@@ -24,6 +24,11 @@
 - [ ] 授权结果与最小权限原则一致：未引入任务范围之外的额外写 scope。
 - [ ] Ticket 00 解除 spark 读取侧 blocker 并可继续执行。
 
+## 复测记录（2026-10-08 晚，用户发起验证）
+- TRAE 授权服务行为已变化：经 `RequestAuthorization` 显式申请 `spark:app:read` 不再返回 "these scopes are not supported"，而是返回授权成功并刷新连接器环境。
+- 但授权后重试 `apps +list` / `apps +get --app-id app_17f41y3cs26`（多次，含用户再次授权）**仍返回 `missing_scope: spark:app:read`（OpenAPI code 99991679）**——授权申请被接受但托管令牌未实际获得该 scope（或刷新未传导到 CLI 凭证）。
+- 用户随后指示：停止重复授权、跳过妙搭侧验证、本轮仅检查代码逻辑。工单保持 `blocked`；解除途径仍为工单「需要开发/配置的内容」三条之一。结论：通道 1（授权服务支持该 scope）部分成立（申请被接受），但下发链路未生效，疑点集中在托管凭证签发（通道 2）或令牌刷新传导。
+
 ## 不在范围
 - `spark:app:write` 授权（见 Ticket 11）。
 - 妙搭应用本身的开发与部署。

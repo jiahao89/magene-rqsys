@@ -37,7 +37,12 @@ try {
       await client.query("COMMIT");
       process.stdout.write(`Applied ${filename}\n`);
     } catch (error) {
-      await client.query("ROLLBACK");
+      // ROLLBACK 自身失败（如连接已断）时保留原始迁移错误
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        // 忽略回滚失败，抛出原始错误
+      }
       throw error;
     } finally {
       client.release();

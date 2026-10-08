@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { createPool } from "./adapters/postgres/pool.js";
 import { handleApiRequest } from "./http/app.js";
+import { errorBody } from "./http/errors.js";
 
 const port = Number(process.env.PORT ?? 8787);
 const database = createPool(process.env.DATABASE_URL);
@@ -28,7 +29,7 @@ const server = createServer(async (incoming, outgoing) => {
   } catch {
     outgoing.statusCode = 500;
     outgoing.setHeader("content-type", "application/json; charset=utf-8");
-    outgoing.end(JSON.stringify({ error: { code: "INTERNAL_ERROR", message: "Request failed." } }));
+    outgoing.end(JSON.stringify(errorBody("INTERNAL")));
   }
 });
 

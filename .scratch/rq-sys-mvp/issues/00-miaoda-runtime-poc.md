@@ -19,6 +19,10 @@
 - 本地 TypeScript 骨架 `npm run typecheck`, `npm run build`, `npm test` 通过；当前仅 3 个健康探针/未实现路由测试。运行 `/api/health` 返回 200；未配置数据库时 `/api/health/ready` 返回 503。此为本地证据，不代表妙搭运行时验证。
 - 仍未验证：RQ-Sys 目标妙搭应用、应用设置、线上日志/指标、数据库持久化、部署/导入流程、身份、调度与后台任务。Spark 写侧仍 blocked；未进行部署、发布、线上环境变量或数据库写操作。
 
+### Spark scope 复测（2026-10-08 晚）
+- 经 TRAE 授权服务申请 `spark:app:read` 已被接受（不再报 scope 不受支持），但授权后 `apps +list`/`+get` 仍返回 `missing_scope: spark:app:read`——授权申请未实际传导到托管令牌。详见 [`10-spark-app-read-scope.md`](10-spark-app-read-scope.md) 复测记录。
+- 用户指示：暂停重复授权、跳过妙搭侧验证；本工单 spark 侧 blocker 维持，后续验证待平台侧修复授权下发链路或提供独立授权环境。
+
 ## 范围
 - 验证可用数据库、持久化边界、数据/存储限制。
 - 验证每周定时触发、后台任务执行、失败重试及应用重启后的任务状态恢复。
