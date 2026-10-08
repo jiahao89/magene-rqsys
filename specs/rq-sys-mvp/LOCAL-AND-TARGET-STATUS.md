@@ -10,6 +10,7 @@ This file records local execution evidence and separates it from unverified targ
 | API build | Passed | `npm run build` exit 0 |
 | API automated tests | Passed (3/3) | `npm test`; liveness, no-DB readiness, and explicit 501 for an unimplemented product API |
 | Local liveness | Passed | `GET /api/health` => HTTP 200, `{"status":"ok","service":"rq-sys-api"}` |
+| Local readiness without database | Correctly not ready | `GET /api/health/ready` => HTTP 503, `{"status":"not_ready","reason":"database_unavailable_or_not_configured"}` |
 | Local lark-cli Spark read probe | Partially available | Fresh `lark-cli apps +list --as user` succeeded and returned two visible apps; no RQ-Sys Miaoda app is present. Separate member-list probe on existing frontend app returned `feature_not_available` rather than a missing-scope error. This does not prove all read surfaces (settings/logs/metrics) are available. |
 
 ## Not implemented or not verified
