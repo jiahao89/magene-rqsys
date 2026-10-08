@@ -32,13 +32,13 @@ flowchart LR
 | 01 | Teambition API and field mapping POC | done（2026-10-08，证据：specs/rq-sys-mvp/TEAMBITION-LIVE-POC.md） | — |
 | 02 | Feishu Base schema, upsert, and automation POC | done（2026-10-08，证据：specs/rq-sys-mvp/FEISHU-BASE-POC.md） | — |
 | 03 | AI provider and data-policy decision/POC | poc-verified-partial（2026-10-08：离线校验 5/5 + 超时/无效 key 在线实测 + PII 掩码断言通过，证据：specs/rq-sys-mvp/AI-ANALYSIS-POC.md；在线 T1–T3 待有效测试 key 补跑） | D-06 已确认；T1–T3 待 key |
-| 04 | Persisted domain model and server API foundation | blocked (local foundation verified; target Miaoda implementation and acceptance remain blocked) | 00 |
+| 04 | Persisted domain model and server API foundation | blocked (local API foundation/tests/runbook updated; business APIs and target Miaoda validation remain blocked on 00) | 00 |
 | 05 | Manual Teambition sync vertical slice | blocked | 00, 01, 04, D-08 |
 | 06 | AI analysis vertical slice | blocked | 03, 05 |
 | 07 | Owner mapping and Feishu Base push vertical slice | blocked | 02, 05 |
-| 08 | Weekly schedule, retry, and audit | blocked (pure-code work approved locally; target-environment acceptance remains blocked) | 00, 05, 06, 07 |
+| 08 | Weekly schedule, retry, and audit | blocked (local pure-code groundwork approved; scheduler/retry/audit implementation and target Miaoda acceptance still pending) | 00, 05, 06, 07 |
 | 09 | Target-environment end-to-end acceptance | blocked | 00–08 |
-| D-08 | Resolve production UI component baseline after repo inspection | blocked | 仓库基线代码（实测 2026-10-08：`jiahao89/magene-rqsys` 为空仓库，无分支/提交） |
+| D-08 | Resolve production UI component baseline after repo inspection | resolved（2026-10-08，ADR-001：基线已推送（main，03aef74）并检视——仓库无 UI 依赖，按 design.md 采用 HeroUI v3 + Tailwind；UI 托管方式留待 00） | ADR-001 已产出 |
 | 10 | Grant `spark:app:read` user scope for Miaoda apps | blocked | TRAE 授权服务/托管凭证侧（2026-10-08 实测：托管凭证无 spark scope 且授权通道不可用；agent 仅负责验收） |
 | 11 | Grant `spark:app:write` user scope for Miaoda apps | blocked | 同 Ticket 10 通道，可与之一并开通；agent 仅负责验收 |
 
