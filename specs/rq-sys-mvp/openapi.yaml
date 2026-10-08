@@ -1,0 +1,310 @@
+openapi: 3.1.0
+info:
+  title: RQ-Sys MVP API
+  version: 0.1.0
+  description: Teambition requirement intake, AI analysis, owner mapping and Feishu Base push.
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+paths:
+  /api/health:
+    get:
+      security: []
+      summary: Liveness probe
+      responses:
+        '200':
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { const: ok }
+                  service: { type: string }
+                required: [status, service]
+  /api/health/ready:
+    get:
+      security: []
+      summary: Database readiness probe
+      responses:
+        '200': { description: Database is reachable }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /api/sources:
+    get:
+      summary: List configured sources
+      responses:
+        '200':
+          description: Sources visible to the caller
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/SourceConfig' } }
+                required: [items]
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/sources/{id}:
+    put:
+      summary: Update a source project and schedule
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SourceConfigUpdate' }
+      responses:
+        '200': { description: Source configuration updated }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/sync/run:
+    post:
+      summary: Start a manual synchronization batch
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 8, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sourceId: { type: string, format: uuid }
+              required: [sourceId]
+      responses:
+        '202':
+          description: Batch accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  batchId: { type: string, format: uuid }
+                  status: { const: running }
+                required: [batchId, status]
+        '409': { description: Source already has an active batch }
+  /api/batches:
+    get:
+      summary: List synchronization batches
+      parameters:
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/BatchStatus' }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+      responses:
+        '200': { description: Batches and next cursor }
+  /api/batches/{id}:
+    get:
+      summary: Get a batch with item results
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Batch detail
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Batch' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/items/{id}/retry:
+    post:
+      summary: Retry one failed item
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '202': { description: Retry accepted }
+        '409': { description: Item is not retryable }
+  /api/requirements:
+    get:
+      summary: Search requirements by source and pipeline state
+      parameters:
+        - name: q
+          in: query
+          schema: { type: string, maxLength: 200 }
+        - name: pullState
+          in: query
+          schema: { $ref: '#/components/schemas/PullState' }
+        - name: analysisState
+          in: query
+          schema: { $ref: '#/components/schemas/AnalysisState' }
+        - name: ownerState
+          in: query
+          schema: { $ref: '#/components/schemas/OwnerState' }
+        - name: pushState
+          in: query
+          schema: { $ref: '#/components/schemas/PushState' }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+      responses:
+        '200': { description: Requirement page }
+  /api/requirements/{id}:
+    get:
+      summary: Get requirement source snapshot and latest analysis
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Requirement detail
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Requirement' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/requirements/{id}/owner:
+    put:
+      summary: Save an operator-selected Feishu owner
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                feishuUserId: { type: string, minLength: 1 }
+                feishuIdType: { type: string, enum: [open_id, user_id, union_id] }
+                tbUserId: { type: [string, 'null'] }
+                tbDisplayName: { type: [string, 'null'] }
+              required: [feishuUserId, feishuIdType]
+      responses:
+        '200': { description: Mapping saved and push queued }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /api/analysis/{id}/retry:
+    post:
+      summary: Queue a new analysis attempt
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '202': { description: Analysis retry accepted; push is not blocked }
+  /api/audit:
+    get:
+      summary: Search workflow audit events
+      parameters:
+        - name: entityId
+          in: query
+          schema: { type: string }
+        - name: since
+          in: query
+          schema: { type: string, format: date-time }
+        - name: until
+          in: query
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        '200': { description: Audit event page }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  responses:
+    BadRequest:
+      description: Request validation failed
+    Unauthorized:
+      description: Missing or invalid identity
+    NotFound:
+      description: Resource not found
+    ServiceUnavailable:
+      description: Dependency unavailable
+  schemas:
+    BatchStatus:
+      type: string
+      enum: [running, succeeded, partial_failure, failed]
+    PullState:
+      type: string
+      enum: [pending, running, synced, failed]
+    AnalysisState:
+      type: string
+      enum: [pending, running, analyzed, failed_retryable]
+    OwnerState:
+      type: string
+      enum: [pending_mapping, auto_mapped, manually_mapped, not_required]
+    PushState:
+      type: string
+      enum: [pending, running, pushed, failed]
+    SourceConfig:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        projectId: { type: string }
+        projectName: { type: string }
+        requirementTypeId: { type: string }
+        enabled: { type: boolean }
+        schedule:
+          type: object
+          properties:
+            enabled: { type: boolean }
+            weekday: { type: [integer, 'null'], minimum: 1, maximum: 7 }
+            time: { type: [string, 'null'], format: time }
+            timezone: { type: [string, 'null'] }
+          required: [enabled, weekday, time, timezone]
+        ownerNames: { type: array, items: { type: string } }
+        fieldMap: { type: object, additionalProperties: { type: string } }
+      required: [id, projectId, projectName, requirementTypeId, enabled, schedule, ownerNames, fieldMap]
+    SourceConfigUpdate:
+      type: object
+      properties:
+        projectId: { type: string, minLength: 1 }
+        projectName: { type: string, minLength: 1 }
+        requirementTypeId: { type: string, minLength: 1 }
+        enabled: { type: boolean }
+        schedule:
+          type: object
+          properties:
+            enabled: { type: boolean }
+            weekday: { type: [integer, 'null'], minimum: 1, maximum: 7 }
+            time: { type: [string, 'null'], format: time }
+            timezone: { type: [string, 'null'] }
+          required: [enabled, weekday, time, timezone]
+        ownerNames: { type: array, items: { type: string } }
+        fieldMap: { type: object, additionalProperties: { type: string } }
+      required: [projectId, projectName, requirementTypeId, enabled, schedule, ownerNames, fieldMap]
+    Requirement:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        sourceRequirementId: { type: string }
+        title: { type: string }
+        sourceVersion: { type: integer }
+        pipeline:
+          type: object
+          properties:
+            pull: { $ref: '#/components/schemas/PullState' }
+            analysis: { $ref: '#/components/schemas/AnalysisState' }
+            owner: { $ref: '#/components/schemas/OwnerState' }
+            push: { $ref: '#/components/schemas/PushState' }
+          required: [pull, analysis, owner, push]
+        source: { type: object, additionalProperties: true }
+        analysis: { type: [object, 'null'], additionalProperties: true }
+        baseRecordId: { type: [string, 'null'] }
+      required: [id, sourceRequirementId, title, sourceVersion, pipeline, source, analysis, baseRecordId]
+    Batch:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        status: { $ref: '#/components/schemas/BatchStatus' }
+        totalCount: { type: integer }
+        succeededCount: { type: integer }
+        failedCount: { type: integer }
+        items: { type: array, items: { type: object, additionalProperties: true } }
+      required: [id, status, totalCount, succeededCount, failedCount, items]

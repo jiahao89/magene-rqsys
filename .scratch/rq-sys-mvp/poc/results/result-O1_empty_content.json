@@ -1,0 +1,12 @@
+{
+  "id": "O1_empty_content",
+  "raw": "",
+  "validate": {
+    "ok": false,
+    "errors": [
+      "empty_content: model returned empty content"
+    ],
+    "obj": null
+  },
+  "expect": "empty content treated as analysis failure (known JSON Output issue in provider docs)"
+}

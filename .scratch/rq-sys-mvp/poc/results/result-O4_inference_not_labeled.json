@@ -1,0 +1,57 @@
+{
+  "id": "O4_inference_not_labeled",
+  "raw": "{\"module\":\"报表分析\",\"confidence\":\"高\",\"overall_reason\":\"x\",\"evidence\":[\"e\"],\"umsc\":{\"U\":{\"rationale\":\"r\",\"evidence\":[\"e\"],\"missing_evidence\":false},\"M\":{\"rationale\":\"r\",\"evidence\":[\"e\"],\"missing_evidence\":false},\"S\":{\"rationale\":\"r\",\"evidence\":[\"e\"],\"missing_evidence\":false},\"C\":{\"rationale\":\"r\",\"evidence\":[\"e\"],\"missing_evidence\":false}},\"facts\":[\"f\"],\"inference\":[\"未标注的推断\"],\"missing_inputs\":[],\"priority\":null}",
+  "validate": {
+    "ok": false,
+    "errors": [
+      "inference_not_labeled_as_ai"
+    ],
+    "obj": {
+      "module": "报表分析",
+      "confidence": "高",
+      "overall_reason": "x",
+      "evidence": [
+        "e"
+      ],
+      "umsc": {
+        "U": {
+          "rationale": "r",
+          "evidence": [
+            "e"
+          ],
+          "missing_evidence": false
+        },
+        "M": {
+          "rationale": "r",
+          "evidence": [
+            "e"
+          ],
+          "missing_evidence": false
+        },
+        "S": {
+          "rationale": "r",
+          "evidence": [
+            "e"
+          ],
+          "missing_evidence": false
+        },
+        "C": {
+          "rationale": "r",
+          "evidence": [
+            "e"
+          ],
+          "missing_evidence": false
+        }
+      },
+      "facts": [
+        "f"
+      ],
+      "inference": [
+        "未标注的推断"
+      ],
+      "missing_inputs": [],
+      "priority": null
+    }
+  },
+  "expect": "unlabeled inference rejected"
+}

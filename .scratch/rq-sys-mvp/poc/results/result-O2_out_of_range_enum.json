@@ -1,0 +1,61 @@
+{
+  "id": "O2_out_of_range_enum",
+  "raw": "{\"module\":\"不存在的模块\",\"confidence\":\"极高\",\"overall_reason\":\"x\",\"evidence\":[\"e\"],\"umsc\":{\"U\":{\"rationale\":\"r\",\"evidence\":[\"e\"],\"missing_evidence\":false},\"M\":{\"rationale\":\"r\",\"evidence\":[\"e\"],\"missing_evidence\":false},\"S\":{\"rationale\":\"r\",\"evidence\":[\"e\"],\"missing_evidence\":false},\"C\":{\"rationale\":\"r\",\"evidence\":[\"e\"],\"missing_evidence\":false}},\"facts\":[\"f\"],\"inference\":[{\"claim\":\"c\",\"ai_inference\":true}],\"missing_inputs\":[],\"priority\":null}",
+  "validate": {
+    "ok": false,
+    "errors": [
+      "module_out_of_range: \"不存在的模块\"",
+      "confidence_out_of_range: \"极高\""
+    ],
+    "obj": {
+      "module": "不存在的模块",
+      "confidence": "极高",
+      "overall_reason": "x",
+      "evidence": [
+        "e"
+      ],
+      "umsc": {
+        "U": {
+          "rationale": "r",
+          "evidence": [
+            "e"
+          ],
+          "missing_evidence": false
+        },
+        "M": {
+          "rationale": "r",
+          "evidence": [
+            "e"
+          ],
+          "missing_evidence": false
+        },
+        "S": {
+          "rationale": "r",
+          "evidence": [
+            "e"
+          ],
+          "missing_evidence": false
+        },
+        "C": {
+          "rationale": "r",
+          "evidence": [
+            "e"
+          ],
+          "missing_evidence": false
+        }
+      },
+      "facts": [
+        "f"
+      ],
+      "inference": [
+        {
+          "claim": "c",
+          "ai_inference": true
+        }
+      ],
+      "missing_inputs": [],
+      "priority": null
+    }
+  },
+  "expect": "module/confidence enum violations rejected"
+}

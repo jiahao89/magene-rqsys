@@ -1,0 +1,21 @@
+{
+  "id": "T1_normal_sufficient_evidence",
+  "mode": "online",
+  "http": "error",
+  "latency_ms": 219,
+  "failure": {
+    "kind": "auth_error",
+    "summary": "HTTP 401 auth_error"
+  },
+  "status": 401,
+  "detailSnippet": "{\"error\":{\"message\":\"Authentication Fails, Your api key: ****df18 is invalid (request_id: 9711d9e2-ea84-4c29-8d02-0718b57f5e6e)\",\"type\":\"authentication_error\",\"param\":null,\"code\":\"invalid_request_error\"}}",
+  "provenance": {
+    "model": "deepseek-flash",
+    "prompt_version": "poc-prompt-v1",
+    "dictionary_version": "test-dict-v1",
+    "rule_version": null,
+    "generated_at": "2026-10-08T09:01:04.141Z",
+    "attempt": 1,
+    "retry_of": null
+  }
+}

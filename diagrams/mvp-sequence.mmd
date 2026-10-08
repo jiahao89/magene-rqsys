@@ -1,0 +1,40 @@
+%%{init: {"theme":"base","themeVariables":{"primaryColor":"#fff0e7","primaryTextColor":"#2d3142","primaryBorderColor":"#eb6c36","lineColor":"#4f5d75","secondaryColor":"#ffffff","tertiaryColor":"#f5f5f5","fontFamily":"Noto Sans SC, PingFang SC, sans-serif"}}}%%
+sequenceDiagram
+  autonumber
+  actor OP as 定时任务 / 操作人
+  participant RQ as RQ-Sys
+  participant TB as Teambition
+  participant AI as 模型服务
+  participant BASE as 飞书多维表格 / 自动化
+  OP->>RQ: 每周自动同步或手动触发
+  RQ->>TB: 拉取单项目需求（首次全量）
+  TB-->>RQ: 原文、需求 ID、负责人、更新时间
+  RQ->>RQ: 去重并识别实质字段变化
+  alt 新需求或实质内容变化
+    RQ->>BASE: 读取现有 PM 字段并快照
+    alt 快照成功
+      RQ->>AI: 发送脱敏标题 / 描述 / 必要非个人上下文；不含附件
+      alt 首次分析成功
+        AI-->>RQ: 模块、整体置信度、U/M/S/C 建议与证据
+      else 首次分析失败或超时
+        AI-->>RQ: 记录失败；后续重试不阻塞推送
+      end
+    else 快照失败
+      RQ-->>OP: 当前需求项失败 / 可重试；保留 Base 状态并继续批次
+    end
+  else 无实质内容变化
+    RQ->>RQ: 只更新元数据；不重置 PM 状态、不重复通知
+  end
+  alt TB 负责人已映射，或 TB 无负责人
+    RQ->>BASE: 按需求 ID 幂等新增 / 更新；空负责人保留人工分配
+  else TB 有负责人但未映射
+    RQ-->>OP: 等待人工选择飞书负责人
+    OP->>RQ: 选择用户并持久化映射
+    RQ->>BASE: 写入映射负责人并推送
+  end
+  BASE->>BASE: 自动化按事件版本去重
+  BASE-->>OP: 通知 PM Leader、可解析提出人、当前负责人
+  opt 后续负责人分配 / TB 负责人映射变更
+    BASE-->>OP: 通知新负责人；TB 映射变更更新 Base 负责人
+  end
+  OP->>BASE: PM 更新业务处理状态（Web 不回读）

@@ -1,0 +1,123 @@
+{
+  "model": "deepseek-flash",
+  "api_base": "https://api.deepseek.com",
+  "key_present": true,
+  "key_redacted_in_all_outputs": true,
+  "cases": [
+    {
+      "id": "O1_empty_content",
+      "mode": "offline",
+      "ok": true,
+      "note": "empty content treated as analysis failure (known JSON Output issue in provider docs)"
+    },
+    {
+      "id": "O2_out_of_range_enum",
+      "mode": "offline",
+      "ok": true,
+      "note": "module/confidence enum violations rejected"
+    },
+    {
+      "id": "O3_priority_without_rule",
+      "mode": "offline",
+      "ok": true,
+      "note": "priority P0-P3 rejected when no rule version published"
+    },
+    {
+      "id": "O4_inference_not_labeled",
+      "mode": "offline",
+      "ok": true,
+      "note": "unlabeled inference rejected"
+    },
+    {
+      "id": "O5_http_error_classification",
+      "mode": "offline",
+      "ok": true,
+      "note": "401/403 auth_error, 429 rate_limited, 5xx provider_error; live 429 not triggered in POC"
+    },
+    {
+      "id": "T1_normal_sufficient_evidence",
+      "mode": "online",
+      "http": "error",
+      "latency_ms": 219,
+      "failure": {
+        "kind": "auth_error",
+        "summary": "HTTP 401 auth_error"
+      },
+      "status": 401,
+      "detailSnippet": "{\"error\":{\"message\":\"Authentication Fails, Your api key: ****df18 is invalid (request_id: 9711d9e2-ea84-4c29-8d02-0718b57f5e6e)\",\"type\":\"authentication_error\",\"param\":null,\"code\":\"invalid_request_error\"}}",
+      "provenance": {
+        "model": "deepseek-flash",
+        "prompt_version": "poc-prompt-v1",
+        "dictionary_version": "test-dict-v1",
+        "rule_version": null,
+        "generated_at": "2026-10-08T09:01:04.141Z",
+        "attempt": 1,
+        "retry_of": null
+      },
+      "ok": false,
+      "note": "valid result with module in dictionary, one confidence, umsc with evidence or missing markers"
+    },
+    {
+      "id": "T2_low_evidence",
+      "mode": "online",
+      "http": "error",
+      "latency_ms": 104,
+      "failure": {
+        "kind": "auth_error",
+        "summary": "HTTP 401 auth_error"
+      },
+      "status": 401,
+      "detailSnippet": "{\"error\":{\"message\":\"Authentication Fails, Your api key: ****df18 is invalid (request_id: f9a6ec78-80ff-4727-b2a5-88af9c8dbb45)\",\"type\":\"authentication_error\",\"param\":null,\"code\":\"invalid_request_error\"}}",
+      "provenance": {
+        "model": "deepseek-flash",
+        "prompt_version": "poc-prompt-v1",
+        "dictionary_version": "test-dict-v1",
+        "rule_version": null,
+        "generated_at": "2026-10-08T09:01:04.252Z",
+        "attempt": 1,
+        "retry_of": null
+      },
+      "ok": false,
+      "note": "待分类 or low confidence; missing_inputs/blind spots present; no fabricated facts"
+    },
+    {
+      "id": "T3_invalid_structure_freeform",
+      "mode": "online",
+      "http": "error",
+      "latency_ms": 71,
+      "failure": {
+        "kind": "auth_error",
+        "summary": "HTTP 401 auth_error"
+      },
+      "status": 401,
+      "detailSnippet": "{\"error\":{\"message\":\"Authentication Fails, Your api key: ****df18 is invalid (request_id: ec851cfb-e82b-4c02-a97f-2682b6e04ffd)\",\"type\":\"authentication_error\",\"param\":null,\"code\":\"invalid_request_error\"}}",
+      "provenance": {
+        "model": "deepseek-flash",
+        "prompt_version": "poc-prompt-freeform",
+        "dictionary_version": "test-dict-v1",
+        "rule_version": null,
+        "generated_at": "2026-10-08T09:01:04.323Z",
+        "attempt": 1,
+        "retry_of": null
+      },
+      "ok": false,
+      "note": "validator rejects non-JSON free text as analysis failure, not success"
+    },
+    {
+      "id": "T4_timeout_abort",
+      "mode": "online",
+      "note": "client abort classified as timeout; requires key",
+      "ok": true
+    },
+    {
+      "id": "T5_service_error_auth",
+      "mode": "online",
+      "note": "invalid key -> auth_error without leaking key; requires key",
+      "ok": true,
+      "failure": {
+        "kind": "auth_error",
+        "summary": "HTTP 401"
+      }
+    }
+  ]
+}

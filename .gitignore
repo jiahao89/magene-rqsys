@@ -1,0 +1,13 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+.DS_Store
+npm-debug.log*
+plugins/
+rq-sys-tech-design/
+
+__pycache__/
+*.py[cod]

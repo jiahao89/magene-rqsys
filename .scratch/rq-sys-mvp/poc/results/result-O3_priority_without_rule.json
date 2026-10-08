@@ -1,0 +1,60 @@
+{
+  "id": "O3_priority_without_rule",
+  "raw": "{\"module\":\"报表分析\",\"confidence\":\"高\",\"overall_reason\":\"x\",\"evidence\":[\"e\"],\"umsc\":{\"U\":{\"rationale\":\"r\",\"evidence\":[\"e\"],\"missing_evidence\":false},\"M\":{\"rationale\":\"r\",\"evidence\":[\"e\"],\"missing_evidence\":false},\"S\":{\"rationale\":\"r\",\"evidence\":[\"e\"],\"missing_evidence\":false},\"C\":{\"rationale\":\"r\",\"evidence\":[\"e\"],\"missing_evidence\":false}},\"facts\":[\"f\"],\"inference\":[{\"claim\":\"c\",\"ai_inference\":true}],\"missing_inputs\":[],\"priority\":\"P1\"}",
+  "validate": {
+    "ok": false,
+    "errors": [
+      "priority_must_be_null_without_published_rule"
+    ],
+    "obj": {
+      "module": "报表分析",
+      "confidence": "高",
+      "overall_reason": "x",
+      "evidence": [
+        "e"
+      ],
+      "umsc": {
+        "U": {
+          "rationale": "r",
+          "evidence": [
+            "e"
+          ],
+          "missing_evidence": false
+        },
+        "M": {
+          "rationale": "r",
+          "evidence": [
+            "e"
+          ],
+          "missing_evidence": false
+        },
+        "S": {
+          "rationale": "r",
+          "evidence": [
+            "e"
+          ],
+          "missing_evidence": false
+        },
+        "C": {
+          "rationale": "r",
+          "evidence": [
+            "e"
+          ],
+          "missing_evidence": false
+        }
+      },
+      "facts": [
+        "f"
+      ],
+      "inference": [
+        {
+          "claim": "c",
+          "ai_inference": true
+        }
+      ],
+      "missing_inputs": [],
+      "priority": "P1"
+    }
+  },
+  "expect": "priority P0-P3 rejected when no rule version published"
+}

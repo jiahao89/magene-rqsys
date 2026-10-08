@@ -1,0 +1,289 @@
+{
+  "version": 2,
+  "nodes": [
+    {
+      "type": "text",
+      "id": "title",
+      "x": 20,
+      "y": 12,
+      "width": 1200,
+      "height": 40,
+      "text": "MVP｜TB 同步、AI 分析与推送流程",
+      "fontSize": 24,
+      "textColor": "#2D3142",
+      "textAlign": "left",
+      "verticalAlign": "middle"
+    },
+    {
+      "type": "frame",
+      "id": "flow",
+      "x": 20,
+      "y": 64,
+      "width": "fit-content",
+      "height": "fit-content",
+      "layout": "dagre",
+      "gap": 24,
+      "padding": 48,
+      "borderColor": "#D0D5DD",
+      "borderWidth": 1,
+      "borderRadius": 18,
+      "layoutOptions": {
+        "rankdir": "TB",
+        "nodesep": 44,
+        "ranksep": 100,
+        "edges": [
+          [
+            "trigger",
+            "fetch",
+            "启动"
+          ],
+          [
+            "fetch",
+            "persist",
+            "获取成功"
+          ],
+          [
+            "persist",
+            "material",
+            "差异检查"
+          ],
+          [
+            "material",
+            "metadata",
+            "否：仅元数据"
+          ],
+          [
+            "material",
+            "snapshot",
+            "是：新建 / 实质变更"
+          ],
+          [
+            "snapshot",
+            "snapfail",
+            "读取失败"
+          ],
+          [
+            "snapshot",
+            "analyze",
+            "读取成功"
+          ],
+          [
+            "analyze",
+            "terminal",
+            "分析完成"
+          ],
+          [
+            "terminal",
+            "owner",
+            "成功 / 失败 / 超时均继续"
+          ],
+          [
+            "owner",
+            "push",
+            "已匹配或无负责人"
+          ],
+          [
+            "owner",
+            "mapowner",
+            "有负责人未匹配"
+          ],
+          [
+            "mapowner",
+            "push",
+            "人工确认后"
+          ],
+          [
+            "push",
+            "notify",
+            "按事件版本去重"
+          ],
+          [
+            "push",
+            "pmstate",
+            "推送状态更新"
+          ]
+        ]
+      },
+      "children": [
+        {
+          "type": "ellipse",
+          "id": "trigger",
+          "text": "每周定时 / 手动触发",
+          "width": 210,
+          "height": 64,
+          "fillColor": "#FFF0E7",
+          "borderColor": "#EB6C36",
+          "borderWidth": 2,
+          "fontSize": 14,
+          "textColor": "#2D3142"
+        },
+        {
+          "type": "rect",
+          "id": "fetch",
+          "text": "拉取单项目需求\n首次全量；后续增量",
+          "width": 225,
+          "height": 76,
+          "fillColor": "#FFF7F2",
+          "borderColor": "#EB6C36",
+          "borderWidth": 1.5,
+          "borderRadius": 12,
+          "fontSize": 14,
+          "textColor": "#2D3142"
+        },
+        {
+          "type": "rect",
+          "id": "persist",
+          "text": "保存 TB 原文与流程状态\n按项目 ID + 需求 ID 去重",
+          "width": 240,
+          "height": 76,
+          "fillColor": "#FFF7F2",
+          "borderColor": "#EB6C36",
+          "borderWidth": 1.5,
+          "borderRadius": 12,
+          "fontSize": 13,
+          "textColor": "#2D3142"
+        },
+        {
+          "type": "diamond",
+          "id": "material",
+          "text": "实质内容变更？",
+          "width": 228,
+          "height": 104,
+          "fillColor": "#FEF3C7",
+          "borderColor": "#D97706",
+          "borderWidth": 2,
+          "fontSize": 13,
+          "textColor": "#2D3142"
+        },
+        {
+          "type": "rect",
+          "id": "metadata",
+          "text": "仅更新元数据与负责人映射\n不重置 PM 状态；无变化不通知",
+          "width": 248,
+          "height": 78,
+          "fillColor": "#F5F5F5",
+          "borderColor": "#667085",
+          "borderWidth": 1.5,
+          "borderRadius": 12,
+          "fontSize": 13,
+          "textColor": "#2D3142"
+        },
+        {
+          "type": "rect",
+          "id": "snapshot",
+          "text": "读取并快照 PM 字段\n处理状态、确认值、结构化备注",
+          "width": 242,
+          "height": 78,
+          "fillColor": "#FFF7F2",
+          "borderColor": "#EB6C36",
+          "borderWidth": 1.5,
+          "borderRadius": 12,
+          "fontSize": 13,
+          "textColor": "#2D3142"
+        },
+        {
+          "type": "rect",
+          "id": "snapfail",
+          "text": "该需求项失败 / 可重试\n保留 Base 与 PM 状态；批次继续",
+          "width": 244,
+          "height": 78,
+          "fillColor": "#FEE2E2",
+          "borderColor": "#DC2626",
+          "borderWidth": 1.5,
+          "borderRadius": 12,
+          "fontSize": 13,
+          "textColor": "#7F1D1D"
+        },
+        {
+          "type": "rect",
+          "id": "analyze",
+          "text": "AI 脱敏文本分析\n模块 + 整体置信度 / 理由 / 证据\nU/M/S/C 建议；未校准时 P0–P3 留空",
+          "width": 270,
+          "height": 96,
+          "fillColor": "#FDE6D9",
+          "borderColor": "#EB6C36",
+          "borderWidth": 2,
+          "borderRadius": 12,
+          "fontSize": 13,
+          "textColor": "#2D3142"
+        },
+        {
+          "type": "diamond",
+          "id": "terminal",
+          "text": "首次尝试终态？\n成功 / 失败 / 超时",
+          "width": 198,
+          "height": 92,
+          "fillColor": "#FEF3C7",
+          "borderColor": "#D97706",
+          "borderWidth": 2,
+          "fontSize": 13,
+          "textColor": "#2D3142"
+        },
+        {
+          "type": "diamond",
+          "id": "owner",
+          "text": "负责人已映射？\n或 TB 无负责人？",
+          "width": 200,
+          "height": 92,
+          "fillColor": "#FEF3C7",
+          "borderColor": "#D97706",
+          "borderWidth": 2,
+          "fontSize": 13,
+          "textColor": "#2D3142"
+        },
+        {
+          "type": "rect",
+          "id": "mapowner",
+          "text": "操作人在 Web 选择飞书用户\n保存映射后触发推送",
+          "width": 248,
+          "height": 78,
+          "fillColor": "#FFF7F2",
+          "borderColor": "#EB6C36",
+          "borderWidth": 1.5,
+          "borderRadius": 12,
+          "fontSize": 13,
+          "textColor": "#2D3142"
+        },
+        {
+          "type": "rect",
+          "id": "push",
+          "text": "按需求 ID 幂等推送 / 更新 Base\n空负责人保留人工分配\nAI 低置信或失败不阻断推送",
+          "width": 265,
+          "height": 90,
+          "fillColor": "#EB6C36",
+          "borderColor": "#C54F21",
+          "borderWidth": 2,
+          "borderRadius": 12,
+          "fontSize": 13,
+          "textColor": "#FFFFFF"
+        },
+        {
+          "type": "rect",
+          "id": "notify",
+          "text": "Base 自动化通知干系人\n首次推送 / 源版本变更 / 负责人变更 / AI 重试成功",
+          "width": 264,
+          "height": 86,
+          "fillColor": "#FFF0E7",
+          "borderColor": "#EB6C36",
+          "borderWidth": 1.5,
+          "borderRadius": 12,
+          "fontSize": 13,
+          "textColor": "#2D3142"
+        },
+        {
+          "type": "rect",
+          "id": "pmstate",
+          "text": "Web 展示已推送\nPM 业务状态仅在 Base 更新",
+          "width": 225,
+          "height": 72,
+          "fillColor": "#F5F5F5",
+          "borderColor": "#667085",
+          "borderWidth": 1.5,
+          "borderRadius": 12,
+          "fontSize": 13,
+          "textColor": "#2D3142"
+        }
+      ]
+    }
+  ]
+}

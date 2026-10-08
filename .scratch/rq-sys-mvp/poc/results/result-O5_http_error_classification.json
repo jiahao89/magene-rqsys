@@ -1,0 +1,26 @@
+{
+  "id": "O5_http_error_classification",
+  "checks": [
+    {
+      "status": 401,
+      "classified": "auth_error"
+    },
+    {
+      "status": 403,
+      "classified": "auth_error"
+    },
+    {
+      "status": 429,
+      "classified": "rate_limited"
+    },
+    {
+      "status": 500,
+      "classified": "provider_error"
+    },
+    {
+      "status": 400,
+      "classified": "request_error"
+    }
+  ],
+  "expect": "401/403 auth_error, 429 rate_limited, 5xx provider_error; live 429 not triggered in POC"
+}

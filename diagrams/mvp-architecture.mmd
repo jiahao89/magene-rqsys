@@ -1,0 +1,31 @@
+%%{init: {"theme":"base","themeVariables":{"primaryColor":"#fff0e7","primaryTextColor":"#2d3142","primaryBorderColor":"#eb6c36","lineColor":"#4f5d75","secondaryColor":"#ffffff","tertiaryColor":"#f5f5f5","fontFamily":"Noto Sans SC, PingFang SC, sans-serif"}}}%%
+flowchart LR
+  subgraph SRC["需求来源"]
+    TB["Teambition<br/>产品组单项目"]
+  end
+  subgraph RQ["RQ-Sys Web 中间件"]
+    WEB["Web 工作台<br/>配置 / 手动同步 / 映射"]
+    JOB["每周调度 + 手动任务"]
+    SYNC["同步引擎<br/>全量初始化 / 增量差异 / 幂等"]
+    AI["AI 分析<br/>模块 / 整体置信度 / U-M-S-C"]
+    DB[("妙搭应用数据库<br/>原文快照 / 状态 / 映射 / 历史")]
+    WEB --> JOB --> SYNC
+    SYNC --> AI
+    SYNC <--> DB
+    AI --> DB
+  end
+  subgraph FS["飞书协作"]
+    BASE["飞书多维表格<br/>需求与 PM 处理状态"]
+    AUTO["多维表格自动化<br/>事件去重与通知"]
+    STAKE["PM Leader / 提出人 / 负责人"]
+    BASE --> AUTO --> STAKE
+  end
+  MODEL["模型服务"]
+  TB -->|"拉取原始需求"| SYNC
+  SYNC -->|"脱敏字段；不含附件"| MODEL
+  MODEL -->|"结构化分析建议"| AI
+  SYNC -->|"按项目 ID + 需求 ID 推送 / 更新"| BASE
+  WEB -->|"查看同步、分析、推送状态"| DB
+  STAKE -->|"PM 更新业务状态"| BASE
+  classDef accent fill:#eb6c36,color:#ffffff,stroke:#eb6c36,stroke-width:2px;
+  class SYNC,AI,BASE accent;

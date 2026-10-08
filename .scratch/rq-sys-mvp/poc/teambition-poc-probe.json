@@ -1,0 +1,279 @@
+{
+  "probe_date": "2026-10-08T15:04:39+0800",
+  "probes": {
+    "full_fetch_1": {
+      "http_status": 200,
+      "latency_ms": 2261,
+      "record_count": 1285,
+      "top_level_keys": {
+        "id": 1285,
+        "unique_id": 1285,
+        "executor_id": 1285,
+        "content": 1285,
+        "custom_fields": 1285,
+        "created": 1285,
+        "startdate": 1285,
+        "duedate": 1285,
+        "creator_id": 1285,
+        "sprint_id": 1285,
+        "scenariofield_config_id": 1285,
+        "taskflow_status_id": 1285
+      },
+      "id_stats": {
+        "total": 1285,
+        "unique": 1285,
+        "null_or_empty": 0,
+        "sample_prefix": "68...",
+        "all_24hex": true
+      },
+      "unique_id_stats": {
+        "present": 1285,
+        "type": "float"
+      },
+      "empty_value_counts": {
+        "executor_id_null": 35,
+        "creator_id_null": 0,
+        "content_null": 0,
+        "duedate_null": 1242,
+        "startdate_null": 1245,
+        "custom_fields_null": 0,
+        "sprint_id_null": 1285
+      },
+      "has_updated_or_modified_field": false,
+      "custom_fields_parse": {
+        "parsed_ok": 1285,
+        "parse_failed": 0
+      },
+      "candidate_field_shapes": {
+        "description_rtf": {
+          "value_shape:array[1]": 1278
+        },
+        "acceptance_rtf": {
+          "value_shape:array[1]": 936
+        },
+        "proposer_lookup": {
+          "value_shape:array[1]": 1056,
+          "value_shape:array[10]": 2,
+          "value_shape:array[0]": 1
+        },
+        "category_commongroup": {
+          "value_shape:array[0]": 369
+        },
+        "type_dropDown": {
+          "value_shape:array[1]": 700,
+          "values_shape:array[1]": 700,
+          "value_shape:array[0]": 4
+        }
+      },
+      "total_elapsed_ms": 2297
+    },
+    "full_fetch_2": {
+      "http_status": 200,
+      "latency_ms": 2543,
+      "record_count": 1285,
+      "top_level_keys": {
+        "id": 1285,
+        "unique_id": 1285,
+        "executor_id": 1285,
+        "content": 1285,
+        "custom_fields": 1285,
+        "created": 1285,
+        "startdate": 1285,
+        "duedate": 1285,
+        "creator_id": 1285,
+        "sprint_id": 1285,
+        "scenariofield_config_id": 1285,
+        "taskflow_status_id": 1285
+      },
+      "id_stats": {
+        "total": 1285,
+        "unique": 1285,
+        "null_or_empty": 0,
+        "sample_prefix": "68...",
+        "all_24hex": true
+      },
+      "unique_id_stats": {
+        "present": 1285,
+        "type": "float"
+      },
+      "empty_value_counts": {
+        "executor_id_null": 35,
+        "creator_id_null": 0,
+        "content_null": 0,
+        "duedate_null": 1242,
+        "startdate_null": 1245,
+        "custom_fields_null": 0,
+        "sprint_id_null": 1285
+      },
+      "has_updated_or_modified_field": false,
+      "custom_fields_parse": {
+        "parsed_ok": 1285,
+        "parse_failed": 0
+      },
+      "candidate_field_shapes": {
+        "description_rtf": {
+          "value_shape:array[1]": 1278
+        },
+        "acceptance_rtf": {
+          "value_shape:array[1]": 936
+        },
+        "proposer_lookup": {
+          "value_shape:array[1]": 1056,
+          "value_shape:array[10]": 2,
+          "value_shape:array[0]": 1
+        },
+        "category_commongroup": {
+          "value_shape:array[0]": 369
+        },
+        "type_dropDown": {
+          "value_shape:array[1]": 700,
+          "values_shape:array[1]": 700,
+          "value_shape:array[0]": 4
+        }
+      },
+      "total_elapsed_ms": 2568
+    },
+    "id_stability": {
+      "count_a": 1285,
+      "count_b": 1285,
+      "identical_sets": true,
+      "added": 0,
+      "removed": 0,
+      "interval_seconds": 20,
+      "status_a": 200,
+      "status_b": 200,
+      "ms_a": 1829,
+      "ms_b": 1747
+    },
+    "pagination_params": {
+      "baseline": {
+        "status": 200,
+        "ms": 2039,
+        "record_count": 1285,
+        "same_as_baseline": true
+      },
+      "page_1_size_10": {
+        "status": 500,
+        "ms": 81,
+        "record_count": null,
+        "same_as_baseline": false
+      },
+      "page_2_size_10": {
+        "status": 500,
+        "ms": 48,
+        "record_count": null,
+        "same_as_baseline": false
+      },
+      "limit_10_offset_10": {
+        "status": 500,
+        "ms": 80,
+        "record_count": null,
+        "same_as_baseline": false
+      },
+      "count_10": {
+        "status": 500,
+        "ms": 34,
+        "record_count": null,
+        "same_as_baseline": false
+      },
+      "pageSize_only_10": {
+        "status": 500,
+        "ms": 33,
+        "record_count": null,
+        "same_as_baseline": false
+      }
+    },
+    "sort_and_update_filter": {
+      "order_by_updated": {
+        "status": 500,
+        "record_count": null,
+        "honored": false
+      },
+      "updated_filter": {
+        "status": 500,
+        "record_count": null,
+        "honored": false
+      },
+      "modified_filter": {
+        "status": 500,
+        "record_count": null,
+        "honored": false
+      }
+    },
+    "error_behavior": {
+      "invalid_project": {
+        "status": 200,
+        "body_shape": "array[0]",
+        "body_preview": "[]"
+      },
+      "invalid_config": {
+        "status": 200,
+        "body_shape": "array[0]",
+        "record_count": 0
+      },
+      "missing_project_id": {
+        "status": 500,
+        "body_shape": "str",
+        "body_preview": "Internal Server Error"
+      },
+      "invalid_auth": {
+        "status": 403,
+        "body_shape": "object{detail}",
+        "body_preview": "{'detail': 'Could not validate API Key'}"
+      },
+      "unknown_endpoint": {
+        "status": 404,
+        "body_shape": "object{error}"
+      }
+    },
+    "rate_limit_burst_6": {
+      "calls": [
+        {
+          "i": 0,
+          "status": 200,
+          "ms": 121
+        },
+        {
+          "i": 1,
+          "status": 200,
+          "ms": 49
+        },
+        {
+          "i": 2,
+          "status": 200,
+          "ms": 71
+        },
+        {
+          "i": 3,
+          "status": 200,
+          "ms": 49
+        },
+        {
+          "i": 4,
+          "status": 200,
+          "ms": 186
+        },
+        {
+          "i": 5,
+          "status": 200,
+          "ms": 59
+        }
+      ],
+      "any_429": false,
+      "all_200": true
+    },
+    "task_detail_and_activity": {
+      "getTaskActivityList": {
+        "status": 200,
+        "is_list": true,
+        "activity_count": 6,
+        "has_ancestor_key": false
+      },
+      "getTasksActivityList": {
+        "status": 200,
+        "is_dict": true,
+        "keys": 2
+      }
+    }
+  }
+}

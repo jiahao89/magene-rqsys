@@ -1,0 +1,17 @@
+%%{init: {"theme":"base","themeVariables":{"primaryColor":"#fff0e7","primaryTextColor":"#2d3142","primaryBorderColor":"#eb6c36","lineColor":"#4f5d75","secondaryColor":"#ffffff","tertiaryColor":"#f5f5f5","fontFamily":"Noto Sans SC, PingFang SC, sans-serif"}}}%%
+flowchart TD
+  S(["触发同步<br/>每周定时 / 手动"]) --> T["拉取单项目需求<br/>首次全量；后续增量"]
+  T --> W["保存 TB 原文与流程状态<br/>按项目 ID + 需求 ID 去重"]
+  W --> M{"标题、描述、范围、验收<br/>或附件引用有变化？"}
+  M -->|"否：仅元数据变化"| META["更新元数据与负责人映射<br/>不重置 PM 状态；无变化不通知"]
+  M -->|"是：新建或实质变更"| SNAP["读取并快照 PM 字段<br/>处理状态、确认值、结构化备注"]
+  SNAP -->|"读取成功"| AI["AI 分析脱敏文本<br/>模块建议 + 整体置信度<br/>U/M/S/C 维度建议与证据"]
+  SNAP -->|"读取失败"| FAIL["该需求项失败 / 可重试<br/>保留 Base 与 PM 状态；批次继续"]
+  AI --> TERM["首次 AI 尝试到达终态<br/>成功 / 失败 / 超时；低置信不阻断"]
+  TERM --> OWN{"TB 负责人映射成功？"}
+  OWN -->|"是，或 TB 无负责人"| PUSH["按需求 ID 幂等推送 / 更新 Base<br/>无负责人时保留人工分配"]
+  OWN -->|"有负责人但未匹配"| MAP["操作人在 Web 选择飞书用户<br/>保存映射后触发推送"] --> PUSH
+  PUSH --> N["Base 自动化通知干系人<br/>首次推送 / 源版本变更 / 负责人变更 / AI 重试成功"]
+  PUSH --> PM["Web 显示已推送<br/>PM 业务状态仅在 Base 更新"]
+  classDef accent fill:#eb6c36,color:#ffffff,stroke:#eb6c36,stroke-width:2px;
+  class AI,TERM,PUSH accent;
