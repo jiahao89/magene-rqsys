@@ -43,3 +43,8 @@ User approved proceeding with platform-neutral local code for Ticket 04 and the 
 - 持久化 repository 端口落地：`apps/api/src/application/repositories.ts` 覆盖 13 张表的切片所需操作（含幂等读取、租约 claim、追加只读）；`contracts/pipeline.ts` 补齐 openapi 请求体/查询参数 zod schemas。
 - 验证：`npm run typecheck`、`npm test`（62 测试通过，0 失败）、`npm run build` 全部通过。新增测试覆盖状态迁移合法性、AI 不覆盖人工字段、推送资格不变量、密钥脱敏与 provider 错误不回显。
 - 边界：业务 CRUD HTTP handlers、身份 provider、PostgreSQL repository 实现仍由对应 tickets 在 Ticket 00 验证后实现；本票目标验收保持 blocked。
+
+## Review and fix evidence (2026-10-08)
+- 双轴代码审查后补齐错误契约：openapi.yaml components 新增 Error schema（{error:{code,message}}）与各错误响应 content（BadRequest/Unauthorized/Forbidden/NotFound/Conflict/InternalError/RouteNotImplemented/ServiceUnavailable），PUT sources/{id} 与 PUT requirements/{id}/owner 接线 401/403。
+- contracts/pipeline.ts 严格度与契约对齐：移除契约没有的 minLength/min(1)（tbUserId/tbDisplayName/cursor/entityId），since/until 用 `z.iso.datetime({ offset: true })` 接受 date-time 允许的偏移量。
+- audit 事件模型合并为单一 DDL 对齐形状（AuditEventRecord），消除 audit/event.ts 与 application/repositories.ts 的双轨抽象。

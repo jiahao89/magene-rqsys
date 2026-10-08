@@ -1,10 +1,14 @@
-// 审计事件 schema 与脱敏：捕获 actor/action/object/outcome/timestamp，
-// 通过 safe-detail 白名单过滤禁止字段（密钥、个人联系方式、provider 原始载荷）。
-// 不变量 5。
+// 审计事件：捕获 actor/action/entity/result/timestamp，
+// 通过 safe-details 白名单过滤禁止字段（密钥、个人联系方式、provider 原始载荷）。
+// 不变量 5。事件模型与 audit_events DDL 行一一对应（domain/persistence.ts 的
+// AuditEventRecord），本模块是审计事件的唯一构造入口，避免持久层词汇分叉。
 
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import type { AuditEventRecord } from "../domain/persistence.js";
 
-// 审计动作枚举：覆盖 MVP 流水线的全部关键动作。
+// 审计动作受控词汇：覆盖 MVP 流水线的全部关键动作。DDL event_type 为自由文本，
+// 此枚举是写入白名单。
 export const AuditActionSchema = z.enum([
   "run.claimed",
   "run.lease_reclaimed",
@@ -19,30 +23,25 @@ export const AuditActionSchema = z.enum([
   "owner.manually_mapped",
 ]);
 
-// 审计结果枚举。
-export const AuditOutcomeSchema = z.enum([
-  "success",
-  "failure",
-  "skipped",
-  "rejected",
-]);
+// result 与 DDL CHECK (result IN ('succeeded', 'failed', 'denied')) 对齐；
+// 跳过/拒绝语义由 action 名承载（如 source.push_skipped / denied）。
+export const AuditResultSchema = z.enum(["succeeded", "failed", "denied"]);
 
-// 审计事件 schema：actor/action/object/outcome/timestamp 必填，detail 可选。
 export const AuditEventSchema = z.object({
   id: z.string().min(1),
-  actor: z.string().min(1), // actor 标识（如 "worker:abc" / "pm:张三" / "system"）
-  action: AuditActionSchema,
-  object: z.string().min(1), // 对象标识（如 "run:<uuid>" / "source:<projectId>:<reqId>"）
-  outcome: AuditOutcomeSchema,
-  timestamp: z.string(), // ISO 8601
-  detail: z.record(z.string(), z.unknown()).optional(),
+  actorId: z.string().min(1),
+  eventType: AuditActionSchema,
+  entityType: z.string().min(1),
+  entityId: z.string().min(1),
+  result: AuditResultSchema,
+  occurredAt: z.string(),
+  safeDetails: z.record(z.string(), z.unknown()),
 });
 
-export type AuditEvent = z.infer<typeof AuditEventSchema>;
 export type AuditAction = z.infer<typeof AuditActionSchema>;
-export type AuditOutcome = z.infer<typeof AuditOutcomeSchema>;
+export type AuditResult = z.infer<typeof AuditResultSchema>;
 
-// 禁止进入审计 detail 的字段名模式：密钥 / 凭据 / 个人联系方式 / provider 原始载荷。
+// 禁止进入审计 safeDetails 的字段名模式：密钥 / 凭据 / 个人联系方式 / provider 原始载荷。
 const FORBIDDEN_KEY_PATTERNS: readonly RegExp[] = [
   /api[-_]?key/i,
   /secret/i,
@@ -63,7 +62,7 @@ const FORBIDDEN_KEY_PATTERNS: readonly RegExp[] = [
   /response[-_]?body/i,
 ];
 
-// detail 字段白名单：只有这些键（或匹配这些模式）可以保留。
+// safeDetails 字段白名单：只有这些键可以保留。
 const ALLOWED_DETAIL_KEYS: readonly string[] = [
   "sourceProjectId",
   "sourceRequirementId",
@@ -80,28 +79,22 @@ const ALLOWED_DETAIL_KEYS: readonly string[] = [
   "confidence",
 ];
 
-// 判断 detail 键是否允许保留。
-function isKeyAllowed(key: string): boolean {
-  if (ALLOWED_DETAIL_KEYS.includes(key)) return true;
-  return false;
-}
-
-// 判断 detail 键是否命中禁止模式。
+// 判断 safeDetails 键是否命中禁止模式。
 function isKeyForbidden(key: string): boolean {
   return FORBIDDEN_KEY_PATTERNS.some((pattern) => pattern.test(key));
 }
 
-// 脱敏 detail：只保留白名单键，其余丢弃（不做值级改写，避免误留敏感数据）。
-// 嵌套对象整体丢弃——审计 detail 保持扁平，避免敏感数据藏于嵌套结构。
-export function redactDetail(
-  detail: Record<string, unknown> | undefined,
-): Record<string, unknown> | undefined {
-  if (!detail) return undefined;
-
+// 脱敏 safeDetails：只保留白名单键，其余丢弃（不做值级改写，避免误留敏感数据）。
+// 嵌套对象整体丢弃——safeDetails 保持扁平，避免敏感数据藏于嵌套结构。
+export function redactSafeDetails(
+  safeDetails: Record<string, unknown> | undefined,
+): Record<string, unknown> {
   const safe: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(detail)) {
+  if (!safeDetails) return safe;
+
+  for (const [key, value] of Object.entries(safeDetails)) {
     if (isKeyForbidden(key)) continue;
-    if (!isKeyAllowed(key)) continue;
+    if (!ALLOWED_DETAIL_KEYS.includes(key)) continue;
     // 只保留原始类型值，嵌套结构丢弃
     if (
       typeof value === "string" ||
@@ -112,32 +105,34 @@ export function redactDetail(
       safe[key] = value;
     }
   }
-  return Object.keys(safe).length > 0 ? safe : undefined;
+  return safe;
 }
 
-// 创建审计事件：自动脱敏 detail 并校验 schema。
-// 返回校验通过的完整事件；detail 中禁止字段被静默移除。
+// 创建审计事件：自动脱敏 safeDetails 并校验 schema。
+// 返回与 DDL 行形状一致的 AuditEventRecord；禁止字段被静默移除。
 export function createAuditEvent(params: {
   actor: string;
   action: AuditAction;
-  object: string;
-  outcome: AuditOutcome;
-  timestamp: string;
-  detail?: Record<string, unknown>;
-}): AuditEvent {
+  entityType: string;
+  entityId: string;
+  result: AuditResult;
+  occurredAt: string;
+  safeDetails?: Record<string, unknown>;
+}): AuditEventRecord {
   const event = {
-    id: crypto.randomUUID(),
-    actor: params.actor,
-    action: params.action,
-    object: params.object,
-    outcome: params.outcome,
-    timestamp: params.timestamp,
-    detail: redactDetail(params.detail),
+    id: randomUUID(),
+    actorId: params.actor,
+    eventType: params.action,
+    entityType: params.entityType,
+    entityId: params.entityId,
+    result: params.result,
+    occurredAt: params.occurredAt,
+    safeDetails: redactSafeDetails(params.safeDetails),
   };
   return AuditEventSchema.parse(event);
 }
 
 // 校验已有序列化的事件（如从存储读回时）。
-export function parseAuditEvent(raw: unknown): AuditEvent {
+export function parseAuditEvent(raw: unknown): AuditEventRecord {
   return AuditEventSchema.parse(raw);
 }

@@ -28,3 +28,9 @@ Ticket 00’s target scheduler POC and Tickets 05–07’s vertical slices remai
 - 6 个不变量全部有测试覆盖，47 个测试通过（`npm test`），`npm run typecheck` 与 `npm run build` 通过。
 - 不变量覆盖：每源一个活跃 run 且同幂等键不重复创建；重试只针对失败阶段并保留先前成功结果；过期 lease 可回收、有效 lease 内并发 claim 被拒绝；退避确定且有界；审计捕获 actor/action/object/outcome/timestamp 并脱敏密钥/联系方式/原始载荷；调度必须显式时区，非法时区/时间抛错而非静默回退。
 - 边界：以上为本地纯代码验证，调度器/worker/重试引擎/审计持久化均未接入妙搭；目标接线与验收仍 blocked on Ticket 00。
+
+## Review and fix evidence (2026-10-08)
+- 双轴代码审查（Standards/Spec，基线 b46594b..94d1bc6）后完成修复：审计事件模型合并为单一 DDL 对齐形状（actorId/eventType/entityType/entityId/result/safeDetails/occurredAt，result 与 CHECK 枚举对齐，消除双轨抽象与词汇漂移）。
+- 不变量 1 补全：claim 决策新增同 (sourceConfigId, teambitionRequirementId) 身份活跃互斥——不同幂等键（如新调度窗口或手动触发）在已有活跃 run 时不再创建重复工作；终态 run 同键拒绝、新键（下一窗口）可建新 run。
+- 其他修复：contracts/pipeline.ts 严格度与 openapi 对齐（去掉契约没有的 minLength、`z.iso.datetime({ offset: true })` 接受偏移量）；scheduler/due.ts 窗口起点改用窗口时刻的时区偏移换算（跨夏令时回退边界不再偏移 1 小时，新增回归测试）；删除 scheduler/idempotency.ts 中间层与 in-memory-storage 死代码；jobs 层词汇与持久层对齐（sourceConfigId/teambitionRequirementId/queued/owner）；提取 lease 到期计算重复；统一 randomUUID 导入。
+- 修复后 67 个测试全部通过，typecheck/build 通过。

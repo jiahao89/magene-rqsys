@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { computeLastDueWindow, type ScheduleConfig } from "./due.js";
-import { buildScheduledRunIdempotencyKey } from "./idempotency.js";
+import { buildScheduledIdempotencyKey } from "../jobs/idempotency.js";
 
 test("不变量6：调度计算使用显式时区而非机器本地时区", () => {
   // 配置 08:00 Asia/Shanghai（UTC+8）= 00:00 UTC
@@ -38,7 +38,7 @@ test("不变量6：now 在目标时刻之前时返回昨日窗口", () => {
   assert.ok(window);
   assert.equal(window.start, "2026-01-01T00:00:00.000Z");
 
-  // now = 2025-12-31T23:00:00Z（上海 07:00），今日目标（00:00 UTC）已过？—— 23:00Z > 00:00Z，是已过
+  // now = 2025-12-31T23:00:00Z（上海 07:00），今日目标（00:00 UTC）已过
   const window2 = computeLastDueWindow(config, new Date("2025-12-31T23:00:00.000Z"));
   assert.ok(window2);
   assert.equal(window2.start, "2025-12-31T00:00:00.000Z");
@@ -58,8 +58,7 @@ test("不变量6：weekday 过滤找到最近符合的窗口", () => {
   assert.ok(window);
   assert.equal(window.start, "2025-12-31T08:00:00.000Z");
 
-  // 2026-01-05 是周一；最近的周三是 2025-12-30？不：2025-12-31 之后最近的周三是 2026-01-07 之前 → 2025-12-31... 实际是 2025-12-31
-  // 从 2026-01-05 往前找周三：2026-01-04(周日) → 01-03(周六) → 01-02(周五) → 01-01(周四) → 2025-12-31(周三)
+  // 2026-01-05 是周一；往前找周三：01-04(周日) → 01-03(周六) → 01-02(周五) → 01-01(周四) → 2025-12-31(周三)
   const window2 = computeLastDueWindow(config, new Date("2026-01-05T10:00:00.000Z"));
   assert.ok(window2);
   assert.equal(window2.start, "2025-12-31T08:00:00.000Z");
@@ -121,6 +120,21 @@ test("跨夏令时边界：America/New_York 时区的调度计算", () => {
   assert.equal(window2.start, "2026-01-01T13:00:00.000Z");
 });
 
+test("跨夏令时回退边界：窗口时刻与 now 分居切换日两侧时起点仍准确", () => {
+  // 2026-11-01 02:00 EDT → 02:00 EST（06:00 UTC）回退
+  // 周六（6）08:00 纽约窗口：2026-10-31 处于 EDT（UTC-4）→ 12:00 UTC
+  const config: ScheduleConfig = {
+    enabled: true,
+    weekday: 6,
+    time: "08:00",
+    timezone: "America/New_York",
+  };
+  // now = 2026-11-01T15:00:00Z（回退后 EST，UTC-5）；用 now 的偏移换算会把窗口起点错算为 13:00 UTC
+  const window = computeLastDueWindow(config, new Date("2026-11-01T15:00:00.000Z"));
+  assert.ok(window);
+  assert.equal(window.start, "2026-10-31T12:00:00.000Z");
+});
+
 test("调度幂等键：同窗口同键，不同窗口不同键", () => {
   const config: ScheduleConfig = { enabled: true, weekday: null, time: "08:00", timezone: "UTC" };
   const window1 = computeLastDueWindow(config, new Date("2026-01-01T10:00:00.000Z"));
@@ -129,20 +143,20 @@ test("调度幂等键：同窗口同键，不同窗口不同键", () => {
 
   assert.ok(window1 && window2 && window3);
 
-  const key1 = buildScheduledRunIdempotencyKey({
-    sourceProjectId: "proj-1",
-    sourceRequirementId: "req-1",
-    window: window1,
+  const key1 = buildScheduledIdempotencyKey({
+    sourceConfigId: "proj-1",
+    teambitionRequirementId: "req-1",
+    scheduleWindow: window1.start,
   });
-  const key2 = buildScheduledRunIdempotencyKey({
-    sourceProjectId: "proj-1",
-    sourceRequirementId: "req-1",
-    window: window2,
+  const key2 = buildScheduledIdempotencyKey({
+    sourceConfigId: "proj-1",
+    teambitionRequirementId: "req-1",
+    scheduleWindow: window2.start,
   });
-  const key3 = buildScheduledRunIdempotencyKey({
-    sourceProjectId: "proj-1",
-    sourceRequirementId: "req-1",
-    window: window3,
+  const key3 = buildScheduledIdempotencyKey({
+    sourceConfigId: "proj-1",
+    teambitionRequirementId: "req-1",
+    scheduleWindow: window3.start,
   });
 
   // 同一窗口内重复计算 → 同键（不变量1）

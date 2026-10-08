@@ -1,5 +1,6 @@
 // 流水线 API 契约 schemas：对齐 openapi.yaml 的请求体与查询参数定义。
 // 验证在服务端进行；源契约是 openapi.yaml，本文件是其 TypeScript 执行形式。
+// 严格度与契约一致：不在 zod 中添加契约没有的约束，避免契约合法请求被拒。
 
 import { z } from "zod";
 import { IdempotencyKeySchema } from "./source.js";
@@ -11,15 +12,15 @@ export const SyncRunRequestSchema = z.object({
 
 // PUT /api/requirements/{id}/owner 请求体
 export const OwnerMappingUpdateSchema = z.object({
-  feishuUserId: z.string().trim().min(1),
+  feishuUserId: z.string().min(1),
   feishuIdType: z.enum(["open_id", "user_id", "union_id"]),
-  tbUserId: z.string().trim().min(1).nullable().optional(),
-  tbDisplayName: z.string().trim().min(1).nullable().optional(),
+  tbUserId: z.string().nullable().optional(),
+  tbDisplayName: z.string().nullable().optional(),
 });
 
-// 通用分页参数
+// 通用分页参数（openapi: integer 1-100, default 25/50）
 const LimitSchema = z.number().int().min(1).max(100);
-const CursorSchema = z.string().min(1);
+const CursorSchema = z.string();
 
 // GET /api/batches 查询参数
 export const BatchListQuerySchema = z.object({
@@ -39,11 +40,11 @@ export const RequirementListQuerySchema = z.object({
   cursor: CursorSchema.optional(),
 });
 
-// GET /api/audit 查询参数
+// GET /api/audit 查询参数（date-time 允许 "+08:00" 等偏移，offset: true 对齐 RFC 3339）
 export const AuditListQuerySchema = z.object({
-  entityId: z.string().min(1).optional(),
-  since: z.iso.datetime().optional(),
-  until: z.iso.datetime().optional(),
+  entityId: z.string().optional(),
+  since: z.iso.datetime({ offset: true }).optional(),
+  until: z.iso.datetime({ offset: true }).optional(),
   limit: LimitSchema.default(50),
 });
 

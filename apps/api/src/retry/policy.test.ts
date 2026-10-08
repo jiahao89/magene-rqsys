@@ -40,7 +40,7 @@ test("不变量4：rate_limited 退避翻倍但仍封顶", () => {
 test("不变量4：各阶段尝试上限确定且不同", () => {
   assert.equal(DEFAULT_STAGE_POLICIES.pull.maxAttempts, 5);
   assert.equal(DEFAULT_STAGE_POLICIES.analysis.maxAttempts, 4);
-  assert.equal(DEFAULT_STAGE_POLICIES.owner_mapping.maxAttempts, 3);
+  assert.equal(DEFAULT_STAGE_POLICIES.owner.maxAttempts, 3);
   assert.equal(DEFAULT_STAGE_POLICIES.push.maxAttempts, 5);
 });
 
@@ -49,9 +49,9 @@ test("不变量4：shouldRetry 在达到上限后返回 false", () => {
   assert.equal(shouldRetry({ stage: "pull", errorClass: "provider_5xx", attemptsSoFar: 4 }), true);
   assert.equal(shouldRetry({ stage: "pull", errorClass: "provider_5xx", attemptsSoFar: 5 }), false);
 
-  // owner_mapping maxAttempts=3
-  assert.equal(shouldRetry({ stage: "owner_mapping", errorClass: "network", attemptsSoFar: 2 }), true);
-  assert.equal(shouldRetry({ stage: "owner_mapping", errorClass: "network", attemptsSoFar: 3 }), false);
+  // owner 阶段 maxAttempts=3
+  assert.equal(shouldRetry({ stage: "owner", errorClass: "network", attemptsSoFar: 2 }), true);
+  assert.equal(shouldRetry({ stage: "owner", errorClass: "network", attemptsSoFar: 3 }), false);
 });
 
 test("不可重试错误类别直接返回 false", () => {
@@ -65,7 +65,7 @@ test("可重试错误类别按阶段判断", () => {
   assert.equal(isRetryable("pull", "network"), true);
   assert.equal(isRetryable("analysis", "provider_5xx"), true);
   assert.equal(isRetryable("push", "rate_limited"), true);
-  assert.equal(isRetryable("owner_mapping", "unknown"), true);
+  assert.equal(isRetryable("owner", "unknown"), true);
 });
 
 test("HTTP 状态码到错误类别映射", () => {

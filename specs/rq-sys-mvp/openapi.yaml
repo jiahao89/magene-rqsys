@@ -58,6 +58,7 @@ paths:
         '200': { description: Source configuration updated }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /api/sync/run:
     post:
       summary: Start a manual synchronization batch
@@ -181,6 +182,8 @@ paths:
       responses:
         '200': { description: Mapping saved and push queued }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /api/analysis/{id}/retry:
     post:
       summary: Queue a new analysis attempt
@@ -220,13 +223,56 @@ components:
   responses:
     BadRequest:
       description: Request validation failed
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
     Unauthorized:
       description: Missing or invalid identity
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Identity is valid but lacks the required role
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
     NotFound:
       description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: Conflicting concurrent operation
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    InternalError:
+      description: Internal error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RouteNotImplemented:
+      description: Endpoint defined by the contract but not yet implemented
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
     ServiceUnavailable:
       description: Dependency unavailable
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
   schemas:
+    Error:
+      type: object
+      description: Uniform error envelope; messages never echo credentials, personal contact information or raw provider responses.
+      properties:
+        error:
+          type: object
+          properties:
+            code: { type: string }
+            message: { type: string }
+          required: [code, message]
+      required: [error]
     BatchStatus:
       type: string
       enum: [running, succeeded, partial_failure, failed]

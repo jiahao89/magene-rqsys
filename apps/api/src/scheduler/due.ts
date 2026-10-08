@@ -4,7 +4,7 @@
 export interface ScheduleConfig {
   enabled: boolean;
   weekday: number | null; // 1-7（周一=1，周日=7），null 表示每日
-  time: string | null; // "HH:MM" UTC 时刻
+  time: string | null; // "HH:MM" 业务日历时刻（按 timezone 解释，非 UTC）
   timezone: string; // 显式时区，调用方必须传入
 }
 
@@ -57,7 +57,9 @@ export function computeLastDueWindow(
     }
   }
 
-  const startUtc = new Date(windowLocal.getTime() - offsetMs);
+  // 窗口起点换算回 UTC：用窗口时刻的时区偏移（而非 now 的偏移），
+  // 保证跨夏令时边界的窗口起点不偏移 1 小时。
+  const startUtc = wallTimeToUtc(config.timezone, windowLocal);
   const endUtc = new Date(startUtc.getTime() + 24 * 60 * 60 * 1000);
 
   return {
@@ -105,4 +107,15 @@ function timezoneOffsetMs(timezone: string, date: Date): number {
   // 构造"该时区墙上时间对应的 UTC Date"
   const asIfUtc = Date.UTC(year, month, day, hour, minute, second);
   return asIfUtc - date.getTime();
+}
+
+// 将"墙上时刻"（按 wall.getTime() 解释为 UTC 的本地日历时刻）换算为真实 UTC 时刻。
+// 迭代求解 utc = wall - offsetAt(utc)，两次迭代覆盖夏令时切换边界；
+// 结果对同一输入确定（固定迭代次数）。
+function wallTimeToUtc(timezone: string, wall: Date): Date {
+  let utc = new Date(wall.getTime() - timezoneOffsetMs(timezone, wall));
+  for (let i = 0; i < 2; i++) {
+    utc = new Date(wall.getTime() - timezoneOffsetMs(timezone, utc));
+  }
+  return utc;
 }

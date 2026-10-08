@@ -1,18 +1,24 @@
 // 同步流水线统一阶段定义。与 domain/workflow.ts 的分阶段状态互补，
-// 此处 SyncStage 用于调度 / 重试 / 审计层的阶段定位，不直接耦合上游状态机。
+// SyncStage 用于调度 / 重试 / 审计层的阶段定位，阶段键与 domain/transitions.ts
+// 的 PipelineStageKey 对齐（pull/analysis/owner/push）。
+// 注意：jobs 层身份词汇与持久层对齐——sourceConfigId 对应 source_configs.id，
+// teambitionRequirementId 对应 requirements.teambition_requirement_id。
 
-export type SyncStage = "pull" | "analysis" | "owner_mapping" | "push";
+export type SyncStage = "pull" | "analysis" | "owner" | "push";
 
 // 阶段执行顺序，用于校验重试只能向前推进、不能回滚已成功阶段。
 export const STAGE_ORDER: readonly SyncStage[] = [
   "pull",
   "analysis",
-  "owner_mapping",
+  "owner",
   "push",
 ] as const;
 
+// 与 DDL pipeline_jobs.status 对齐：queued/running/succeeded/failed 同名直存；
+// dead 表示超出最大尝试次数，持久化映射为 failed 且 attempt_count >= max_attempts；
+// cancelled 是队列级概念（操作员取消），仅在 PipelineJobRecord 上出现。
 export type JobStatus =
-  | "pending" // 已创建，等待 worker claim
+  | "queued" // 已创建，等待 worker claim
   | "running" // 已被 worker claim，lease 仍有效
   | "succeeded" // 所有阶段成功
   | "failed" // 某阶段失败，仍可重试
@@ -35,8 +41,8 @@ export interface StageResult {
 // 持久作业运行状态。设计为可序列化存储，便于 storage port 实现。
 export interface JobRun {
   id: string; // run UUID（crypto.randomUUID() 生成）
-  sourceProjectId: string;
-  sourceRequirementId: string;
+  sourceConfigId: string; // 对应 source_configs.id
+  teambitionRequirementId: string; // 对应 requirements.teambition_requirement_id
   trigger: TriggerKind;
   idempotencyKey: IdempotencyKey;
   status: JobStatus;
@@ -51,8 +57,8 @@ export interface JobRun {
 
 // claim 请求：用于在 storage 上创建或接管 run。
 export interface ClaimRequest {
-  sourceProjectId: string;
-  sourceRequirementId: string;
+  sourceConfigId: string;
+  teambitionRequirementId: string;
   trigger: TriggerKind;
   idempotencyKey: IdempotencyKey;
   workerId: string;
@@ -63,7 +69,7 @@ export interface ClaimRequest {
 // claim 结果判别联合，覆盖不变量 1 与 3 的全部路径。
 export type ClaimOutcome =
   | { kind: "claimed"; run: JobRun } // 新建并 claim
-  | { kind: "already_active"; run: JobRun } // 同幂等键已有有效 lease 的 run
+  | { kind: "already_active"; run: JobRun } // 同幂等键或同身份已有活跃 run
   | { kind: "lease_expired_reclaimed"; run: JobRun } // 回收过期 lease 并重新 claim
   | { kind: "terminal_rejected"; run: JobRun }; // 同幂等键的 run 已终态，不重复创建
 

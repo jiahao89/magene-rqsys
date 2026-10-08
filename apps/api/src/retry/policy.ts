@@ -26,7 +26,7 @@ export interface StageRetryPolicy {
 export const DEFAULT_STAGE_POLICIES: Record<SyncStage, StageRetryPolicy> = {
   pull: { maxAttempts: 5, baseBackoffMs: 1_000, maxBackoffMs: 60_000 },
   analysis: { maxAttempts: 4, baseBackoffMs: 5_000, maxBackoffMs: 120_000 },
-  owner_mapping: { maxAttempts: 3, baseBackoffMs: 2_000, maxBackoffMs: 30_000 },
+  owner: { maxAttempts: 3, baseBackoffMs: 2_000, maxBackoffMs: 30_000 },
   push: { maxAttempts: 5, baseBackoffMs: 1_000, maxBackoffMs: 60_000 },
 };
 

@@ -8,7 +8,7 @@ import { STAGE_ORDER } from "./types.js";
 
 // 判断 run 是否处于"活跃"状态（仍可推进，未终态）。
 export function isActive(run: JobRun): boolean {
-  return run.status === "pending" || run.status === "running";
+  return run.status === "queued" || run.status === "running";
 }
 
 // 判断 run 是否处于终态（不再接受新 claim）。
@@ -36,44 +36,54 @@ export function nextStage(run: JobRun): SyncStage | null {
   return null; // 全部阶段已成功
 }
 
-// 核心 claim 决策：给定已有 run（可能为 null）和请求，返回应采取的 ClaimOutcome。
-// 这是纯函数，storage 实现负责按此结果更新持久状态。
+// 计算 lease 到期时刻（ISO 8601）。
+export function computeLeaseExpiry(now: string, leaseDurationMs: number): string {
+  return new Date(new Date(now).getTime() + leaseDurationMs).toISOString();
+}
+
+// 核心 claim 决策：给定已有 run（按幂等键查找，可能为 null）、同身份活跃 run
+// （按 (sourceConfigId, teambitionRequirementId) 查找，可能为 null）和请求，
+// 返回应采取的 ClaimOutcome。这是纯函数，storage 实现负责按此结果更新持久状态。
 export function decideClaim(
   existing: JobRun | null,
   request: ClaimRequest,
+  activeForIdentity: JobRun | null = null,
 ): ClaimOutcome {
-  // 无已有 run：新建并 claim
-  if (!existing) {
-    return { kind: "claimed", run: createNewRun(request) };
+  // 同幂等键已有 run：先按该 run 的状态决策
+  if (existing) {
+    // 已终态：拒绝重复创建（同键重复触发不创建重复工作）
+    if (isTerminal(existing)) {
+      return { kind: "terminal_rejected", run: existing };
+    }
+
+    // lease 仍有效：拒绝并发 claim（不变量 3 后半）
+    if (isLeaseValidAt(existing, request.now)) {
+      return { kind: "already_active", run: existing };
+    }
+
+    // lease 过期或从未 claim：回收并重新 claim（不变量 3 前半）
+    return {
+      kind: "lease_expired_reclaimed",
+      run: reclaimRun(existing, request),
+    };
   }
 
-  // 已有 run 已终态：拒绝重复创建
-  if (isTerminal(existing)) {
-    return { kind: "terminal_rejected", run: existing };
+  // 不变量 1 前半：同源同需求已有活跃 run 时，不同幂等键也不创建重复工作
+  if (activeForIdentity && isActive(activeForIdentity)) {
+    return { kind: "already_active", run: activeForIdentity };
   }
 
-  // 已有 run 且 lease 仍有效：拒绝并发 claim（不变量 3 后半）
-  if (isLeaseValidAt(existing, request.now)) {
-    return { kind: "already_active", run: existing };
-  }
-
-  // 已有 run 但 lease 过期或从未 claim：回收并重新 claim（不变量 3 前半）
-  return {
-    kind: "lease_expired_reclaimed",
-    run: reclaimRun(existing, request),
-  };
+  // 无活跃 run：新建并 claim
+  return { kind: "claimed", run: createNewRun(request) };
 }
 
 // 创建新 run。
 function createNewRun(request: ClaimRequest): JobRun {
   const now = request.now;
-  const leaseExpiry = new Date(
-    new Date(now).getTime() + request.leaseDurationMs,
-  ).toISOString();
   return {
     id: randomUUID(),
-    sourceProjectId: request.sourceProjectId,
-    sourceRequirementId: request.sourceRequirementId,
+    sourceConfigId: request.sourceConfigId,
+    teambitionRequirementId: request.teambitionRequirementId,
     trigger: request.trigger,
     idempotencyKey: request.idempotencyKey,
     status: "running",
@@ -81,7 +91,7 @@ function createNewRun(request: ClaimRequest): JobRun {
     currentStage: "pull",
     stageResults: [],
     workerId: request.workerId,
-    leaseExpiresAt: leaseExpiry,
+    leaseExpiresAt: computeLeaseExpiry(now, request.leaseDurationMs),
     createdAt: now,
     updatedAt: now,
   };
@@ -89,9 +99,6 @@ function createNewRun(request: ClaimRequest): JobRun {
 
 // 回收过期 lease：保留已有阶段结果，尝试次数递增，重新 claim 给新 worker。
 function reclaimRun(existing: JobRun, request: ClaimRequest): JobRun {
-  const leaseExpiry = new Date(
-    new Date(request.now).getTime() + request.leaseDurationMs,
-  ).toISOString();
   // 重试时恢复到首个未成功阶段
   const resumeStage = nextStage(existing) ?? existing.currentStage;
   return {
@@ -100,7 +107,7 @@ function reclaimRun(existing: JobRun, request: ClaimRequest): JobRun {
     attempt: existing.attempt + 1,
     currentStage: resumeStage,
     workerId: request.workerId,
-    leaseExpiresAt: leaseExpiry,
+    leaseExpiresAt: computeLeaseExpiry(request.now, request.leaseDurationMs),
     updatedAt: request.now,
   };
 }

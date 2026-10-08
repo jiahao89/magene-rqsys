@@ -7,8 +7,8 @@ const BASE_TIME = "2026-01-01T00:00:00.000Z";
 
 function buildRequest(overrides?: Partial<ClaimRequest>): ClaimRequest {
   return {
-    sourceProjectId: "proj-1",
-    sourceRequirementId: "req-1",
+    sourceConfigId: "proj-1",
+    teambitionRequirementId: "req-1",
     trigger: "scheduled",
     idempotencyKey: "sched:proj-1:req-1:2026-01-01T08:00:00.000Z",
     workerId: "worker-a",
@@ -21,8 +21,8 @@ function buildRequest(overrides?: Partial<ClaimRequest>): ClaimRequest {
 function buildRun(overrides?: Partial<JobRun>): JobRun {
   return {
     id: "run-1",
-    sourceProjectId: "proj-1",
-    sourceRequirementId: "req-1",
+    sourceConfigId: "proj-1",
+    teambitionRequirementId: "req-1",
     trigger: "scheduled",
     idempotencyKey: "sched:proj-1:req-1:2026-01-01T08:00:00.000Z",
     status: "running",
@@ -58,6 +58,37 @@ test("不变量1：同幂等键重复触发不创建重复工作（already_activ
   }
 });
 
+test("不变量1：不同幂等键但同身份活跃 run 存在时返回 already_active", () => {
+  const active = buildRun({ idempotencyKey: "sched:proj-1:req-1:window-1" });
+  const outcome = decideClaim(
+    null,
+    buildRequest({ idempotencyKey: "sched:proj-1:req-1:window-2", workerId: "worker-b" }),
+    active,
+  );
+  assert.equal(outcome.kind, "already_active");
+  if (outcome.kind === "already_active") {
+    assert.equal(outcome.run.id, active.id);
+  }
+});
+
+test("同键终态 run 拒绝重复触发，新键可对终态身份创建新 run", () => {
+  const succeeded = buildRun({
+    status: "succeeded",
+    currentStage: null,
+    workerId: null,
+    leaseExpiresAt: null,
+  });
+  // 同键 → terminal_rejected
+  assert.equal(decideClaim(succeeded, buildRequest()).kind, "terminal_rejected");
+  // 新键（如下一调度窗口）→ 新 run
+  const outcome = decideClaim(
+    null,
+    buildRequest({ idempotencyKey: "sched:proj-1:req-1:window-next", workerId: "worker-b" }),
+    succeeded,
+  );
+  assert.equal(outcome.kind, "claimed");
+});
+
 test("不变量1：终态 run 拒绝同幂等键重复触发（terminal_rejected）", () => {
   const succeeded = buildRun({ status: "succeeded", currentStage: null, workerId: null, leaseExpiresAt: null });
   const outcome = decideClaim(succeeded, buildRequest());
@@ -84,8 +115,8 @@ test("不变量3：过期 lease 可安全回收（lease_expired_reclaimed）", (
   }
 });
 
-test("不变量3：从未 claim 的 pending run 可被回收", () => {
-  const pending = buildRun({ status: "pending", workerId: null, leaseExpiresAt: null });
+test("不变量3：从未 claim 的 queued run 可被回收", () => {
+  const pending = buildRun({ status: "queued", workerId: null, leaseExpiresAt: null });
   const outcome = decideClaim(pending, buildRequest({ workerId: "worker-c" }));
   assert.equal(outcome.kind, "lease_expired_reclaimed");
   if (outcome.kind === "lease_expired_reclaimed") {
@@ -95,7 +126,7 @@ test("不变量3：从未 claim 的 pending run 可被回收", () => {
 
 test("不变量3：lease 有效性判断的边界条件", () => {
   const run = buildRun({ leaseExpiresAt: "2026-01-01T00:01:00.000Z" });
-  // 完全相等的时刻不算有效（过期）
+  // 完全相等的时刻不算有效
   assert.equal(isLeaseValidAt(run, "2026-01-01T00:01:00.000Z"), false);
   // 早于过期时刻有效
   assert.equal(isLeaseValidAt(run, "2026-01-01T00:00:59.999Z"), true);
@@ -119,7 +150,7 @@ test("不变量2：nextStage 返回首个未成功阶段，保留先前成功结
 });
 
 test("不变量2：全部阶段成功时 nextStage 返回 null", () => {
-  const results: StageResult[] = (["pull", "analysis", "owner_mapping", "push"] as const).map(
+  const results: StageResult[] = (["pull", "analysis", "owner", "push"] as const).map(
     (stage) => ({ stage, status: "succeeded" as const, attempt: 1, finishedAt: BASE_TIME }),
   );
   assert.equal(nextStage(buildRun({ stageResults: results })), null);
@@ -134,19 +165,18 @@ test("回收过期 lease 时恢复到首个未成功阶段", () => {
   const outcome = decideClaim(expired, buildRequest({ now: "2026-01-01T00:05:00.000Z" }));
   assert.equal(outcome.kind, "lease_expired_reclaimed");
   if (outcome.kind === "lease_expired_reclaimed") {
-    // 恢复到失败阶段 analysis，而非从头开始
+    // 恢复到失败阶段 analysis（首个未成功阶段），pull 结果仍在
     assert.equal(outcome.run.currentStage, "analysis");
-    assert.equal(outcome.run.stageResults.length, 2); // 先前结果保留
+    assert.equal(outcome.run.stageResults.length, 2);
   }
 });
 
 test("活跃与终态判断", () => {
   assert.equal(isActive(buildRun()), true);
-  assert.equal(isActive(buildRun({ status: "pending" })), true);
+  assert.equal(isActive(buildRun({ status: "queued" })), true);
   assert.equal(isActive(buildRun({ status: "failed" })), false);
   assert.equal(isTerminal(buildRun()), false);
   assert.equal(isTerminal(buildRun({ status: "succeeded" })), true);
   assert.equal(isTerminal(buildRun({ status: "dead" })), true);
-  // failed 状态既不算活跃（不接受新 claim 前）也不算终态？——按实现：failed 可被重试 claim 回收
   assert.equal(isTerminal(buildRun({ status: "failed" })), false);
 });

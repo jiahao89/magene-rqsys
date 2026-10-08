@@ -1,35 +1,41 @@
 // 内存作业存储 + 推进逻辑实现：用于本地测试和小规模验证。
 // 目标 Miaoda 适配器在 Ticket 00 验证后接入，替换此类。
-// 此实现保证：幂等键唯一映射、lease 校验、阶段结果追加只读。
+// 此实现保证：幂等键唯一映射、同身份活跃互斥（不变量 1）、lease 校验、
+// 阶段结果追加只读。
 
 import {
   JobNotFoundError,
   LeaseNotHeldError,
   type JobStorage,
 } from "../ports/storage.js";
-import { decideClaim, nextStage } from "./claim.js";
-import {
-  STAGE_ORDER,
-  type AdvanceRequest,
-  type ClaimOutcome,
-  type ClaimRequest,
-  type JobRun,
-  type StageResult,
+import { decideClaim, isLeaseValidAt, nextStage } from "./claim.js";
+import type {
+  AdvanceRequest,
+  ClaimOutcome,
+  ClaimRequest,
+  JobRun,
+  StageResult,
 } from "./types.js";
 
 export class InMemoryJobStorage implements JobStorage {
   private readonly runs = new Map<string, JobRun>(); // id -> run
   private readonly idempotencyIndex = new Map<string, string>(); // idempotencyKey -> runId
+  private readonly identityIndex = new Map<string, string>(); // sourceConfigId:teambitionRequirementId -> 最近 runId
 
   async claim(request: ClaimRequest): Promise<ClaimOutcome> {
     const existingId = this.idempotencyIndex.get(request.idempotencyKey) ?? null;
     const existing = existingId ? (this.runs.get(existingId) ?? null) : null;
 
-    const outcome = decideClaim(existing, request);
+    const identityKey = `${request.sourceConfigId}:${request.teambitionRequirementId}`;
+    const activeId = this.identityIndex.get(identityKey) ?? null;
+    const activeForIdentity = activeId ? (this.runs.get(activeId) ?? null) : null;
+
+    const outcome = decideClaim(existing, request, activeForIdentity);
 
     // 持久化结果
     this.runs.set(outcome.run.id, outcome.run);
     this.idempotencyIndex.set(request.idempotencyKey, outcome.run.id);
+    this.identityIndex.set(identityKey, outcome.run.id);
 
     return outcome;
   }
@@ -41,10 +47,7 @@ export class InMemoryJobStorage implements JobStorage {
     }
 
     // lease 校验：worker 必须仍持有有效 lease
-    if (run.workerId !== request.workerId || !run.leaseExpiresAt) {
-      throw new LeaseNotHeldError(request.runId, request.workerId);
-    }
-    if (new Date(run.leaseExpiresAt).getTime() <= new Date(request.now).getTime()) {
+    if (run.workerId !== request.workerId || !isLeaseValidAt(run, request.now)) {
       throw new LeaseNotHeldError(request.runId, request.workerId);
     }
 
@@ -116,12 +119,3 @@ function applyStageResult(run: JobRun, request: AdvanceRequest): JobRun {
     updatedAt: request.now,
   };
 }
-
-// 辅助：判断阶段是否在某 stage 顺序之前（用于 retry 模块）。
-export function isBefore(stage: SyncStageLike, reference: SyncStageLike): boolean {
-  const a = STAGE_ORDER.indexOf(stage);
-  const b = STAGE_ORDER.indexOf(reference);
-  return a >= 0 && b >= 0 && a < b;
-}
-
-type SyncStageLike = (typeof STAGE_ORDER)[number];

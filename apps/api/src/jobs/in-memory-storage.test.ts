@@ -7,8 +7,8 @@ const BASE_TIME = "2026-01-01T00:00:00.000Z";
 
 function makeRequest(overrides?: Record<string, unknown>) {
   return {
-    sourceProjectId: "proj-1",
-    sourceRequirementId: "req-1",
+    sourceConfigId: "proj-1",
+    teambitionRequirementId: "req-1",
     trigger: "scheduled" as const,
     idempotencyKey: "sched:proj-1:req-1:window-1",
     workerId: "worker-a",
@@ -35,11 +35,31 @@ test("不变量1：同幂等键的重复调度不创建重复 run", async () => 
   assert.equal(found.id, first.kind === "claimed" ? first.run.id : "");
 });
 
-test("不变量1：不同幂等键创建不同 run", async () => {
+test("不变量1：同需求身份不同键、活跃 run 存在时不创建重复工作", async () => {
+  const storage = new InMemoryJobStorage();
+  const first = await storage.claim(
+    makeRequest({ idempotencyKey: "sched:proj-1:req-1:window-1" }),
+  );
+  assert.equal(first.kind, "claimed");
+
+  // 不同键（如新调度窗口或手动触发）但同一需求身份且活跃 → 拒绝重复创建
+  const second = await storage.claim(
+    makeRequest({ idempotencyKey: "sched:proj-1:req-1:window-2" }),
+  );
+  assert.equal(second.kind, "already_active");
+  if (second.kind === "already_active") {
+    assert.equal(second.run.id, first.kind === "claimed" ? first.run.id : "");
+  }
+});
+
+test("不变量1：不同需求身份各自创建独立 run", async () => {
   const storage = new InMemoryJobStorage();
   const first = await storage.claim(makeRequest());
   const second = await storage.claim(
-    makeRequest({ idempotencyKey: "sched:proj-1:req-1:window-2" }),
+    makeRequest({
+      teambitionRequirementId: "req-2",
+      idempotencyKey: "sched:proj-1:req-2:window-1",
+    }),
   );
 
   assert.equal(first.kind, "claimed");
@@ -124,7 +144,7 @@ test("不变量2：全部阶段成功后 run 标记 succeeded，lease 释放", a
     workerId: "worker-a",
     now: BASE_TIME,
   });
-  for (const stage of ["analysis", "owner_mapping", "push"] as const) {
+  for (const stage of ["analysis", "owner", "push"] as const) {
     current = await storage.advance({
       runId,
       stage,
@@ -198,19 +218,19 @@ test("advance 校验 lease 与阶段匹配", async () => {
 
 test("幂等键生成：调度键稳定，手动键唯一", () => {
   const scheduled1 = buildScheduledIdempotencyKey({
-    sourceProjectId: "proj-1",
-    sourceRequirementId: "req-1",
+    sourceConfigId: "proj-1",
+    teambitionRequirementId: "req-1",
     scheduleWindow: "2026-01-01T08:00:00.000Z",
   });
   const scheduled2 = buildScheduledIdempotencyKey({
-    sourceProjectId: "proj-1",
-    sourceRequirementId: "req-1",
+    sourceConfigId: "proj-1",
+    teambitionRequirementId: "req-1",
     scheduleWindow: "2026-01-01T08:00:00.000Z",
   });
   assert.equal(scheduled1, scheduled2); // 同窗口同键
 
-  const manual1 = buildManualIdempotencyKey({ sourceProjectId: "proj-1", sourceRequirementId: "req-1" });
-  const manual2 = buildManualIdempotencyKey({ sourceProjectId: "proj-1", sourceRequirementId: "req-1" });
+  const manual1 = buildManualIdempotencyKey({ sourceConfigId: "proj-1", teambitionRequirementId: "req-1" });
+  const manual2 = buildManualIdempotencyKey({ sourceConfigId: "proj-1", teambitionRequirementId: "req-1" });
   assert.notEqual(manual1, manual2); // 每次手动触发独立
 });
 
