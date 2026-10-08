@@ -28,7 +28,7 @@ flowchart LR
 
 | ID | Ticket | Status | Depends on |
 |---|---|---|---|
-| 00 | Miaoda runtime capability POC | blocked（2026-10-08 实测：TRAE 授权服务不支持 spark scope，凭证交互式登录被托管禁用；待妙搭控制台手动验证或平台解除） | — |
+| 00 | Miaoda runtime capability POC | partially-available（2026-10-08 本地 Spark app list/get 可用；member-list 对现有 frontend app 返回 feature_not_available；目标 RQ-Sys 应用/运行时仍未验证） | — |
 | 01 | Teambition API and field mapping POC | done（2026-10-08，证据：specs/rq-sys-mvp/TEAMBITION-LIVE-POC.md） | — |
 | 02 | Feishu Base schema, upsert, and automation POC | done（2026-10-08，证据：specs/rq-sys-mvp/FEISHU-BASE-POC.md） | — |
 | 03 | AI provider and data-policy decision/POC | poc-verified-partial（2026-10-08：离线校验 5/5 + 超时/无效 key 在线实测 + PII 掩码断言通过，证据：specs/rq-sys-mvp/AI-ANALYSIS-POC.md；在线 T1–T3 待有效测试 key 补跑） | D-06 已确认；T1–T3 待 key |
@@ -39,7 +39,7 @@ flowchart LR
 | 08 | Weekly schedule, retry, and audit | blocked (local pure-code groundwork approved; scheduler/retry/audit implementation and target Miaoda acceptance still pending) | 00, 05, 06, 07 |
 | 09 | Target-environment end-to-end acceptance | blocked | 00–08 |
 | D-08 | Resolve production UI component baseline after repo inspection | resolved（2026-10-08，ADR-001：基线已推送（main，03aef74）并检视——仓库无 UI 依赖，按 design.md 采用 HeroUI v3 + Tailwind；UI 托管方式留待 00） | ADR-001 已产出 |
-| 10 | Grant `spark:app:read` user scope for Miaoda apps | blocked | TRAE 授权服务/托管凭证侧（2026-10-08 实测：托管凭证无 spark scope 且授权通道不可用；agent 仅负责验收） |
-| 11 | Grant `spark:app:write` user scope for Miaoda apps | blocked | 同 Ticket 10 通道，可与之一并开通；agent 仅负责验收 |
+| 10 | Grant `spark:app:read` user scope for Miaoda apps | blocked（2026-10-08 TRAE 托管授权侧报告该 scope 暂不支持；本地 CLI `apps +list` 现可读，应用列表读验证通过；协作者读取单项返回 feature_not_available，与 missing_scope 不同） | TRAE 授权服务/托管凭证侧；更细资源读取取决于应用类型/平台支持 |
+| 11 | Grant `spark:app:write` user scope for Miaoda apps | blocked（未对指定测试应用执行写权限验证；TRAE 托管授权侧报告该 scope 暂不支持，等外部开通与用户指定安全测试目标） | 同 Ticket 10 通道，可与之一并开通；agent 仅负责验收 |
 
 `ready-for-agent` 表示可开始做 POC/决策工作，不代表生产集成已具备条件。具体 blocker 在各 ticket 中列出。全生命周期 28 字段不属于这些 tickets。

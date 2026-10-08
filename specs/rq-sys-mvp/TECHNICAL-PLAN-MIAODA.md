@@ -28,6 +28,19 @@ MVP 继续遵守这些边界：
 
 ## 3. 技术选型建议
 
+### Runtime and capability status
+
+This section is the environment-specific addendum to the platform recommendation. It separates local source/runtime evidence from the still-unverified target Miaoda runtime.
+
+| Capability | Local evidence (verified) | Target Miaoda evidence |
+|---|---|---|
+| Spark app inventory/read | `lark-cli apps +list --as user` succeeded and listed two apps; target RQ-Sys app is not among them. | No RQ-Sys app inspected. This does not establish scheduler, database, logs, or write access. |
+| Existing app detail | `apps +get --app-id app_17f41y3cs26 --as user` succeeded. | Not evidence about RQ-Sys target runtime. |
+| Collaborator read | `apps +member-list` on existing frontend app returned OpenAPI 3340005 `feature_not_available`. | This app/resource does not support collaborator management via lark-cli; no inference about other read methods. |
+| Local API runtime | Typecheck/build/test passed. `/api/health` => 200; `/api/health/ready` => 503 because no local database URL is configured. | Node/server entrypoint, database, identity, secrets, scheduler/background task, Git import/publish remain unverified. |
+
+The earlier 2026-10-08 TRAE authorization-service report that Spark scopes were unsupported remains evidence about that authorization service only. A later lark-cli app-list success shows partial current Spark read capability; do not generalize either result to untested API surfaces or to TRAE itself.
+
 | 层 | 建议 | 原因与边界 |
 |---|---|---|
 | 前端语言 | TypeScript | 当前前端已采用；与服务端共享请求/响应契约，降低类型漂移。运行时仍需在妙搭 POC 中确认。 |

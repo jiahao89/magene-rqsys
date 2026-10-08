@@ -1,4 +1,4 @@
-# [blocked] 00 — 验证妙搭运行时能力
+# [partially-available] 00 — 验证妙搭运行时能力
 
 ## 目标
 确认目标妙搭应用能支撑 RQ-Sys 需要的持久化、定时任务、后台执行和凭据管理，形成可据以选型的证据。
@@ -11,6 +11,13 @@
 - 解除途径（任一）：TRAE 授权服务支持 spark scope 后重试；或由用户在妙搭控制台手动验证并回填记录；或在有 spark 权限的独立环境中执行本 POC。
 - spark scope 开通已拆分为独立工单：[`10-spark-app-read-scope.md`](10-spark-app-read-scope.md)、[`11-spark-app-write-scope.md`](11-spark-app-write-scope.md)；两单完成（agent 验收通过）后本工单 spark 侧 blocker 解除。
 - 本工单不阻塞 Ticket 02（飞书 Base POC），Base 域凭证已验证可用（2026-10-08）。
+
+### Spark 读取侧部分恢复证据（2026-10-08）
+- 新会话执行 `lark-cli apps +list --as user` 成功，返回两个当前用户可见应用；列表中没有 RQ-Sys 专用妙搭应用。
+- 对已有前端应用 `app_17f41y3cs26` 执行 `apps +get` 成功，返回应用详情。
+- 对该应用执行 `apps +member-list` 返回 OpenAPI `feature_not_available` / code `3340005`，提示该应用类型不支持通过 lark-cli 管理协作者；不是 `missing_scope`，也不能据此证明其他 Spark 读取命令可用。
+- 本地 TypeScript 骨架 `npm run typecheck`, `npm run build`, `npm test` 通过；当前仅 3 个健康探针/未实现路由测试。运行 `/api/health` 返回 200；未配置数据库时 `/api/health/ready` 返回 503。此为本地证据，不代表妙搭运行时验证。
+- 仍未验证：RQ-Sys 目标妙搭应用、应用设置、线上日志/指标、数据库持久化、部署/导入流程、身份、调度与后台任务。Spark 写侧仍 blocked；未进行部署、发布、线上环境变量或数据库写操作。
 
 ## 范围
 - 验证可用数据库、持久化边界、数据/存储限制。
