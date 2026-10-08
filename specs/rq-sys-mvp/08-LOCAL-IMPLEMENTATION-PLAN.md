@@ -1,6 +1,12 @@
 # Schedule, Retry, and Audit — Local-First Engineering Plan
 
-Status: approved for platform-neutral local implementation; target Miaoda wiring and acceptance remain blocked on Ticket 00 and preceding vertical slices.
+Status: platform-neutral local implementation completed (commit c80a711, 2026-10-08); target Miaoda wiring and acceptance remain blocked on Ticket 00 and preceding vertical slices.
+
+## Local implementation evidence (2026-10-08)
+
+- Modules delivered under `apps/api/src/`: `jobs/`（claim/lease 决策、幂等键、内存存储）、`scheduler/`（显式时区 due 窗口）、`retry/`（阶段策略与有界退避）、`audit/`（zod schema 与白名单脱敏）、`ports/`（clock/storage/execution）。
+- 47 invariant tests pass; `npm run typecheck` and `npm run build` verified locally.
+- All six invariants listed below have passing test coverage.
 
 ## Scope guard
 

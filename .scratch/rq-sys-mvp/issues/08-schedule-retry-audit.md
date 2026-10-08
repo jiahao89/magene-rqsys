@@ -22,3 +22,9 @@ Ticket 00’s target scheduler POC and Tickets 05–07’s vertical slices remai
 - User approved local-only development of pure-code scheduling, retry, and audit modules while target Miaoda remains unverified. Do not represent this as configured or running in Miaoda.
 - Local runtime is not durable without a configured PostgreSQL database; no DATABASE_URL/.env is configured in this workspace. Local liveness passed and readiness correctly returned HTTP 503.
 - No target schedule, background worker, retry execution, or target-environment audit persistence has been implemented or verified yet. Target acceptance remains blocked.
+
+## Local implementation evidence (2026-10-08, commit c80a711)
+- Platform-neutral modules implemented and pushed: `apps/api/src/jobs/`（作业状态类型、claim/lease 决策纯函数、幂等键生成、内存存储适配器）、`apps/api/src/scheduler/`（显式时区 due 窗口计算、调度幂等键）、`apps/api/src/retry/`（阶段重试策略、错误分类、有界指数退避）、`apps/api/src/audit/`（zod 事件 schema、safe-detail 白名单脱敏、追加只读存储）、`apps/api/src/ports/`（clock/storage/execution 端口与确定性测试适配器）。
+- 6 个不变量全部有测试覆盖，47 个测试通过（`npm test`），`npm run typecheck` 与 `npm run build` 通过。
+- 不变量覆盖：每源一个活跃 run 且同幂等键不重复创建；重试只针对失败阶段并保留先前成功结果；过期 lease 可回收、有效 lease 内并发 claim 被拒绝；退避确定且有界；审计捕获 actor/action/object/outcome/timestamp 并脱敏密钥/联系方式/原始载荷；调度必须显式时区，非法时区/时间抛错而非静默回退。
+- 边界：以上为本地纯代码验证，调度器/worker/重试引擎/审计持久化均未接入妙搭；目标接线与验收仍 blocked on Ticket 00。

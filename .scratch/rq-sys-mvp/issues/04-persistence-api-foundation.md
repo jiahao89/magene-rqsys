@@ -35,3 +35,11 @@ Ticket 00 remains a blocker for target Miaoda implementation and acceptance. Per
 
 ## Approved partial scope
 User approved proceeding with platform-neutral local code for Ticket 04 and the pure-code components of Ticket 08 while Ticket 00 and Spark write authorization remain blocked. Target-environment acceptance remains blocked.
+
+## Local implementation evidence (2026-10-08)
+- 持久化领域模型落地：`apps/api/src/domain/persistence.ts` 与 DDL 13 张表一一对应的 TS record 类型（source config、sync batch/item、requirement、source snapshot、analysis run、person mapping、pm snapshot、base push run、module dictionary、priority rule、pipeline job、audit event），可空列统一 `| null`，唯一性约束以注释对齐 DDL。
+- 状态迁移规则落地：`apps/api/src/domain/transitions.ts` 定义 pull/analysis/owner/push 合法迁移表与 `canTransition`/`assertTransition`；`applyAutoOwnerSuggestion` 保证自动映射不覆盖 `manually_mapped`；`isPushEligible` 保证低置信/缺优先级/首轮 AI 失败不阻塞合格推送。
+- 安全错误 envelope 落地：`apps/api/src/http/errors.ts` 错误码注册表（与 openapi 错误契约对齐）、`redactSecrets` 输出前脱敏密钥/Bearer/联系方式（保留 UUID 资源标识符）、`safeProviderError` 保证 provider 原始错误永不回显；`http/app.ts` 501 路由已接入统一 envelope。
+- 持久化 repository 端口落地：`apps/api/src/application/repositories.ts` 覆盖 13 张表的切片所需操作（含幂等读取、租约 claim、追加只读）；`contracts/pipeline.ts` 补齐 openapi 请求体/查询参数 zod schemas。
+- 验证：`npm run typecheck`、`npm test`（62 测试通过，0 失败）、`npm run build` 全部通过。新增测试覆盖状态迁移合法性、AI 不覆盖人工字段、推送资格不变量、密钥脱敏与 provider 错误不回显。
+- 边界：业务 CRUD HTTP handlers、身份 provider、PostgreSQL repository 实现仍由对应 tickets 在 Ticket 00 验证后实现；本票目标验收保持 blocked。
