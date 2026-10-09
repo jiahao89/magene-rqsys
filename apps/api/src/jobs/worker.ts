@@ -31,8 +31,10 @@ export class PipelineJobWorker {
     if (!job) return { kind: "idle" };
     try {
       await this.dispatch(job);
-      const completed = await this.options.jobs.complete(job.id, { status: "succeeded", now: this.now().toISOString() });
-      if (!completed) throw new Error("claimed job disappeared before completion");
+      // fencing：仅当 attempt 仍等于认领时的值才接受结果（工单 15）；
+      // 返回 null 说明租约已被其他 worker 重新认领，本 worker 迟到的结果被拒绝且不覆盖新状态。
+      const completed = await this.options.jobs.complete(job.id, { expectedAttempt: job.attemptCount, status: "succeeded", now: this.now().toISOString() });
+      if (!completed) return { kind: "failed", jobId: job.id };
       return { kind: "succeeded", jobId: job.id };
     } catch (error) {
       // 重试策略：有剩余尝试则按阶段退避重排（保留先前成功结果）；超限或永久错误进入终态
@@ -43,18 +45,22 @@ export class PipelineJobWorker {
         stage === undefined;
       if (terminal) {
         const code = error instanceof UnsupportedJobTypeError ? "unsupported_job_type" : "max_attempts_reached";
-        await this.options.jobs.complete(job.id, {
+        const recorded = await this.options.jobs.complete(job.id, {
+          expectedAttempt: job.attemptCount,
           status: "failed", errorCode: code,
           errorSummary: code === "unsupported_job_type"
             ? "No handler is registered for this job type."
             : "Max attempts reached; manual retry is available.",
           now: this.now().toISOString(),
         });
+        // 结果被新 worker 拒绝（fencing）：新认领者接管，本 worker 放弃
+        if (!recorded) return { kind: "failed", jobId: job.id };
         return { kind: "failed", jobId: job.id };
       }
       const backoffMs = computeBackoffMs({ stage, attempt: job.attemptCount + 1 });
       // 安全摘要：错误详情不含密钥或 provider 原始响应
       await this.options.jobs.reschedule(job.id, {
+        expectedAttempt: job.attemptCount,
         backoffMs, errorCode: "worker_handler_failed",
         errorSummary: "Job handler failed; scheduled for retry.", now: this.now().toISOString(),
       });

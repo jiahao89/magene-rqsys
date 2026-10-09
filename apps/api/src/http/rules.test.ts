@@ -10,7 +10,7 @@ function dictionaryRecord(overrides: Partial<ModuleDictionaryVersionRecord> = {}
   return { version: 1, status: "draft", entries: ["报表分析", "数据导入"], createdBy: "actor-1", createdAt: "2026-10-09T00:00:00.000Z", publishedAt: null, ...overrides };
 }
 function ruleRecord(overrides: Partial<PriorityRuleVersionRecord> = {}): PriorityRuleVersionRecord {
-  return { id: "55555555-5555-4555-8555-555555555555", version: 1, status: "draft", rules: { thresholds: { p0: 4, p1: 3, p2: 2 } }, validationEvidence: [], createdBy: "actor-1", createdAt: "2026-10-09T00:00:00.000Z", publishedAt: null, ...overrides };
+  return { id: "55555555-5555-4555-8555-555555555555", version: 1, status: "draft", rules: { scoring: { user: { 强: 3, 中: 2 }, market: { 强: 3, 中: 2 }, business: { 强: 3, 中: 2 }, technology: { 强: 3, 中: 2 } }, thresholds: { p0: 11, p1: 8, p2: 5 } }, validationEvidence: [{ cohort: "q3" }], createdBy: "actor-1", createdAt: "2026-10-09T00:00:00.000Z", publishedAt: null, ...overrides };
 }
 
 interface RulesFixture {
@@ -48,12 +48,12 @@ function makeFixture(): RulesFixture {
       },
     },
     audit: { append: async () => undefined, search: async () => [] },
-    sources: { list: async () => [], get: async () => null, update: async () => null },
+    sources: { list: async () => [], get: async () => null, update: async () => null, create: async () => { throw new Error("not used in rules tests"); } },
     batches: { create: async () => { throw new Error("not used in rules tests"); }, get: async () => null, findByIdempotencyKey: async () => null, list: async () => ({ items: [], nextCursor: null }), complete: async () => null },
     items: { upsert: async () => { throw new Error("not used in rules tests"); }, get: async () => null, listByBatch: async () => [] },
     jobs: { enqueue: async () => { throw new Error("not used in rules tests"); }, claimNext: async () => null, reschedule: async () => null, complete: async () => null },
   };
-  return { dependencies: { database: null, repositories, identity: { requireActor: async () => ({ id: "actor-1", roles: ["operator"] }) }, now: () => new Date("2026-10-09T00:00:00.000Z") }, dictionaries, rules };
+  return { dependencies: { database: null, repositories, identity: { requireActor: async () => ({ id: "actor-1", roles: ["administrator"] }) }, now: () => new Date("2026-10-09T00:00:00.000Z") }, dictionaries, rules };
 }
 const unauthenticated: ApiDependencies = { database: null, repositories: undefined, identity: undefined, now: undefined };
 
@@ -115,19 +115,26 @@ test("lists priority rule versions after authentication", async () => {
   assert.equal(r.status, 200);
   const body = await r.json() as { items: { id: string; rules: unknown }[] };
   assert.equal(body.items.length, 1);
-  assert.deepEqual(body.items[0]!.rules, { thresholds: { p0: 4, p1: 3, p2: 2 } });
+  assert.deepEqual(body.items[0]!.rules, { scoring: { user: { 强: 3, 中: 2 }, market: { 强: 3, 中: 2 }, business: { 强: 3, 中: 2 }, technology: { 强: 3, 中: 2 } }, thresholds: { p0: 11, p1: 8, p2: 5 } });
 });
 test("creates a priority rule draft and rejects thresholds violating the contract", async () => {
   const { dependencies, rules } = makeFixture();
-  const ok = await handleApiRequest(new Request("http://localhost/api/rules/priority", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ rules: { thresholds: { p0: 4, p1: 2, p2: 1 } }, validationEvidence: [{ case: "c-1" }] }) }), dependencies);
+  const scoring = { user: { 强: 3, 中: 2, 弱: 1 }, market: { 强: 3, 中: 2, 弱: 1 }, business: { 强: 3, 中: 2, 弱: 1 }, technology: { 强: 3, 中: 2, 弱: 1 } };
+  const ok = await handleApiRequest(new Request("http://localhost/api/rules/priority", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ rules: { scoring, thresholds: { p0: 4, p1: 2, p2: 1 } }, validationEvidence: [{ case: "c-1" }] }) }), dependencies);
   assert.equal(ok.status, 201);
   const created = await ok.json() as { version: number; status: string; rules: unknown; validationEvidence: unknown[] };
   assert.equal(created.version, 2);
-  assert.deepEqual(created.rules, { thresholds: { p0: 4, p1: 2, p2: 1 } });
+  assert.deepEqual(created.rules, { scoring, thresholds: { p0: 4, p1: 2, p2: 1 } });
   assert.deepEqual(created.validationEvidence, [{ case: "c-1" }]);
   assert.equal(rules.length, 2);
-  for (const thresholds of [{ p0: 1, p1: 3, p2: 2 }, { p0: 4, p1: 3, p2: 9 }, { p0: "4", p1: 3, p2: 2 }]) {
-    const bad = await handleApiRequest(new Request("http://localhost/api/rules/priority", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ rules: { thresholds } }) }), dependencies);
+  for (const rulesPayload of [
+    { scoring, thresholds: { p0: 1, p1: 3, p2: 2 } },
+    { scoring, thresholds: { p0: 4, p1: 3, p2: 9 } },
+    { scoring, thresholds: { p0: "4", p1: 3, p2: 2 } },
+    { thresholds: { p0: 4, p1: 3, p2: 2 } },
+    { scoring: { ...scoring, user: {} }, thresholds: { p0: 4, p1: 3, p2: 2 } },
+  ]) {
+    const bad = await handleApiRequest(new Request("http://localhost/api/rules/priority", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ rules: rulesPayload }) }), dependencies);
     assert.equal(bad.status, 400);
   }
 });
@@ -156,7 +163,7 @@ test("audits priority rule create and publish actions", async () => {
   const events: { eventType: string; entityType: string; entityId: string }[] = [];
   const { dependencies } = makeFixture();
   (dependencies.repositories as ApiRepositories).audit = { append: async (e) => { events.push({ eventType: e.eventType, entityType: e.entityType, entityId: e.entityId }); }, search: async () => [] };
-  await handleApiRequest(new Request("http://localhost/api/rules/priority", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ rules: { thresholds: { p0: 4, p1: 3, p2: 1 } } }) }), dependencies);
+  await handleApiRequest(new Request("http://localhost/api/rules/priority", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ rules: { scoring: { user: { 强: 3, 中: 2 }, market: { 强: 3, 中: 2 }, business: { 强: 3, 中: 2 }, technology: { 强: 3, 中: 2 } }, thresholds: { p0: 4, p1: 3, p2: 1 } } }) }), dependencies);
   const created = (dependencies.repositories as ApiRepositories).priorityRules ? await (dependencies.repositories as ApiRepositories).priorityRules!.list() : [];
   await handleApiRequest(new Request(`http://localhost/api/rules/priority/${created[0]!.id}/publish`, { method: "POST" }), dependencies);
   assert.deepEqual(events.map((e) => e.eventType), ["priority_rule.created", "priority_rule.published"]);

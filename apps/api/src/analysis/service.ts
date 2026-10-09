@@ -1,6 +1,6 @@
 import type { ValidatedAnalysis } from "./contract.js";
 import { AiProviderError, type AiProvider } from "./provider.js";
-import { recommendationScores } from "./priority-rule.js";
+import { recommendationValues } from "./priority-rule.js";
 
 export interface AnalysisRun {
   id: string;
@@ -39,7 +39,7 @@ export interface AnalysisServiceInput {
   priorityRule: {
     id: string;
     version: number;
-    compute: (scores: { user: number; market: number; business: number; technology: number }) => "P0" | "P1" | "P2" | "P3";
+    compute: (values: { user: string; market: string; business: string; technology: string }) => "P0" | "P1" | "P2" | "P3" | null;
   } | null;
   promptVersion?: string;
   model?: string;
@@ -86,10 +86,10 @@ export async function runAnalysis(input: AnalysisServiceInput, options: Analysis
       dictionary: input.dictionary,
       priorityRule: input.priorityRule,
     });
-    // 已发布规则时用确定性规则从 U/M/S/C 建议计算优先级（不丢弃规则、不信任模型自评）；
-    // 规则未发布时 priority 保持为空
+    // 已发布规则时用规则评分映射从 U/M/S/C 建议取值确定性计算优先级（不丢弃规则、不信任模型自评）；
+    // 规则未发布或建议取值不在已批准评分映射中时 priority 保持为空（宁缺毋滥）
     const priority = input.priorityRule
-      ? input.priorityRule.compute(recommendationScores(result))
+      ? input.priorityRule.compute(recommendationValues(result))
       : result.priority;
     const completed = await options.repository.complete(run.id, {
       status: "analyzed", result: { ...result, priority }, completedAt: (options.now ?? (() => new Date()))().toISOString(),

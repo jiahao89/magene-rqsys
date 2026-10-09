@@ -132,3 +132,31 @@ test("analysis config keeps API credential absent rather than making an external
   assert.equal(called, false);
   assert.equal(maskPii("张三 alice@example.com", ["张三"]).includes("alice@example.com"), false);
 });
+
+test("maskPii covers extra identity markers: platform user IDs, ID cards and @mentions", () => {
+  const masked = maskPii("用户 aabbccddeeff001122334455 证件 110101199003078515 提到 @李四 需要报表", []);
+  for (const secret of ["aabbccddeeff001122334455", "110101199003078515", "@李四"]) {
+    assert.equal(masked.includes(secret), false, `masked text must not contain ${secret}`);
+  }
+  // 需求编号等 24 位以下标识与普通业务文本不受影响
+  assert.equal(maskPii("订单 2026-Q3 增长 20%", []).includes("2026-Q3"), true);
+});
+
+test("outbound model payload carries no names, user IDs, contacts, credentials or attachment content (ticket 13)", async () => {
+  let outbound = "";
+  const fetchStub: FetchLike = async (_input, init) => {
+    outbound = String(init?.body);
+    return jsonResponse({ choices: [{ message: { content: JSON.stringify(validResult) } }] });
+  };
+  const provider = createDeepSeekProvider({ apiKey: "sk-test-secret", fetch: fetchStub });
+  await provider.analyze({
+    title: "张三 提的查询需求 @李四",
+    description: "负责人张三 提交了新需求：需要支持查询和筛选。用户ID aabbccddeeff001122334455 邮箱 lee@corp.cn 手机 13911112222 证件 110101199003078515",
+    context: "仅业务背景：本季度报表使用频率上升（附件文件与其内容不进入模型输入）",
+    piiMarkers: ["张三", "李四"],
+    dictionary, priorityRule: null,
+  });
+  for (const secret of ["张三", "李四", "aabbccddeeff001122334455", "lee@corp.cn", "13911112222", "110101199003078515", "身份证背面照片内容", "sk-test-secret"]) {
+    assert.equal(outbound.includes(secret), false, `outbound payload must not contain ${secret}`);
+  }
+});

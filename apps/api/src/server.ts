@@ -15,6 +15,7 @@ import { createDueSyncJobs } from "./scheduler/due-jobs.js";
 import { FeishuBasePushAdapter } from "./base/client.js";
 import { FeishuBitableClient } from "./base/transport.js";
 import { createBasePushService } from "./base/push-service.js";
+import { createAnalysisAdvancer } from "./pipeline/advance.js";
 import type { SourceProjectConfig } from "./domain/workflow.js";
 
 const port = Number(process.env.PORT ?? 8787);
@@ -64,7 +65,7 @@ const analysisJobHandler: ((job: { payload: Record<string, unknown> }) => Promis
   if (!requirement) throw new Error("Analysis requirement was not found");
   const source = await repositories.sources.get(requirement.sourceConfigId);
   if (!source) throw new Error("Analysis source configuration was not found");
-  const published = (await repositories.moduleDictionaries.list()).find((version) => version.status === "published");
+  const published = (await repositories.dictionaries.list()).find((version) => version.status === "published");
   const dictionary = { version: published?.version ?? 0, modules: (published?.entries ?? []).map((entry) => typeof entry === "string" ? entry : String((entry as { name?: unknown }).name ?? entry)) };
   // 已发布规则接入确定性计算；规则 JSON 不符合契约时 buildPriorityRule 返回 null（priority 保持为空）
   const ruleRecord = await repositories.priorityRules.getPublished();
@@ -79,6 +80,11 @@ const analysisJobHandler: ((job: { payload: Record<string, unknown> }) => Promis
     dictionary, priorityRule,
   }, { repository: new AnalysisRepositoryAdapter(repositories.analyses), provider });
   await repositories.requirements.updateAnalysisState(requirement.id, run.status === "analyzed" ? "analyzed" : "failed_retryable");
+  // 工单 14：首次分析进入可见终态后继续负责人处理与 Base 推送——AI 不是推送门槛。
+  // 无负责人 → not_required 直接入队；有负责人且映射唯一 → auto_mapped 入队；未匹配 → 等待人工映射。
+  if (advanceAfterAnalysis) {
+    await advanceAfterAnalysis(requirement.id, run.status === "analyzed" ? "analyzed" : "failed_retryable", typeof job.payload.actorId === "string" ? job.payload.actorId : null);
+  }
 } : undefined;
 
 // ---- Feishu Base 推送装配：env 凭证齐全时构建真实 transport（工单 00/W7 目标环境验证）----
@@ -119,6 +125,10 @@ const baseAdapter = baseClient && repositories
   : undefined;
 const baseProjectId = process.env.BASE_PROJECT_ID ?? null;
 
+const advanceAfterAnalysis = repositories ? createAnalysisAdvancer({
+  requirements: repositories.requirements, people: repositories.people, jobs: repositories.jobs, audit: repositories.audit,
+}) : undefined;
+
 const basePushJobHandler: ((job: { payload: Record<string, unknown> }) => Promise<void>) | undefined = repositories && baseAdapter && baseProjectId ? async (job) => {
   const requirementId = job.payload.requirementId;
   if (typeof requirementId !== "string") throw new Error("Invalid base_push job payload");
@@ -126,11 +136,12 @@ const basePushJobHandler: ((job: { payload: Record<string, unknown> }) => Promis
   if (!requirement) throw new Error("Base push requirement was not found");
   const service = createBasePushService({
     requirements: repositories.requirements, people: repositories.people, basePushes: repositories.basePushes,
-    audit: repositories.audit, base: baseAdapter, baseProjectId, baseFields, actorId: null,
+    audit: repositories.audit, analyses: repositories.analyses, base: baseAdapter, baseProjectId, baseFields, actorId: null,
   });
   // 幂等键与 owner handler 的入队键一致：base-push:{reqId}:v{version}
   const outcome = await service.pushRequirement(requirementId, `base-push:${requirementId}:v${requirement.sourceVersion}`);
-  if (outcome.kind !== "pushed") throw new Error("Base push failed; retry is available.");
+  if (outcome.kind === "error") throw new Error("Base push failed; retry is available.");
+  // conflict：pull 未同步或等待人工映射——等待不是失败，人工映射持久化后会重新入队
 } : undefined;
 
 const worker = repositories ? new PipelineJobWorker({

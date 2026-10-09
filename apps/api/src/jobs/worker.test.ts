@@ -32,7 +32,25 @@ test("worker claims one due job and dispatches sync using the existing orchestra
   assert.equal(result.kind, "succeeded");
   assert.deepEqual(h.calls.map((call) => (call as unknown[])[0]), ["claim", "sync", "complete"]);
   assert.deepEqual(h.calls[1], ["sync", { batchId: "batch-1", sourceConfigId: "source-1", trigger: "manual", actorId: null }]);
-  assert.deepEqual((h.calls[2] as unknown[])[2], { status: "succeeded", now: NOW });
+  assert.deepEqual((h.calls[2] as unknown[])[2], { expectedAttempt: 1, status: "succeeded", now: NOW });
+});
+
+test("迟到的 worker 结果被 fencing 拒绝：不覆盖新认领者的状态（不变量，工单 15）", async () => {
+  const calls: unknown[] = [];
+  const claimedJob = job();
+  const jobs: PipelineJobRepository = {
+    async enqueue() { throw new Error("unused"); },
+    async claimNext(workerId, leaseMs, now) { calls.push(["claim", workerId, leaseMs, now]); return claimedJob; },
+    async reschedule(id, params) { calls.push(["reschedule", id, params]); return claimedJob; },
+    // 模拟租约已被新 worker 重新认领（attempt 已推进）：本 worker 迟到的 complete 被 fencing 拒绝返回 null
+    async complete(id, result) { calls.push(["complete", id, result]); return null; },
+  };
+  const sync = (async (input: unknown) => { calls.push(["sync", input]); return { batchId: "batch-1", status: "succeeded", totalCount: 1, succeededCount: 1, failedCount: 0 }; }) as unknown as SyncJobRunner;
+  const worker = new PipelineJobWorker({ jobs, sync, workerId: "stale-worker", leaseMs: 30_000, now: () => new Date(NOW) });
+  assert.equal((await worker.runOnce()).kind, "failed");
+  assert.deepEqual(calls.map((call) => (call as unknown[])[0]), ["claim", "sync", "complete"]);
+  // complete 携带认领时的 attempt 作为 fencing 令牌
+  assert.deepEqual((calls[2] as unknown[])[2], { expectedAttempt: 1, status: "succeeded", now: NOW });
 });
 
 test("worker leaves the queue untouched when no job is claimable", async () => {
@@ -51,7 +69,7 @@ test("不变量4：retryable failure reschedules with bounded stage backoff and 
   assert.deepEqual(h.calls.map((call) => (call as unknown[])[0]), ["claim", "sync", "reschedule"]);
   const params = (h.calls[2] as unknown[])[2] as Record<string, unknown>;
   // sync → pull 阶段，下一次尝试为第 2 次 → 退避 2000ms（有界、确定）
-  assert.deepEqual(params, { backoffMs: 2_000, errorCode: "worker_handler_failed", errorSummary: "Job handler failed; scheduled for retry.", now: NOW });
+  assert.deepEqual(params, { expectedAttempt: 1, backoffMs: 2_000, errorCode: "worker_handler_failed", errorSummary: "Job handler failed; scheduled for retry.", now: NOW });
   assert.equal(JSON.stringify(params).includes("secret"), false);
 });
 

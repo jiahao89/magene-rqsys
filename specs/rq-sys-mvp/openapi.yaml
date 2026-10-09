@@ -44,6 +44,24 @@ paths:
                   items: { type: array, items: { $ref: '#/components/schemas/SourceConfig' } }
                 required: [items]
         '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      summary: Create the single product-group source (controlled initialization)
+      description: Only an administrator may create the source. The MVP allows exactly one source; the request body accepts only the whitelisted configuration fields and never credentials.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SourceConfigUpdate' }
+      responses:
+        '201':
+          description: Source created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SourceConfig' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: A source already exists }
   /api/sources/{id}:
     put:
       summary: Update a source project and schedule
@@ -87,6 +105,9 @@ paths:
                   batchId: { type: string, format: uuid }
                   status: { $ref: '#/components/schemas/BatchStatus' }
                 required: [batchId, status]
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '409': { description: Source already has an active batch }
   /api/batches:
     get:
@@ -122,6 +143,8 @@ paths:
         - $ref: '#/components/parameters/Id'
       responses:
         '202': { description: Retry accepted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '409': { description: Item is not retryable }
   /api/requirements:
     get:
@@ -206,6 +229,7 @@ paths:
                 required: [status]
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: Requirement is not eligible for push }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
@@ -216,6 +240,8 @@ paths:
         - $ref: '#/components/parameters/Id'
       responses:
         '202': { description: Analysis retry accepted; push is not blocked }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /api/audit:
     get:
       summary: Search workflow audit events
@@ -261,6 +287,8 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ModuleDictionaryVersion' }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /api/rules/dictionary/{version}/publish:
     post:
       summary: Publish a draft dictionary version; retires the previously published version
@@ -275,6 +303,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ModuleDictionaryVersion' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: Version exists but is not a draft }
   /api/rules/priority:
@@ -304,6 +334,8 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/PriorityRuleVersion' }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /api/rules/priority/{id}/publish:
     post:
       summary: Publish a draft rule version; retires the previously published version
@@ -315,6 +347,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PriorityRuleVersion' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: Rule version exists but is not a draft }
 components:
@@ -457,6 +491,8 @@ components:
       properties:
         id: { type: string, format: uuid }
         status: { $ref: '#/components/schemas/BatchStatus' }
+        triggerType: { type: string, enum: [manual, scheduled] }
+        actorId: { type: [string, 'null'] }
         totalCount: { type: integer }
         succeededCount: { type: integer }
         failedCount: { type: integer }
@@ -497,11 +533,21 @@ components:
       required: [id, version, status, rules, validationEvidence, createdBy, createdAt, publishedAt]
     PriorityRuleCreate:
       type: object
-      description: Rule payload matches the deterministic interpreter; thresholds score against the 0-4 evidence-complete total.
+      description: Rule payload carries the approved U/M/S/C scoring maps and deterministic thresholds; the interpreter never invents a formula, and an empty validation evidence list keeps the rule unusable for computation.
       properties:
         rules:
           type: object
           properties:
+            scoring:
+              type: object
+              description: Approved value-to-score map per U/M/S/C dimension; recommendations outside the map keep priority blank.
+              properties:
+                user: { type: object, additionalProperties: { type: number } }
+                market: { type: object, additionalProperties: { type: number } }
+                business: { type: object, additionalProperties: { type: number } }
+                technology: { type: object, additionalProperties: { type: number } }
+              required: [user, market, business, technology]
+              additionalProperties: false
             thresholds:
               type: object
               properties:
@@ -510,7 +556,7 @@ components:
                 p2: { type: number, minimum: 0, maximum: 4 }
               required: [p0, p1, p2]
               additionalProperties: false
-          required: [thresholds]
+          required: [scoring, thresholds]
           additionalProperties: false
         validationEvidence: { type: array, items: { type: object, additionalProperties: true } }
       required: [rules]

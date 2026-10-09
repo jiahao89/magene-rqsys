@@ -13,6 +13,8 @@ export interface SourceConfigRepository {
   list(): Promise<SourceConfigRecord[]>;
   get(id: string): Promise<SourceConfigRecord | null>;
   update(id: string, update: SourceConfigUpdate): Promise<SourceConfigRecord | null>;
+  // 受控初始化：MVP 只允许一个产品组来源；唯一性由调用方（HTTP 层）与部署流程共同保证。
+  create(input: { projectId: string; projectName: string; requirementTypeId: string; enabled: boolean }): Promise<SourceConfigRecord>;
 }
 
 // sync_batches
@@ -155,6 +157,8 @@ export interface BasePushRunRepository {
     },
   ): Promise<BasePushRunRecord | null>;
   findByIdempotencyKey(key: string): Promise<BasePushRunRecord | null>;
+  // 需求最近一次推送尝试（含失败）——用于实质变化判断：仅当本次源版本新于上次推送版本时读 PM 快照
+  latest(requirementId: string): Promise<BasePushRunRecord | null>;
 }
 
 // pipeline_jobs（dedupe_key 唯一；claim 用租约语义，与 jobs/ 模块决策逻辑配合）
@@ -167,16 +171,21 @@ export interface PipelineJobRepository {
     maxAttempts?: number;
   }): Promise<PipelineJobRecord>;
   claimNext(workerId: string, leaseMs: number, now: string): Promise<PipelineJobRecord | null>;
-  // 失败重排：状态回到 queued，available_at 按退避推迟；超出最大尝试由 worker 判定终态
+  // 失败重排：状态回到 queued，available_at 按退避推迟；超出最大尝试由 worker 判定终态。
+  // expectedAttempt 是 fencing 令牌：仅当 attempt_count 仍等于认领时的值才允许更新（工单 15）。
   reschedule(id: string, params: {
+    expectedAttempt: number;
     backoffMs: number;
     errorCode?: string;
     errorSummary?: string;
     now: string;
   }): Promise<PipelineJobRecord | null>;
+  // expectedAttempt：仅当 attempt_count 匹配认领时的值且仍在 running 才接受结果；
+  // 返回 null 表示租约已被其他 worker 重新认领，迟到的结果被拒绝且不覆盖新状态。
   complete(
     id: string,
     result: {
+      expectedAttempt: number;
       status: "succeeded" | "failed" | "cancelled";
       errorCode?: string;
       errorSummary?: string;
