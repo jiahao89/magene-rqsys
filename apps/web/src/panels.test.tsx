@@ -89,14 +89,15 @@ describe("MappingsPanel (ticket 17)", () => {
   it("persists a manual mapping via the API and reports the queued push", async () => {
     fetchMock.mockImplementation(async (input, init) => {
       const path = typeof input === "string" ? input : new Request(input).url;
-      if (path === "/api/requirements/req-1/owner" && init?.method === "PUT") {
-        return jsonOk({ requirementId: "req-1", ownerState: "manually_mapped", status: "queued" });
-      }
+      if (path === "/api/requirements/req-1/owner" && init?.method === "PUT") return jsonOk({ requirementId: "req-1", ownerState: "manually_mapped", status: "queued" });
+      if (path.includes("ownerState=pending_mapping")) return jsonOk({ items: [pending], nextCursor: null });
+      if (path.startsWith("/api/requirements")) return jsonOk({ items: [], nextCursor: null });
+      if (path === "/api/mappings") return jsonOk({ items: [{ id: "map-1", teambitionUserId: "tb-user", teambitionDisplayName: "Ada", feishuUserId: "ou-user", feishuIdType: "open_id", matchMethod: "manual", createdBy: "operator", updatedAt: "2026-10-09T00:00:00.000Z" }] });
       throw new Error(`unexpected fetch ${path}`);
     });
 
-    render(<MappingsPanel requirements={[pending]} onRefresh={() => undefined} />);
-    fireEvent.click(screen.getByRole("button", { name: "选择飞书用户" }));
+    render(<MappingsPanel onRefresh={() => undefined} />);
+    fireEvent.click(await screen.findByRole("button", { name: "选择飞书用户" }));
     fireEvent.change(screen.getByLabelText("飞书用户 Open ID"), { target: { value: "ou-abc123" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
 

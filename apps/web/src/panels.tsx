@@ -1,12 +1,12 @@
 // 工单 16/17 工作台面板：数据全部来自本地 API，不使用演示数据；
 // 权限拒绝、空数据、加载中、局部失败和 API 不可用都显示可恢复状态。
 // 需求池/批次/审计面板自治加载，支持服务端筛选与游标分页。
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, Component, type ReactNode } from "react";
 import { RefreshCw, X } from "lucide-react";
 import {
-  ApiError, createSource, getBatch, getRequirement, listAudit, listBatches, listRequirements, pushRequirement,
+  ApiError, createSource, getBatch, getRequirement, listAudit, listBatches, listMappings, listRequirements, pushRequirement,
   retryAnalysis, retrySyncItem, setOwner, updateSource,
-  type AnalysisVersionSummary, type AuditEvent, type BatchDetail, type BatchSummary,
+  type AnalysisVersionSummary, type AuditEvent, type BatchDetail, type BatchSummary, type PersonMapping,
   type RequirementDetail, type RequirementSummary, type SourceConfig, type SourceConfigUpdate,
 } from "./api";
 
@@ -245,6 +245,7 @@ function RequirementDetailCard({ selected, structured, busy, feishuUserId, setFe
       <tr><td>分析盲点</td><td>{blindSpots.length ? blindSpots.join("；") || "—" : "—"}</td></tr>
       <tr><td>源快照版本</td><td>v{selected.sourceVersion}（只读，来自 Teambition 快照）</td></tr>
     </tbody></table></div>
+    <details className="source-snapshot"><summary>查看源快照内容（allowlist 字段，只读）</summary><pre className="source-snapshot-pre">{JSON.stringify(selected.source, null, 2)}</pre></details>
     {selected.analyses.length > 0 && <div className="table-scroll"><table><thead><tr><th>分析版本</th><th>状态</th><th>模块</th><th>优先级</th><th>开始时间</th><th>失败摘要</th></tr></thead><tbody>{[...selected.analyses].reverse().map((version: AnalysisVersionSummary) => <tr key={version.analysisVersion}><td className="mono-cell">v{version.analysisVersion}</td><td>{stageLabel(version.status)}</td><td>{version.moduleSuggestion ?? "—"}</td><td>{version.priority ?? "空"}</td><td>{timeLabel(version.startedAt)}</td><td>{version.safeErrorSummary ?? "—"}</td></tr>)}</tbody></table></div>}
     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
       {["failed_retryable", "pending"].includes(selected.pipeline.analysis) && <button className="button button-secondary button-small" onClick={() => void onAct(async () => { await retryAnalysis(selected.id); return "AI 分析重试已入队"; }, selected.id)} disabled={busy}>重试 AI 分析</button>}
@@ -269,15 +270,35 @@ function stageLabel(state: string) {
   return <span className={`status-chip ${tone}`}><span />{map[state] ?? state}</span>;
 }
 
-// ---------- 工单 17：负责人映射（待匹配需求 + 现有映射视图） ----------
+// ---------- 工单 17：负责人映射（pending 服务端筛选 + 现有映射列表） ----------
 
-export function MappingsPanel({ requirements, onRefresh }: { requirements: RequirementSummary[]; onRefresh: () => void }) {
-  const pending = requirements.filter((row) => row.pipeline.owner === "pending_mapping");
-  const resolved = requirements.filter((row) => ["auto_mapped", "manually_mapped", "not_required"].includes(row.pipeline.owner));
+export function MappingsPanel({ onRefresh }: { onRefresh: () => void }) {
+  const [pending, setPending] = useState<RequirementSummary[]>([]);
+  const [resolved, setResolved] = useState<RequirementSummary[]>([]);
+  const [mappings, setMappings] = useState<PersonMapping[]>([]);
   const [feishuUserId, setFeishuUserId] = useState("");
   const [targetId, setTargetId] = useState<string | null>(null);
+  const [loadState, setLoadState] = useState<LoadState>("loading");
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoadState("loading"); setLoadError(null);
+    const [pendingPage, resolvedPage, mappingPage] = await Promise.allSettled([
+      listRequirements({ ownerState: "pending_mapping", limit: 25 }),
+      listRequirements({ limit: 25 }),
+      listMappings(),
+    ]);
+    if (pendingPage.status === "fulfilled") setPending(pendingPage.value.items);
+    if (resolvedPage.status === "fulfilled") setResolved(resolvedPage.value.items.filter((row) => row.pipeline.owner !== "pending_mapping"));
+    if (mappingPage.status === "fulfilled") setMappings(mappingPage.value);
+    if (pendingPage.status === "rejected" && resolvedPage.status === "rejected" && mappingPage.status === "rejected") {
+      setLoadError(pendingPage.reason instanceof ApiError ? errorText(pendingPage.reason) : "无法加载映射数据。");
+      setLoadState("error");
+    } else setLoadState("ready");
+  }, []);
+  useEffect(() => { void load(); }, [load]);
 
   const submit = async () => {
     if (!targetId) return;
@@ -287,15 +308,17 @@ export function MappingsPanel({ requirements, onRefresh }: { requirements: Requi
       const result = await setOwner(targetId, { feishuUserId: feishuUserId.trim(), feishuIdType: "open_id" });
       setNotice(`映射已持久化（${result.ownerState}），Base 推送已入队。`);
       setTargetId(null); setFeishuUserId("");
-      onRefresh();
+      onRefresh(); await load();
     } catch (cause) { setNotice(errorText(cause)); }
     finally { setBusy(false); }
   };
+  const matchMethodLabel: Record<PersonMapping["matchMethod"], string> = { tb_user_id: "TB 用户 ID", unique_name: "姓名唯一匹配", manual: "人工指定" };
 
   return <section className="panel requirements-panel">
-    <div className="panel-heading"><div><h2>负责人映射</h2><p>为待匹配负责人选择飞书用户；映射持久化成功后才会入队推送。</p></div><button className="button button-secondary button-small" onClick={onRefresh}><RefreshCw size={14} />刷新</button></div>
-    <StateBanner loadError={null} notice={notice} onCloseNotice={() => setNotice(null)} />
-    {pending.length ? <div className="table-scroll"><table><thead><tr><th>需求</th><th>TB 负责人</th><th>操作</th></tr></thead><tbody>{pending.map((row) => <tr key={row.id}><td><div className="requirement-title"><span className="req-id">REQ-{row.sourceRequirementId}</span><strong>{row.title}</strong></div></td><td>待匹配</td><td>{targetId === row.id ? <div style={{ display: "flex", gap: 6 }}><input aria-label="飞书用户 Open ID" placeholder="Open ID" value={feishuUserId} onChange={(e) => setFeishuUserId(e.target.value)} /><button className="button button-primary button-small" onClick={() => void submit()} disabled={busy}>保存</button><button className="button button-secondary button-small" onClick={() => setTargetId(null)}>取消</button></div> : <button className="button button-secondary button-small" onClick={() => { setTargetId(row.id); setFeishuUserId(""); }}>选择飞书用户</button>}</td></tr>)}</tbody></table></div> : <div className="table-empty"><strong>没有待匹配的负责人</strong><span>TB 无负责人需求可直接推送；未匹配需求会出现在这里等待人工映射。</span></div>}
+    <div className="panel-heading"><div><h2>负责人映射</h2><p>为待匹配负责人选择飞书用户；映射持久化成功后才会入队推送。</p></div><button className="button button-secondary button-small" onClick={() => { onRefresh(); void load(); }}><RefreshCw size={14} />刷新</button></div>
+    <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
+    {pending.length ? <div className="table-scroll"><table><thead><tr><th>需求</th><th>TB 负责人</th><th>操作</th></tr></thead><tbody>{pending.map((row) => <tr key={row.id}><td><div className="requirement-title"><span className="req-id">REQ-{row.sourceRequirementId}</span><strong>{row.title}</strong></div></td><td>待匹配</td><td>{targetId === row.id ? <div style={{ display: "flex", gap: 6 }}><input aria-label="飞书用户 Open ID" placeholder="Open ID" value={feishuUserId} onChange={(e) => setFeishuUserId(e.target.value)} /><button className="button button-primary button-small" onClick={() => void submit()} disabled={busy}>保存</button><button className="button button-secondary button-small" onClick={() => setTargetId(null)}>取消</button></div> : <button className="button button-secondary button-small" onClick={() => { setTargetId(row.id); setFeishuUserId(""); }}>选择飞书用户</button>}</td></tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadState === "loading" ? "正在载入待匹配需求…" : "没有待匹配的负责人"}</strong><span>{loadState === "loading" ? "正在从本地 API 读取。" : "TB 无负责人需求可直接推送；未匹配需求会出现在这里等待人工映射。"}</span></div>}
+    {mappings.length > 0 && <div className="table-scroll"><table><thead><tr><th>TB 用户 / 姓名</th><th>飞书用户</th><th>匹配方式</th><th>更新时间</th></tr></thead><tbody>{mappings.map((m) => <tr key={m.id}><td>{m.teambitionDisplayName ?? m.teambitionUserId ?? "（仅姓名匹配占位）"}</td><td className="mono-cell">{m.feishuUserId}</td><td>{matchMethodLabel[m.matchMethod] ?? m.matchMethod}</td><td>{timeLabel(m.updatedAt)}</td></tr>)}</tbody></table></div>}
     {resolved.length > 0 && <div className="table-scroll"><table><thead><tr><th>已处理需求</th><th>负责人状态</th></tr></thead><tbody>{resolved.map((row) => <tr key={row.id}><td>{row.title}</td><td>{stageLabel(row.pipeline.owner)}</td></tr>)}</tbody></table></div>}
   </section>;
 }
@@ -329,4 +352,18 @@ export function AuditPanel() {
     <StateBanner loadError={loadError} notice={null} onCloseNotice={() => undefined} />
     {events.length ? <div className="table-scroll"><table><thead><tr><th>时间</th><th>操作者</th><th>动作</th><th>对象</th><th>结果</th><th>安全摘要</th></tr></thead><tbody>{events.map((event) => <tr key={event.id}><td>{timeLabel(event.occurredAt)}</td><td>{event.actorId ?? "系统"}</td><td className="mono-cell">{event.eventType}</td><td className="mono-cell">{event.entityType}:{event.entityId.slice(0, 8)}</td><td>{stageLabel(event.result === "succeeded" ? "synced" : event.result === "failed" ? "failed" : "pending_mapping")}</td><td>{Object.keys(event.safeDetails).length ? JSON.stringify(event.safeDetails) : "—"}</td></tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadState === "loading" ? "正在载入审计日志…" : "没有匹配的审计记录"}</strong><span>{loadState === "loading" ? "正在从本地 API 读取。" : "调整筛选条件或执行操作后再试。"}</span></div>}
   </section>;
+}
+
+// ---------- 全局错误边界：面板崩溃时显示可恢复状态而非白屏 ----------
+
+interface ErrorBoundaryState { error: Error | null }
+export class PanelErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryState> {
+  state: ErrorBoundaryState = { error: null };
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState { return { error }; }
+  render() {
+    if (this.state.error) {
+      return <section className="panel requirements-panel"><div className="alert-banner" role="alert"><div><strong>页面渲染出错</strong><span>{this.state.error.message}。请刷新页面重试；问题持续时检查本地 API 日志。</span></div></div><div className="rules-form"><button className="button button-secondary button-small" onClick={() => this.setState({ error: null })}>重试渲染</button></div></section>;
+    }
+    return this.props.children;
+  }
 }

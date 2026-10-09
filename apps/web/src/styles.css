@@ -230,6 +230,9 @@ tbody tr:hover { background: #fcfcfd; }
 .rules-threshold { display: flex; flex-direction: column; gap: 4px; font-size: 9px; color: #818b9a; }
 .rules-threshold input { width: 58px; min-height: 29px; padding: 0 7px; border: 1px solid #e1e5eb; border-radius: 6px; color: #495468; background: #fff; font: inherit; font-size: 10px; }
 .rules-threshold input:focus { border-color: #9db4e4; outline: 0; }
+.source-snapshot { margin: 0 14px 12px; }
+.source-snapshot summary { color: #4f6fae; font-size: 10px; cursor: pointer; }
+.source-snapshot-pre { max-height: 260px; overflow: auto; margin: 8px 0 0; padding: 10px; border: 1px solid #e7e9ee; border-radius: 6px; background: #f9fafb; color: #495468; font-size: 9px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; }
 @media (prefers-reduced-motion: reduce) { *,*::before,*::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; } }
 @media (min-width: 1500px) { .content-area { padding-top: 37px; } .metric-card { padding: 17px; } }
 @media (max-width: 1120px) { .content-area { padding-right: 24px; padding-left: 24px; } .sidebar { width: 215px; } .main-area { margin-left: 215px; } .metric-grid { gap: 9px; } .metric-card { padding: 12px 10px 9px; } .overview-grid { grid-template-columns: 1fr 1fr; gap: 10px; } .pipeline-progress { width: 72px; } .progress-track { width: 70px; } }

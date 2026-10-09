@@ -260,6 +260,31 @@ paths:
           schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
       responses:
         '200': { description: Audit event page }
+  /api/mappings:
+    get:
+      summary: List active person mappings for the single source
+      responses:
+        '200':
+          description: Active mappings (relationship and match method only; no personal contact fields)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        teambitionUserId: { type: [string, 'null'] }
+                        teambitionDisplayName: { type: [string, 'null'] }
+                        feishuUserId: { type: string }
+                        feishuIdType: { type: string, enum: [open_id, user_id, union_id] }
+                        matchMethod: { type: string, enum: [tb_user_id, unique_name, manual] }
+                        createdBy: { type: [string, 'null'] }
+                        updatedAt: { type: string, format: date-time }
+        '401': { $ref: '#/components/responses/Unauthorized' }
   /api/rules/dictionary:
     get:
       summary: List module dictionary versions

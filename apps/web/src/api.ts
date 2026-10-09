@@ -274,6 +274,22 @@ export async function listBatches(params: { status?: string; limit?: number; cur
   return requestJson<{ items: BatchSummary[]; nextCursor: string | null }>(`/api/batches${suffix}`, fetcher);
 }
 
+export interface PersonMapping {
+  id: string;
+  teambitionUserId: string | null;
+  teambitionDisplayName: string | null;
+  feishuUserId: string;
+  feishuIdType: "open_id" | "user_id" | "union_id";
+  matchMethod: "tb_user_id" | "unique_name" | "manual";
+  createdBy: string | null;
+  updatedAt: string;
+}
+
+export async function listMappings(fetcher: typeof fetch = fetch): Promise<PersonMapping[]> {
+  const result = await requestJson<{ items: PersonMapping[] }>("/api/mappings", fetcher);
+  return result.items;
+}
+
 export function listAudit(params: { entityId?: string; since?: string; until?: string; limit?: number; fetcher?: typeof fetch } = {}): Promise<AuditEvent[]> {
   const { fetcher = fetch, ...query } = params;
   const search = new URLSearchParams();

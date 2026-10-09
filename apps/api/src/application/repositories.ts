@@ -123,6 +123,8 @@ export interface PersonMappingRepository {
     sourceConfigId: string,
     by: { tbUserId?: string; normalizedName?: string },
   ): Promise<PersonMappingRecord | null>;
+  // 活跃映射列表（工单 17 工作台展示）：按来源过滤、最近更新优先
+  listActive(sourceConfigId: string): Promise<PersonMappingRecord[]>;
 }
 
 // pm_snapshots（只追加；推送前保存，读取失败时不覆盖 Base 行）

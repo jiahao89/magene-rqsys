@@ -48,6 +48,10 @@ function requirementDto(req: RequirementRecord, analysis: Record<string, unknown
 function analysisVersionDto(r: AnalysisRunRecord) {
   return { analysisVersion: r.analysisVersion, status: r.status, moduleSuggestion: r.moduleSuggestion, confidence: r.confidence, priority: r.priority, startedAt: r.startedAt, completedAt: r.completedAt, safeErrorSummary: r.safeErrorSummary };
 }
+// 负责人映射展示：只含映射关系与匹配方式，不含个人联系方式
+function mappingDto(m: PersonMappingRecord) {
+  return { id: m.id, teambitionUserId: m.teambitionUserId, teambitionDisplayName: m.teambitionDisplayName, feishuUserId: m.feishuUserId, feishuIdType: m.feishuIdType, matchMethod: m.matchMethod, createdBy: m.createdBy, updatedAt: m.updatedAt };
+}
 function requirementSearchDto(req: RequirementRecord) { return requirementDto(req); }
 function dictionaryDto(d: ModuleDictionaryVersionRecord) { return { version: d.version, status: d.status, entries: d.entries, createdBy: d.createdBy, createdAt: d.createdAt, publishedAt: d.publishedAt }; }
 function priorityRuleDto(r: PriorityRuleVersionRecord) { return { id: r.id, version: r.version, status: r.status, rules: r.rules, validationEvidence: r.validationEvidence, createdBy: r.createdBy, createdAt: r.createdAt, publishedAt: r.publishedAt }; }
@@ -226,6 +230,14 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "priority_rule.published", entityType: "priority_rule", entityId: id, result: "succeeded", safeDetails: { version: published.version }, occurredAt: now });
     if (auditFailure) return auditFailure;
     return json(priorityRuleDto(published));
+  }
+  if (method === "GET" && url.pathname === "/api/mappings") {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.people || !repositories.sources) return jsonError("DEPENDENCY_UNAVAILABLE");
+    // 单一来源（D-09）：返回当前来源的活跃映射；来源未配置时为空列表
+    const source = (await repositories.sources.list())[0] ?? null;
+    const items = source ? await repositories.people.listActive(source.id) : [];
+    return json({ items: items.map(mappingDto) });
   }
   if (method === "GET" && url.pathname === "/api/requirements") {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;

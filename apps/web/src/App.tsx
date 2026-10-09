@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Activity, ArrowDownToLine, ArrowRight, Check, ChevronDown, CircleAlert, CircleHelp, Clock3, Command, Database, FileClock, FolderSync, Gauge, GitBranch, Layers3, ListChecks, LoaderCircle, Play, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Users, X } from "lucide-react";
 import { ApiError, createDictionaryDraft, createPriorityRuleDraft, getHealth, listDictionaryVersions, listPriorityRules, listSources, publishDictionaryVersion, publishPriorityRule, runSync, type DictionaryVersion, type PriorityRuleVersion, type PublishStatus, type SourceConfig } from "./api";
-import { AuditPanel, BatchesPanel, MappingsPanel, RequirementsPanel, SourcesPanel } from "./panels";
+import { AuditPanel, BatchesPanel, MappingsPanel, PanelErrorBoundary, RequirementsPanel, SourcesPanel } from "./panels";
 
 type Batch = { id: string; status: string; totalCount: number; succeededCount: number; failedCount: number; startedAt?: string; completedAt?: string; errorSummary?: string };
 type Requirement = { id: string; sourceRequirementId: string; title: string; sourceVersion: number; pipeline: { pull: string; analysis: string; owner: string; push: string }; analysis?: { module?: string; confidence?: string } | null };
@@ -108,6 +108,7 @@ function App() {
         <header className="topbar"><div className="breadcrumbs"><span>工作区</span><span className="crumb-sep">/</span><strong>{pageTitles[page]}</strong></div><div className="topbar-actions"><span className={`connection-state ${health}`}><span className="connection-dot" />{health === "ready" ? "API 已连接" : health === "loading" ? "正在检查 API" : "API 未连接"}</span><span className="topbar-divider" /><button className="icon-button" aria-label="帮助"><CircleHelp size={17} /></button><button className="icon-button" aria-label="活动记录"><Activity size={17} /></button><div className="top-avatar">J</div></div></header>
 
         <div className="content-area">
+          <PanelErrorBoundary>
           {error && <div className="alert-banner" role="alert"><CircleAlert size={18} /><div><strong>服务暂不可用</strong><span>{error}</span></div><button className="button button-secondary button-small" onClick={() => void loadData()}><RefreshCw size={14} />重试连接</button></div>}
           {notice && <div className="notice-banner" role="status"><Check size={16} /><span>{notice}</span><button className="icon-button" aria-label="关闭提示" onClick={() => setNotice(null)}><X size={15} /></button></div>}
           {page === "Overview" && <>
@@ -137,6 +138,7 @@ function App() {
           </>}
 
           {page !== "Overview" && <section className="secondary-page"><div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" />WORKSPACE</div><h1>{pageTitles[page]}</h1><p>{pageDescription(page)}</p></div>{page === "Batches" && <button className="button button-primary" onClick={() => void handleRunSync()} disabled={busy || health !== "ready"}><Play size={15} fill="currentColor" />{busy ? "提交中…" : "立即同步"}</button>}</div><SecondaryContent page={page} sources={sources} batches={batches} requirements={shownRequirements} loadState={health} onNavigate={setPage} onRefresh={() => void loadData()} /></section>}
+          </PanelErrorBoundary>
         </div>
       </main>
     </div>
@@ -153,7 +155,7 @@ function SecondaryContent({ page, sources, batches, requirements, loadState, onN
   if (page === "Batches") return <BatchesPanel onRefresh={onRefresh} />;
   if (page === "Sources") return <SourcesPanel sources={sources} loadState={loadState} onRefresh={onRefresh} />;
   if (page === "Rules") return <RulesPanel />;
-  if (page === "Mappings") return <MappingsPanel requirements={requirements} onRefresh={onRefresh} />;
+  if (page === "Mappings") return <MappingsPanel onRefresh={onRefresh} />;
   if (page === "Audit") return <AuditPanel />;
   return <section className="panel placeholder-panel"><div className="placeholder-illustration"><span><Users size={23} /></span><i /><i /><i /></div><div className="eyebrow"><span className="eyebrow-line" />API 契约待实现</div><h2>页面未实现</h2><p>该页面尚未提供 API 契约。</p><button className="button button-secondary" onClick={() => onNavigate("Overview" as Page)}>返回总览<ArrowRight size={15} /></button></section>;
 }
