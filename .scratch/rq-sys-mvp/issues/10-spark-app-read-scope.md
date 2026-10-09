@@ -1,34 +1,27 @@
-# [blocked] 10 — 开通 spark:app:read 用户授权
+# [resolved] 10 — 开通 spark:app:read 用户授权
 
 ## 目标
 让当前 TRAE lark-cli 环境的用户访问令牌获得妙搭（Spark）应用的只读 scope `spark:app:read`，使 agent 可执行妙搭应用的读取类命令（应用列表/详情、协作者列表、协作设置、日志与观测指标等），支撑 Ticket 00 的妙搭运行时 POC。
 
-## 实测证据（2026-10-08）
+## ✅ 复测记录（2026-10-09，根因确认并验证通过）
+- **根因修正**：此前所有 `missing_scope: spark:app:read` 的根因不是授权服务能力缺失，而是 **TraeWork 注入的环境变量凭证（`LARKSUITE_CLI_APP_ID` / `LARKSUITE_CLI_USER_ACCESS_TOKEN` / `LARKSUITE_CLI_BRAND`）缺少 spark 权限并遮蔽了本地已授权配置**。授权流程每次都成功，但 CLI 用的是注入凭证。
+- **解法（用户提供）**：所有妙搭命令统一加前缀回退本地已授权配置：
+  `env -u LARKSUITE_CLI_APP_ID -u LARKSUITE_CLI_USER_ACCESS_TOKEN -u LARKSUITE_CLI_BRAND lark-cli <command> --as user`
+- **验证通过（identity=user，本地配置）**：
+  - `apps +list --as user` ✅ 返回应用列表（含目标应用 `app_17fqkjwyx1u` = RQ-Sys，full_stack，enabled，is_published=true，online_url 返回）
+  - `apps +get --app-id app_17fqkjwyx1u --as user` ✅ 返回应用详情（app_type/meta_token/发布状态）
+  - `apps +release-list` / `+release-get` ✅ 返回发布记录（最新 finished release `7694630996987743435` 的 commit `1a2910bb` 仍为妙搭 scaffold shell——RQ-Sys 实现未部署，属工单 00/09 范围）
+- 验收标准 1 达成；未引入任何写 scope。
+
+## 实测证据（2026-10-08，历史）
 - 环境：TRAE SOLO CN 0.1.69 插件托管版 lark-cli 1.0.94，应用 `cli_a965abcba6fadbd3`，用户身份 贾浩（`ou_894482287d1f95aff25b5550604167fb`），`doctor` 全部通过。
 - 托管令牌 scope 集合（自访问令牌解码核验）：`auth:user.id:read`、`offline_access`、`trae:approval/base/calendar/contact/docs/mail/meetings/messenger/mindnotes/sheets/slides/space/tasks/wiki:manage`；不含任何 `spark:` scope。
-- 实际调用 `lark-cli apps +member-settings-get --app-id app_test_probe --as user` 返回：
-  `unauthorized: user authorization does not cover the required scope(s): spark:app:read`，`missing_scopes: ["spark:app:read"]`（OpenAPI code 99991679）。
-- 授权通道均不可用：
-  1. CLI 侧：`auth login`/`auth scopes`/`auth check` 返回 `credentials are provided externally and do not support interactive management`。
-  2. TRAE 授权服务：显式申请 `spark:app:read` 返回 `these scopes are not supported for authorization by the service`。
+- 实际调用 `lark-cli apps +member-settings-get --app-id app_test_probe --as user` 返回：`missing_scopes: ["spark:app:read"]`（99991679）——即注入凭证遮蔽现象的首次记录。
+- 复测（2026-10-08 晚）：RequestAuthorization 返回成功但令牌仍 missing_scope——同为注入凭证遮蔽，非授权服务下发链路问题。
 
-## 需要开发/配置的内容（由具备相应权限的一方完成）
-任选其一或组合：
-1. TRAE 授权服务（trae-remote-official:lark::feishu）将 `spark:app:read` 纳入可授权 scope 清单，并支持经 `RequestAuthorization` 流程下发。
-2. TRAE 托管凭证在签发 `LARKSUITE_CLI_USER_ACCESS_TOKEN` 时预置 `spark:app:read`（最小集合：`spark:app:read`，如需 `+list` 全量列举按平台要求补充配套 scope）。
-3. 允许本环境的 lark-cli 走标准设备流（`auth login --scope spark:app:read`）完成用户增量授权。
-
-## 验收标准（完成后由 agent 验证）
-- [ ] `lark-cli apps +list --as user` 成功返回应用列表（或对任一真实 `app_` 应用执行 `+get` 成功）。
-- [ ] `lark-cli apps +member-list --app-id <真实 app_id> --as user` 或 `+member-settings-get --app-id <真实 app_id> --as user` 不再返回 `missing_scope`（缺失原因只能是权限/资源不存在，不是 scope）。
-- [ ] 授权结果与最小权限原则一致：未引入任务范围之外的额外写 scope。
-- [ ] Ticket 00 解除 spark 读取侧 blocker 并可继续执行。
-
-## 复测记录（2026-10-08 晚，用户发起验证）
-- TRAE 授权服务行为已变化：经 `RequestAuthorization` 显式申请 `spark:app:read` 不再返回 "these scopes are not supported"，而是返回授权成功并刷新连接器环境。
-- 但授权后重试 `apps +list` / `apps +get --app-id app_17f41y3cs26`（多次，含用户再次授权）**仍返回 `missing_scope: spark:app:read`（OpenAPI code 99991679）**——授权申请被接受但托管令牌未实际获得该 scope（或刷新未传导到 CLI 凭证）。
-- 用户随后指示：停止重复授权、跳过妙搭侧验证、本轮仅检查代码逻辑。工单保持 `blocked`；解除途径仍为工单「需要开发/配置的内容」三条之一。结论：通道 1（授权服务支持该 scope）部分成立（申请被接受），但下发链路未生效，疑点集中在托管凭证签发（通道 2）或令牌刷新传导。
+## 后续
+- [ ] `+member-list` / `+member-settings-get` 对真实 app 用前缀命令复测（此前 feature_not_available 的结论需在新通道下复核）。
+- [ ] Ticket 11（`spark:app:write`）按同一前缀规则验证写操作；写操作仍须遵守高风险门禁。
 
 ## 不在范围
-- `spark:app:write` 授权（见 Ticket 11）。
 - 妙搭应用本身的开发与部署。

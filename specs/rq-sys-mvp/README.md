@@ -33,6 +33,26 @@ The upstream requirements-definition document has 28 fields across basic informa
 | 4 | 04-workbench.md | Web workflows, APIs, roles, visible states | 00–03 |
 | 5 | 05-platform-reliability-security.md | Miaoda persistence/scheduling, credentials, audit, acceptance gates | 00 |
 
+## 5. Acceptance boundary and next steps
+
+As of 2026-10-09, the local RQ-Sys implementation checkout is `main` at `ef9a288`. A fresh local run passed API tests (167/167), Web tests (13/13), typecheck, production build, and `git diff --check`. This is local verification only and does not establish Miaoda, Teambition, AI-provider, or Feishu Base runtime acceptance.
+
+The dedicated Miaoda app is `app_17fqkjwyx1u` (`full_stack`). Its `dev` database currently has 13 empty tables matching the broad object/column shape of `database/migrations/0001_initial.sql`; `+db-changelog-list` shows the DDL and a subsequent PUBLISH entry, database quota reads successfully, and `+env-list` returns no variables. A `finished` release exists for commit `1a2910bb6d678c3fe0b3cbb568d3ab6c9ecef7c8`, but that commit is a Miaoda scaffold/workbench shell, not the RQ-Sys API implementation checkout. `+automation-list` returns no triggers. `+member-settings-get` currently returns `feature_not_available` for this app type.
+
+### Remaining external gates
+
+- Tickets 10/11: platform authorization service must provision and propagate `spark:app:read` / `spark:app:write`; then execute the prescribed probe on a user-designated safe test app.
+- Ticket 00: complete supported target-runtime verification for DB driver/connection, migrations and schema constraints, backups/retention, scheduled jobs/recovery, secret injection, observability/quotas, UI artifact hosting, and HeroUI version lock.
+- Identity: keep the identity adapter unimplemented until the target Miaoda token/session contract is verified; API production authorization remains blocked without it.
+- Ticket 09: run approved test-environment end-to-end acceptance for Teambition import, DeepSeek, Feishu Base writes/snapshots/owner/notification dedupe, scheduler, identity, failures and retries.
+- Resolve and record D-02 (Base PM workflow architecture), D-03 (field-by-field source mapping), and D-10 (business timezone/window) before affected production behavior.
+
+### Local workspace hygiene
+
+- `apps/api/scripts/verify-review-findings.mjs` is an untracked temporary probe with a “Do not commit” header; do not add it to source control. Remove it only after required local review evidence is retained.
+- `rq-sys-miaoda/` is a separate, clean local Git checkout whose remote is the app-specific Miaoda repository; its history contains only Miaoda scaffold/config commits plus commit `1a2910b` adding a workspace/database-page shell. It is not the `jiahao89/magene-rqsys` implementation checkout and must not be treated as if it contains the RQ-Sys backend.
+- Do not claim any connector, schedule, runtime API, or end-to-end slice is “integrated” until it has target-environment evidence. The MVP explicitly excludes the complete 28-field model; roadmap expansion requires an approved field dictionary (D-01).
+
 ## PRD traceability
 
 | Current PRD section | Spec coverage |

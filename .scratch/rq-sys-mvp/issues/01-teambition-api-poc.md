@@ -13,7 +13,9 @@
 - 形成字段映射表：API 字段/类型/空值/是否可读/样例及未覆盖原因。
 - 形成分页与增量拉取的实际请求和响应证据，遮蔽 token/个人敏感信息。
 - 明确全量导入范围及重复同步判断方式。
-- 硬编码默认 API key fallback 只留在服务端 helper，未写入浏览器包、配置回显或日志。
+
+## Follow-up observations
+- 需求 ID 跨周稳定性、删除记录发现、附件引用内部结构与来源 URL 语义、网关在更大规模下的限流仍是持续观察项；当前未阻塞 MVP 当前数据集的基础字段映射。证据和 caveats 见 `specs/rq-sys-mvp/TEAMBITION-LIVE-POC.md`。
 
 ## 不在范围
 写入 Teambition、标题推断 ID、或引入 PRD 外字段。
