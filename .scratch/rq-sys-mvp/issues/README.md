@@ -43,7 +43,7 @@ flowchart LR
 
 | ID | Ticket | Status | Depends on |
 |---|---|---|---|
-| 00 | Miaoda runtime capability POC | partially-available（2026-10-09 app_17fqkjwyx1u: list/get 可用；dev schema/changelog/quota 查询可用且 13 张表已存在；dev env-list 空；automation-list 空；member-settings-get 对该 app 返回 feature_not_available。PostgreSQL runtime/backup、job recovery、secret injection、online observability/retention/UI hosting/HeroUI 仍未验证） | — |
+| 00 | Miaoda runtime capability POC | partially-available（2026-10-09 app_17fqkjwyx1u: list/get、dev schema/changelog/quota 查询可用且 13 张空表已存在；dev env-list 与 automation-list 为空；member APIs feature_not_available；online logs/traces/metrics/analytics 查询端点可调用，但当前 requests/latency/PV/UV 无有效值、CPU/memory 有样本。数据库运行时/迁移、worker/recovery/backup、secret injection、scheduler、retention 和 UI hosting 均未验收） | — |
 | 01 | Teambition API and field mapping POC | done（2026-10-08，证据：specs/rq-sys-mvp/TEAMBITION-LIVE-POC.md；仍跟踪其中标注的持续观察项） | — |
 | 02 | Feishu Base schema, upsert, and automation POC | done（2026-10-08，证据：specs/rq-sys-mvp/FEISHU-BASE-POC.md） | — |
 | 03 | AI provider and data-policy decision/POC | done（2026-10-08 离线校验 5/5 + 超时/无效 key 在线实测 + PII 掩码断言；2026-10-09 有效 key 补跑 T1–T3 全部通过 + 生产适配器冒烟通过并修复 factory env 断链/prompt 样例缺失，证据：specs/rq-sys-mvp/AI-ANALYSIS-POC.md） | D-06 已确认；T1–T3 已验证 |
@@ -52,10 +52,10 @@ flowchart LR
 | 06 | AI analysis vertical slice | blocked | 03, 05 |
 | 07 | Owner mapping and Feishu Base push vertical slice | blocked | 02, 05 |
 | 08 | Weekly schedule, retry, and audit | blocked (2026-10-09 current app check: `app_17fqkjwyx1u` has no automation triggers; no scheduled worker execution or target audit-persistence/recovery acceptance evidence; local worker groundwork only) | 00, 05, 06, 07 |
-| 09 | Target-environment end-to-end acceptance | blocked (read-only checkpoint 2026-10-09: app `app_17fqkjwyx1u` latest finished release is scaffold UI commit `1a2910b`, not RQ-Sys implementation; dev schema has 13 empty tables; env-list empty; no automations; collaborator-settings API unavailable for this app type; no target E2E path exercised) | 00–08, 12–17, external gates 10–11 |
+| 09 | Target-environment end-to-end acceptance | blocked (latest release `7694630996987743435` remains scaffold commit `1a2910b`; dev schema 13 empty tables, env-list and automations empty; local Spark list/get/observability queries work but collaborator APIs are feature_not_available and only CPU/memory metrics have samples; RQ-Sys runtime/identity/external credentials and all E2E scenarios unverified) | 00–08, 12–17, external gates 10–11 |
 | D-08 | Resolve production UI component baseline after repo inspection | resolved（2026-10-08，ADR-001：基线已推送（main，03aef74）并检视——仓库无 UI 依赖，按 design.md 采用 HeroUI v3 + Tailwind；UI 托管方式留待 00） | ADR-001 已产出 |
-| 10 | Grant `spark:app:read` user scope for Miaoda apps | resolved（2026-10-09 根因确认：TraeWork 注入的凭证环境变量（LARKSUITE_CLI_APP_ID/USER_ACCESS_TOKEN/BRAND）缺少 spark 权限并遮蔽本地已授权配置；解法为所有妙搭命令加 `env -u` 前缀回退本地配置。`apps +list/+get/+release-list/+release-get` 已验证通过（identity=user，目标 app_17fqkjwyx1u 返回）；后续 +member 复测见工单） | — |
-| 11 | Grant `spark:app:write` user scope for Miaoda apps | ready-for-agent（2026-10-09 通道更新：根因同工单 10（注入凭证遮蔽），同一 `env -u` 前缀规则下写 scope 推断可用、待写验证实测；需用户指定安全测试目标并遵守高风险门禁 dry-run → 确认 → --yes） | 用户指定安全测试目标 |
+| 10 | Grant `spark:app:read` user scope for Miaoda apps | resolved（2026-10-09 根因确认：TraeWork 注入凭证遮蔽本地授权；加 `env -u LARKSUITE_CLI_APP_ID -u LARKSUITE_CLI_USER_ACCESS_TOKEN -u LARKSUITE_CLI_BRAND` 后 apps +list/+get/release 与 observability 命令调用成功。member APIs 仍为 feature_not_available；观测数据部分为空/null，详见工单 evidence） | — |
+| 11 | Grant `spark:app:write` user scope for Miaoda apps | blocked（2026-10-09 已在用户指定 app `app_17fqkjwyx1u` 按 dry-run → 用户确认 → --yes 尝试 member-add；服务端返回 `feature_not_available` 3340005（该 full_stack app 不支持 CLI 协作者管理），不是 missing_scope，也未写入。需支持该 API 的安全测试 app 或其他适用 write probe；详见工单） | 用户指定安全测试目标/平台能力支持 |
 | 12 | API wiring, role enforcement, and source setup | implemented-not-target-verified（2026-10-09 本地完成：规则仓储/HTTP 装配修复、服务端角色矩阵（manage_config/manage_rules/operate）覆盖全部写端点、POST /api/sources 单一来源受控创建 + strict 白名单拒绝凭据字段、审计写失败不返回虚假成功；测试 auth-source.test.ts + typecheck/build 通过。目标妙搭身份适配仍依赖 Ticket 00） | — |
 | 13 | AI output semantics, priority rules, and privacy | implemented-not-target-verified（2026-10-09 本地完成：移除证据计数公式，规则 JSON 改为显式 U/M/S/C 评分映射 + 阈值，未发布/未校准规则时 priority 保持 null（buildPriorityRule 返回 null，取值不在映射中不猜测）；maskPii 增补身份证/24 位平台用户 ID/@提及；outbound payload 无姓名/用户 ID/联系方式/凭据的断言测试通过。provider target acceptance remains Ticket 09） | 03 |
 | 14 | Complete analysis-to-Base push workflow | implemented-not-target-verified（2026-10-09 本地完成：分析首次终态后 pipeline/advance.ts 按负责人规则推进（无负责人→not_required 直接入队；映射唯一→auto_mapped；未匹配→等待人工映射不入队），AI 失败/低置信度/空优先级不阻塞；push-service 映射最新分析版本 AI 字段（P0–P3 原样传递，priority null 不写字段），TB 有负责人未匹配时拒绝推送并审计 denied；PM 快照仅当源版本新于上次推送版本；人工映射先持久化再入队。真实 Base acceptance remains Ticket 09） | 02, 12, 13 |
@@ -65,4 +65,4 @@ flowchart LR
 
 `ready-for-agent` 表示可开始做 POC/决策工作，不代表生产集成已具备条件。具体 blocker 在各 ticket 中列出。全生命周期 28 字段不属于这些 tickets。
 
-Tickets 12–17 are the prioritized remaining local-development slices. Tickets 00, 10, and 11 remain external capability/permission gates; do not claim target acceptance until Ticket 09 passes. The new tickets are local drafts and have not been published to an external tracker.
+Tickets 12–17 are the prioritized remaining tickets. A 2026-10-09 implementation pass did find and fix one duplicate-custom-field normalization issue; subsequent code work should start with a fresh inspection.

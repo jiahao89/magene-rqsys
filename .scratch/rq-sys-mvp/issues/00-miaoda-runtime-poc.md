@@ -8,6 +8,7 @@
 - 仅 dev 数据库做过本轮只读盘点：13 张业务表、estimated rows 均为 0；`requirements` 的列/索引/约束可通过 `+db-table-get` 读取。`+db-changelog-list` 返回 CREATE_TABLE 和 PUBLISH 记录；`+db-quota-get` 返回 13 tables、0 views 和配额字段。该 schema 的创建与发布均已有历史记录，本轮未重复执行 DDL。
 - `+env-list --environment dev` 返回空；没有 Teambition/Feishu/AI provider 应用变量。用户已明确先跳过向 app 写 `TEAMBITION_GATEWAY_URL`；未设置任何凭据或外呼 provider。
 - `+automation-list --all` 返回空；没有 weekly trigger。尚无安全 event fixture/worker runtime evidence，因此没有创建或启用自动化。
+- 使用本地 Spark 凭证前缀后，在线 logs/traces/metrics/analytics 命令可调用；当前 requests/latency、PV/UV 无有效数据，CPU/memory 有样本。member APIs 仍为 `feature_not_available`。
 - `+member-settings-get` 返回 `feature_not_available`，提示该 app 的协作者设置需在 Miaoda 页面管理；此结果既不代表身份验证通过，也不证明 scope 故障。
 - 最新 finished release 为 `7694615270979357961`，commit `1a2910bb6d678c3fe0b3cbb568d3ab6c9ecef7c8`，online URL 返回。该 commit 属于 Miaoda scaffold 和 workspace/database-page shell，不是 `jiahao89/magene-rqsys` 的 RQ-Sys implementation source。
 - 妙搭 credential list 显示 app `app_17fqkjwyx1u` credential status valid；这只验证本地 Miaoda git push credential 状态，不代表 GitHub 镜像/导入或代码自动同步已配置。

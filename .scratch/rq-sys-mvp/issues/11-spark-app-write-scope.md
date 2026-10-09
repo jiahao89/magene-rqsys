@@ -9,6 +9,12 @@
   `env -u LARKSUITE_CLI_APP_ID -u LARKSUITE_CLI_USER_ACCESS_TOKEN -u LARKSUITE_CLI_BRAND lark-cli <command> --as user`
 - 读侧 `spark:app:read` 已验证通过（`apps +list`/`+get`/`+release-list`/`+release-get` 全部成功）；写 scope 按同一本地配置推断可用，**待写验证实测确认**。
 
+## ✅ Ticket 11 验收尝试（2026-10-09，用户指定 app）
+- 用户指定 `app_17fqkjwyx1u`，本次命令统一使用本地 Spark 凭证前缀；协作者 ID 选择当前发起用户，仅拟添加 `view` 权限。
+- `+member-add --dry-run` 与 `+member-remove --dry-run` 均生成了预期请求；随后用户明确授权执行 add → remove。
+- 正式 `+member-add ... --yes` 被服务端拒绝，返回 `feature_not_available` / 3340005：该 full_stack app 的协作者管理不支持通过 lark-cli。该错误不是 `missing_scope: spark:app:write`，也不是写入成功；没有发生协作者变更，因此未执行 remove。
+- 结论：本次目标应用无法用于 Ticket 11 的 API 写侧 scope 验收。需在真正支持 CLI 协作者 API 的安全测试应用，或平台提供适用的其他无害 write probe 后重新验收。不能据此判定 spark:app:write 已开通。
+
 ## 实测证据（2026-10-08，历史）
 - 托管令牌 scope 不含任何 `spark:` scope。
 - `spark:app:write` 缺失为**推断**而非直接实测：

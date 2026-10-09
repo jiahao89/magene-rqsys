@@ -47,9 +47,7 @@ The dedicated Miaoda app is `app_17fqkjwyx1u` (`full_stack`). Its `dev` database
 - Ticket 09: run approved test-environment end-to-end acceptance for Teambition import, DeepSeek, Feishu Base writes/snapshots/owner/notification dedupe, scheduler, identity, failures and retries.
 - Resolve and record D-02 (Base PM workflow architecture), D-03 (field-by-field source mapping), and D-10 (business timezone/window) before affected production behavior.
 
-### Local workspace hygiene
-
-- `apps/api/scripts/verify-review-findings.mjs` is an untracked temporary probe with a “Do not commit” header; do not add it to source control. Remove it only after required local review evidence is retained.
+- The initial handoff claim that there are no code items is stale: a 2026-10-09 pass found and fixed a Teambition custom-field duplicate-normalization bug.
 - `rq-sys-miaoda/` is a separate, clean local Git checkout whose remote is the app-specific Miaoda repository; its history contains only Miaoda scaffold/config commits plus commit `1a2910b` adding a workspace/database-page shell. It is not the `jiahao89/magene-rqsys` implementation checkout and must not be treated as if it contains the RQ-Sys backend.
 - Do not claim any connector, schedule, runtime API, or end-to-end slice is “integrated” until it has target-environment evidence. The MVP explicitly excludes the complete 28-field model; roadmap expansion requires an approved field dictionary (D-01).
 

@@ -19,6 +19,11 @@
 - 实际调用 `lark-cli apps +member-settings-get --app-id app_test_probe --as user` 返回：`missing_scopes: ["spark:app:read"]`（99991679）——即注入凭证遮蔽现象的首次记录。
 - 复测（2026-10-08 晚）：RequestAuthorization 返回成功但令牌仍 missing_scope——同为注入凭证遮蔽，非授权服务下发链路问题。
 
+## 后续复测（2026-10-09，正确凭证前缀）
+- `apps +list/+get` 及 release 查询成功，确认本地凭证可执行这部分 Spark 读取。
+- `+member-list` 与 `+member-settings-get` 对目标 app 仍返回 `feature_not_available` / 3340005，提示协作者管理不通过 CLI 提供；此项属于应用能力限制，不作为 scope blocker。
+- `+log-list` / `+trace-list`、`+metric-list`、`+analytics-list` 均可调用；近 24h log/trace 与 requests/latency 为空、CPU/memory 有样本、PV/UV 值为 null。只证明命令可读，不证明数据保留期或 analytics 完整性。
+
 ## 后续
 - [ ] `+member-list` / `+member-settings-get` 对真实 app 用前缀命令复测（此前 feature_not_available 的结论需在新通道下复核）。
 - [ ] Ticket 11（`spark:app:write`）按同一前缀规则验证写操作；写操作仍须遵守高风险门禁。

@@ -3,12 +3,12 @@
 ## 目标
 在目标妙搭环境用最小化真实需求验证 MVP 主链路及降级路径。
 
-- RQ-Sys code implementation in the target Miaoda checkout (`app_17fqkjwyx1u`): **not deployed**; current finished release `7694615270979357961` is the scaffold/workspace shell commit `1a2910b`, not the GitHub implementation at `ef9a288`.
+- RQ-Sys 业务 API/Web 仍未部署；latest release `7694630996987743435` 只含 scaffold/workspace shell commit `1a2910bb6d678c3fe0b3cbb568d3ab6c9ecef7c8`，不是 implementation commit `ef9a288`。
 - `dev` schema: 13 tables exist with zero estimated rows; changelog includes CREATE_TABLE and PUBLISH. No RQ-Sys sync/API workload has been executed in that environment.
 - `+env-list` is empty; there are no app environment variables configured for Teambition, Feishu Base, or AI provider calls.
 - `+automation-list --all` returns no triggers. Scheduler automation is not configured or running.
-- `+member-settings-get` returns `feature_not_available` for this app; this does not verify an identity provider or production role mapping.
-- Local API tests 167/167 and Web tests 13/13, typecheck/build/diff-check pass at `ef9a288`; these are local evidence only.
+- `+member-settings-get` 与 `+member-list` 经正确的本地凭证前缀回读仍为 `feature_not_available`（3340005）；协作者管理需要在妙搭应用页面操作。
+- 在线观测（最近 24h）：`+log-list`、`+trace-list` 成功返回空；`+metric-list` 的 requests/latency 为空，CPU/memory 有样本；`+analytics-list` 的 users/page-view 接口成功但值为 null。API 可调用，不等于已验证保留期/完整 PV/UV 能力。
 - No target runtime end-to-end scenario in this ticket has been executed; all five scenarios below remain blocked by Tickets 00/10/11, identity/provider setup, external test fixtures, and D-02/D-03/D-10.
 
 ## Acceptance scenarios (not yet run)
@@ -20,8 +20,10 @@
 
 ## Evidence log
 - 2026-10-09 — read-only current-state check: application `app_17fqkjwyx1u` is full_stack, enabled and published; latest finished release `7694615270979357961` uses commit `1a2910bb6d678c3fe0b3cbb568d3ab6c9ecef7c8` and has an `online_url`. This release commit belongs to the Miaoda scaffold/workspace shell, not the RQ-Sys GitHub implementation checkout (`main` `ef9a288`).
-- 2026-10-09 — explicit dev environment schema probes: 13 tables, all estimated row count zero; `requirements` structure/indexes are readable; changelog reports CREATE_TABLE followed by PUBLISH; quota API returns successfully. `env-list` has no entries; automation list has none; member settings returns `feature_not_available`. No write-side application flow was run.
-- 2026-10-09 — fresh local verification at `ef9a288`: API 167/167, Web 13/13, typecheck, build and `git diff --check` succeeded. Local-only evidence.
+- 2026-10-09 — latest release rechecked as `7694630996987743435`, still commit `1a2910bb6d678c3fe0b3cbb568d3ab6c9ecef7c8`; this is the same scaffold shell, not the RQ-Sys implementation.
+- 2026-10-09 — explicit dev environment schema probes: 13 tables, all estimated row count zero; `requirements` structure/indexes are readable; changelog reports CREATE_TABLE followed by PUBLISH; quota API returns successfully. `env-list` has no entries; automation list has none. No write-side application flow was run.
+- 2026-10-09 — using local Spark credentials (`env -u LARKSUITE_CLI_APP_ID -u LARKSUITE_CLI_USER_ACCESS_TOKEN -u LARKSUITE_CLI_BRAND`): app list/get and release queries succeed; collaborator member/settings calls return feature_not_available (3340005); online log/trace/metrics/analytics API calls succeed, but requests/latency and PV/UV series are empty/null while CPU/memory samples exist. This proves query access only, not retention or complete analytics coverage.
+- 2026-10-09 — fresh local verification at `ef9a288`: API 170/170, Web 13/13, typecheck, build and `git diff --check` succeeded. Local-only evidence.
 
 ## Acceptance criteria
 - 每个场景保留脱敏的目标环境证据；清楚标识真实验证、模拟验证、未验证。
