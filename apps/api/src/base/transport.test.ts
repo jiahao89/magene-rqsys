@@ -1,0 +1,96 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { FeishuBitableClient } from "./transport.js";
+
+const CONFIG = {
+  appId: "cli_x", appSecret: "s3cret", appToken: "app-token", tableId: "tbl-1",
+  keyFields: { projectId: "TB项目ID", requirementId: "TB需求ID" },
+  baseUrl: "https://open.feishu.test",
+};
+
+function fakeFetch(handler: (url: string, init?: RequestInit) => { status?: number; body: unknown }, calls: string[]) {
+  return (async (url: string | URL, init?: RequestInit) => {
+    const path = String(url).replace(/^https:\/\/open\.feishu\.test/, "");
+    calls.push(`${(init?.method ?? "GET")} ${path}`);
+    const result = handler(path, init);
+    return new Response(JSON.stringify(result.body), { status: result.status ?? 200, headers: { "content-type": "application/json" } });
+  }) as unknown as typeof globalThis.fetch;
+}
+
+test("tenant token 请求并缓存至过期前", async () => {
+  const calls: string[] = [];
+  let tokenCalls = 0;
+  const client = new FeishuBitableClient({
+    ...CONFIG,
+    fetch: (async (url: string | URL, init?: RequestInit) => {
+      const path = String(url).replace(/^https:\/\/open\.feishu\.test/, "");
+      calls.push(`${(init?.method ?? "GET")} ${path}`);
+      if (path.includes("/tenant_access_token")) {
+        tokenCalls++;
+        return new Response(JSON.stringify({ code: 0, tenant_access_token: "t-1", expire: 3600 }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ code: 0, data: { items: [] } }), { status: 200 });
+    }) as unknown as typeof globalThis.fetch,
+  });
+
+  await client.findByRequirementKey({ projectId: "p1", requirementId: "r1" });
+  await client.findByRequirementKey({ projectId: "p1", requirementId: "r1" });
+  // token 只请求一次（缓存生效）
+  assert.equal(tokenCalls, 1);
+  const tokenRequests = calls.filter((c) => c.includes("/tenant_access_token"));
+  assert.equal(tokenRequests.length, 1);
+});
+
+test("findByRequirementKey 用复合键字段过滤并返回首个命中", async () => {
+  const calls: string[] = [];
+  const client = new FeishuBitableClient({
+    ...CONFIG,
+    fetch: fakeFetch((path, init) => {
+      if (path.includes("/tenant_access_token")) return { body: { code: 0, tenant_access_token: "t-1", expire: 3600 } };
+      if (path.includes("/records/search")) {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        assert.deepEqual(body.conditions, [
+          { field_name: "TB项目ID", op: "is", value: ["p1"] },
+          { field_name: "TB需求ID", op: "is", value: ["r1"] },
+        ]);
+        return { body: { code: 0, data: { items: [{ record_id: "rec-1", fields: { 标题: "A" } }] } } };
+      }
+      return { body: { code: 0 } };
+    }, calls),
+  });
+  const found = await client.findByRequirementKey({ projectId: "p1", requirementId: "r1" });
+  assert.equal(found?.recordId, "rec-1");
+  assert.ok(calls.some((c) => c.startsWith("POST /open-apis/bitable/v1/apps/app-token/tables/tbl-1/records/search")));
+});
+
+test("create/update/readPmFields 走 bitable records API", async () => {
+  const calls: string[] = [];
+  const client = new FeishuBitableClient({
+    ...CONFIG,
+    fetch: fakeFetch((path) => {
+      if (path.includes("/tenant_access_token")) return { body: { code: 0, tenant_access_token: "t-1", expire: 3600 } };
+      if (path.endsWith("/records") && !path.includes("/")) return { body: { code: 0 } };
+      if (path.includes("/records/rec-1")) return { body: { code: 0, data: { record: { record_id: "rec-1", fields: { PM状态: "待处理" } } } } };
+      return { body: { code: 0, data: { record: { record_id: "rec-2", fields: {} } } } };
+    }, calls),
+  });
+
+  const created = await client.create({ 标题: "A" });
+  assert.equal(created.recordId, "rec-2");
+  const updated = await client.update("rec-1", { 标题: "B" });
+  assert.equal(updated.recordId, "rec-1");
+  const pm = await client.readPmFields("rec-1");
+  assert.deepEqual(pm, { PM状态: "待处理" });
+  assert.ok(calls.some((c) => c.startsWith("PUT /open-apis/bitable/v1/apps/app-token/tables/tbl-1/records/rec-1")));
+});
+
+test("Feishu 业务错误（code != 0）抛错且不泄露 appSecret", async () => {
+  const client = new FeishuBitableClient({
+    ...CONFIG,
+    fetch: fakeFetch((path) => {
+      if (path.includes("/tenant_access_token")) return { body: { code: 0, tenant_access_token: "t-1", expire: 3600 } };
+      return { body: { code: 1254043, msg: "record not found" } };
+    }, []),
+  });
+  await assert.rejects(() => client.findByRequirementKey({ projectId: "p", requirementId: "r" }), /code 1254043/);
+});

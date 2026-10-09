@@ -12,6 +12,9 @@ import { runAnalysis } from "./analysis/service.js";
 import { AnalysisRepositoryAdapter } from "./analysis/repository-adapter.js";
 import { buildPriorityRule } from "./analysis/priority-rule.js";
 import { createDueSyncJobs } from "./scheduler/due-jobs.js";
+import { FeishuBasePushAdapter } from "./base/client.js";
+import { FeishuBitableClient } from "./base/transport.js";
+import { createBasePushService } from "./base/push-service.js";
 import type { SourceProjectConfig } from "./domain/workflow.js";
 
 const port = Number(process.env.PORT ?? 8787);
@@ -78,9 +81,64 @@ const analysisJobHandler: ((job: { payload: Record<string, unknown> }) => Promis
   await repositories.requirements.updateAnalysisState(requirement.id, run.status === "analyzed" ? "analyzed" : "failed_retryable");
 } : undefined;
 
+// ---- Feishu Base 推送装配：env 凭证齐全时构建真实 transport（工单 00/W7 目标环境验证）----
+const DEFAULT_BASE_FIELDS = {
+  projectId: "TB项目ID", requirementId: "TB需求ID", owner: "执行人",
+  source: { title: "标题", description: "需求说明", scope: "范围说明", acceptanceCriteria: "验收标准", proposerName: "提出人", statusId: "TB状态", sourceUrl: "TB链接" } as Record<string, string>,
+  ai: { module: "AI模块建议", priority: "AI优先级建议", analysisVersion: "AI分析版本" } as Record<string, string>,
+  pm: ["PM状态", "PM确认模块", "PM确认优先级", "处理人", "处理时间", "结构化备注"] as string[],
+};
+function parseBaseFields(raw: string | undefined): typeof DEFAULT_BASE_FIELDS {
+  if (!raw) return DEFAULT_BASE_FIELDS;
+  try {
+    const parsed = JSON.parse(raw) as Partial<typeof DEFAULT_BASE_FIELDS>;
+    return {
+      projectId: parsed.projectId ?? DEFAULT_BASE_FIELDS.projectId,
+      requirementId: parsed.requirementId ?? DEFAULT_BASE_FIELDS.requirementId,
+      owner: parsed.owner ?? DEFAULT_BASE_FIELDS.owner,
+      source: { ...DEFAULT_BASE_FIELDS.source, ...(parsed.source ?? {}) },
+      ai: { ...DEFAULT_BASE_FIELDS.ai, ...(parsed.ai ?? {}) },
+      pm: Array.isArray(parsed.pm) ? parsed.pm : DEFAULT_BASE_FIELDS.pm,
+    };
+  } catch {
+    return DEFAULT_BASE_FIELDS;
+  }
+}
+const baseFields = parseBaseFields(process.env.BASE_FIELDS_JSON);
+const baseClient = process.env.FEISHU_APP_ID && process.env.FEISHU_APP_SECRET && process.env.BASE_APP_TOKEN && process.env.BASE_TABLE_ID
+  ? new FeishuBitableClient({
+      appId: process.env.FEISHU_APP_ID, appSecret: process.env.FEISHU_APP_SECRET,
+      appToken: process.env.BASE_APP_TOKEN, tableId: process.env.BASE_TABLE_ID,
+      keyFields: { projectId: baseFields.projectId, requirementId: baseFields.requirementId },
+    })
+  : undefined;
+const baseAdapter = baseClient && repositories
+  ? new FeishuBasePushAdapter(baseClient, baseFields, {
+      async savePmSnapshot(input) { await repositories.pmSnapshots.append({ ...input, capturedAt: new Date().toISOString() }); },
+    })
+  : undefined;
+const baseProjectId = process.env.BASE_PROJECT_ID ?? null;
+
+const basePushJobHandler: ((job: { payload: Record<string, unknown> }) => Promise<void>) | undefined = repositories && baseAdapter && baseProjectId ? async (job) => {
+  const requirementId = job.payload.requirementId;
+  if (typeof requirementId !== "string") throw new Error("Invalid base_push job payload");
+  const requirement = await repositories.requirements.get(requirementId);
+  if (!requirement) throw new Error("Base push requirement was not found");
+  const service = createBasePushService({
+    requirements: repositories.requirements, people: repositories.people, basePushes: repositories.basePushes,
+    audit: repositories.audit, base: baseAdapter, baseProjectId, baseFields, actorId: null,
+  });
+  // 幂等键与 owner handler 的入队键一致：base-push:{reqId}:v{version}
+  const outcome = await service.pushRequirement(requirementId, `base-push:${requirementId}:v${requirement.sourceVersion}`);
+  if (outcome.kind !== "pushed") throw new Error("Base push failed; retry is available.");
+} : undefined;
+
 const worker = repositories ? new PipelineJobWorker({
   jobs: repositories.jobs, ...(syncJobRunner ? { sync: syncJobRunner } : {}),
-  handlers: { ...(analysisJobHandler ? { analysis: analysisJobHandler } : {}) },
+  handlers: {
+    ...(analysisJobHandler ? { analysis: analysisJobHandler } : {}),
+    ...(basePushJobHandler ? { base_push: basePushJobHandler } : {}),
+  },
   workerId: process.env.WORKER_ID ?? "local-worker", leaseMs: 30_000,
 }) : undefined;
 
