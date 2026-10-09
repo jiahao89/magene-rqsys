@@ -1,4 +1,4 @@
-# [poc-verified-partial: 2026-10-08] 03 — 确认 AI 服务与数据策略并验证结构化输出
+# [done: 2026-10-09] 03 — 确认 AI 服务与数据策略并验证结构化输出
 
 ## 目标
 在获批模型服务和数据策略后，验证 Spec 02 的最小分析契约可以稳定实现。
@@ -23,4 +23,13 @@ D-06 已于 2026-10-08 确认（详见 OPEN-DECISIONS.md）：
 - 数据策略：商业 API 标准口径——国内区域、服务商默认留存（KV cache 用户隔离、自动清空）、业务审计在应用侧 PostgreSQL；依据个人信息收集清单（修订 2025-12-22），模型训练用途仅限 C 端智能对话，开放平台 API 输入未列入。
 - 凭证：服务端环境变量 `AI_API_KEY`，永不打印/回显，不进入浏览器构建产物。
 
-本票拆为 provider adapter（决策已解锁）和分析实现（依赖 05）。POC 部分验证完成（2026-10-08，证据：`specs/rq-sys-mvp/AI-ANALYSIS-POC.md`）：离线校验器 5/5 通过（空内容/越界枚举/无规则优先级/推断未标记/错误分类）；在线实测通过无效 key 401 → auth_error（key 不泄露）、网络可达（401 延迟 71–312ms）、客户端超时分类；PII 掩码断言通过（markers 列表替换姓名 + 正则兜底手机号/邮箱，出站载荷零 marker 原文）。**待办：用户晚点提供有效测试 key 后补跑 T1/T2/T3（正常/低证据/freeform 无效结构）**；妙搭运行时对 DeepSeek 端点的可达性留待目标环境验证（工单 00）。
+本票拆为 provider adapter（决策已解锁）和分析实现（依赖 05）。POC 部分验证完成（2026-10-08，证据：`specs/rq-sys-mvp/AI-ANALYSIS-POC.md`）：离线校验器 5/5 通过（空内容/越界枚举/无规则优先级/推断未标记/错误分类）；在线实测通过无效 key 401 → auth_error（key 不泄露）、网络可达（401 延迟 71–312ms）、客户端超时分类；PII 掩码断言通过（markers 列表替换姓名 + 正则兜底手机号/邮箱，出站载荷零 marker 原文）。妙搭运行时对 DeepSeek 端点的可达性留待目标环境验证（工单 00）。
+
+## 有效 key 补跑与生产适配器验证（2026-10-09）
+- 用户提供有效测试 key（仅存 `.env`，gitignored，不提交不回显）。**T1/T2/T3 全部 PASS**：T1 正常充分证据 → 合法结构化输出（module 命中词典、confidence 高、U/M/S/C 证据/缺失标注规范、priority null）；T2 低证据 → 待分类/低置信 + 缺失信息呈现、无编造事实；T3 freeform 非 JSON → 校验器拒绝为 analysis_failure。离线 O1–O5 复跑仍 PASS；T4 超时/T5 无效 key 保持 PASS。POC 10/10 通过。
+- **生产适配器（apps/api）冒烟通过**并修复三个集成缺陷：
+  1. `createDeepSeekProvider` 工厂读取空环境对象 `{}`，永远拿不到 env 凭证 → 修复为 `getAiProviderConfig()`（默认 process.env）。
+  2. 生产提示词缺少精确 JSON 样例 → 模型输出结构错位（evidence 给字符串、missing_evidence 给数组）→ 修复为与 AnalysisSchema 一致的完整样例 + 约束说明（对齐 POC 提示词风格）。
+  3. 校验失败原因被吞掉 → 修复为携带可诊断 detail（zod issues/原文断言失败原因）入 safe error。
+- 环境注意：用户 shell 环境导出了旧无效 `AI_API_KEY`（尾号 df18），Node `--env-file` 不覆盖已存在的环境变量，会遮蔽 `.env` 中的新 key——本地运行 AI 相关验证需 `env -u AI_API_KEY`。建议清理 shell profile 中的旧 key。
+- 边界：以上为本地脚本与生产适配器（注入 fetch）验证；妙搭运行时外呼仍待工单 00。

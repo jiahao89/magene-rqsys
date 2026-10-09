@@ -1,21 +1,37 @@
 {
   "id": "T3_invalid_structure_freeform",
   "mode": "online",
-  "http": "error",
-  "latency_ms": 71,
-  "failure": {
-    "kind": "auth_error",
-    "summary": "HTTP 401 auth_error"
+  "http": "ok",
+  "latency_ms": 9132,
+  "finish_reason": "stop",
+  "usage": {
+    "prompt_tokens": 130,
+    "completion_tokens": 1459,
+    "total_tokens": 1589,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 926
+    },
+    "prompt_cache_hit_tokens": 0,
+    "prompt_cache_miss_tokens": 130
   },
-  "status": 401,
-  "detailSnippet": "{\"error\":{\"message\":\"Authentication Fails, Your api key: ****df18 is invalid (request_id: ec851cfb-e82b-4c02-a97f-2682b6e04ffd)\",\"type\":\"authentication_error\",\"param\":null,\"code\":\"invalid_request_error\"}}",
+  "raw_response_saved": true,
+  "validation": {
+    "ok": false,
+    "errors": [
+      "invalid_json: Unexpected token '我', \"我的初步看法是：这是\"... is not valid JSON"
+    ]
+  },
   "provenance": {
     "model": "deepseek-flash",
     "prompt_version": "poc-prompt-freeform",
     "dictionary_version": "test-dict-v1",
     "rule_version": null,
-    "generated_at": "2026-10-08T09:01:04.323Z",
+    "generated_at": "2026-10-09T03:08:29.974Z",
     "attempt": 1,
     "retry_of": null
-  }
+  },
+  "expected": "validator rejects non-JSON free text as analysis failure, not success"
 }

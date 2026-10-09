@@ -68,7 +68,25 @@ function safeHttpError(status: number): AiProviderError {
 function prompt(request: SafeAnalysisRequest): string {
   return [
     "Analyze the requirement using only the minimized source text below. Do not infer unsupported facts.",
-    "Return one JSON object with: module, confidence (高/中/低), confidence_reason, evidence, recommendations (user/market/business/technology each with recommendation/rationale/evidence and missing_evidence where applicable), facts (text/evidence), inferences (text/ai_inference:true), missing_inputs, blind_spots, priority (null when no published rule).",
+    "Return ONE JSON object exactly matching this shape:",
+    JSON.stringify({
+      module: "模块名（从受控词典选择）",
+      confidence: "高|中|低",
+      confidence_reason: "一句话总体理由",
+      evidence: ["引用原文片段"],
+      recommendations: {
+        user: { recommendation: "建议", rationale: "价值判断", evidence: ["原文片段"], missing_evidence: false },
+        market: { recommendation: "建议", rationale: "成本判断", evidence: [], missing_evidence: true },
+        business: { recommendation: "建议", rationale: "风险判断", evidence: ["原文片段"], missing_evidence: false },
+        technology: { recommendation: "建议", rationale: "依赖判断", evidence: [], missing_evidence: true },
+      },
+      facts: [{ text: "原文中的事实", evidence: "对应原文片段" }],
+      inferences: [{ text: "推断内容", ai_inference: true }],
+      missing_inputs: ["缺失信息"],
+      blind_spots: ["分析盲点"],
+      priority: null,
+    }, null, 2),
+    "Constraints: evidence arrays contain exact quotes copied verbatim from the source text; missing_evidence is a boolean and true requires an empty evidence array; every inference must have ai_inference: true; facts only record statements present in the source text; priority must be null when no published rule is provided, otherwise P0-P3.",
     `Controlled modules: ${JSON.stringify(request.dictionary.modules)}; fallback modules: 其他, 待分类.`,
     `Published priority rule: ${JSON.stringify(request.priorityRule)}.`,
     `Title: ${request.title}`,
@@ -78,7 +96,7 @@ function prompt(request: SafeAnalysisRequest): string {
 }
 
 export function createDeepSeekProvider(options: Partial<AiProviderConfig> & { fetch?: FetchLike } = {}): AiProvider {
-  const config = { ...getAiProviderConfig({}), ...options };
+  const config = { ...getAiProviderConfig(), ...options };
   const fetcher = options.fetch ?? globalThis.fetch;
   return {
     name: "deepseek",
@@ -128,8 +146,12 @@ export function createDeepSeekProvider(options: Partial<AiProviderConfig> & { fe
           priorityRule: input.priorityRule,
           sourceText: [request.title, request.description, request.context].join("\n"),
         });
-      } catch {
-        throw new AiProviderError("analysis_failure", "AI provider returned invalid or unsupported analysis output.");
+      } catch (error) {
+        // 校验失败原因入 safe error（输入已 PII 掩码，输出不含原始个人信息）
+        const detail = error instanceof z.ZodError
+          ? error.issues.slice(0, 5).map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ")
+          : error instanceof Error ? error.message : "";
+        throw new AiProviderError("analysis_failure", `AI provider returned invalid or unsupported analysis output${detail ? ` (${detail.slice(0, 300)})` : ""}.`);
       }
     },
   };

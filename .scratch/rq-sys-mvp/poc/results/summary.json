@@ -37,70 +37,114 @@
     {
       "id": "T1_normal_sufficient_evidence",
       "mode": "online",
-      "http": "error",
-      "latency_ms": 219,
-      "failure": {
-        "kind": "auth_error",
-        "summary": "HTTP 401 auth_error"
+      "http": "ok",
+      "latency_ms": 5968,
+      "finish_reason": "stop",
+      "usage": {
+        "prompt_tokens": 590,
+        "completion_tokens": 1133,
+        "total_tokens": 1723,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 409
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 590
       },
-      "status": 401,
-      "detailSnippet": "{\"error\":{\"message\":\"Authentication Fails, Your api key: ****df18 is invalid (request_id: 9711d9e2-ea84-4c29-8d02-0718b57f5e6e)\",\"type\":\"authentication_error\",\"param\":null,\"code\":\"invalid_request_error\"}}",
+      "raw_response_saved": true,
+      "validation": {
+        "ok": true,
+        "errors": []
+      },
       "provenance": {
         "model": "deepseek-flash",
         "prompt_version": "poc-prompt-v1",
         "dictionary_version": "test-dict-v1",
         "rule_version": null,
-        "generated_at": "2026-10-08T09:01:04.141Z",
+        "generated_at": "2026-10-09T03:08:16.830Z",
         "attempt": 1,
         "retry_of": null
       },
-      "ok": false,
+      "expected": "valid result with module in dictionary, one confidence, umsc with evidence or missing markers",
+      "ok": true,
       "note": "valid result with module in dictionary, one confidence, umsc with evidence or missing markers"
     },
     {
       "id": "T2_low_evidence",
       "mode": "online",
-      "http": "error",
-      "latency_ms": 104,
-      "failure": {
-        "kind": "auth_error",
-        "summary": "HTTP 401 auth_error"
+      "http": "ok",
+      "latency_ms": 4005,
+      "finish_reason": "stop",
+      "usage": {
+        "prompt_tokens": 524,
+        "completion_tokens": 835,
+        "total_tokens": 1359,
+        "prompt_tokens_details": {
+          "cached_tokens": 256
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 293
+        },
+        "prompt_cache_hit_tokens": 256,
+        "prompt_cache_miss_tokens": 268
       },
-      "status": 401,
-      "detailSnippet": "{\"error\":{\"message\":\"Authentication Fails, Your api key: ****df18 is invalid (request_id: f9a6ec78-80ff-4727-b2a5-88af9c8dbb45)\",\"type\":\"authentication_error\",\"param\":null,\"code\":\"invalid_request_error\"}}",
+      "raw_response_saved": true,
+      "validation": {
+        "ok": true,
+        "errors": []
+      },
       "provenance": {
         "model": "deepseek-flash",
         "prompt_version": "poc-prompt-v1",
         "dictionary_version": "test-dict-v1",
         "rule_version": null,
-        "generated_at": "2026-10-08T09:01:04.252Z",
+        "generated_at": "2026-10-09T03:08:20.840Z",
         "attempt": 1,
         "retry_of": null
       },
-      "ok": false,
+      "expected": "待分类 or low confidence; missing_inputs/blind spots present; no fabricated facts",
+      "ok": true,
       "note": "待分类 or low confidence; missing_inputs/blind spots present; no fabricated facts"
     },
     {
       "id": "T3_invalid_structure_freeform",
       "mode": "online",
-      "http": "error",
-      "latency_ms": 71,
-      "failure": {
-        "kind": "auth_error",
-        "summary": "HTTP 401 auth_error"
+      "http": "ok",
+      "latency_ms": 9132,
+      "finish_reason": "stop",
+      "usage": {
+        "prompt_tokens": 130,
+        "completion_tokens": 1459,
+        "total_tokens": 1589,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 926
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 130
       },
-      "status": 401,
-      "detailSnippet": "{\"error\":{\"message\":\"Authentication Fails, Your api key: ****df18 is invalid (request_id: ec851cfb-e82b-4c02-a97f-2682b6e04ffd)\",\"type\":\"authentication_error\",\"param\":null,\"code\":\"invalid_request_error\"}}",
+      "raw_response_saved": true,
+      "validation": {
+        "ok": false,
+        "errors": [
+          "invalid_json: Unexpected token '我', \"我的初步看法是：这是\"... is not valid JSON"
+        ]
+      },
       "provenance": {
         "model": "deepseek-flash",
         "prompt_version": "poc-prompt-freeform",
         "dictionary_version": "test-dict-v1",
         "rule_version": null,
-        "generated_at": "2026-10-08T09:01:04.323Z",
+        "generated_at": "2026-10-09T03:08:29.974Z",
         "attempt": 1,
         "retry_of": null
       },
-      "ok": false,
+      "expected": "validator rejects non-JSON free text as analysis failure, not success",
+      "ok": true,
       "note": "validator rejects non-JSON free text as analysis failure, not success"
     },
     {

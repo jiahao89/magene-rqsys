@@ -1,6 +1,6 @@
 # AI 分析 POC 实测记录（Ticket 03）
 
-> 实测日期：2026-10-08。全部操作通过零依赖 Node ESM 脚本在本机完成；模型端点为 DeepSeek 开放平台。
+> 实测日期：2026-10-08（离线 + 无效 key 在线）；2026-10-09 有效 key 补跑 T1–T3 全部通过。全部操作通过零依赖 Node ESM 脚本在本机完成；模型端点为 DeepSeek 开放平台。
 > 对应工单：`.scratch/rq-sys-mvp/issues/03-ai-provider-poc.md`；决策登记：`specs/rq-sys-mvp/OPEN-DECISIONS.md` D-06。
 
 ## 前置决策（D-06，2026-10-08 已确认）
@@ -56,9 +56,18 @@ Spec 02 禁止发送姓名、用户 ID、联系方式。POC 在 `buildOutboundPa
 | 无效 key 调用（T5） | ✅ HTTP 401 → `auth_error` 分类正确；provider 错误消息中 key 被掩码为 `****df18`，本地 `sanitize()` 确保完整 key 不出现在任何落盘输出 |
 | 网络可达性 | ✅ 本机到 `api.deepseek.com` 可达，401 延迟 71–312ms（401 属快速业务拒绝，证明 TLS/网络链路通畅） |
 | 客户端超时（T4） | ✅ 无参 `AbortController.abort()` → fetch reject `AbortError` → 分类为 `timeout` |
-| 正常/低证据/freeform（T1–T3） | ⏸ 现有 key 无效（401），等待有效测试 key 补跑 |
+| 正常/低证据/freeform（T1–T3） | ✅ 2026-10-09 有效 key 补跑全部通过（T1 合法结构化输出、T2 待分类/低置信无编造、T3 非 JSON 拒绝） |
 
 超时实现注记：`controller.abort(reason)` 传入自定义 reason 时 fetch 会 reject 该 reason（name='Error'），分类器无法识别；必须用无参 `abort()` 才能拿到 `AbortError`。生产 adapter 直接按无参 abort 实现。
+
+### 2.1 有效 key 补跑（2026-10-09）
+
+- 有效测试 key（仅存 `.env`，gitignored）。POC 10/10 通过：离线 O1–O5 复跑 PASS；在线 T1（正常充分证据 → module「报表分析」命中词典、confidence「高」、U/M/S/C 证据/缺失标注规范、priority null）、T2（低证据 → 待分类/低置信、missing_inputs 呈现、无编造事实）、T3（freeform 非 JSON → 校验器拒绝为 analysis_failure）全部 PASS；T4/T5 保持 PASS。
+- **生产适配器（apps/api）冒烟通过**（`apps/api/scripts/provider-smoke.mjs`，注入 fetch 路径）：module/confidence/priority(null)/证据/推断标注/盲点全部符合 AnalysisSchema。过程中修复三个集成缺陷：
+  1. `createDeepSeekProvider` 工厂读取空环境对象，永远拿不到 env 凭证 → 修复为默认读 `process.env`。
+  2. 生产提示词缺少精确 JSON 样例 → 模型输出结构错位 → 修复为与 AnalysisSchema 一致的完整样例 + 约束说明。
+  3. 校验失败原因被吞掉 → 修复为携带可诊断 detail 入 safe error。
+- 环境注意：用户 shell profile 导出的旧无效 `AI_API_KEY`（尾号 df18）会遮蔽 `.env` 中的新 key（Node `--env-file` 不覆盖已存在环境变量）；本地运行 AI 验证需 `env -u AI_API_KEY`。
 
 ### 3. 每次分析的版本可记录（provenance）
 
@@ -78,7 +87,6 @@ Spec 02 禁止发送姓名、用户 ID、联系方式。POC 在 `buildOutboundPa
 
 ## 尚未验证
 
-- **T1/T2/T3（正常充足证据 / 低证据 / freeform 无效结构）**：等待有效 DeepSeek 测试 key；这是工单 03 验收「验证结构化输出」的剩余部分。
 - 妙搭运行时对 DeepSeek 端点的可达性与出网策略（工单 00 未解除）。
 - 真实 429 限流响应与退避行为。
 - JSON Output 空 content 的真实复现（处理逻辑已由 O1 离线覆盖）。

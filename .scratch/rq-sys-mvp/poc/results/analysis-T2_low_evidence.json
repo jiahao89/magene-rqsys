@@ -1,0 +1,71 @@
+{
+  "provenance": {
+    "model": "deepseek-flash",
+    "prompt_version": "poc-prompt-v1",
+    "dictionary_version": "test-dict-v1",
+    "rule_version": null,
+    "generated_at": "2026-10-09T03:08:20.840Z",
+    "attempt": 1,
+    "retry_of": null
+  },
+  "result": {
+    "module": "待分类",
+    "confidence": "低",
+    "overall_reason": "需求仅为一句笼统的“优化一下系统”，未说明对象模块、性能指标或期望效果，无法可靠归入任何可用模块。",
+    "evidence": [
+      "优化一下系统",
+      "感觉现在的系统有点慢，希望改进。"
+    ],
+    "umsc": {
+      "U": {
+        "rationale": "用户表达了“系统慢”的体感与改进期望，说明存在性能优化诉求，但未说明影响范围与业务收益，价值无法量化。",
+        "evidence": [
+          "感觉现在的系统有点慢，希望改进。"
+        ],
+        "missing_evidence": false
+      },
+      "M": {
+        "rationale": "需求未指明优化对象、技术方案与范围，无法估算开发与测试成本。",
+        "evidence": [],
+        "missing_evidence": true
+      },
+      "S": {
+        "rationale": "未说明涉及哪些功能或数据，无法判断改动可能带来的回归风险与影响面。",
+        "evidence": [],
+        "missing_evidence": true
+      },
+      "C": {
+        "rationale": "未说明系统架构、依赖组件、上下游接口或环境限制，无法判断外部依赖。",
+        "evidence": [],
+        "missing_evidence": true
+      }
+    },
+    "facts": [
+      "需求标题为“优化一下系统”。",
+      "需求描述为“感觉现在的系统有点慢，希望改进。”"
+    ],
+    "inference": [
+      {
+        "claim": "该需求可能指向系统性能优化（如响应速度、加载时间等），但原文未明确。",
+        "ai_inference": true
+      },
+      {
+        "claim": "诉求来源为个人主观感受，缺乏可度量的性能数据支撑。",
+        "ai_inference": true
+      },
+      {
+        "claim": "在补齐优化目标与指标前，该需求不具备可排期、可验收的条件。",
+        "ai_inference": true
+      }
+    ],
+    "missing_inputs": [
+      "具体要优化的模块或功能范围",
+      "性能问题的具体表现（如页面加载、接口响应、报表生成等）",
+      "可量化的优化目标与验收指标",
+      "问题出现的场景、频率与影响用户范围",
+      "现有系统架构与可用的监控/性能数据",
+      "期望完成时间与相关干系人"
+    ],
+    "priority": null
+  }
+}
