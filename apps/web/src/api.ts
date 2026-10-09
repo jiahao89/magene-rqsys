@@ -252,26 +252,24 @@ export interface BatchSummary {
   startedAt?: string;
 }
 
-export async function listRequirements(params: { q?: string; ownerState?: string; analysisState?: string; limit?: number; cursor?: string; fetcher?: typeof fetch } = {}): Promise<{ items: RequirementSummary[]; nextCursor: string | null }> {
-  const { fetcher = fetch, ...query } = params;
+// 列表查询参数统一拼装（剔除空值）
+function buildSearch(query: Record<string, string | number | undefined>): string {
   const search = new URLSearchParams();
-  if (query.q) search.set("q", query.q);
-  if (query.ownerState) search.set("ownerState", query.ownerState);
-  if (query.analysisState) search.set("analysisState", query.analysisState);
-  if (query.limit !== undefined) search.set("limit", String(query.limit));
-  if (query.cursor) search.set("cursor", query.cursor);
-  const suffix = search.toString() ? `?${search.toString()}` : "";
-  return requestJson<{ items: RequirementSummary[]; nextCursor: string | null }>(`/api/requirements${suffix}`, fetcher);
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== "") search.set(key, String(value));
+  }
+  const suffix = search.toString();
+  return suffix ? `?${suffix}` : "";
+}
+
+export async function listRequirements(params: { q?: string; ownerState?: string; analysisState?: string; limit?: number; cursor?: string; fetcher?: typeof fetch } = {}): Promise<{ items: RequirementSummary[]; nextCursor: string | null }> {
+  const { fetcher = fetch, q, ownerState, analysisState, limit, cursor } = params;
+  return requestJson<{ items: RequirementSummary[]; nextCursor: string | null }>(`/api/requirements${buildSearch({ q, ownerState, analysisState, limit, cursor })}`, fetcher);
 }
 
 export async function listBatches(params: { status?: string; limit?: number; cursor?: string; fetcher?: typeof fetch } = {}): Promise<{ items: BatchSummary[]; nextCursor: string | null }> {
-  const { fetcher = fetch, ...query } = params;
-  const search = new URLSearchParams();
-  if (query.status) search.set("status", query.status);
-  if (query.limit !== undefined) search.set("limit", String(query.limit));
-  if (query.cursor) search.set("cursor", query.cursor);
-  const suffix = search.toString() ? `?${search.toString()}` : "";
-  return requestJson<{ items: BatchSummary[]; nextCursor: string | null }>(`/api/batches${suffix}`, fetcher);
+  const { fetcher = fetch, status, limit, cursor } = params;
+  return requestJson<{ items: BatchSummary[]; nextCursor: string | null }>(`/api/batches${buildSearch({ status, limit, cursor })}`, fetcher);
 }
 
 export interface PersonMapping {
@@ -291,12 +289,6 @@ export async function listMappings(fetcher: typeof fetch = fetch): Promise<Perso
 }
 
 export function listAudit(params: { entityId?: string; since?: string; until?: string; limit?: number; fetcher?: typeof fetch } = {}): Promise<AuditEvent[]> {
-  const { fetcher = fetch, ...query } = params;
-  const search = new URLSearchParams();
-  if (query.entityId) search.set("entityId", query.entityId);
-  if (query.since) search.set("since", query.since);
-  if (query.until) search.set("until", query.until);
-  if (query.limit !== undefined) search.set("limit", String(query.limit));
-  const suffix = search.toString() ? `?${search.toString()}` : "";
-  return requestJson<{ items: AuditEvent[] }>(`/api/audit${suffix}`, fetcher).then((result) => result.items);
+  const { fetcher = fetch, entityId, since, until, limit } = params;
+  return requestJson<{ items: AuditEvent[] }>(`/api/audit${buildSearch({ entityId, since, until, limit })}`, fetcher).then((result) => result.items);
 }

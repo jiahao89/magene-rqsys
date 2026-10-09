@@ -34,7 +34,7 @@ test("mappings list requires authentication", async () => {
   const r = await handleApiRequest(new Request("http://localhost/api/mappings"), unauthenticated);
   assert.equal(r.status, 401);
 });
-test("mappings list is read-only and returns 501-free shape when no source exists", async () => {
+test("mappings list returns an empty page when no source is configured", async () => {
   const fixture = makeFixture();
   (fixture.repositories as ApiRepositories).sources = { list: async () => [], get: async () => null, update: async () => null, create: async () => { throw new Error("unused"); } };
   (fixture.repositories as ApiRepositories).people = { upsertManual: async () => { throw new Error("unused"); }, resolveActive: async () => null, listActive: async () => [] };

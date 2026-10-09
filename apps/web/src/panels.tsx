@@ -198,7 +198,7 @@ export function RequirementsPanel({ onRefresh }: { onRefresh: () => void }) {
     try { setSelected(await getRequirement(id)); }
     catch (cause) { setDetailError(errorText(cause)); }
   };
-  const act = async (action: () => Promise<string>, detailId: string) => {
+  const runAction = async (action: () => Promise<string>, detailId: string) => {
     setBusy(true); setNotice(null);
     try { setNotice(await action()); onRefresh(); await open(detailId); }
     catch (cause) { setNotice(errorText(cause)); }
@@ -215,7 +215,7 @@ export function RequirementsPanel({ onRefresh }: { onRefresh: () => void }) {
       <button className="button button-secondary button-small" onClick={() => { onRefresh(); void load({ q: query.trim(), ownerState, analysisState }, null); }}><RefreshCw size={14} />刷新</button>
     </div></div>
     <StateBanner loadError={loadError ?? detailError} notice={notice} onCloseNotice={() => setNotice(null)} />
-    {selected && <RequirementDetailCard selected={selected} structured={structured} busy={busy} feishuUserId={feishuUserId} setFeishuUserId={setFeishuUserId} onClose={() => setSelected(null)} onAct={act} />}
+    {selected && <RequirementDetailCard selected={selected} structured={structured} busy={busy} feishuUserId={feishuUserId} setFeishuUserId={setFeishuUserId} onClose={() => setSelected(null)} onAct={runAction} />}
     <RequirementsTable rows={rows} loading={loadState === "loading"} onOpen={(row) => void open(row.id)} />
     {cursor && <div className="rules-form"><button className="button button-secondary button-small" onClick={() => void load({ q: query.trim(), ownerState, analysisState }, cursor)} disabled={loadState === "loading"}>加载更多</button></div>}
   </section>;
@@ -270,11 +270,17 @@ function stageLabel(state: string) {
   return <span className={`status-chip ${tone}`}><span />{map[state] ?? state}</span>;
 }
 
+// 审计结果列独立渲染（result 枚举 succeeded/failed/denied），不复用流水线阶段标签
+function auditResultLabel(result: AuditEvent["result"]) {
+  const map: Record<AuditEvent["result"], string> = { succeeded: "成功", failed: "失败", denied: "已拒绝" };
+  const tone = result === "failed" ? "status-danger" : result === "denied" ? "status-muted" : "status-live";
+  return <span className={`status-chip ${tone}`}><span />{map[result]}</span>;
+}
+
 // ---------- 工单 17：负责人映射（pending 服务端筛选 + 现有映射列表） ----------
 
 export function MappingsPanel({ onRefresh }: { onRefresh: () => void }) {
   const [pending, setPending] = useState<RequirementSummary[]>([]);
-  const [resolved, setResolved] = useState<RequirementSummary[]>([]);
   const [mappings, setMappings] = useState<PersonMapping[]>([]);
   const [feishuUserId, setFeishuUserId] = useState("");
   const [targetId, setTargetId] = useState<string | null>(null);
@@ -285,18 +291,20 @@ export function MappingsPanel({ onRefresh }: { onRefresh: () => void }) {
 
   const load = useCallback(async () => {
     setLoadState("loading"); setLoadError(null);
-    const [pendingPage, resolvedPage, mappingPage] = await Promise.allSettled([
+    const [pendingPage, mappingPage] = await Promise.allSettled([
       listRequirements({ ownerState: "pending_mapping", limit: 25 }),
-      listRequirements({ limit: 25 }),
       listMappings(),
     ]);
-    if (pendingPage.status === "fulfilled") setPending(pendingPage.value.items);
-    if (resolvedPage.status === "fulfilled") setResolved(resolvedPage.value.items.filter((row) => row.pipeline.owner !== "pending_mapping"));
-    if (mappingPage.status === "fulfilled") setMappings(mappingPage.value);
-    if (pendingPage.status === "rejected" && resolvedPage.status === "rejected" && mappingPage.status === "rejected") {
-      setLoadError(pendingPage.reason instanceof ApiError ? errorText(pendingPage.reason) : "无法加载映射数据。");
+    // 任一关键请求失败即进入错误态（自述的可恢复行为：不静默吞掉局部失败）
+    if (pendingPage.status === "rejected" || mappingPage.status === "rejected") {
+      const cause = pendingPage.status === "rejected" ? pendingPage.reason : mappingPage.status === "rejected" ? mappingPage.reason : null;
+      setLoadError(cause instanceof ApiError ? errorText(cause) : "无法加载映射数据。");
       setLoadState("error");
-    } else setLoadState("ready");
+      return;
+    }
+    setPending(pendingPage.value.items);
+    setMappings(mappingPage.value);
+    setLoadState("ready");
   }, []);
   useEffect(() => { void load(); }, [load]);
 
@@ -319,7 +327,6 @@ export function MappingsPanel({ onRefresh }: { onRefresh: () => void }) {
     <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
     {pending.length ? <div className="table-scroll"><table><thead><tr><th>需求</th><th>TB 负责人</th><th>操作</th></tr></thead><tbody>{pending.map((row) => <tr key={row.id}><td><div className="requirement-title"><span className="req-id">REQ-{row.sourceRequirementId}</span><strong>{row.title}</strong></div></td><td>待匹配</td><td>{targetId === row.id ? <div style={{ display: "flex", gap: 6 }}><input aria-label="飞书用户 Open ID" placeholder="Open ID" value={feishuUserId} onChange={(e) => setFeishuUserId(e.target.value)} /><button className="button button-primary button-small" onClick={() => void submit()} disabled={busy}>保存</button><button className="button button-secondary button-small" onClick={() => setTargetId(null)}>取消</button></div> : <button className="button button-secondary button-small" onClick={() => { setTargetId(row.id); setFeishuUserId(""); }}>选择飞书用户</button>}</td></tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadState === "loading" ? "正在载入待匹配需求…" : "没有待匹配的负责人"}</strong><span>{loadState === "loading" ? "正在从本地 API 读取。" : "TB 无负责人需求可直接推送；未匹配需求会出现在这里等待人工映射。"}</span></div>}
     {mappings.length > 0 && <div className="table-scroll"><table><thead><tr><th>TB 用户 / 姓名</th><th>飞书用户</th><th>匹配方式</th><th>更新时间</th></tr></thead><tbody>{mappings.map((m) => <tr key={m.id}><td>{m.teambitionDisplayName ?? m.teambitionUserId ?? "（仅姓名匹配占位）"}</td><td className="mono-cell">{m.feishuUserId}</td><td>{matchMethodLabel[m.matchMethod] ?? m.matchMethod}</td><td>{timeLabel(m.updatedAt)}</td></tr>)}</tbody></table></div>}
-    {resolved.length > 0 && <div className="table-scroll"><table><thead><tr><th>已处理需求</th><th>负责人状态</th></tr></thead><tbody>{resolved.map((row) => <tr key={row.id}><td>{row.title}</td><td>{stageLabel(row.pipeline.owner)}</td></tr>)}</tbody></table></div>}
   </section>;
 }
 
@@ -350,7 +357,7 @@ export function AuditPanel() {
       <button className="button button-secondary button-small" onClick={() => void load({ entityId: entityId.trim(), since: since ? new Date(since).toISOString() : "", until: until ? new Date(until).toISOString() : "" })}>筛选</button>
     </div></div>
     <StateBanner loadError={loadError} notice={null} onCloseNotice={() => undefined} />
-    {events.length ? <div className="table-scroll"><table><thead><tr><th>时间</th><th>操作者</th><th>动作</th><th>对象</th><th>结果</th><th>安全摘要</th></tr></thead><tbody>{events.map((event) => <tr key={event.id}><td>{timeLabel(event.occurredAt)}</td><td>{event.actorId ?? "系统"}</td><td className="mono-cell">{event.eventType}</td><td className="mono-cell">{event.entityType}:{event.entityId.slice(0, 8)}</td><td>{stageLabel(event.result === "succeeded" ? "synced" : event.result === "failed" ? "failed" : "pending_mapping")}</td><td>{Object.keys(event.safeDetails).length ? JSON.stringify(event.safeDetails) : "—"}</td></tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadState === "loading" ? "正在载入审计日志…" : "没有匹配的审计记录"}</strong><span>{loadState === "loading" ? "正在从本地 API 读取。" : "调整筛选条件或执行操作后再试。"}</span></div>}
+    {events.length ? <div className="table-scroll"><table><thead><tr><th>时间</th><th>操作者</th><th>动作</th><th>对象</th><th>结果</th><th>安全摘要</th></tr></thead><tbody>{events.map((event) => <tr key={event.id}><td>{timeLabel(event.occurredAt)}</td><td>{event.actorId ?? "系统"}</td><td className="mono-cell">{event.eventType}</td><td className="mono-cell">{event.entityType}:{event.entityId.slice(0, 8)}</td><td>{auditResultLabel(event.result)}</td><td>{Object.keys(event.safeDetails).length ? JSON.stringify(event.safeDetails) : "—"}</td></tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadState === "loading" ? "正在载入审计日志…" : "没有匹配的审计记录"}</strong><span>{loadState === "loading" ? "正在从本地 API 读取。" : "调整筛选条件或执行操作后再试。"}</span></div>}
   </section>;
 }
 
