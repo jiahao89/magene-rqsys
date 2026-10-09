@@ -17,3 +17,10 @@
 
 ## Blocked by
 Ticket 03（provider 与数据策略获批并验证）、Ticket 05（真实源数据已落库）。
+
+## Local implementation evidence (2026-10-08)
+- Added a pure TypeScript DeepSeek-compatible JSON-mode provider with dependency-injected `fetch`; API credential is optional server environment config (`AI_API_KEY`) and missing credentials fail before any network request.
+- Added minimization, PII/contact/credential masking and an outbound payload built only from title, description, explicitly supplied business context and controlled dictionary/rule metadata. Provider response validation checks output shape, active module membership, evidence against the redacted source text, priority/rule consistency and labeled inferences.
+- Added analysis orchestration that refuses to run before source snapshot persistence, appends a new attempt/version each run, records safe failures as retryable, and leaves PM-owned fields outside the write path. Added an adapter over the existing `AnalysisRunRepository` append/complete/latest/list methods; no schema migration or external DB write was performed.
+- Verification: analysis-specific tests pass (8/8), executed with `AI_API_KEY` removed. Isolated strict TypeScript check passed for provider/contract/service/tests. Stub fetch only; no model API call was made and no credential value was printed or added to the repository.
+- Boundaries: full-project `npm run typecheck` and `npm test` remain blocked by unrelated local files (`adapters/postgres/repositories.ts` duplicate method implementations; existing failing Postgres mapping and owner mapping tests). This slice is local pure-code groundwork only; provider approval/reachability, persistent database wiring, pipeline invocation, public retry API, and target Miaoda acceptance remain blocked.

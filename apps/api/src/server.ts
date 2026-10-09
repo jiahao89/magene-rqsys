@@ -1,10 +1,18 @@
 import { createServer } from "node:http";
 import { createPool } from "./adapters/postgres/pool.js";
-import { handleApiRequest } from "./http/app.js";
+import { PostgresRepositories } from "./adapters/postgres/repositories.js";
+import { type ApiDependencies, handleApiRequest } from "./http/app.js";
 import { errorBody } from "./http/errors.js";
 
 const port = Number(process.env.PORT ?? 8787);
 const database = createPool(process.env.DATABASE_URL);
+const repositories = database ? new PostgresRepositories(database) : undefined;
+const identity = repositories ? {
+  async requireActor(_request: Request): Promise<{ id: string; roles: string[] }> {
+    // Replace with the deployment's verified token/session identity adapter.
+    throw new Error("No verified identity provider is configured");
+  },
+} : undefined;
 
 const server = createServer(async (incoming, outgoing) => {
   try {
@@ -16,13 +24,11 @@ const server = createServer(async (incoming, outgoing) => {
       if (Array.isArray(value)) headers.set(key, value.join(", "));
       else if (value !== undefined) headers.set(key, value);
     }
-
     const request = new Request(`http://${incoming.headers.host ?? "localhost"}${incoming.url ?? "/"}`, {
-      method: incoming.method ?? "GET",
-      headers,
-      ...(body.length > 0 ? { body } : {}),
+      method: incoming.method ?? "GET", headers, ...(body.length > 0 ? { body } : {}),
     });
-    const response = await handleApiRequest(request, { database });
+    const dependencies: ApiDependencies = { database, repositories, identity, now: undefined };
+    const response = await handleApiRequest(request, dependencies);
     outgoing.statusCode = response.status;
     response.headers.forEach((value, key) => outgoing.setHeader(key, value));
     outgoing.end(Buffer.from(await response.arrayBuffer()));
@@ -32,16 +38,7 @@ const server = createServer(async (incoming, outgoing) => {
     outgoing.end(JSON.stringify(errorBody("INTERNAL")));
   }
 });
-
-server.listen(port, "0.0.0.0", () => {
-  process.stdout.write(`RQ-Sys API listening on :${port}\n`);
-});
-
-async function shutdown(): Promise<void> {
-  server.close();
-  await database?.end();
-}
-
+server.listen(port, "0.0.0.0", () => process.stdout.write(`RQ-Sys API listening on :${port}\n`));
+async function shutdown(): Promise<void> { server.close(); await database?.end(); }
 process.once("SIGINT", () => void shutdown());
 process.once("SIGTERM", () => void shutdown());
-

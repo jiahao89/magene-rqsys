@@ -19,7 +19,7 @@ export const OwnerMappingUpdateSchema = z.object({
 });
 
 // 通用分页参数（openapi: integer 1-100, default 25/50）
-const LimitSchema = z.number().int().min(1).max(100);
+const LimitSchema = z.coerce.number().int().min(1).max(100);
 const CursorSchema = z.string();
 
 // GET /api/batches 查询参数

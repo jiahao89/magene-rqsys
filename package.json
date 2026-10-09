@@ -3,14 +3,16 @@
   "private": true,
   "type": "module",
   "workspaces": [
-    "apps/api"
+    "apps/api",
+    "apps/web"
   ],
   "scripts": {
     "dev:api": "npm --workspace @rq-sys/api run dev",
-    "build": "npm --workspace @rq-sys/api run build",
-    "typecheck": "npm --workspace @rq-sys/api run typecheck",
+    "dev:web": "npm --workspace @rq-sys/web run dev",
+    "build": "npm --workspace @rq-sys/api run build && npm --workspace @rq-sys/web run build",
+    "typecheck": "npm --workspace @rq-sys/api run typecheck && npm --workspace @rq-sys/web run typecheck",
     "db:migrate": "npm --workspace @rq-sys/api run db:migrate",
-    "test": "npm --workspace @rq-sys/api run test"
+    "test": "npm --workspace @rq-sys/api run test && npm --workspace @rq-sys/web run test"
   },
   "engines": {
     "node": ">=22"

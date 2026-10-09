@@ -78,14 +78,14 @@ paths:
               required: [sourceId]
       responses:
         '202':
-          description: Batch accepted
+          description: Batch accepted (new or idempotent replay; replay returns the existing batch's current status)
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   batchId: { type: string, format: uuid }
-                  status: { const: running }
+                  status: { $ref: '#/components/schemas/BatchStatus' }
                 required: [batchId, status]
         '409': { description: Source already has an active batch }
   /api/batches:

@@ -1,34 +1,31 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { type ApiDependencies, handleApiRequest } from "./app.js";
+import type { AuditEventRecord, SourceConfigRecord, SyncBatchRecord, SyncItemRecord } from "../domain/persistence.js";
+import type { ApiDependencies, ApiRepositories } from "./app.js";
+import { handleApiRequest } from "./app.js";
 
-const dependencies: ApiDependencies = { database: null };
+const source: SourceConfigRecord = { id: "11111111-1111-4111-8111-111111111111", provider: "teambition", externalProjectId: "p1", externalProjectName: "Project", requirementTypeId: "type1", enabled: true, scheduleEnabled: false, scheduleWeekday: null, scheduleLocalTime: null, scheduleTimezone: null, ownerNames: ["Lee"], fieldMap: { title: "name" }, createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z" };
+const batch: SyncBatchRecord = { id: "22222222-2222-4222-8222-222222222222", sourceConfigId: source.id, triggerType: "manual", actorId: "actor-1", idempotencyKey: "request-key-0001", status: "running", startedAt: "2026-10-08T00:00:00.000Z", completedAt: null, totalCount: 0, succeededCount: 0, failedCount: 0, errorSummary: null, createdAt: "2026-10-08T00:00:00.000Z" };
+const item: SyncItemRecord = { id: "33333333-3333-4333-8333-333333333333", batchId: batch.id, requirementId: null, teambitionRequirementId: "tb-1", action: "created", status: "succeeded", errorCode: null, errorDetail: null, startedAt: "2026-10-08T00:00:00.000Z", completedAt: "2026-10-08T00:00:00.000Z" };
+const auditEvent: AuditEventRecord = { id: "44444444-4444-4444-8444-444444444444", actorId: "actor-1", eventType: "sync.requested", entityType: "sync_batch", entityId: batch.id, result: "succeeded", safeDetails: {}, occurredAt: "2026-10-08T00:00:00.000Z" };
+function makeDependencies(): ApiDependencies {
+ const batches: SyncBatchRecord[] = [];
+ const repositories: ApiRepositories = {
+  sources: { list: async () => [source], get: async (id) => id === source.id ? source : null, update: async (id, u) => id === source.id ? { ...source, externalProjectId: u.projectId, externalProjectName: u.projectName, requirementTypeId: u.requirementTypeId, enabled: u.enabled, scheduleEnabled: u.schedule.enabled, scheduleWeekday: u.schedule.weekday, scheduleLocalTime: u.schedule.time, scheduleTimezone: u.schedule.timezone, ownerNames: u.ownerNames, fieldMap: u.fieldMap } : null },
+  batches: { create: async (p) => { const b = { ...batch, ...p, id: `batch-${batches.length + 1}` }; batches.push(b); return b; }, get: async (id) => batches.find((b) => b.id === id) ?? (id === batch.id ? batch : null), findByIdempotencyKey: async (sid, key) => batches.find((b) => b.sourceConfigId === sid && b.idempotencyKey === key) ?? null, list: async ({ status, limit, cursor }) => { const rows = batches.filter((b) => !status || b.status === status); const start = cursor ? rows.findIndex((b) => b.id === cursor) + 1 : 0; const items = rows.slice(start, start + limit); return { items, nextCursor: start + limit < rows.length ? items.at(-1)?.id ?? null : null }; }, complete: async () => null },
+  items: { upsert: async () => item, get: async () => item, listByBatch: async (id) => id === batch.id ? [item] : [] },
+  audit: { append: async () => undefined, search: async () => [auditEvent] },
+  jobs: { enqueue: async (p) => ({ ...p, id: "job-1", status: "queued", attemptCount: 0, maxAttempts: p.maxAttempts ?? 3, lockedUntil: null, lastErrorCode: null, lastErrorSummary: null, createdAt: p.availableAt, updatedAt: p.availableAt }), claimNext: async () => null, complete: async () => null },
+ };
+ return { database: null, repositories, identity: { requireActor: async () => ({ id: "actor-1", roles: ["operator"] }) }, now: () => new Date("2026-10-08T00:00:00.000Z") };
+}
+const unauthenticated: ApiDependencies = { database: null, repositories: undefined, identity: undefined, now: undefined };
+test("liveness reports the API service", async () => { const r = await handleApiRequest(new Request("http://localhost/api/health"), unauthenticated); assert.equal(r.status, 200); assert.deepEqual(await r.json(), { status: "ok", service: "rq-sys-api" }); });
 
- test("liveness reports the API service", async () => {
-  const response = await handleApiRequest(new Request("http://localhost/api/health"), dependencies);
-  assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { status: "ok", service: "rq-sys-api" });
-});
-
-test("readiness reports unavailable when no database is configured", async () => {
-  const response = await handleApiRequest(new Request("http://localhost/api/health/ready"), dependencies);
-  assert.equal(response.status, 503);
-  assert.deepEqual(await response.json(), {
-    status: "not_ready",
-    reason: "database_unavailable_or_not_configured",
-  });
-});
-
-test("unimplemented product endpoints return an explicit 501 contract error", async () => {
-  const response = await handleApiRequest(
-    new Request("http://localhost/api/sources"),
-    dependencies,
-  );
-  assert.equal(response.status, 501);
-  assert.deepEqual(await response.json(), {
-    error: {
-      code: "ROUTE_NOT_IMPLEMENTED",
-      message: "This endpoint is defined by the API contract and will be implemented in its ticket.",
-    },
-  });
-});
+test("readiness reports unavailable when no database is configured", async () => { const r = await handleApiRequest(new Request("http://localhost/api/health/ready"), unauthenticated); assert.equal(r.status, 503); assert.deepEqual(await r.json(), { status: "not_ready", reason: "database_unavailable_or_not_configured" }); });
+test("lists source configs after injected identity authentication", async () => { const r = await handleApiRequest(new Request("http://localhost/api/sources"), makeDependencies()); assert.equal(r.status, 200); assert.deepEqual(await r.json(), { items: [{ id: source.id, projectId: "p1", projectName: "Project", requirementTypeId: "type1", enabled: true, schedule: { enabled: false, weekday: null, time: null, timezone: null }, ownerNames: ["Lee"], fieldMap: { title: "name" } }] }); });
+test("rejects protected routes without an identity provider", async () => { const r = await handleApiRequest(new Request("http://localhost/api/sources"), unauthenticated); assert.equal(r.status, 401); });
+test("updates source config after authentication", async () => { const r = await handleApiRequest(new Request(`http://localhost/api/sources/${source.id}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId: "p2", projectName: "Updated", requirementTypeId: "t2", enabled: false, schedule: { enabled: true, weekday: 1, time: "09:30", timezone: "Asia/Shanghai" }, ownerNames: [], fieldMap: {} }) }), makeDependencies()); assert.equal(r.status, 200); assert.equal((await r.json() as { projectId: string }).projectId, "p2"); });
+test("queues a sync once and returns the batch for an idempotent repeat", async () => { const d = makeDependencies(); const req = () => new Request("http://localhost/api/sync/run", { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": "request-key-0001" }, body: JSON.stringify({ sourceId: source.id }) }); const first = await handleApiRequest(req(), d); assert.equal(first.status, 202); assert.deepEqual(await first.json(), { batchId: "batch-1", status: "running" }); const dup = await handleApiRequest(req(), d); assert.equal(dup.status, 202); assert.deepEqual(await dup.json(), { batchId: "batch-1", status: "running" }); });
+test("lists and retrieves batches with items", async () => { const d = makeDependencies(); assert.equal((await handleApiRequest(new Request("http://localhost/api/batches?limit=10"), d)).status, 200); const r = await handleApiRequest(new Request(`http://localhost/api/batches/${batch.id}`), d); assert.equal(r.status, 200); assert.deepEqual((await r.json() as { items: SyncItemRecord[] }).items, [item]); });
+test("lists audit events", async () => { const r = await handleApiRequest(new Request("http://localhost/api/audit?entityId=foo&limit=10"), makeDependencies()); assert.equal(r.status, 200); assert.deepEqual(await r.json(), { items: [auditEvent] }); });
