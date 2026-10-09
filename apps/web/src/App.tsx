@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Activity, ArrowDownToLine, ArrowRight, Check, ChevronDown, CircleAlert, CircleHelp, Clock3, Command, Database, FileClock, FolderSync, Gauge, GitBranch, Layers3, ListChecks, LoaderCircle, Play, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Users, X } from "lucide-react";
 import { ApiError, createDictionaryDraft, createPriorityRuleDraft, getHealth, listDictionaryVersions, listPriorityRules, listSources, publishDictionaryVersion, publishPriorityRule, runSync, type DictionaryVersion, type PriorityRuleVersion, type PublishStatus, type SourceConfig } from "./api";
+import { AuditPanel, BatchesPanel, MappingsPanel, RequirementsPanel, SourcesPanel } from "./panels";
 
 type Batch = { id: string; status: string; totalCount: number; succeededCount: number; failedCount: number; startedAt?: string; completedAt?: string; errorSummary?: string };
 type Requirement = { id: string; sourceRequirementId: string; title: string; sourceVersion: number; pipeline: { pull: string; analysis: string; owner: string; push: string }; analysis?: { module?: string; confidence?: string } | null };
@@ -148,13 +149,13 @@ function RequirementsTable({ rows, loading }: { rows: Requirement[]; loading: bo
 }
 
 function SecondaryContent({ page, sources, batches, requirements, loadState, onNavigate, onRefresh }: { page: Page; sources: SourceConfig[]; batches: Batch[]; requirements: Requirement[]; loadState: LoadState; onNavigate: (page: Page) => void; onRefresh: () => void }) {
-  if (page === "Requirements") return <section className="panel requirements-panel"><div className="panel-heading"><div><h2>需求处理记录</h2><p>按源需求 ID 跟踪各处理阶段；数据从 API 读取</p></div><span className="status-chip status-muted"><span />{requirements.length} 条记录</span></div><RequirementsTable rows={requirements} loading={loadState === "loading"} /></section>;
-  if (page === "Batches") return <section className="panel requirements-panel"><div className="panel-heading"><div><h2>同步批次历史</h2><p>触发者、批次时间与阶段结果由 API 提供</p></div><button className="button button-secondary button-small" onClick={onRefresh}><RefreshCw size={14} />刷新</button></div>{batches.length ? <div className="table-scroll"><table><thead><tr><th>批次 ID</th><th>状态</th><th>需求总数</th><th>成功</th><th>失败</th><th>开始时间</th></tr></thead><tbody>{batches.map((batch) => <tr key={batch.id}><td className="mono-cell">{batch.id}</td><td><span className={`status-chip ${batch.status === "failed" ? "status-danger" : batch.status === "running" ? "status-live" : "status-muted"}`}><span />{stateLabel(batch.status)}</span></td><td>{batch.totalCount}</td><td>{batch.succeededCount}</td><td className={batch.failedCount ? "text-danger" : ""}>{batch.failedCount}</td><td>{batch.startedAt ? new Date(batch.startedAt).toLocaleString("zh-CN") : "—"}</td></tr>)}</tbody></table></div> : <EmptyPanel loading={loadState === "loading"} title="还没有同步批次" description="启动手动同步后，真实批次记录会显示在这里。" />}</section>;
-  if (page === "Sources") return <section className="panel config-panel"><div className="panel-heading"><div><h2>连接与数据源</h2><p>仅显示 API 返回的来源配置；前端不读取或存储集成密钥。</p></div><span className={`connection-state ${loadState}`}><span className="connection-dot" />{loadState === "ready" ? "API 已连接" : loadState === "loading" ? "检查中" : "未连接"}</span></div>{sources.length ? sources.map((source) => <div className="config-source" key={source.id}><div className="source-icon"><GitBranch size={17} /></div><div className="config-copy"><strong>{source.projectName}</strong><span>项目 ID：{source.projectId}</span><span>需求类型：{source.requirementTypeId}</span></div><span className={`status-chip ${source.enabled ? "status-live" : "status-muted"}`}><span />{source.enabled ? "已启用" : "已停用"}</span></div>) : <EmptyPanel loading={loadState === "loading"} title="尚未配置数据源" description="配置接口尚未支持时，请通过受控的服务端流程设置来源；不要在浏览器中输入或保存凭据。" />}</section>;
+  if (page === "Requirements") return <RequirementsPanel requirements={requirements} loadState={loadState} onRefresh={onRefresh} />;
+  if (page === "Batches") return <BatchesPanel batches={batches} loadState={loadState} onRefresh={onRefresh} />;
+  if (page === "Sources") return <SourcesPanel sources={sources} loadState={loadState} onRefresh={onRefresh} />;
   if (page === "Rules") return <RulesPanel />;
-  const placeholder = page === "Mappings" ? { icon: Users, title: "负责人映射由工作流 API 管理", body: "尚未提供负责人映射读取/写入接口。等接口就绪后，会在这里处理待匹配负责人；不会伪造人员列表或推送状态。", link: "查看需求池", target: "Requirements" as Page } : { icon: FileClock, title: "审计读取 API 尚未就绪", body: "审计记录需要由服务端持久化并关联操作者。API 未提供数据时，页面不会展示虚构日志。", link: "查看最近批次", target: "Batches" as Page };
-  const Icon = placeholder.icon;
-  return <section className="panel placeholder-panel"><div className="placeholder-illustration"><span><Icon size={23} /></span><i /><i /><i /></div><div className="eyebrow"><span className="eyebrow-line" />API 契约待实现</div><h2>{placeholder.title}</h2><p>{placeholder.body}</p><button className="button button-secondary" onClick={() => onNavigate(placeholder.target)}>{placeholder.link}<ArrowRight size={15} /></button></section>;
+  if (page === "Mappings") return <MappingsPanel requirements={requirements} onRefresh={onRefresh} />;
+  if (page === "Audit") return <AuditPanel />;
+  return <section className="panel placeholder-panel"><div className="placeholder-illustration"><span><Users size={23} /></span><i /><i /><i /></div><div className="eyebrow"><span className="eyebrow-line" />API 契约待实现</div><h2>页面未实现</h2><p>该页面尚未提供 API 契约。</p><button className="button button-secondary" onClick={() => onNavigate("Overview" as Page)}>返回总览<ArrowRight size={15} /></button></section>;
 }
 
 const publishStatusChip: Record<PublishStatus, { label: string; className: string }> = { draft: { label: "草稿", className: "status-muted" }, published: { label: "已发布", className: "status-live" }, retired: { label: "已退役", className: "status-muted" } };
@@ -162,6 +163,16 @@ const publishStatusChip: Record<PublishStatus, { label: string; className: strin
 function PublishStatusChip({ status }: { status: PublishStatus }) {
   const chip = publishStatusChip[status];
   return <span className={`status-chip ${chip.className}`}><span />{chip.label}</span>;
+}
+
+// 评分映射输入：每行「维度:取值=分数」；分数来自规则数据本身，UI 不代填公式
+function parseScoringInput(text: string): Record<string, Record<string, number>> {
+  const map: Record<string, Record<string, number>> = { user: {}, market: {}, business: {}, technology: {} };
+  for (const line of text.split("\n")) {
+    const match = line.trim().match(/^(user|market|business|technology)[:：]\s*(.+?)\s*=\s*(-?\d+(?:\.\d+)?)$/);
+    if (match) map[match[1]!]![match[2]!.trim()] = Number(match[3]);
+  }
+  return map;
 }
 
 function RulesPanel() {
@@ -172,6 +183,7 @@ function RulesPanel() {
   const [busy, setBusy] = useState(false);
   const [entriesInput, setEntriesInput] = useState("");
   const [thresholds, setThresholds] = useState({ p0: 4, p1: 3, p2: 2 });
+  const [scoringInput, setScoringInput] = useState("user:强=3\nuser:中=2\nuser:弱=1\nmarket:强=3\nmarket:中=2\nmarket:弱=1\nbusiness:强=3\nbusiness:中=2\nbusiness:弱=1\ntechnology:强=3\ntechnology:中=2\ntechnology:弱=1");
 
   const load = useCallback(async () => {
     setLoadError(null);
@@ -199,7 +211,9 @@ function RulesPanel() {
   });
   const handleCreateRule = () => withFeedback(async () => {
     if (!(thresholds.p0 >= thresholds.p1 && thresholds.p1 >= thresholds.p2)) throw new ApiError("阈值需满足 P0 ≥ P1 ≥ P2。", 400, "INVALID_THRESHOLDS");
-    const created = await createPriorityRuleDraft({ thresholds });
+    const scoring = parseScoringInput(scoringInput);
+    if (Object.values(scoring).some((map) => Object.keys(map).length === 0)) throw new ApiError("每个维度至少需要一条「取值=分数」的已批准评分。", 400, "INVALID_SCORING");
+    const created = await createPriorityRuleDraft({ scoring, thresholds });
     return `规则 v${created.version} 草稿已创建`;
   });
 
@@ -221,6 +235,9 @@ function RulesPanel() {
           {(["p0", "p1", "p2"] as const).map((key) => <label key={key} className="rules-threshold"><span>{key.toUpperCase()} 阈值</span><input type="number" min={0} max={4} step={1} value={thresholds[key]} aria-label={`${key.toUpperCase()} 阈值`} onChange={(event) => setThresholds((prev) => ({ ...prev, [key]: Number(event.target.value) }))} /></label>)}
         </div>
         <button className="button button-primary button-small" onClick={() => void handleCreateRule()} disabled={busy}>创建草稿</button>
+      </div>
+      <div className="rules-form">
+        <label className="rules-threshold" style={{ flex: 1 }}><span>U/M/S/C 已批准评分映射（每行「维度:取值=分数」；未校准证据的规则不会用于计算）</span><textarea aria-label="评分映射" className="rules-textarea" rows={3} value={scoringInput} onChange={(event) => setScoringInput(event.target.value)} /></label>
       </div>
       {rules.length ? <div className="table-scroll"><table><thead><tr><th>版本</th><th>状态</th><th>阈值 (P0/P1/P2)</th><th>创建时间</th><th>发布时间</th><th>操作</th></tr></thead><tbody>{rules.map((rule) => <tr key={rule.id}><td className="mono-cell">v{rule.version}</td><td><PublishStatusChip status={rule.status} /></td><td className="mono-cell">{[rule.rules.thresholds?.p0, rule.rules.thresholds?.p1, rule.rules.thresholds?.p2].map((value) => value ?? "—").join(" / ")}</td><td>{new Date(rule.createdAt).toLocaleString("zh-CN")}</td><td>{rule.publishedAt ? new Date(rule.publishedAt).toLocaleString("zh-CN") : "—"}</td><td>{rule.status === "draft" && <button className="button button-secondary button-small" onClick={() => void withFeedback(async () => { await publishPriorityRule(rule.id); return `规则 v${rule.version} 已发布`; })} disabled={busy}>发布</button>}</td></tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadError ? "配置不可用" : "还没有规则版本"}</strong><span>{loadError ? "请检查 API 连接后重试。" : "创建阈值规则草稿并发布后，AI 建议才会生成 P0–P3 优先级。"}</span></div>}
     </section>

@@ -111,7 +111,7 @@ export async function listPriorityRules(fetcher: typeof fetch = fetch): Promise<
 }
 
 export function createPriorityRuleDraft(
-  rules: { thresholds: { p0: number; p1: number; p2: number } },
+  rules: { scoring: Record<string, Record<string, number>>; thresholds: { p0: number; p1: number; p2: number } },
   fetcher: typeof fetch = fetch,
 ): Promise<PriorityRuleVersion> {
   return postJson<PriorityRuleVersion>("/api/rules/priority", { rules }, fetcher);
@@ -119,4 +119,112 @@ export function createPriorityRuleDraft(
 
 export function publishPriorityRule(id: string, fetcher: typeof fetch = fetch): Promise<PriorityRuleVersion> {
   return postJson<PriorityRuleVersion>(`/api/rules/priority/${id}/publish`, null, fetcher);
+}
+
+export interface SourceConfigUpdate {
+  projectId: string;
+  projectName: string;
+  requirementTypeId: string;
+  enabled: boolean;
+  schedule: { enabled: boolean; weekday: number | null; time: string | null; timezone: string | null };
+  ownerNames: string[];
+  fieldMap: Record<string, string>;
+}
+
+export function createSource(update: SourceConfigUpdate, fetcher: typeof fetch = fetch): Promise<SourceConfig> {
+  return postJson<SourceConfig>("/api/sources", update, fetcher);
+}
+
+async function putJson<T>(path: string, body: unknown, fetcher: typeof fetch): Promise<T> {
+  const response = await fetcher(path, {
+    method: "PUT",
+    headers: { accept: "application/json", "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return parseJsonResponse<T>(response);
+}
+
+export function updateSource(id: string, update: SourceConfigUpdate, fetcher: typeof fetch = fetch): Promise<SourceConfig> {
+  return putJson<SourceConfig>(`/api/sources/${id}`, update, fetcher);
+}
+
+export interface SyncItem {
+  id: string;
+  requirementId: string | null;
+  teambitionRequirementId: string;
+  action: "created" | "updated" | "unchanged";
+  status: "succeeded" | "failed";
+  errorCode: string | null;
+  errorDetail: string | null;
+  startedAt: string;
+  completedAt: string | null;
+}
+
+export interface BatchDetail {
+  batchId: string;
+  status: string;
+  triggerType?: string;
+  actorId?: string | null;
+  totalCount: number;
+  succeededCount: number;
+  failedCount: number;
+  startedAt?: string;
+  completedAt?: string;
+  errorSummary?: string | null;
+  items: SyncItem[];
+}
+
+export function getBatch(id: string, fetcher: typeof fetch = fetch): Promise<BatchDetail> {
+  return requestJson<BatchDetail>(`/api/batches/${id}`, fetcher);
+}
+
+export function retrySyncItem(id: string, fetcher: typeof fetch = fetch): Promise<{ batchId: string; status: string }> {
+  return postJson<{ batchId: string; status: string }>(`/api/items/${id}/retry`, null, fetcher);
+}
+
+export interface RequirementDetail {
+  id: string;
+  sourceRequirementId: string;
+  title: string;
+  sourceVersion: number;
+  pipeline: { pull: string; analysis: string; owner: string; push: string };
+  source: Record<string, unknown>;
+  analysis: Record<string, unknown> | null;
+  baseRecordId: string | null;
+}
+
+export function getRequirement(id: string, fetcher: typeof fetch = fetch): Promise<RequirementDetail> {
+  return requestJson<RequirementDetail>(`/api/requirements/${id}`, fetcher);
+}
+
+export function retryAnalysis(id: string, fetcher: typeof fetch = fetch): Promise<{ requirementId: string; status: string }> {
+  return postJson<{ requirementId: string; status: string }>(`/api/analysis/${id}/retry`, null, fetcher);
+}
+
+export function pushRequirement(id: string, fetcher: typeof fetch = fetch, idempotencyKey: string = crypto.randomUUID()): Promise<{ status: string; baseRecordId: string | null; created?: boolean }> {
+  return postJson<{ status: string; baseRecordId: string | null; created?: boolean }>(`/api/requirements/${id}/push`, null, fetcher, { "Idempotency-Key": idempotencyKey });
+}
+
+export function setOwner(id: string, input: { feishuUserId: string; feishuIdType: "open_id" | "user_id" | "union_id" }, fetcher: typeof fetch = fetch): Promise<{ requirementId: string; ownerState: string; status: string }> {
+  return putJson<{ requirementId: string; ownerState: string; status: string }>(`/api/requirements/${id}/owner`, input, fetcher);
+}
+
+export interface AuditEvent {
+  id: string;
+  actorId: string | null;
+  eventType: string;
+  entityType: string;
+  entityId: string;
+  result: "succeeded" | "failed" | "denied";
+  safeDetails: Record<string, unknown>;
+  occurredAt: string;
+}
+
+export function listAudit(params: { entityId?: string; limit?: number; fetcher?: typeof fetch } = {}): Promise<AuditEvent[]> {
+  const { fetcher = fetch, ...query } = params;
+  const search = new URLSearchParams();
+  if (query.entityId) search.set("entityId", query.entityId);
+  if (query.limit !== undefined) search.set("limit", String(query.limit));
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return requestJson<{ items: AuditEvent[] }>(`/api/audit${suffix}`, fetcher).then((result) => result.items);
 }

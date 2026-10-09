@@ -1,0 +1,106 @@
+// 工单 16/17 面板测试：数据全部来自 mock API；覆盖正向、权限拒绝与详情/重试交互。
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { BatchesPanel, MappingsPanel, SourcesPanel } from "./panels";
+import type { SourceConfig } from "./api";
+
+const fetchMock = vi.fn<typeof fetch>();
+beforeEach(() => {
+  cleanup();
+  fetchMock.mockReset();
+  vi.stubGlobal("fetch", fetchMock);
+});
+
+const source: SourceConfig = { id: "source-1", projectId: "p-1", projectName: "需求收集与管理", requirementTypeId: "t-1", enabled: true, schedule: { enabled: false, weekday: null, time: null, timezone: null }, ownerNames: ["李产品"], fieldMap: { requirementType: "cf-1" } };
+
+function jsonOk(body: unknown, status = 200): Response {
+  return Response.json(body, { status });
+}
+
+describe("SourcesPanel (ticket 16)", () => {
+  it("updates the existing source and re-reads a consistent result", async () => {
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/sources/source-1" && init?.method === "PUT") {
+        const body = JSON.parse(String(init.body)) as { projectName: string };
+        return jsonOk({ ...source, projectName: body.projectName });
+      }
+      return jsonOk(source);
+    });
+
+    render(<SourcesPanel sources={[source]} loadState="ready" onRefresh={() => undefined} />);
+    fireEvent.change(screen.getByLabelText("项目名称"), { target: { value: "产品需求池" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存更新" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/sources/source-1", expect.objectContaining({ method: "PUT" })));
+    expect(await screen.findByText("来源配置已保存并从 API 重新读取一致。")).toBeInTheDocument();
+    expect((screen.getByLabelText("项目名称") as HTMLInputElement).value).toBe("产品需求池");
+  });
+
+  it("shows an explicit permission state instead of faking success on 403", async () => {
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/sources/source-1" && init?.method === "PUT") {
+        return jsonOk({ error: { code: "FORBIDDEN", message: "You do not have permission to perform this action." } }, 403);
+      }
+      return jsonOk(source);
+    });
+
+    render(<SourcesPanel sources={[source]} loadState="ready" onRefresh={() => undefined} />);
+    fireEvent.click(screen.getByRole("button", { name: "保存更新" }));
+
+    expect(await screen.findByText(/没有权限执行此操作/)).toBeInTheDocument();
+  });
+});
+
+describe("BatchesPanel (ticket 16)", () => {
+  const batch = { id: "batch-1", status: "partial_failure", totalCount: 2, succeededCount: 1, failedCount: 1, startedAt: "2026-10-09T00:00:00.000Z", triggerType: "manual", actorId: "operator-1" };
+
+  it("opens batch detail, keeps succeeded rows visible and retries the failed item", async () => {
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/batches/batch-1") {
+        return jsonOk({
+          batchId: "batch-1", status: "partial_failure", totalCount: 2, succeededCount: 1, failedCount: 1, items: [
+            { id: "item-ok", requirementId: null, teambitionRequirementId: "tb-ok", action: "created", status: "succeeded", errorCode: null, errorDetail: null, startedAt: "2026-10-09T00:00:00.000Z", completedAt: "2026-10-09T00:00:01.000Z" },
+            { id: "item-bad", requirementId: null, teambitionRequirementId: "tb-bad", action: "created", status: "failed", errorCode: "source_item_failed", errorDetail: "Requirement could not be synchronized", startedAt: "2026-10-09T00:00:00.000Z", completedAt: "2026-10-09T00:00:01.000Z" },
+          ],
+        });
+      }
+      if (path === "/api/items/item-bad/retry" && init?.method === "POST") return jsonOk({ batchId: "batch-2", status: "queued" }, 202);
+      return jsonOk({ items: [batch] });
+    });
+
+    render(<BatchesPanel batches={[batch]} loadState="ready" onRefresh={() => undefined} />);
+    expect(screen.getByText("手动 · operator")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看" }));
+
+    expect(await screen.findByText("tb-ok")).toBeInTheDocument();
+    expect(screen.getByText("tb-bad")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+
+    expect(await screen.findByText("失败项已重新入队：批次 batch-2")).toBeInTheDocument();
+  });
+});
+
+describe("MappingsPanel (ticket 17)", () => {
+  const pending = { id: "req-1", sourceRequirementId: "tb-1", title: "需要报表", sourceVersion: 1, pipeline: { pull: "synced", analysis: "analyzed", owner: "pending_mapping", push: "pending" } };
+
+  it("persists a manual mapping via the API and reports the queued push", async () => {
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/requirements/req-1/owner" && init?.method === "PUT") {
+        return jsonOk({ requirementId: "req-1", ownerState: "manually_mapped", status: "queued" });
+      }
+      throw new Error(`unexpected fetch ${path}`);
+    });
+
+    render(<MappingsPanel requirements={[pending]} onRefresh={() => undefined} />);
+    fireEvent.click(screen.getByRole("button", { name: "选择飞书用户" }));
+    fireEvent.change(screen.getByLabelText("飞书用户 Open ID"), { target: { value: "ou-abc123" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(await screen.findByText(/映射已持久化（manually_mapped），Base 推送已入队/)).toBeInTheDocument();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/requirements/req-1/owner", expect.objectContaining({ method: "PUT" })));
+  });
+});
