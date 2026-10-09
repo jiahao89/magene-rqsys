@@ -234,6 +234,89 @@ paths:
           schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
       responses:
         '200': { description: Audit event page }
+  /api/rules/dictionary:
+    get:
+      summary: List module dictionary versions
+      responses:
+        '200':
+          description: Dictionary versions, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/ModuleDictionaryVersion' } }
+                required: [items]
+    post:
+      summary: Create a draft module dictionary version
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DictionaryCreate' }
+      responses:
+        '201':
+          description: Draft version created (version is auto-incremented)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModuleDictionaryVersion' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /api/rules/dictionary/{version}/publish:
+    post:
+      summary: Publish a draft dictionary version; retires the previously published version
+      parameters:
+        - name: version
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Published version
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModuleDictionaryVersion' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Version exists but is not a draft }
+  /api/rules/priority:
+    get:
+      summary: List priority rule versions
+      responses:
+        '200':
+          description: Rule versions, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/PriorityRuleVersion' } }
+                required: [items]
+    post:
+      summary: Create a draft priority rule version
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PriorityRuleCreate' }
+      responses:
+        '201':
+          description: Draft rule version created (version is auto-incremented)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PriorityRuleVersion' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /api/rules/priority/{id}/publish:
+    post:
+      summary: Publish a draft rule version; retires the previously published version
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Published rule version
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PriorityRuleVersion' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Rule version exists but is not a draft }
 components:
   securitySchemes:
     bearerAuth:
@@ -379,3 +462,56 @@ components:
         failedCount: { type: integer }
         items: { type: array, items: { type: object, additionalProperties: true } }
       required: [id, status, totalCount, succeededCount, failedCount, items]
+    PublishStatus:
+      type: string
+      enum: [draft, published, retired]
+    ModuleDictionaryVersion:
+      type: object
+      description: Versioned module dictionary; only the published version feeds AI analysis.
+      properties:
+        version: { type: integer, minimum: 1 }
+        status: { $ref: '#/components/schemas/PublishStatus' }
+        entries: { type: array, items: { type: string } }
+        createdBy: { type: [string, 'null'] }
+        createdAt: { type: string, format: date-time }
+        publishedAt: { type: [string, 'null'], format: date-time }
+      required: [version, status, entries, createdBy, createdAt, publishedAt]
+    DictionaryCreate:
+      type: object
+      properties:
+        entries: { type: array, items: { type: string, minLength: 1 }, minItems: 1 }
+      required: [entries]
+      additionalProperties: false
+    PriorityRuleVersion:
+      type: object
+      description: Versioned priority rule; priority stays blank until a rule version is published.
+      properties:
+        id: { type: string, format: uuid }
+        version: { type: integer, minimum: 1 }
+        status: { $ref: '#/components/schemas/PublishStatus' }
+        rules: { type: object, additionalProperties: true }
+        validationEvidence: { type: array, items: { type: object, additionalProperties: true } }
+        createdBy: { type: [string, 'null'] }
+        createdAt: { type: string, format: date-time }
+        publishedAt: { type: [string, 'null'], format: date-time }
+      required: [id, version, status, rules, validationEvidence, createdBy, createdAt, publishedAt]
+    PriorityRuleCreate:
+      type: object
+      description: Rule payload matches the deterministic interpreter; thresholds score against the 0-4 evidence-complete total.
+      properties:
+        rules:
+          type: object
+          properties:
+            thresholds:
+              type: object
+              properties:
+                p0: { type: number, minimum: 0, maximum: 4 }
+                p1: { type: number, minimum: 0, maximum: 4 }
+                p2: { type: number, minimum: 0, maximum: 4 }
+              required: [p0, p1, p2]
+              additionalProperties: false
+          required: [thresholds]
+          additionalProperties: false
+        validationEvidence: { type: array, items: { type: object, additionalProperties: true } }
+      required: [rules]
+      additionalProperties: false

@@ -197,14 +197,20 @@ export interface AuditEventRepository {
 }
 
 // module_dictionary_versions / priority_rule_versions（受控版本，发布状态留痕）
+// 发布语义：仅 draft 可发布；发布时自动 retired 旧的 published 版本，保持单一生效版本。
 export interface ModuleDictionaryRepository {
   list(): Promise<ModuleDictionaryVersionRecord[]>;
   get(version: number): Promise<ModuleDictionaryVersionRecord | null>;
+  create(input: { entries: unknown[]; createdBy: string; now: string }): Promise<ModuleDictionaryVersionRecord>;
+  publish(version: number, publishedAt: string): Promise<ModuleDictionaryVersionRecord>;
 }
 
 export interface PriorityRuleRepository {
   get(id: string): Promise<PriorityRuleVersionRecord | null>;
   getPublished(): Promise<PriorityRuleVersionRecord | null>;
+  list(): Promise<PriorityRuleVersionRecord[]>;
+  create(input: { rules: Record<string, unknown>; validationEvidence: unknown[]; createdBy: string; now: string }): Promise<PriorityRuleVersionRecord>;
+  publish(id: string, publishedAt: string): Promise<PriorityRuleVersionRecord>;
 }
 
 // requirements 查询与状态迁移（handlers 与 worker 共用）

@@ -1,11 +1,12 @@
 import type { Pool } from "pg";
 import type { IdentityProvider } from "../application/ports.js";
-import type { AuditEventRepository, AnalysisRunRepository, PipelineJobRepository, SourceConfigRepository, SyncBatchRepository, SyncItemRepository, PersonMappingRepository, RequirementQueryRepository, BasePushRunRepository } from "../application/repositories.js";
-import type { PersonMappingRecord, RequirementRecord, SourceConfigRecord, SyncBatchRecord } from "../domain/persistence.js";
+import type { AuditEventRepository, AnalysisRunRepository, PipelineJobRepository, SourceConfigRepository, SyncBatchRepository, SyncItemRepository, PersonMappingRepository, RequirementQueryRepository, BasePushRunRepository, ModuleDictionaryRepository, PriorityRuleRepository } from "../application/repositories.js";
+import type { PersonMappingRecord, ModuleDictionaryVersionRecord, PriorityRuleVersionRecord, RequirementRecord, SourceConfigRecord, SyncBatchRecord } from "../domain/persistence.js";
 import type { FeishuBasePushAdapter } from "../base/client.js";
 import { AuditListQuerySchema, BatchListQuerySchema, OwnerMappingUpdateSchema, RequirementListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
 import { randomUUID } from "node:crypto";
 import { SourceConfigUpdateSchema } from "../contracts/source.js";
+import { DictionaryCreateSchema, PriorityRuleCreateSchema } from "../contracts/rules.js";
 import { isDatabaseReady } from "../adapters/postgres/health.js";
 import { jsonError } from "./errors.js";
 import { decodeRequirementCursor } from "../application/requirement-cursor.js";
@@ -21,6 +22,8 @@ export interface ApiRepositories {
   requirements?: RequirementQueryRepository;
   basePushes?: BasePushRunRepository;
   analyses?: AnalysisRunRepository;
+  dictionaries?: ModuleDictionaryRepository;
+  priorityRules?: PriorityRuleRepository;
 }
 export interface ApiDependencies {
   database: Pool | null;
@@ -42,6 +45,8 @@ function requirementDto(req: RequirementRecord, analysis: Record<string, unknown
   return { id: req.id, sourceRequirementId: req.teambitionRequirementId, title: req.title, sourceVersion: req.sourceVersion, pipeline: { pull: req.pipeline.pull, analysis: req.pipeline.analysis, owner: req.pipeline.owner, push: req.pipeline.push }, source: req.sourcePayload, analysis, baseRecordId: req.baseRecordId };
 }
 function requirementSearchDto(req: RequirementRecord) { return requirementDto(req); }
+function dictionaryDto(d: ModuleDictionaryVersionRecord) { return { version: d.version, status: d.status, entries: d.entries, createdBy: d.createdBy, createdAt: d.createdAt, publishedAt: d.publishedAt }; }
+function priorityRuleDto(r: PriorityRuleVersionRecord) { return { id: r.id, version: r.version, status: r.status, rules: r.rules, validationEvidence: r.validationEvidence, createdBy: r.createdBy, createdAt: r.createdAt, publishedAt: r.publishedAt }; }
 async function actorFor(request: Request, dependencies: ApiDependencies) {
   if (!dependencies.identity) return { response: jsonError("UNAUTHORIZED") } as const;
   try { return { actor: await dependencies.identity.requireActor(request) } as const; }
@@ -109,6 +114,60 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const query = Object.fromEntries(url.searchParams.entries()); if (query.limit !== undefined) query.limit = String(Number(query.limit));
     const parsed = AuditListQuerySchema.safeParse(query); if (!parsed.success) return jsonError("VALIDATION_FAILED");
     return json({ items: await repositories.audit.search({ limit: parsed.data.limit, ...(parsed.data.entityId === undefined ? {} : { entityId: parsed.data.entityId }), ...(parsed.data.since === undefined ? {} : { since: parsed.data.since }), ...(parsed.data.until === undefined ? {} : { until: parsed.data.until }) }) });
+  }
+  if (method === "GET" && url.pathname === "/api/rules/dictionary") {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.dictionaries) return jsonError("DEPENDENCY_UNAVAILABLE");
+    return json({ items: (await repositories.dictionaries.list()).map(dictionaryDto) });
+  }
+  if (method === "POST" && url.pathname === "/api/rules/dictionary") {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.dictionaries) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const body = DictionaryCreateSchema.safeParse(await readJson(request)); if (!body.success) return jsonError("VALIDATION_FAILED");
+    const now = (dependencies.now ?? (() => new Date()))().toISOString();
+    const created = await repositories.dictionaries.create({ entries: body.data.entries, createdBy: auth.actor.id, now });
+    await repositories.audit.append({ id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "dictionary.created", entityType: "module_dictionary", entityId: String(created.version), result: "succeeded", safeDetails: { entryCount: created.entries.length }, occurredAt: now });
+    return json(dictionaryDto(created), 201);
+  }
+  const dictionaryPublishMatch = url.pathname.match(/^\/api\/rules\/dictionary\/(\d+)\/publish$/);
+  if (method === "POST" && dictionaryPublishMatch) {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.dictionaries) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const version = Number(dictionaryPublishMatch[1]);
+    const existing = await repositories.dictionaries.get(version);
+    if (!existing) return jsonError("NOT_FOUND");
+    if (existing.status !== "draft") return jsonError("CONFLICT");
+    const now = (dependencies.now ?? (() => new Date()))().toISOString();
+    const published = await repositories.dictionaries.publish(version, now);
+    await repositories.audit.append({ id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "dictionary.published", entityType: "module_dictionary", entityId: String(version), result: "succeeded", safeDetails: { entryCount: published.entries.length }, occurredAt: now });
+    return json(dictionaryDto(published));
+  }
+  if (method === "GET" && url.pathname === "/api/rules/priority") {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.priorityRules) return jsonError("DEPENDENCY_UNAVAILABLE");
+    return json({ items: (await repositories.priorityRules.list()).map(priorityRuleDto) });
+  }
+  if (method === "POST" && url.pathname === "/api/rules/priority") {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.priorityRules) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const body = PriorityRuleCreateSchema.safeParse(await readJson(request)); if (!body.success) return jsonError("VALIDATION_FAILED");
+    const now = (dependencies.now ?? (() => new Date()))().toISOString();
+    const created = await repositories.priorityRules.create({ rules: body.data.rules, validationEvidence: body.data.validationEvidence ?? [], createdBy: auth.actor.id, now });
+    await repositories.audit.append({ id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "priority_rule.created", entityType: "priority_rule", entityId: created.id, result: "succeeded", safeDetails: { version: created.version }, occurredAt: now });
+    return json(priorityRuleDto(created), 201);
+  }
+  const rulePublishMatch = url.pathname.match(/^\/api\/rules\/priority\/([^/]+)\/publish$/);
+  if (method === "POST" && rulePublishMatch) {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.priorityRules) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const id = decodeURIComponent(rulePublishMatch[1]!);
+    const existing = await repositories.priorityRules.get(id);
+    if (!existing) return jsonError("NOT_FOUND");
+    if (existing.status !== "draft") return jsonError("CONFLICT");
+    const now = (dependencies.now ?? (() => new Date()))().toISOString();
+    const published = await repositories.priorityRules.publish(id, now);
+    await repositories.audit.append({ id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "priority_rule.published", entityType: "priority_rule", entityId: id, result: "succeeded", safeDetails: { version: published.version }, occurredAt: now });
+    return json(priorityRuleDto(published));
   }
   if (method === "GET" && url.pathname === "/api/requirements") {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { Activity, ArrowDownToLine, ArrowRight, BookOpen, Check, ChevronDown, CircleAlert, CircleHelp, Clock3, Command, Database, FileClock, FolderSync, Gauge, GitBranch, Layers3, ListChecks, LoaderCircle, Play, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Users, X } from "lucide-react";
-import { ApiError, getHealth, listSources, runSync, type SourceConfig } from "./api";
+import { Activity, ArrowDownToLine, ArrowRight, Check, ChevronDown, CircleAlert, CircleHelp, Clock3, Command, Database, FileClock, FolderSync, Gauge, GitBranch, Layers3, ListChecks, LoaderCircle, Play, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Users, X } from "lucide-react";
+import { ApiError, createDictionaryDraft, createPriorityRuleDraft, getHealth, listDictionaryVersions, listPriorityRules, listSources, publishDictionaryVersion, publishPriorityRule, runSync, type DictionaryVersion, type PriorityRuleVersion, type PublishStatus, type SourceConfig } from "./api";
 
 type Batch = { id: string; status: string; totalCount: number; succeededCount: number; failedCount: number; startedAt?: string; completedAt?: string; errorSummary?: string };
 type Requirement = { id: string; sourceRequirementId: string; title: string; sourceVersion: number; pipeline: { pull: string; analysis: string; owner: string; push: string }; analysis?: { module?: string; confidence?: string } | null };
@@ -151,9 +151,80 @@ function SecondaryContent({ page, sources, batches, requirements, loadState, onN
   if (page === "Requirements") return <section className="panel requirements-panel"><div className="panel-heading"><div><h2>需求处理记录</h2><p>按源需求 ID 跟踪各处理阶段；数据从 API 读取</p></div><span className="status-chip status-muted"><span />{requirements.length} 条记录</span></div><RequirementsTable rows={requirements} loading={loadState === "loading"} /></section>;
   if (page === "Batches") return <section className="panel requirements-panel"><div className="panel-heading"><div><h2>同步批次历史</h2><p>触发者、批次时间与阶段结果由 API 提供</p></div><button className="button button-secondary button-small" onClick={onRefresh}><RefreshCw size={14} />刷新</button></div>{batches.length ? <div className="table-scroll"><table><thead><tr><th>批次 ID</th><th>状态</th><th>需求总数</th><th>成功</th><th>失败</th><th>开始时间</th></tr></thead><tbody>{batches.map((batch) => <tr key={batch.id}><td className="mono-cell">{batch.id}</td><td><span className={`status-chip ${batch.status === "failed" ? "status-danger" : batch.status === "running" ? "status-live" : "status-muted"}`}><span />{stateLabel(batch.status)}</span></td><td>{batch.totalCount}</td><td>{batch.succeededCount}</td><td className={batch.failedCount ? "text-danger" : ""}>{batch.failedCount}</td><td>{batch.startedAt ? new Date(batch.startedAt).toLocaleString("zh-CN") : "—"}</td></tr>)}</tbody></table></div> : <EmptyPanel loading={loadState === "loading"} title="还没有同步批次" description="启动手动同步后，真实批次记录会显示在这里。" />}</section>;
   if (page === "Sources") return <section className="panel config-panel"><div className="panel-heading"><div><h2>连接与数据源</h2><p>仅显示 API 返回的来源配置；前端不读取或存储集成密钥。</p></div><span className={`connection-state ${loadState}`}><span className="connection-dot" />{loadState === "ready" ? "API 已连接" : loadState === "loading" ? "检查中" : "未连接"}</span></div>{sources.length ? sources.map((source) => <div className="config-source" key={source.id}><div className="source-icon"><GitBranch size={17} /></div><div className="config-copy"><strong>{source.projectName}</strong><span>项目 ID：{source.projectId}</span><span>需求类型：{source.requirementTypeId}</span></div><span className={`status-chip ${source.enabled ? "status-live" : "status-muted"}`}><span />{source.enabled ? "已启用" : "已停用"}</span></div>) : <EmptyPanel loading={loadState === "loading"} title="尚未配置数据源" description="配置接口尚未支持时，请通过受控的服务端流程设置来源；不要在浏览器中输入或保存凭据。" />}</section>;
-  const placeholder = page === "Mappings" ? { icon: Users, title: "负责人映射由工作流 API 管理", body: "尚未提供负责人映射读取/写入接口。等接口就绪后，会在这里处理待匹配负责人；不会伪造人员列表或推送状态。", link: "查看需求池", target: "Requirements" as Page } : page === "Rules" ? { icon: BookOpen, title: "规则配置 API 尚未就绪", body: "模块词典和优先级规则必须经版本化配置。当前前端不模拟保存，也不会推断 P0–P3 优先级。", link: "查看产品范围", target: "Overview" as Page } : { icon: FileClock, title: "审计读取 API 尚未就绪", body: "审计记录需要由服务端持久化并关联操作者。API 未提供数据时，页面不会展示虚构日志。", link: "查看最近批次", target: "Batches" as Page };
+  if (page === "Rules") return <RulesPanel />;
+  const placeholder = page === "Mappings" ? { icon: Users, title: "负责人映射由工作流 API 管理", body: "尚未提供负责人映射读取/写入接口。等接口就绪后，会在这里处理待匹配负责人；不会伪造人员列表或推送状态。", link: "查看需求池", target: "Requirements" as Page } : { icon: FileClock, title: "审计读取 API 尚未就绪", body: "审计记录需要由服务端持久化并关联操作者。API 未提供数据时，页面不会展示虚构日志。", link: "查看最近批次", target: "Batches" as Page };
   const Icon = placeholder.icon;
   return <section className="panel placeholder-panel"><div className="placeholder-illustration"><span><Icon size={23} /></span><i /><i /><i /></div><div className="eyebrow"><span className="eyebrow-line" />API 契约待实现</div><h2>{placeholder.title}</h2><p>{placeholder.body}</p><button className="button button-secondary" onClick={() => onNavigate(placeholder.target)}>{placeholder.link}<ArrowRight size={15} /></button></section>;
+}
+
+const publishStatusChip: Record<PublishStatus, { label: string; className: string }> = { draft: { label: "草稿", className: "status-muted" }, published: { label: "已发布", className: "status-live" }, retired: { label: "已退役", className: "status-muted" } };
+
+function PublishStatusChip({ status }: { status: PublishStatus }) {
+  const chip = publishStatusChip[status];
+  return <span className={`status-chip ${chip.className}`}><span />{chip.label}</span>;
+}
+
+function RulesPanel() {
+  const [dictionaries, setDictionaries] = useState<DictionaryVersion[]>([]);
+  const [rules, setRules] = useState<PriorityRuleVersion[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [entriesInput, setEntriesInput] = useState("");
+  const [thresholds, setThresholds] = useState({ p0: 4, p1: 3, p2: 2 });
+
+  const load = useCallback(async () => {
+    setLoadError(null);
+    const [dictionaryPage, rulePage] = await Promise.allSettled([listDictionaryVersions(), listPriorityRules()]);
+    if (dictionaryPage.status === "fulfilled") setDictionaries(dictionaryPage.value);
+    if (rulePage.status === "fulfilled") setRules(rulePage.value);
+    if (dictionaryPage.status === "rejected" && rulePage.status === "rejected") {
+      setLoadError(dictionaryPage.reason instanceof ApiError ? `${dictionaryPage.reason.message}（${dictionaryPage.reason.code}）` : "无法加载规则配置。");
+    }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+
+  const withFeedback = async (action: () => Promise<string>) => {
+    setBusy(true); setNotice(null);
+    try { setNotice(await action()); await load(); }
+    catch (cause) { setNotice(cause instanceof ApiError ? `${cause.message}（${cause.code}）` : "操作失败：无法连接本地 API。"); }
+    finally { setBusy(false); }
+  };
+  const handleCreateDictionary = () => withFeedback(async () => {
+    const entries = entriesInput.split("\n").map((line) => line.trim()).filter(Boolean);
+    if (!entries.length) throw new ApiError("请输入至少一个模块名称（每行一个）。", 400, "EMPTY_INPUT");
+    const created = await createDictionaryDraft(entries);
+    setEntriesInput("");
+    return `词典 v${created.version} 草稿已创建`;
+  });
+  const handleCreateRule = () => withFeedback(async () => {
+    if (!(thresholds.p0 >= thresholds.p1 && thresholds.p1 >= thresholds.p2)) throw new ApiError("阈值需满足 P0 ≥ P1 ≥ P2。", 400, "INVALID_THRESHOLDS");
+    const created = await createPriorityRuleDraft({ thresholds });
+    return `规则 v${created.version} 草稿已创建`;
+  });
+
+  return <>
+    <section className="panel requirements-panel">
+      <div className="panel-heading"><div><h2>模块词典</h2><p>AI 分析只使用已发布的词典版本；发布新版本会自动退役旧版本。</p></div><button className="button button-secondary button-small" onClick={() => void load()} disabled={busy}><RefreshCw size={14} />刷新</button></div>
+      {loadError && <div className="alert-banner" role="alert"><CircleAlert size={18} /><div><strong>配置加载失败</strong><span>{loadError}</span></div></div>}
+      {notice && <div className="notice-banner" role="status"><Check size={16} /><span>{notice}</span><button className="icon-button" aria-label="关闭提示" onClick={() => setNotice(null)}><X size={15} /></button></div>}
+      <div className="rules-form">
+        <textarea aria-label="模块名称" className="rules-textarea" rows={3} placeholder="每行一个模块名称，例如：&#10;报表分析&#10;数据导入" value={entriesInput} onChange={(event) => setEntriesInput(event.target.value)} />
+        <button className="button button-primary button-small" onClick={() => void handleCreateDictionary()} disabled={busy}>创建草稿</button>
+      </div>
+      {dictionaries.length ? <div className="table-scroll"><table><thead><tr><th>版本</th><th>状态</th><th>模块</th><th>创建时间</th><th>发布时间</th><th>操作</th></tr></thead><tbody>{dictionaries.map((d) => <tr key={d.version}><td className="mono-cell">v{d.version}</td><td><PublishStatusChip status={d.status} /></td><td>{d.entries.join("、")}</td><td>{new Date(d.createdAt).toLocaleString("zh-CN")}</td><td>{d.publishedAt ? new Date(d.publishedAt).toLocaleString("zh-CN") : "—"}</td><td>{d.status === "draft" && <button className="button button-secondary button-small" onClick={() => void withFeedback(async () => { await publishDictionaryVersion(d.version); return `词典 v${d.version} 已发布`; })} disabled={busy}>发布</button>}</td></tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadError ? "配置不可用" : "还没有词典版本"}</strong><span>{loadError ? "请检查 API 连接后重试。" : "创建草稿并发布后，AI 分析将使用该词典。"}</span></div>}
+    </section>
+    <section className="panel requirements-panel">
+      <div className="panel-heading"><div><h2>优先级规则</h2><p>规则版本经历史案例校准；发布前需求优先级保持为空。</p></div></div>
+      <div className="rules-form">
+        <div className="rules-thresholds">
+          {(["p0", "p1", "p2"] as const).map((key) => <label key={key} className="rules-threshold"><span>{key.toUpperCase()} 阈值</span><input type="number" min={0} max={4} step={1} value={thresholds[key]} aria-label={`${key.toUpperCase()} 阈值`} onChange={(event) => setThresholds((prev) => ({ ...prev, [key]: Number(event.target.value) }))} /></label>)}
+        </div>
+        <button className="button button-primary button-small" onClick={() => void handleCreateRule()} disabled={busy}>创建草稿</button>
+      </div>
+      {rules.length ? <div className="table-scroll"><table><thead><tr><th>版本</th><th>状态</th><th>阈值 (P0/P1/P2)</th><th>创建时间</th><th>发布时间</th><th>操作</th></tr></thead><tbody>{rules.map((rule) => <tr key={rule.id}><td className="mono-cell">v{rule.version}</td><td><PublishStatusChip status={rule.status} /></td><td className="mono-cell">{[rule.rules.thresholds?.p0, rule.rules.thresholds?.p1, rule.rules.thresholds?.p2].map((value) => value ?? "—").join(" / ")}</td><td>{new Date(rule.createdAt).toLocaleString("zh-CN")}</td><td>{rule.publishedAt ? new Date(rule.publishedAt).toLocaleString("zh-CN") : "—"}</td><td>{rule.status === "draft" && <button className="button button-secondary button-small" onClick={() => void withFeedback(async () => { await publishPriorityRule(rule.id); return `规则 v${rule.version} 已发布`; })} disabled={busy}>发布</button>}</td></tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadError ? "配置不可用" : "还没有规则版本"}</strong><span>{loadError ? "请检查 API 连接后重试。" : "创建阈值规则草稿并发布后，AI 建议才会生成 P0–P3 优先级。"}</span></div>}
+    </section>
+  </>;
 }
 
 function EmptyPanel({ loading, title, description }: { loading: boolean; title: string; description: string }) {
