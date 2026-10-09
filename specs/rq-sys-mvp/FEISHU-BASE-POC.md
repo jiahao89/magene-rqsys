@@ -9,7 +9,7 @@
 |------|-----|
 | 测试 Base | TB同步测试(可删除) `OddqbqBeOamFjFsR5IXcJdjknmd`（owner 贾浩，时区 Asia/Shanghai，is_advanced=false） |
 | POC 表 | RQ-POC-验证 `tblxbyvbdLGVnLaO`（视图 `vew9msdoyO`，rev=1） |
-| 测试记录 1 | `recvxrwaGzPGJd`（poc_req_0001，含 PM 确认字段的完整记录） |
+| 测试记录 1 | `recvxwGs5Js0PA`（poc_req_0001，含 PM 确认字段；2026-10-09 冒烟事故误删原记录 recvxrwaGzPGJd 后按快照恢复，未知文本值以「（已恢复）」标记） |
 | 测试记录 2 | `recvxrwFnUJC0e`（poc_req_0002，空负责人起点） |
 | 执行人 open_id | `ou_894482287d1f95aff25b5550604167fb`（贾浩，j***@magene.com，经 contact +search-user 解析） |
 | 自动化 workflow | `wkf5C7AvESOSNy9n`（POC-执行人变更通知） |
@@ -88,6 +88,24 @@
 - 批量写入 200 条上限边界（实测规模为单条与双条）。
 - workflow 被 Base 管理员或租户策略限制的场景（当前租户未受限）。
 - `+workflow-update` 对已启用 workflow 的热更新行为（本次仅创建/启用）。
+
+## 生产 adapter 真实冒烟（2026-10-09，工单 07）
+
+RQ-Sys 的 `FeishuBitableClient`/`FeishuBasePushAdapter` 通过 lark-cli 代理 fetch（托管凭证）对测试 Base 执行真实 API 调用。验证脚本：`apps/api/scripts/transport-real-smoke.mts`（读/写）与 `apps/api/scripts/adapter-real-smoke.mts`（全流程）。
+
+### 实测结论
+
+| 能力 | 结果 |
+|------|------|
+| 复合键搜索（base/v3） | ✅ `GET /open-apis/base/v3/bases/{base_token}/tables/{table_id}/records?filter={"conditions":[["TB需求ID","==",..],["TB项目ID","==",..]],"logic":"and"}` 精确命中；**bitable v1 records/search 在非 advanced 表上条件被忽略（返回全表）或校验拒绝，不可用** |
+| 命名字段读取（bitable v1 GET） | ✅ `GET .../bitable/v1/apps/{app_token}/tables/{table_id}/records/{record_id}` 返回命名字段 |
+| 创建 / delta 更新 / 删除（bitable v1） | ✅ POST/PUT/DELETE 全链路成功（写入不触碰执行人字段即不触发通知自动化） |
+| Date 字段写入 | 原生 OpenAPI 要求 **unix 毫秒时间戳**（POC 时期的 `"yyyy-MM-dd HH:mm"` 为 lark-cli 便捷层格式） |
+| adapter 全流程 | ✅ 首推创建 → 实质变化 → PM 快照保存 + PM 状态重置「待处理」→ 读回确认 PM 确认字段零污染 → 清理 |
+
+### 事故记录（2026-10-09）
+
+初版 transport 的搜索体缺少 `filter` 包装层且用错了 API 族（bitable v1 search 顶层条件被忽略返回全表），导致冒烟首推错误命中 POC 测试记录 `recvxrwaGzPGJd`，后续清理误删该记录。处置：按删除前的读取快照恢复为 `recvxwGs5Js0PA`（已知字段忠实还原：TB/AI/PM 字段值、处理人、时间戳；文本值未留档，以「（已恢复）」标记），并以修复后的复合键搜索验证命中。修复后重跑全流程冒烟，首推正确创建新记录，POC 记录不再被触碰。
 
 ## 对后续工单的影响
 

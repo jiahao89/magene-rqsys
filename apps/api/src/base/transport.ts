@@ -67,24 +67,27 @@ export class FeishuBitableClient implements BaseClient {
   }
 
   async findByRequirementKey(key: BaseRequirementKey): Promise<BaseRecord | null> {
+    // 复合键查询走 base/v3（Ticket 02 POC 验证过的格式）：
+    // bitable v1 records/search 在非 advanced 表上不支持该过滤（条件被忽略或校验拒绝，2026-10-09 真实冒烟发现）。
+    const filter = JSON.stringify({
+      conditions: [
+        [this.config.keyFields.projectId, "==", key.projectId],
+        [this.config.keyFields.requirementId, "==", key.requirementId],
+      ],
+      logic: "and",
+    });
+    const query = new URLSearchParams({ filter, limit: "100" });
     const res = await this.authed(
-      `${this.baseUrl}/open-apis/bitable/v1/apps/${this.config.appToken}/tables/${this.config.tableId}/records/search`,
-      {
-        method: "POST",
-        body: JSON.stringify({
-          conjunction: "and",
-          conditions: [
-            { field_name: this.config.keyFields.projectId, op: "is", value: [key.projectId] },
-            { field_name: this.config.keyFields.requirementId, op: "is", value: [key.requirementId] },
-          ],
-        }),
-      },
+      `${this.baseUrl}/open-apis/base/v3/bases/${this.config.appToken}/tables/${this.config.tableId}/records?${query.toString()}`,
+      { method: "GET" },
     );
-    if (!res.ok) throw new Error(`Feishu records search returned HTTP ${res.status}`);
-    const payload = (await res.json()) as FeishuEnvelope;
-    this.assertOk(payload, "records search");
-    const item = payload.data?.items?.[0];
-    return item ? { recordId: item.record_id, fields: item.fields ?? {} } : null;
+    if (!res.ok) throw new Error(`Feishu records filter returned HTTP ${res.status}`);
+    const payload = (await res.json()) as FeishuEnvelope & { data?: { record_id_list?: string[] } };
+    this.assertOk(payload, "records filter");
+    const recordId = payload.data?.record_id_list?.[0];
+    if (!recordId) return null;
+    // 命名字段读取走 bitable v1 GET
+    return this.readRecord(recordId);
   }
 
   async create(fields: Record<string, unknown>): Promise<BaseRecord> {
@@ -112,6 +115,10 @@ export class FeishuBitableClient implements BaseClient {
   }
 
   async readPmFields(recordId: string): Promise<Record<string, unknown>> {
+    return (await this.readRecord(recordId)).fields;
+  }
+
+  private async readRecord(recordId: string): Promise<BaseRecord> {
     const res = await this.authed(
       `${this.baseUrl}/open-apis/bitable/v1/apps/${this.config.appToken}/tables/${this.config.tableId}/records/${recordId}`,
       { method: "GET" },
@@ -119,6 +126,7 @@ export class FeishuBitableClient implements BaseClient {
     if (!res.ok) throw new Error(`Feishu record read returned HTTP ${res.status}`);
     const payload = (await res.json()) as FeishuEnvelope;
     this.assertOk(payload, "record read");
-    return payload.data?.record?.fields ?? {};
+    if (!payload.data?.record) throw new Error("Feishu record read returned no record");
+    return { recordId: payload.data.record.record_id, fields: payload.data.record.fields ?? {} };
   }
 }
