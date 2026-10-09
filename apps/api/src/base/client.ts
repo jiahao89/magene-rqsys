@@ -64,7 +64,9 @@ export class FeishuBasePushAdapter {
       if (!this.snapshots) throw new Error("PM snapshot writer is unavailable");
       const pmValues = await this.client.readPmFields(existing.recordId);
       await this.snapshots.savePmSnapshot({ requirementId: input.requirementId, sourceVersion: input.sourceVersion, baseRecordId: existing.recordId, pmValues });
-      delta["PM状态"] = "待处理";
+      // PM 状态字段来自配置映射（pm 数组首项），不硬编码字段名
+      const pmStatusField = this.fields.pm[0];
+      if (pmStatusField) delta[pmStatusField] = "待处理";
     }
     // Unmapped and empty TB ownership never erases a human-assigned Base owner.
     if (input.owner === null) delete delta[this.fields.owner];

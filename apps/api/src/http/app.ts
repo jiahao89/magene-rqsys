@@ -178,10 +178,19 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const run = await repositories.basePushes.append({requirementId:req.id,sourceVersion:req.sourceVersion,pushVersion:req.sourceVersion,idempotencyKey:key.data,startedAt:now});
     const ownerLookup = req.executorUserId ? {tbUserId:req.executorUserId} : (req.executorName ? {normalizedName:req.executorName.normalize("NFKC").trim().replace(/\s+/gu," ").toLocaleLowerCase()} : {});
     const mapping = await repositories.people.resolveActive(req.sourceConfigId,ownerLookup);
+    // 推送状态合法推进：pending/failed → running → pushed/failed（pending → pushed 是非法迁移）
+    await repositories.requirements.setPushState(req.id,"running");
     try {
       const pushed = await dependencies.base.push({projectId:dependencies.baseProjectId,requirementId:req.teambitionRequirementId,title:req.title,description:req.description,owner:mapping?{userId:mapping.feishuUserId,idType:mapping.feishuIdType}:null,sourceVersion:req.sourceVersion,substantiveChanged:Boolean(req.baseRecordId),idempotencyKey:key.data,sourceValues:{scope:req.scope,acceptanceCriteria:req.acceptanceCriteria,sourceStatusId:req.sourceStatusId,sourceUrl:req.sourceUrl},aiValues:{}});
       await repositories.basePushes.updateResult(run.id,{status:"pushed",baseRecordId:pushed.recordId,completedAt:(dependencies.now??(()=>new Date()))().toISOString()});
       await repositories.requirements.setPushState(req.id,"pushed");
+      // 推送时解析到负责人则推进 owner 状态（已达目标状态时跳过，避免非法迁移）
+      if (mapping) {
+        const targetOwnerState = mapping.matchMethod === "manual" ? "manually_mapped" : "auto_mapped";
+        if (req.pipeline.owner !== targetOwnerState) await repositories.requirements.setOwner(req.id, mapping.feishuUserId, targetOwnerState);
+      } else if (!req.executorUserId && req.pipeline.owner === "pending_mapping") {
+        await repositories.requirements.setOwner(req.id, null, "not_required");
+      }
       await repositories.audit.append({id:crypto.randomUUID(),actorId:auth.actor.id,eventType:"base.push",entityType:"requirement",entityId:req.id,result:"succeeded",safeDetails:{created:pushed.created,sourceVersion:req.sourceVersion},occurredAt:(dependencies.now??(()=>new Date()))().toISOString()});
       return json({status:"pushed",baseRecordId:pushed.recordId,created:pushed.created},202);
     } catch {

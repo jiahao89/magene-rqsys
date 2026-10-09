@@ -1,5 +1,6 @@
 import type { ValidatedAnalysis } from "./contract.js";
 import { AiProviderError, type AiProvider } from "./provider.js";
+import { recommendationScores } from "./priority-rule.js";
 
 export interface AnalysisRun {
   id: string;
@@ -85,9 +86,13 @@ export async function runAnalysis(input: AnalysisServiceInput, options: Analysis
       dictionary: input.dictionary,
       priorityRule: input.priorityRule,
     });
-    // 契约校验保证 priority 与规则发布状态一致（规则未发布时优先级为空），不做兜底合成
+    // 已发布规则时用确定性规则从 U/M/S/C 建议计算优先级（不丢弃规则、不信任模型自评）；
+    // 规则未发布时 priority 保持为空
+    const priority = input.priorityRule
+      ? input.priorityRule.compute(recommendationScores(result))
+      : result.priority;
     const completed = await options.repository.complete(run.id, {
-      status: "analyzed", result, completedAt: (options.now ?? (() => new Date()))().toISOString(),
+      status: "analyzed", result: { ...result, priority }, completedAt: (options.now ?? (() => new Date()))().toISOString(),
       safeErrorCode: null, safeErrorSummary: null,
     });
     if (!completed) throw new AnalysisPersistenceError("Analysis run could not be completed.");

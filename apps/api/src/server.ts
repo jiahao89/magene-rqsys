@@ -10,6 +10,8 @@ import { TeambitionClient } from "./adapters/teambition/client.js";
 import { createDeepSeekProvider } from "./analysis/provider.js";
 import { runAnalysis } from "./analysis/service.js";
 import { AnalysisRepositoryAdapter } from "./analysis/repository-adapter.js";
+import { buildPriorityRule } from "./analysis/priority-rule.js";
+import { createDueSyncJobs } from "./scheduler/due-jobs.js";
 import type { SourceProjectConfig } from "./domain/workflow.js";
 
 const port = Number(process.env.PORT ?? 8787);
@@ -33,11 +35,23 @@ const syncJobRunner: SyncJobRunner | undefined = repositories ? async (job) => {
     ownerNames: source.ownerNames, fieldMap: source.fieldMap,
   };
   const client = new TeambitionClient();
+  const persistence = createPostgresSyncPersistence(repositories, job.sourceConfigId);
   const orchestrator = new SyncOrchestrator(
     { async listRequirements(cfg) { return { items: await client.listRequirementTasks(cfg), hasMore: false, nextCursor: null }; } },
-    createPostgresSyncPersistence(repositories, job.sourceConfigId),
+    persistence,
   );
-  return orchestrator.run({ batchId: job.batchId, sourceConfigId: job.sourceConfigId, config, ...(job.onlyIds === undefined ? {} : { onlyIds: job.onlyIds }) });
+  const result = await orchestrator.run({ batchId: job.batchId, sourceConfigId: job.sourceConfigId, config, ...(job.onlyIds === undefined ? {} : { onlyIds: job.onlyIds }) });
+  // 打通同步 → AI 分析链路：为新建/实质变更的需求创建分析任务（按源版本幂等去重）
+  if (result.status !== "failed") {
+    const now = new Date().toISOString();
+    for (const touched of persistence.touchedRequirements()) {
+      await repositories.jobs.enqueue({
+        jobType: "analysis", dedupeKey: `analysis:${touched.id}:v${touched.sourceVersion}`,
+        payload: { requirementId: touched.id, actorId: job.actorId }, availableAt: now,
+      });
+    }
+  }
+  return result;
 } : undefined;
 
 const analysisJobHandler: ((job: { payload: Record<string, unknown> }) => Promise<void>) | undefined = repositories ? async (job) => {
@@ -49,14 +63,17 @@ const analysisJobHandler: ((job: { payload: Record<string, unknown> }) => Promis
   if (!source) throw new Error("Analysis source configuration was not found");
   const published = (await repositories.moduleDictionaries.list()).find((version) => version.status === "published");
   const dictionary = { version: published?.version ?? 0, modules: (published?.entries ?? []).map((entry) => typeof entry === "string" ? entry : String((entry as { name?: unknown }).name ?? entry)) };
-  // 优先级规则语义待首个已发布版本定义；未接入前 priority 保持为空（规则未发布时优先级为空）
-  await repositories.priorityRules.getPublished();
+  // 已发布规则接入确定性计算；规则 JSON 不符合契约时 buildPriorityRule 返回 null（priority 保持为空）
+  const ruleRecord = await repositories.priorityRules.getPublished();
+  const priorityRule = ruleRecord ? buildPriorityRule(ruleRecord) : null;
   const provider = createDeepSeekProvider();
   await repositories.requirements.updateAnalysisState(requirement.id, "running");
   const run = await runAnalysis({
     requirementId: requirement.id, sourceVersion: requirement.sourceVersion, sourcePersisted: true,
     title: requirement.title, description: requirement.description ?? "", context: requirement.scope ?? "",
-    piiMarkers: source.ownerNames, dictionary, priorityRule: null,
+    // 文本中可能出现的姓名（配置名单 + 需求 proposer/executor）一律掩码；用户 ID 不进 prompt
+    piiMarkers: [...source.ownerNames, requirement.proposerName, requirement.executorName].filter((x): x is string => Boolean(x)),
+    dictionary, priorityRule,
   }, { repository: new AnalysisRepositoryAdapter(repositories.analyses), provider });
   await repositories.requirements.updateAnalysisState(requirement.id, run.status === "analyzed" ? "analyzed" : "failed_retryable");
 } : undefined;
@@ -93,11 +110,16 @@ const server = createServer(async (incoming, outgoing) => {
 });
 server.listen(port, "0.0.0.0", () => process.stdout.write(`RQ-Sys API listening on :${port}\n`));
 
-// 本地开发轮询循环：WORKER_POLL_MS 未设置时不启动（不作为生产调度证据）
+// 本地开发轮询循环：WORKER_POLL_MS 未设置时不启动（不作为生产调度证据；目标环境定时触发由妙搭 automation 承担）
 const workerPollMs = Number(process.env.WORKER_POLL_MS ?? 0);
 let workerTimer: NodeJS.Timeout | undefined;
-if (worker && workerPollMs > 0) {
-  workerTimer = setInterval(() => { void worker.runOnce().catch((error) => process.stderr.write(`worker runOnce failed: ${String(error)}\n`)); }, workerPollMs);
+if (worker && repositories && workerPollMs > 0) {
+  workerTimer = setInterval(() => {
+    void (async () => {
+      await createDueSyncJobs({ sources: repositories.sources, batches: repositories.batches, jobs: repositories.jobs, now: new Date() });
+      await worker.runOnce();
+    })().catch((error) => process.stderr.write(`worker tick failed: ${String(error)}\n`));
+  }, workerPollMs);
   process.stdout.write(`Pipeline worker polling every ${workerPollMs}ms\n`);
 }
 

@@ -167,6 +167,13 @@ export interface PipelineJobRepository {
     maxAttempts?: number;
   }): Promise<PipelineJobRecord>;
   claimNext(workerId: string, leaseMs: number, now: string): Promise<PipelineJobRecord | null>;
+  // 失败重排：状态回到 queued，available_at 按退避推迟；超出最大尝试由 worker 判定终态
+  reschedule(id: string, params: {
+    backoffMs: number;
+    errorCode?: string;
+    errorSummary?: string;
+    now: string;
+  }): Promise<PipelineJobRecord | null>;
   complete(
     id: string,
     result: {

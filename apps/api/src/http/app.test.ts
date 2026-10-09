@@ -15,7 +15,7 @@ function makeDependencies(): ApiDependencies {
   batches: { create: async (p) => { const b = { ...batch, ...p, id: `batch-${batches.length + 1}` }; batches.push(b); return b; }, get: async (id) => batches.find((b) => b.id === id) ?? (id === batch.id ? batch : null), findByIdempotencyKey: async (sid, key) => batches.find((b) => b.sourceConfigId === sid && b.idempotencyKey === key) ?? null, list: async ({ status, limit, cursor }) => { const rows = batches.filter((b) => !status || b.status === status); const start = cursor ? rows.findIndex((b) => b.id === cursor) + 1 : 0; const items = rows.slice(start, start + limit); return { items, nextCursor: start + limit < rows.length ? items.at(-1)?.id ?? null : null }; }, complete: async () => null },
   items: { upsert: async () => item, get: async () => item, listByBatch: async (id) => id === batch.id ? [item] : [] },
   audit: { append: async () => undefined, search: async () => [auditEvent] },
-  jobs: { enqueue: async (p) => ({ ...p, id: "job-1", status: "queued", attemptCount: 0, maxAttempts: p.maxAttempts ?? 3, lockedUntil: null, lastErrorCode: null, lastErrorSummary: null, createdAt: p.availableAt, updatedAt: p.availableAt }), claimNext: async () => null, complete: async () => null },
+  jobs: { enqueue: async (p) => ({ ...p, id: "job-1", status: "queued", attemptCount: 0, maxAttempts: p.maxAttempts ?? 3, lockedUntil: null, lastErrorCode: null, lastErrorSummary: null, createdAt: p.availableAt, updatedAt: p.availableAt }), claimNext: async () => null, reschedule: async () => null, complete: async () => null },
  };
  return { database: null, repositories, identity: { requireActor: async () => ({ id: "actor-1", roles: ["operator"] }) }, now: () => new Date("2026-10-08T00:00:00.000Z") };
 }

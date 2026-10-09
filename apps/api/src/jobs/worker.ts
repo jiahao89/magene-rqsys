@@ -1,6 +1,10 @@
 import type { PipelineJobRecord } from "../domain/persistence.js";
 import type { PipelineJobRepository } from "../application/repositories.js";
 import type { SyncJobRunner } from "../sync/service.js";
+import { computeBackoffMs } from "../retry/policy.js";
+
+// jobType → 重试策略阶段映射（复用 retry/policy.ts 的阶段退避）
+const STAGE_FOR_JOB_TYPE = { sync: "pull", analysis: "analysis", base_push: "push" } as const;
 
 export interface PipelineJobWorkerOptions {
   jobs: PipelineJobRepository;
@@ -31,12 +35,28 @@ export class PipelineJobWorker {
       if (!completed) throw new Error("claimed job disappeared before completion");
       return { kind: "succeeded", jobId: job.id };
     } catch (error) {
-      const code = error instanceof UnsupportedJobTypeError ? "unsupported_job_type" : "worker_handler_failed";
+      // 重试策略：有剩余尝试则按阶段退避重排（保留先前成功结果）；超限或永久错误进入终态
+      const stage = STAGE_FOR_JOB_TYPE[job.jobType];
+      const terminal =
+        error instanceof UnsupportedJobTypeError ||
+        job.attemptCount >= job.maxAttempts ||
+        stage === undefined;
+      if (terminal) {
+        const code = error instanceof UnsupportedJobTypeError ? "unsupported_job_type" : "max_attempts_reached";
+        await this.options.jobs.complete(job.id, {
+          status: "failed", errorCode: code,
+          errorSummary: code === "unsupported_job_type"
+            ? "No handler is registered for this job type."
+            : "Max attempts reached; manual retry is available.",
+          now: this.now().toISOString(),
+        });
+        return { kind: "failed", jobId: job.id };
+      }
+      const backoffMs = computeBackoffMs({ stage, attempt: job.attemptCount + 1 });
       // 安全摘要：错误详情不含密钥或 provider 原始响应
-      await this.options.jobs.complete(job.id, {
-        status: "failed", errorCode: code,
-        errorSummary: code === "unsupported_job_type" ? "No handler is registered for this job type." : "Job handler failed; retry is available.",
-        now: this.now().toISOString(),
+      await this.options.jobs.reschedule(job.id, {
+        backoffMs, errorCode: "worker_handler_failed",
+        errorSummary: "Job handler failed; scheduled for retry.", now: this.now().toISOString(),
       });
       return { kind: "failed", jobId: job.id };
     }
@@ -51,6 +71,7 @@ export class PipelineJobWorker {
       if (typeof batchId !== "string" || typeof sourceId !== "string" || (triggerType !== "manual" && triggerType !== "scheduled") || (actorId !== null && typeof actorId !== "string")) throw new Error("Invalid sync job payload");
       if (onlyIds !== undefined && (!Array.isArray(onlyIds) || !onlyIds.every((id) => typeof id === "string"))) throw new Error("Invalid sync job payload: onlyIds");
       const result = await this.options.sync({ batchId, sourceConfigId: sourceId, trigger: triggerType, actorId, ...(Array.isArray(onlyIds) ? { onlyIds: onlyIds as string[] } : {}) });
+      // 批次失败/部分失败 → 触发重试策略（保留已成功条目，重试由编排器幂等处理）
       if (result.status === "failed" || result.status === "partial_failure") throw new Error("sync completed with retryable failures");
       return;
     }

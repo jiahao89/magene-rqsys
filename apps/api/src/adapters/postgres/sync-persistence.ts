@@ -1,10 +1,16 @@
 import type { SyncPersistence } from "../../sync/service.js";
 import type { PostgresRepositories, RequirementRowWrite } from "./repositories.js";
 
+export interface PostgresSyncPersistence extends SyncPersistence {
+  // 本次批次中新建或实质变更的需求（unchanged 不入列）——用于同步完成后链式创建分析任务
+  touchedRequirements(): Array<{ id: string; sourceVersion: number }>;
+}
+
 export function createPostgresSyncPersistence(
   repositories: PostgresRepositories,
   sourceConfigId: string,
-): SyncPersistence {
+): PostgresSyncPersistence {
+  const touched: Array<{ id: string; sourceVersion: number }> = [];
   return {
     async findRequirement(sourceConfigId, sourceRequirementId) {
       return repositories.requirements.findForSync(sourceConfigId, sourceRequirementId);
@@ -34,7 +40,10 @@ export function createPostgresSyncPersistence(
         sourceVersion: input.sourceVersion,
         latestBatchId: input.latestBatchId,
       };
-      return repositories.requirements.upsertRequirement(sourceConfigId, input.sourceRequirementId, write);
+      const upserted = await repositories.requirements.upsertRequirement(sourceConfigId, input.sourceRequirementId, write);
+      // 编排器只对新建/哈希变化的需求调用 upsert——全部记入 touched 供链式分析
+      touched.push({ id: upserted.id, sourceVersion: upserted.sourceVersion });
+      return upserted;
     },
     async appendSourceSnapshot(input) {
       await repositories.sourceSnapshots.append(input);
@@ -54,6 +63,9 @@ export function createPostgresSyncPersistence(
     },
     async completeBatch(batchId, result) {
       await repositories.batches.complete(batchId, result);
+    },
+    touchedRequirements() {
+      return touched;
     },
   };
 }
