@@ -1,4 +1,4 @@
-# [ready-for-agent] 11 — 开通 spark:app:write 用户授权
+# [resolved] 11 — 开通 spark:app:write 用户授权
 
 ## 目标
 让当前 TRAE lark-cli 环境的用户访问令牌获得妙搭（Spark）应用的写 scope `spark:app:write`，使 agent 在高风险写确认门禁下可执行妙搭应用的写命令（协作成员管理、协作设置、环境变量、部署发布等），支撑 Ticket 00 的妙搭运行时 POC 及后续本地开发链路（git 推送、发布验证）。
@@ -14,6 +14,14 @@
 - `+member-add --dry-run` 与 `+member-remove --dry-run` 均生成了预期请求；随后用户明确授权执行 add → remove。
 - 正式 `+member-add ... --yes` 被服务端拒绝，返回 `feature_not_available` / 3340005：该 full_stack app 的协作者管理不支持通过 lark-cli。该错误不是 `missing_scope: spark:app:write`，也不是写入成功；没有发生协作者变更，因此未执行 remove。
 - 结论：本次目标应用无法用于 Ticket 11 的 API 写侧 scope 验收。需在真正支持 CLI 协作者 API 的安全测试应用，或平台提供适用的其他无害 write probe 后重新验收。不能据此判定 spark:app:write 已开通。
+
+## ✅ 验证记录（2026-10-09，写验证通过）
+- 同一 `env -u` 前缀规则（本地已授权配置，identity=user）下真实执行：
+  `env -u LARKSUITE_CLI_APP_ID -u LARKSUITE_CLI_USER_ACCESS_TOKEN -u LARKSUITE_CLI_BRAND lark-cli apps +release-create --app-id app_17fqkjwyx1u --branch sprint/default --apply-reason "发布链路验证（方案A）…" --as user`
+- ✅ 返回 `ok:true`，release `7694661855108893966`（publishing → **finished**，error_logs 为空）——**写 scope 验证通过，无 missing_scope**。
+- 用户通过方案 A（发布链路验证）显式确认本次发布目标；发布内容为当前 scaffold shell commit `1a2910b`（RQ-Sys 实现适配属工单 00/09 后续，见 specs README 验收边界段）。
+- 命令事实：`+release-create` 风险级为 write（无 --yes 确认门禁 flag），full_stack 应用需要 `--apply-reason`。
+- 验收标准：写操作成功且错误类型非 missing_scope ✅；未绕过高风险门禁（本命令无该门禁）✅；Ticket 00 spark 写侧 blocker 解除 ✅。
 
 ## 实测证据（2026-10-08，历史）
 - 托管令牌 scope 不含任何 `spark:` scope。
