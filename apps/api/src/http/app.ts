@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { SourceConfigUpdateSchema } from "../contracts/source.js";
 import { isDatabaseReady } from "../adapters/postgres/health.js";
 import { jsonError } from "./errors.js";
+import { decodeRequirementCursor } from "../application/requirement-cursor.js";
 
 export interface ApiRepositories {
   sources: SourceConfigRepository;
@@ -113,7 +114,8 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
     const query = Object.fromEntries(url.searchParams.entries());
     const parsed = RequirementListQuerySchema.safeParse(query); if (!parsed.success) return jsonError("VALIDATION_FAILED");
-    const page = await repositories.requirements.search({ ...(parsed.data.q === undefined ? {} : { q: parsed.data.q }), ...(parsed.data.pullState === undefined ? {} : { pullState: parsed.data.pullState }), ...(parsed.data.analysisState === undefined ? {} : { analysisState: parsed.data.analysisState }), ...(parsed.data.ownerState === undefined ? {} : { ownerState: parsed.data.ownerState }), ...(parsed.data.pushState === undefined ? {} : { pushState: parsed.data.pushState }), limit: parsed.data.limit, ...(parsed.data.cursor === undefined ? {} : { cursor: parsed.data.cursor }) });
+    const cursor = decodeRequirementCursor(parsed.data.cursor);
+    const page = await repositories.requirements.search({ ...(parsed.data.q === undefined ? {} : { q: parsed.data.q }), ...(parsed.data.pullState === undefined ? {} : { pullState: parsed.data.pullState }), ...(parsed.data.analysisState === undefined ? {} : { analysisState: parsed.data.analysisState }), ...(parsed.data.ownerState === undefined ? {} : { ownerState: parsed.data.ownerState }), ...(parsed.data.pushState === undefined ? {} : { pushState: parsed.data.pushState }), limit: parsed.data.limit, ...(cursor === undefined ? {} : { cursor }) });
     return json({ items: page.items.map(requirementSearchDto), nextCursor: page.nextCursor });
   }
   const requirementMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)$/);

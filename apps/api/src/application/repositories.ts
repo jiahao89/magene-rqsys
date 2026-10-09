@@ -54,6 +54,7 @@ export interface SyncItemRepository {
     status: "succeeded" | "failed";
     errorCode?: string;
     errorDetail?: string;
+    startedAt: string;
     completedAt: string;
   }): Promise<SyncItemRecord>;
   get(id: string): Promise<SyncItemRecord | null>;
@@ -206,6 +207,11 @@ export interface RequirementOwnerRepository {
   updatePushState(requirementId: string, to: PushState, baseRecordId?: string): Promise<void>;
 }
 
+export interface RequirementSearchCursor {
+  createdAt: string;
+  id: string;
+}
+
 export interface RequirementQueryRepository {
   // 按 openapi /api/requirements 查询参数检索（q 匹配标题，游标按 created_at,id 倒序）
   search(query: {
@@ -215,7 +221,7 @@ export interface RequirementQueryRepository {
     ownerState?: OwnerState;
     pushState?: PushState;
     limit: number;
-    cursor?: string;
+    cursor?: RequirementSearchCursor;
   }): Promise<{ items: RequirementRecord[]; nextCursor: string | null }>;
   get(id: string): Promise<RequirementRecord | null>;
   // 同步幂等查找：返回流水线推进所需的最小字段

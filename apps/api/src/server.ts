@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { createPool } from "./adapters/postgres/pool.js";
 import { PostgresRepositories } from "./adapters/postgres/repositories.js";
+import { createPostgresSyncPersistence } from "./adapters/postgres/sync-persistence.js";
 import { type ApiDependencies, handleApiRequest } from "./http/app.js";
 import { errorBody } from "./http/errors.js";
 import { PipelineJobWorker } from "./jobs/worker.js";
@@ -34,13 +35,7 @@ const syncJobRunner: SyncJobRunner | undefined = repositories ? async (job) => {
   const client = new TeambitionClient();
   const orchestrator = new SyncOrchestrator(
     { async listRequirements(cfg) { return { items: await client.listRequirementTasks(cfg), hasMore: false, nextCursor: null }; } },
-    {
-      async findRequirement(sourceConfigId, sourceRequirementId) { return repositories.requirements.findForSync(sourceConfigId, sourceRequirementId); },
-      async upsertRequirement(input) { return repositories.requirements.upsertRequirement(job.sourceConfigId, input.sourceRequirementId, { sourceHash: input.sourceHash, substantiveHash: input.substantiveHash, title: input.title, uniqueId: input.sourceUniqueId, description: input.mappedFields.description ?? null, scope: input.mappedFields.scope ?? null, acceptanceCriteria: input.mappedFields.acceptanceCriteria ?? null, proposerUserId: input.sourceCreatorId, proposerName: input.mappedFields.proposerName ?? null, executorUserId: input.sourceExecutorId, executorName: input.mappedFields.executorName ?? null, statusId: input.sourceStatusId, createdAt: input.sourceCreatedAt, updatedAt: input.sourceUpdatedAt, url: input.mappedFields.sourceUrl ?? null, payload: input.sourcePayload, attachmentRefs: input.mappedFields.attachmentRefs ?? [], customFields: input.mappedFields.customFields ?? [] }); },
-      async appendSourceSnapshot(input) { await repositories.sourceSnapshots.append(input); },
-      async writeSyncItem(input) { await repositories.items.upsert({ batchId: input.batchId, requirementId: input.requirementId, teambitionRequirementId: input.teambitionRequirementId, action: input.action, status: input.status, ...(input.errorCode === null ? {} : { errorCode: input.errorCode }), ...(input.errorDetail === null ? {} : { errorDetail: input.errorDetail }), completedAt: input.completedAt }); },
-      async completeBatch(batchId, result) { await repositories.batches.complete(batchId, result); },
-    },
+    createPostgresSyncPersistence(repositories, job.sourceConfigId),
   );
   return orchestrator.run({ batchId: job.batchId, sourceConfigId: job.sourceConfigId, config, ...(job.onlyIds === undefined ? {} : { onlyIds: job.onlyIds }) });
 } : undefined;
