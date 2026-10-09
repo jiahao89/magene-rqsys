@@ -1,7 +1,7 @@
 // 工单 16/17 面板测试：数据全部来自 mock API；覆盖正向、权限拒绝与详情/重试交互。
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { BatchesPanel, MappingsPanel, SourcesPanel } from "./panels";
+import { BatchesPanel, MappingsPanel, RequirementsPanel, SourcesPanel } from "./panels";
 import type { SourceConfig } from "./api";
 
 const fetchMock = vi.fn<typeof fetch>();
@@ -68,11 +68,11 @@ describe("BatchesPanel (ticket 16)", () => {
         });
       }
       if (path === "/api/items/item-bad/retry" && init?.method === "POST") return jsonOk({ batchId: "batch-2", status: "queued" }, 202);
-      return jsonOk({ items: [batch] });
+      return jsonOk({ items: [batch], nextCursor: null });
     });
 
-    render(<BatchesPanel batches={[batch]} loadState="ready" onRefresh={() => undefined} />);
-    expect(screen.getByText("手动 · operator")).toBeInTheDocument();
+    render(<BatchesPanel onRefresh={() => undefined} />);
+    expect(await screen.findByText("手动 · operator")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "查看" }));
 
     expect(await screen.findByText("tb-ok")).toBeInTheDocument();
@@ -102,5 +102,57 @@ describe("MappingsPanel (ticket 17)", () => {
 
     expect(await screen.findByText(/映射已持久化（manually_mapped），Base 推送已入队/)).toBeInTheDocument();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/requirements/req-1/owner", expect.objectContaining({ method: "PUT" })));
+  });
+});
+
+describe("RequirementsPanel (ticket 17)", () => {
+  const row = { id: "req-1", sourceRequirementId: "tb-1", title: "需要报表", sourceVersion: 2, pipeline: { pull: "synced", analysis: "analyzed", owner: "auto_mapped", push: "pushed" } };
+
+  it("shows AI evidence, facts vs inference separation, and the analysis version history in detail", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path.startsWith("/api/requirements/req-1")) {
+        return jsonOk({
+          ...row,
+          analysis: {
+            module: "报表分析", priority: "P1", confidence: "中", confidence_reason: "标题提到报表",
+            evidence: ["支持报表导出"], facts: [{ text: "需要月度报表", evidence: "支持报表导出" }],
+            inferences: [{ text: "可能需要定时导出", ai_inference: true }], missing_inputs: ["目标用户"], blind_spots: ["价值待确认"],
+          },
+          analyses: [
+            { analysisVersion: 1, status: "failed_retryable", moduleSuggestion: null, confidence: null, priority: null, startedAt: "2026-10-09T00:00:00.000Z", completedAt: "2026-10-09T00:00:05.000Z", safeErrorSummary: "AI provider request timed out." },
+            { analysisVersion: 2, status: "analyzed", moduleSuggestion: "报表分析", confidence: "中", priority: "P1", startedAt: "2026-10-09T00:01:00.000Z", completedAt: "2026-10-09T00:01:03.000Z", safeErrorSummary: null },
+          ],
+        });
+      }
+      return jsonOk({ items: [row], nextCursor: null });
+    });
+
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    fireEvent.click(await screen.findByRole("button", { name: "查看" }));
+
+    expect(await screen.findByText("支持报表导出")).toBeInTheDocument();
+    expect(screen.getByText(/【AI 推断】可能需要定时导出/)).toBeInTheDocument();
+    expect(screen.getByText("目标用户")).toBeInTheDocument();
+    expect(screen.getByText("价值待确认")).toBeInTheDocument();
+    expect(screen.getByText(/AI provider request timed out\./)).toBeInTheDocument();
+    expect(screen.getByText(/事实（来自源文本）/)).toBeInTheDocument();
+  });
+
+  it("passes server-side search and filters to the requirements API", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path.startsWith("/api/requirements")) return jsonOk({ items: [row], nextCursor: "cursor-1" });
+      return jsonOk({});
+    });
+
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await screen.findByText("需要报表");
+    fireEvent.change(screen.getByLabelText("搜索需求标题"), { target: { value: "报表" } });
+    fireEvent.change(screen.getByLabelText("负责人筛选"), { target: { value: "auto_mapped" } });
+    fireEvent.click(screen.getByRole("button", { name: "筛选" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/requirements?q=%E6%8A%A5%E8%A1%A8&ownerState=auto_mapped&limit=25", expect.anything()));
+    expect(await screen.findByRole("button", { name: "加载更多" })).toBeInTheDocument();
   });
 });

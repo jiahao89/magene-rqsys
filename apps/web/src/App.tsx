@@ -149,8 +149,8 @@ function RequirementsTable({ rows, loading }: { rows: Requirement[]; loading: bo
 }
 
 function SecondaryContent({ page, sources, batches, requirements, loadState, onNavigate, onRefresh }: { page: Page; sources: SourceConfig[]; batches: Batch[]; requirements: Requirement[]; loadState: LoadState; onNavigate: (page: Page) => void; onRefresh: () => void }) {
-  if (page === "Requirements") return <RequirementsPanel requirements={requirements} loadState={loadState} onRefresh={onRefresh} />;
-  if (page === "Batches") return <BatchesPanel batches={batches} loadState={loadState} onRefresh={onRefresh} />;
+  if (page === "Requirements") return <RequirementsPanel onRefresh={onRefresh} />;
+  if (page === "Batches") return <BatchesPanel onRefresh={onRefresh} />;
   if (page === "Sources") return <SourcesPanel sources={sources} loadState={loadState} onRefresh={onRefresh} />;
   if (page === "Rules") return <RulesPanel />;
   if (page === "Mappings") return <MappingsPanel requirements={requirements} onRefresh={onRefresh} />;
@@ -184,6 +184,7 @@ function RulesPanel() {
   const [entriesInput, setEntriesInput] = useState("");
   const [thresholds, setThresholds] = useState({ p0: 4, p1: 3, p2: 2 });
   const [scoringInput, setScoringInput] = useState("user:强=3\nuser:中=2\nuser:弱=1\nmarket:强=3\nmarket:中=2\nmarket:弱=1\nbusiness:强=3\nbusiness:中=2\nbusiness:弱=1\ntechnology:强=3\ntechnology:中=2\ntechnology:弱=1");
+  const [evidenceInput, setEvidenceInput] = useState("");
 
   const load = useCallback(async () => {
     setLoadError(null);
@@ -213,7 +214,10 @@ function RulesPanel() {
     if (!(thresholds.p0 >= thresholds.p1 && thresholds.p1 >= thresholds.p2)) throw new ApiError("阈值需满足 P0 ≥ P1 ≥ P2。", 400, "INVALID_THRESHOLDS");
     const scoring = parseScoringInput(scoringInput);
     if (Object.values(scoring).some((map) => Object.keys(map).length === 0)) throw new ApiError("每个维度至少需要一条「取值=分数」的已批准评分。", 400, "INVALID_SCORING");
-    const created = await createPriorityRuleDraft({ scoring, thresholds });
+    let validationEvidence: unknown[] = [];
+    try { validationEvidence = evidenceInput.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => JSON.parse(line) as unknown); }
+    catch { throw new ApiError("校准证据每行必须是一个合法 JSON 对象。", 400, "INVALID_EVIDENCE"); }
+    const created = await createPriorityRuleDraft({ scoring, thresholds }, fetch, validationEvidence);
     return `规则 v${created.version} 草稿已创建`;
   });
 
@@ -238,6 +242,9 @@ function RulesPanel() {
       </div>
       <div className="rules-form">
         <label className="rules-threshold" style={{ flex: 1 }}><span>U/M/S/C 已批准评分映射（每行「维度:取值=分数」；未校准证据的规则不会用于计算）</span><textarea aria-label="评分映射" className="rules-textarea" rows={3} value={scoringInput} onChange={(event) => setScoringInput(event.target.value)} /></label>
+      </div>
+      <div className="rules-form">
+        <label className="rules-threshold" style={{ flex: 1 }}><span>校准证据（每行一个 JSON 对象；为空的规则发布后不会用于优先级计算）</span><textarea aria-label="校准证据" className="rules-textarea" rows={2} placeholder='例如：{"cohort":"2026-Q3","cases":12}' value={evidenceInput} onChange={(event) => setEvidenceInput(event.target.value)} /></label>
       </div>
       {rules.length ? <div className="table-scroll"><table><thead><tr><th>版本</th><th>状态</th><th>阈值 (P0/P1/P2)</th><th>创建时间</th><th>发布时间</th><th>操作</th></tr></thead><tbody>{rules.map((rule) => <tr key={rule.id}><td className="mono-cell">v{rule.version}</td><td><PublishStatusChip status={rule.status} /></td><td className="mono-cell">{[rule.rules.thresholds?.p0, rule.rules.thresholds?.p1, rule.rules.thresholds?.p2].map((value) => value ?? "—").join(" / ")}</td><td>{new Date(rule.createdAt).toLocaleString("zh-CN")}</td><td>{rule.publishedAt ? new Date(rule.publishedAt).toLocaleString("zh-CN") : "—"}</td><td>{rule.status === "draft" && <button className="button button-secondary button-small" onClick={() => void withFeedback(async () => { await publishPriorityRule(rule.id); return `规则 v${rule.version} 已发布`; })} disabled={busy}>发布</button>}</td></tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadError ? "配置不可用" : "还没有规则版本"}</strong><span>{loadError ? "请检查 API 连接后重试。" : "创建阈值规则草稿并发布后，AI 建议才会生成 P0–P3 优先级。"}</span></div>}
     </section>

@@ -113,8 +113,9 @@ export async function listPriorityRules(fetcher: typeof fetch = fetch): Promise<
 export function createPriorityRuleDraft(
   rules: { scoring: Record<string, Record<string, number>>; thresholds: { p0: number; p1: number; p2: number } },
   fetcher: typeof fetch = fetch,
+  validationEvidence: unknown[] = [],
 ): Promise<PriorityRuleVersion> {
-  return postJson<PriorityRuleVersion>("/api/rules/priority", { rules }, fetcher);
+  return postJson<PriorityRuleVersion>("/api/rules/priority", { rules, validationEvidence }, fetcher);
 }
 
 export function publishPriorityRule(id: string, fetcher: typeof fetch = fetch): Promise<PriorityRuleVersion> {
@@ -182,17 +183,6 @@ export function retrySyncItem(id: string, fetcher: typeof fetch = fetch): Promis
   return postJson<{ batchId: string; status: string }>(`/api/items/${id}/retry`, null, fetcher);
 }
 
-export interface RequirementDetail {
-  id: string;
-  sourceRequirementId: string;
-  title: string;
-  sourceVersion: number;
-  pipeline: { pull: string; analysis: string; owner: string; push: string };
-  source: Record<string, unknown>;
-  analysis: Record<string, unknown> | null;
-  baseRecordId: string | null;
-}
-
 export function getRequirement(id: string, fetcher: typeof fetch = fetch): Promise<RequirementDetail> {
   return requestJson<RequirementDetail>(`/api/requirements/${id}`, fetcher);
 }
@@ -220,10 +210,76 @@ export interface AuditEvent {
   occurredAt: string;
 }
 
-export function listAudit(params: { entityId?: string; limit?: number; fetcher?: typeof fetch } = {}): Promise<AuditEvent[]> {
+export interface RequirementSummary {
+  id: string;
+  sourceRequirementId: string;
+  title: string;
+  sourceVersion: number;
+  pipeline: { pull: string; analysis: string; owner: string; push: string };
+}
+
+export interface AnalysisVersionSummary {
+  analysisVersion: number;
+  status: string;
+  moduleSuggestion: string | null;
+  confidence: string | null;
+  priority: string | null;
+  startedAt: string;
+  completedAt: string | null;
+  safeErrorSummary: string | null;
+}
+
+export interface RequirementDetail {
+  id: string;
+  sourceRequirementId: string;
+  title: string;
+  sourceVersion: number;
+  pipeline: { pull: string; analysis: string; owner: string; push: string };
+  source: Record<string, unknown>;
+  analysis: Record<string, unknown> | null;
+  analyses: AnalysisVersionSummary[];
+  baseRecordId: string | null;
+}
+
+export interface BatchSummary {
+  id: string;
+  status: string;
+  triggerType?: string;
+  actorId?: string | null;
+  totalCount: number;
+  succeededCount: number;
+  failedCount: number;
+  startedAt?: string;
+}
+
+export async function listRequirements(params: { q?: string; ownerState?: string; analysisState?: string; limit?: number; cursor?: string; fetcher?: typeof fetch } = {}): Promise<{ items: RequirementSummary[]; nextCursor: string | null }> {
+  const { fetcher = fetch, ...query } = params;
+  const search = new URLSearchParams();
+  if (query.q) search.set("q", query.q);
+  if (query.ownerState) search.set("ownerState", query.ownerState);
+  if (query.analysisState) search.set("analysisState", query.analysisState);
+  if (query.limit !== undefined) search.set("limit", String(query.limit));
+  if (query.cursor) search.set("cursor", query.cursor);
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return requestJson<{ items: RequirementSummary[]; nextCursor: string | null }>(`/api/requirements${suffix}`, fetcher);
+}
+
+export async function listBatches(params: { status?: string; limit?: number; cursor?: string; fetcher?: typeof fetch } = {}): Promise<{ items: BatchSummary[]; nextCursor: string | null }> {
+  const { fetcher = fetch, ...query } = params;
+  const search = new URLSearchParams();
+  if (query.status) search.set("status", query.status);
+  if (query.limit !== undefined) search.set("limit", String(query.limit));
+  if (query.cursor) search.set("cursor", query.cursor);
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return requestJson<{ items: BatchSummary[]; nextCursor: string | null }>(`/api/batches${suffix}`, fetcher);
+}
+
+export function listAudit(params: { entityId?: string; since?: string; until?: string; limit?: number; fetcher?: typeof fetch } = {}): Promise<AuditEvent[]> {
   const { fetcher = fetch, ...query } = params;
   const search = new URLSearchParams();
   if (query.entityId) search.set("entityId", query.entityId);
+  if (query.since) search.set("since", query.since);
+  if (query.until) search.set("until", query.until);
   if (query.limit !== undefined) search.set("limit", String(query.limit));
   const suffix = search.toString() ? `?${search.toString()}` : "";
   return requestJson<{ items: AuditEvent[] }>(`/api/audit${suffix}`, fetcher).then((result) => result.items);

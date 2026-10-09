@@ -484,8 +484,22 @@ components:
           required: [pull, analysis, owner, push]
         source: { type: object, additionalProperties: true }
         analysis: { type: [object, 'null'], additionalProperties: true }
+        analyses:
+          type: array
+          description: Prior and current analysis version summaries (spec 02 prior versions); newest last.
+          items:
+            type: object
+            properties:
+              analysisVersion: { type: integer }
+              status: { $ref: '#/components/schemas/AnalysisState' }
+              moduleSuggestion: { type: [string, 'null'] }
+              confidence: { type: [string, 'null'], enum: [高, 中, 低, null] }
+              priority: { type: [string, 'null'], enum: [P0, P1, P2, P3, null] }
+              startedAt: { type: string, format: date-time }
+              completedAt: { type: [string, 'null'], format: date-time }
+              safeErrorSummary: { type: [string, 'null'] }
         baseRecordId: { type: [string, 'null'] }
-      required: [id, sourceRequirementId, title, sourceVersion, pipeline, source, analysis, baseRecordId]
+      required: [id, sourceRequirementId, title, sourceVersion, pipeline, source, analysis, analyses, baseRecordId]
     Batch:
       type: object
       properties:
