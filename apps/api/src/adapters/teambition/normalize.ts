@@ -37,9 +37,11 @@ function allowlistedSourcePayload(
   fields: TeambitionCustomField[],
   mappedIds: Set<string>,
 ): Record<string, unknown> {
-  const allowed = fields
-    .filter((field) => mappedIds.has(field._customfieldid))
-    .map((field) => ({
+  const allowedById = new Map<string, TeambitionCustomField>();
+  for (const field of fields) {
+    if (mappedIds.has(field._customfieldid)) allowedById.set(field._customfieldid, field);
+  }
+  const allowed = Array.from(allowedById.values()).map((field) => ({
       id: field._customfieldid,
       type: field.type ?? null,
       value: field.value ?? null,
@@ -69,7 +71,8 @@ export function normalizeTeambitionTask(
   if (!task.id) throw new Error("Teambition task is missing its stable id");
 
   const customFields = parseCustomFields(task.custom_fields);
-  const byId = new Map(customFields.map((field) => [field._customfieldid, field]));
+  const byId = new Map<string, TeambitionCustomField>();
+  for (const field of customFields) byId.set(field._customfieldid, field);
   const mappedFields: Record<string, unknown> = {};
 
   for (const [domainField, teambitionFieldId] of Object.entries(fieldMap)) {
