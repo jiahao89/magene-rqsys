@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Activity, ArrowDownToLine, ArrowRight, BookOpen, Check, ChevronDown, CircleAlert, CircleHelp, Clock3, Command, Database, FileClock, FolderSync, Gauge, GitBranch, Layers3, ListChecks, LoaderCircle, Play, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Users, X } from "lucide-react";
-import { ApiError, getHealth, listSources, type SourceConfig } from "./api";
+import { ApiError, getHealth, listSources, runSync, type SourceConfig } from "./api";
 
 type Batch = { id: string; status: string; totalCount: number; succeededCount: number; failedCount: number; startedAt?: string; completedAt?: string; errorSummary?: string };
 type Requirement = { id: string; sourceRequirementId: string; title: string; sourceVersion: number; pipeline: { pull: string; analysis: string; owner: string; push: string }; analysis?: { module?: string; confidence?: string } | null };
@@ -13,8 +13,8 @@ const navigation: { label: Page; icon: typeof Gauge }[] = [
 ];
 const pageTitles: Record<Page, string> = { Overview: "总览", Requirements: "需求池", Batches: "同步批次", Sources: "数据源配置", Mappings: "负责人映射", Rules: "分类规则", Audit: "审计日志" };
 
-async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, { ...init, headers: { accept: "application/json", ...(init?.body ? { "content-type": "application/json" } : {}), ...init?.headers } });
+async function apiJson<T>(path: string): Promise<T> {
+  const response = await fetch(path, { headers: { accept: "application/json" } });
   const body: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     const envelope = body && typeof body === "object" && "error" in body ? body.error : undefined;
@@ -72,14 +72,12 @@ function App() {
 
   useEffect(() => { void loadData(); }, [loadData]);
 
-  const runSync = async () => {
+  const handleRunSync = async () => {
     const source = sources.find((item) => item.enabled);
     if (!source) { setNotice("请先配置并启用一个数据源。"); return; }
     setBusy(true); setNotice(null);
     try {
-      const result = await apiJson<{ batchId: string; status: string }>("/api/sync/run", {
-        method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ sourceId: source.id }),
-      });
+      const result = await runSync(source);
       setNotice(`批次 ${result.batchId} 已提交`);
       await loadData();
     } catch (cause) {
@@ -112,7 +110,7 @@ function App() {
           {error && <div className="alert-banner" role="alert"><CircleAlert size={18} /><div><strong>服务暂不可用</strong><span>{error}</span></div><button className="button button-secondary button-small" onClick={() => void loadData()}><RefreshCw size={14} />重试连接</button></div>}
           {notice && <div className="notice-banner" role="status"><Check size={16} /><span>{notice}</span><button className="icon-button" aria-label="关闭提示" onClick={() => setNotice(null)}><X size={15} /></button></div>}
           {page === "Overview" && <>
-            <section className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" />SYNC WORKBENCH</div><h1>工作流总览</h1><p>查看需求同步进度、分析状态与推送健康度。</p></div><div className="heading-actions"><button className="button button-secondary" onClick={() => void loadData()} disabled={health === "loading"}><RefreshCw size={15} className={health === "loading" ? "spin" : ""} />刷新</button><button className="button button-primary" onClick={() => void runSync()} disabled={busy || health !== "ready"}><Play size={15} fill="currentColor" />{busy ? "提交中…" : "立即同步"}</button></div></section>
+            <section className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" />SYNC WORKBENCH</div><h1>工作流总览</h1><p>查看需求同步进度、分析状态与推送健康度。</p></div><div className="heading-actions"><button className="button button-secondary" onClick={() => void loadData()} disabled={health === "loading"}><RefreshCw size={15} className={health === "loading" ? "spin" : ""} />刷新</button><button className="button button-primary" onClick={() => void handleRunSync()} disabled={busy || health !== "ready"}><Play size={15} fill="currentColor" />{busy ? "提交中…" : "立即同步"}</button></div></section>
             <section className="source-banner"><div className="source-leading"><span className="source-icon"><GitBranch size={17} /></span><div><span className="micro-label">当前同步来源</span><strong>{sources[0]?.projectName ?? (health === "loading" ? "正在加载配置…" : "尚未配置数据源")}</strong></div></div><div className="source-meta"><span className={`status-chip ${sources[0]?.enabled ? "status-live" : "status-muted"}`}><span />{sources[0]?.enabled ? "同步已启用" : "未启用"}</span><span className="source-meta-divider" /><span className="subtle-text">Teambition 项目</span></div><button className="text-link" onClick={() => setPage("Sources")}>管理来源 <ArrowRight size={14} /></button></section>
 
             <section className="section-block"><div className="section-heading"><div><h2>同步健康度</h2><p>四个处理阶段独立统计 · 不互相阻塞</p></div><button className="link-button" onClick={() => setPage("Requirements")}>查看需求池 <ArrowRight size={14} /></button></div>
@@ -137,7 +135,7 @@ function App() {
             <footer className="page-footer"><span>RQ-Sys MVP <span className="footer-dot">·</span> 本地开发工作区</span><span><ShieldCheck size={14} />状态由 API 返回；不展示飞书 PM 处理状态</span></footer>
           </>}
 
-          {page !== "Overview" && <section className="secondary-page"><div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" />WORKSPACE</div><h1>{pageTitles[page]}</h1><p>{pageDescription(page)}</p></div>{page === "Batches" && <button className="button button-primary" onClick={() => void runSync()} disabled={busy || health !== "ready"}><Play size={15} fill="currentColor" />{busy ? "提交中…" : "立即同步"}</button>}</div><SecondaryContent page={page} sources={sources} batches={batches} requirements={shownRequirements} loadState={health} onNavigate={setPage} onRefresh={() => void loadData()} /></section>}
+          {page !== "Overview" && <section className="secondary-page"><div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" />WORKSPACE</div><h1>{pageTitles[page]}</h1><p>{pageDescription(page)}</p></div>{page === "Batches" && <button className="button button-primary" onClick={() => void handleRunSync()} disabled={busy || health !== "ready"}><Play size={15} fill="currentColor" />{busy ? "提交中…" : "立即同步"}</button>}</div><SecondaryContent page={page} sources={sources} batches={batches} requirements={shownRequirements} loadState={health} onNavigate={setPage} onRefresh={() => void loadData()} /></section>}
         </div>
       </main>
     </div>

@@ -4,7 +4,9 @@
 // 唯一性约束由 DDL 保证（见 domain/persistence.ts 注释），端口语义与之对齐。
 
 import type { AuditEventRecord, BasePushRunRecord, BatchState, AnalysisRunRecord, ModuleDictionaryVersionRecord, PersonMappingRecord, PmSnapshotRecord, PipelineJobRecord, PipelineJobType, PriorityLevel, PriorityRuleVersionRecord, SourceConfigRecord, SourceSnapshotRecord, SyncBatchRecord, SyncItemAction, SyncItemRecord, SyncTrigger } from "../domain/persistence.js";
+import type { AnalysisState, OwnerState, PullState, PushState } from "../domain/workflow.js";
 import type { SourceConfigUpdate } from "../contracts/source.js";
+import type { RequirementRecord } from "../domain/persistence.js";
 
 // source_configs
 export interface SourceConfigRepository {
@@ -151,6 +153,7 @@ export interface BasePushRunRepository {
       completedAt: string;
     },
   ): Promise<BasePushRunRecord | null>;
+  findByIdempotencyKey(key: string): Promise<BasePushRunRecord | null>;
 }
 
 // pipeline_jobs（dedupe_key 唯一；claim 用租约语义，与 jobs/ 模块决策逻辑配合）
@@ -194,4 +197,38 @@ export interface ModuleDictionaryRepository {
 export interface PriorityRuleRepository {
   get(id: string): Promise<PriorityRuleVersionRecord | null>;
   getPublished(): Promise<PriorityRuleVersionRecord | null>;
+}
+
+// requirements 查询与状态迁移（handlers 与 worker 共用）
+export interface RequirementOwnerRepository {
+  get(id: string): Promise<RequirementRecord | null>;
+  updateOwnerState(requirementId: string, to: OwnerState): Promise<void>;
+  updatePushState(requirementId: string, to: PushState, baseRecordId?: string): Promise<void>;
+}
+
+export interface RequirementQueryRepository {
+  // 按 openapi /api/requirements 查询参数检索（q 匹配标题，游标按 created_at,id 倒序）
+  search(query: {
+    q?: string;
+    pullState?: PullState;
+    analysisState?: AnalysisState;
+    ownerState?: OwnerState;
+    pushState?: PushState;
+    limit: number;
+    cursor?: string;
+  }): Promise<{ items: RequirementRecord[]; nextCursor: string | null }>;
+  get(id: string): Promise<RequirementRecord | null>;
+  // 同步幂等查找：返回流水线推进所需的最小字段
+  findForSync(sourceConfigId: string, teambitionRequirementId: string): Promise<{
+    id: string;
+    sourceVersion: number;
+    sourceHash: string;
+    substantiveHash: string;
+  } | null>;
+  // 状态迁移（内部走 domain/transitions 校验，非法迁移抛 InvalidTransitionError）
+  updateAnalysisState(requirementId: string, to: AnalysisState): Promise<void>;
+  // 负责人落库：feishuUserId 来自 person_mappings，本表只推进 owner 状态
+  setOwner(requirementId: string, feishuUserId: string | null, state: OwnerState): Promise<void>;
+  setBaseRecord(requirementId: string, baseRecordId: string, pushedAt: string): Promise<void>;
+  setPushState(requirementId: string, state: PushState): Promise<void>;
 }

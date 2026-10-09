@@ -14,7 +14,10 @@ export interface SyncPersistence {
   writeSyncItem(input:{batchId:string;requirementId:string|null;teambitionRequirementId:string;action:"created"|"updated"|"unchanged";status:"succeeded"|"failed";errorCode:string|null;errorDetail:string|null;startedAt:string;completedAt:string}):Promise<void>;
   completeBatch(batchId:string,result:{status:BatchState;totalCount:number;succeededCount:number;failedCount:number;errorSummary:string|null;completedAt:string}):Promise<void>;
 }
-export interface SyncInput { batchId:string;sourceConfigId:string;config:SourceProjectConfig;startedAt?:string; }
+export interface SyncInput { batchId:string;sourceConfigId:string;config:SourceProjectConfig;startedAt?:string;onlyIds?:string[] }
+// Queue payloads resolve configuration at the application composition seam; the orchestrator stays provider-agnostic.
+export interface SyncJobContext { batchId:string;sourceConfigId:string;trigger:"manual"|"scheduled";actorId:string|null;onlyIds?:string[] }
+export type SyncJobRunner = (job: SyncJobContext) => Promise<SyncResult>;
 export interface SyncResult {batchId:string;status:BatchState;totalCount:number;succeededCount:number;failedCount:number;}
 
 function substantivePayload(requirement:NormalizedTeambitionRequirement):Record<string,unknown>{
@@ -38,6 +41,9 @@ export class SyncOrchestrator {
       await this.persistence.completeBatch(input.batchId,{...result,errorSummary:"Teambition task list could not be fetched.",completedAt:clock().toISOString()});
       return result;
     }
+    // 单项重试：只处理指定需求（按源需求 ID 过滤）
+    const onlyIds=input.onlyIds?new Set(input.onlyIds):null;
+    if(onlyIds)all=all.filter((record)=>record.id!==undefined&&onlyIds.has(record.id));
     let succeededCount=0,failedCount=0;
     for(const record of all){const began=clock().toISOString();let requirementId:string|null=null;let action:"created"|"updated"|"unchanged"="created";let status:"succeeded"|"failed"="succeeded";let errorCode:string|null=null,errorDetail:string|null=null;
       try{

@@ -1,8 +1,10 @@
 import type { Pool } from "pg";
 import type { IdentityProvider } from "../application/ports.js";
-import type { AuditEventRepository, PipelineJobRepository, SourceConfigRepository, SyncBatchRepository, SyncItemRepository } from "../application/repositories.js";
-import type { SourceConfigRecord, SyncBatchRecord } from "../domain/persistence.js";
-import { AuditListQuerySchema, BatchListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
+import type { AuditEventRepository, AnalysisRunRepository, PipelineJobRepository, SourceConfigRepository, SyncBatchRepository, SyncItemRepository, PersonMappingRepository, RequirementQueryRepository, BasePushRunRepository } from "../application/repositories.js";
+import type { PersonMappingRecord, RequirementRecord, SourceConfigRecord, SyncBatchRecord } from "../domain/persistence.js";
+import type { FeishuBasePushAdapter } from "../base/client.js";
+import { AuditListQuerySchema, BatchListQuerySchema, OwnerMappingUpdateSchema, RequirementListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
+import { randomUUID } from "node:crypto";
 import { SourceConfigUpdateSchema } from "../contracts/source.js";
 import { isDatabaseReady } from "../adapters/postgres/health.js";
 import { jsonError } from "./errors.js";
@@ -13,11 +15,18 @@ export interface ApiRepositories {
   items: SyncItemRepository;
   audit: AuditEventRepository;
   jobs: PipelineJobRepository;
+  people?: PersonMappingRepository;
+  requirements?: RequirementQueryRepository;
+  basePushes?: BasePushRunRepository;
+  analyses?: AnalysisRunRepository;
 }
 export interface ApiDependencies {
   database: Pool | null;
   identity: IdentityProvider | undefined;
   repositories: ApiRepositories | undefined;
+  base?: FeishuBasePushAdapter;
+  baseProjectId?: string;
+  baseFields?: { projectId: string; requirementId: string; owner: string; source: Record<string,string>; ai: Record<string,string>; pm: string[] };
   now: (() => Date) | undefined;
 }
 function json(body: unknown, status = 200): Response { return Response.json(body, { status }); }
@@ -27,6 +36,10 @@ function sourceDto(source: SourceConfigRecord) {
 function batchDto(batch: SyncBatchRecord) {
   return { id: batch.id, status: batch.status, totalCount: batch.totalCount, succeededCount: batch.succeededCount, failedCount: batch.failedCount, startedAt: batch.startedAt, completedAt: batch.completedAt, errorSummary: batch.errorSummary };
 }
+function requirementDto(req: RequirementRecord, analysis: Record<string, unknown> | null = null) {
+  return { id: req.id, sourceRequirementId: req.teambitionRequirementId, title: req.title, sourceVersion: req.sourceVersion, pipeline: { pull: req.pipeline.pull, analysis: req.pipeline.analysis, owner: req.pipeline.owner, push: req.pipeline.push }, source: req.sourcePayload, analysis, baseRecordId: req.baseRecordId };
+}
+function requirementSearchDto(req: RequirementRecord) { return requirementDto(req); }
 async function actorFor(request: Request, dependencies: ApiDependencies) {
   if (!dependencies.identity) return { response: jsonError("UNAUTHORIZED") } as const;
   try { return { actor: await dependencies.identity.requireActor(request) } as const; }
@@ -94,6 +107,86 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const query = Object.fromEntries(url.searchParams.entries()); if (query.limit !== undefined) query.limit = String(Number(query.limit));
     const parsed = AuditListQuerySchema.safeParse(query); if (!parsed.success) return jsonError("VALIDATION_FAILED");
     return json({ items: await repositories.audit.search({ limit: parsed.data.limit, ...(parsed.data.entityId === undefined ? {} : { entityId: parsed.data.entityId }), ...(parsed.data.since === undefined ? {} : { since: parsed.data.since }), ...(parsed.data.until === undefined ? {} : { until: parsed.data.until }) }) });
+  }
+  if (method === "GET" && url.pathname === "/api/requirements") {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const query = Object.fromEntries(url.searchParams.entries());
+    const parsed = RequirementListQuerySchema.safeParse(query); if (!parsed.success) return jsonError("VALIDATION_FAILED");
+    const page = await repositories.requirements.search({ ...(parsed.data.q === undefined ? {} : { q: parsed.data.q }), ...(parsed.data.pullState === undefined ? {} : { pullState: parsed.data.pullState }), ...(parsed.data.analysisState === undefined ? {} : { analysisState: parsed.data.analysisState }), ...(parsed.data.ownerState === undefined ? {} : { ownerState: parsed.data.ownerState }), ...(parsed.data.pushState === undefined ? {} : { pushState: parsed.data.pushState }), limit: parsed.data.limit, ...(parsed.data.cursor === undefined ? {} : { cursor: parsed.data.cursor }) });
+    return json({ items: page.items.map(requirementSearchDto), nextCursor: page.nextCursor });
+  }
+  const requirementMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)$/);
+  if (method === "GET" && requirementMatch) {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const req = await repositories.requirements.get(decodeURIComponent(requirementMatch[1]!)); if (!req) return jsonError("NOT_FOUND");
+    const latest = await repositories.analyses?.latest(req.id) ?? null;
+    return json(requirementDto(req, latest && latest.status === "analyzed" ? latest.structuredResult : null));
+  }
+  const itemRetryMatch = url.pathname.match(/^\/api\/items\/([^/]+)\/retry$/);
+  if (method === "POST" && itemRetryMatch) {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.items || !repositories.batches || !repositories.jobs) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const item = await repositories.items.get(decodeURIComponent(itemRetryMatch[1]!)); if (!item) return jsonError("NOT_FOUND");
+    if (item.status !== "failed") return jsonError("CONFLICT");
+    const batch = await repositories.batches.get(item.batchId); if (!batch) return jsonError("NOT_FOUND");
+    const startedAt = (dependencies.now ?? (() => new Date()))().toISOString();
+    let retryBatch: SyncBatchRecord;
+    try { retryBatch = await repositories.batches.create({ sourceConfigId: batch.sourceConfigId, triggerType: "manual", actorId: auth.actor.id, idempotencyKey: `retry:${item.id}:${randomUUID()}`, startedAt }); }
+    catch { return jsonError("CONFLICT"); }
+    try { await repositories.jobs.enqueue({ jobType: "sync", dedupeKey: `sync:${retryBatch.id}`, payload: { batchId: retryBatch.id, sourceId: batch.sourceConfigId, triggerType: "manual", actorId: auth.actor.id, onlyIds: [item.teambitionRequirementId] }, availableAt: startedAt }); }
+    catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
+    return json({ batchId: retryBatch.id, status: "queued" }, 202);
+  }
+  const analysisRetryMatch = url.pathname.match(/^\/api\/analysis\/([^/]+)\/retry$/);
+  if (method === "POST" && analysisRetryMatch) {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.requirements || !repositories.jobs) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const req = await repositories.requirements.get(decodeURIComponent(analysisRetryMatch[1]!)); if (!req) return jsonError("NOT_FOUND");
+    const now = (dependencies.now ?? (() => new Date()))().toISOString();
+    try { await repositories.jobs.enqueue({ jobType: "analysis", dedupeKey: `analysis:${req.id}:${randomUUID()}`, payload: { requirementId: req.id, actorId: auth.actor.id }, availableAt: now }); }
+    catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
+    return json({ requirementId: req.id, status: "queued" }, 202);
+  }
+  const ownerMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/owner$/);
+  if (method === "PUT" && ownerMatch) {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.people || !repositories.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const body = OwnerMappingUpdateSchema.safeParse(await readJson(request)); if (!body.success) return jsonError("VALIDATION_FAILED");
+    const req = await repositories.requirements.get(decodeURIComponent(ownerMatch[1]!)); if (!req) return jsonError("NOT_FOUND");
+    if (req.pipeline.pull !== "synced") return jsonError("CONFLICT");
+    const now = (dependencies.now ?? (() => new Date()))().toISOString();
+    const dedupeKey = `base-push:${req.id}:v${req.sourceVersion}`;
+    const priorJob = await repositories.jobs.enqueue({jobType:"base_push",dedupeKey,payload:{requirementId:req.id,actorId:auth.actor.id},availableAt:now});
+    const mapping = await repositories.people.upsertManual({ sourceConfigId:req.sourceConfigId, teambitionUserId:body.data.tbUserId ?? req.executorUserId, teambitionDisplayName:body.data.tbDisplayName ?? req.executorName, feishuUserId:body.data.feishuUserId, feishuIdType:body.data.feishuIdType, createdBy:auth.actor.id, now });
+    await repositories.requirements.setOwner(req.id,mapping.feishuUserId,"manually_mapped");
+    await repositories.audit.append({id:crypto.randomUUID(),actorId:auth.actor.id,eventType:"owner.manually_mapped",entityType:"requirement",entityId:req.id,result:"succeeded",safeDetails:{mappingId:mapping.id,feishuIdType:mapping.feishuIdType},occurredAt:now});
+    return json({requirementId:req.id,ownerState:"manually_mapped",status:"queued"});
+  }
+  const pushMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/push$/);
+  if (method === "POST" && pushMatch) {
+    const auth = await actorFor(request,dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.requirements || !repositories.basePushes || !repositories.people || !dependencies.base || !dependencies.baseProjectId || !dependencies.baseFields) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const key = SyncIdempotencyHeaderSchema.safeParse(request.headers.get("Idempotency-Key")); if (!key.success) return jsonError("VALIDATION_FAILED");
+    const req = await repositories.requirements.get(decodeURIComponent(pushMatch[1]!)); if (!req) return jsonError("NOT_FOUND");
+    if (req.pipeline.pull !== "synced") return jsonError("CONFLICT");
+    const previous = await repositories.basePushes.findByIdempotencyKey(key.data); if (previous) return json({status:previous.status,baseRecordId:previous.baseRecordId},202);
+    const now = (dependencies.now ?? (()=>new Date()))().toISOString();
+    const run = await repositories.basePushes.append({requirementId:req.id,sourceVersion:req.sourceVersion,pushVersion:req.sourceVersion,idempotencyKey:key.data,startedAt:now});
+    const ownerLookup = req.executorUserId ? {tbUserId:req.executorUserId} : (req.executorName ? {normalizedName:req.executorName.normalize("NFKC").trim().replace(/\s+/gu," ").toLocaleLowerCase()} : {});
+    const mapping = await repositories.people.resolveActive(req.sourceConfigId,ownerLookup);
+    try {
+      const pushed = await dependencies.base.push({projectId:dependencies.baseProjectId,requirementId:req.teambitionRequirementId,title:req.title,description:req.description,owner:mapping?{userId:mapping.feishuUserId,idType:mapping.feishuIdType}:null,sourceVersion:req.sourceVersion,substantiveChanged:Boolean(req.baseRecordId),idempotencyKey:key.data,sourceValues:{scope:req.scope,acceptanceCriteria:req.acceptanceCriteria,sourceStatusId:req.sourceStatusId,sourceUrl:req.sourceUrl},aiValues:{}});
+      await repositories.basePushes.updateResult(run.id,{status:"pushed",baseRecordId:pushed.recordId,completedAt:(dependencies.now??(()=>new Date()))().toISOString()});
+      await repositories.requirements.setPushState(req.id,"pushed");
+      await repositories.audit.append({id:crypto.randomUUID(),actorId:auth.actor.id,eventType:"base.push",entityType:"requirement",entityId:req.id,result:"succeeded",safeDetails:{created:pushed.created,sourceVersion:req.sourceVersion},occurredAt:(dependencies.now??(()=>new Date()))().toISOString()});
+      return json({status:"pushed",baseRecordId:pushed.recordId,created:pushed.created},202);
+    } catch {
+      await repositories.basePushes.updateResult(run.id,{status:"failed",safeErrorCode:"BASE_PUSH_FAILED",safeErrorSummary:"Base update failed; retry is available.",completedAt:(dependencies.now??(()=>new Date()))().toISOString()});
+      await repositories.requirements.setPushState(req.id,"failed");
+      return jsonError("DEPENDENCY_UNAVAILABLE");
+    }
   }
   return jsonError("ROUTE_NOT_IMPLEMENTED");
 }

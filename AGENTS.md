@@ -58,3 +58,18 @@ Run tests only when the user or ticket explicitly asks for them. For integration
 
 This workspace currently contains the project documents and scaffold but is not the GitHub implementation checkout. Before production code work, open the actual `jiahao89/magene-rqsys` repository, inspect its branch and uncommitted changes, and establish the agreed source-of-truth workflow with Miaoda. Do not initialize this documentation workspace as a substitute repository or assume the deleted mock prototype is the baseline.
 
+## Agent skills
+
+- Use `.agents/skills`/Hermes-installed Matt Pocock skills selectively: `diagnosing-bugs` for root-cause work, `tdd` for behavior changes and integration tests, `implement` for scoped tickets, and `codebase-design` for module/interface decisions. Read `docs/agents/issue-tracker.md` and `docs/agents/domain.md` first.
+- GitHub actions use `software-development:github`; read the corresponding reference before clone/pull/push/commit/PR operations. The GitHub remote is code source only; local Markdown files under `.scratch/rq-sys-mvp/issues/` are the ticket tracker.
+- Before editing a shared ticket, reread `.scratch/rq-sys-mvp/issues/README.md`; synchronize status evidence between the ticket and README.
+
+## Safety and verification gates
+
+- Treat `spark:app:write` operations as high risk: dry-run → explicit user confirmation → `--yes`. Never bypass exit code 10.
+- Do not deploy/create releases, initialize Git credentials, write external environment variables, mutate Miaoda databases, or change collaborators unless explicitly authorized under the project constraints.
+- Keep secrets server-side; use stubs for local provider tests. Do not call the AI provider without an authorized test key.
+- Keep the identity adapter unimplemented until target Miaoda identity is verified.
+- Label work “implemented, not verified in target environment” unless actual target verification evidence exists. Local PostgreSQL/tests do not prove Miaoda behavior.
+- Run typecheck, relevant/full tests, build, and `git diff --check` before claiming local completion.
+

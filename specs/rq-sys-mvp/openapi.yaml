@@ -184,6 +184,31 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+  /api/requirements/{id}/push:
+    post:
+      summary: Push a requirement to Feishu Base (idempotent by Idempotency-Key)
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 8, maxLength: 128 }
+      responses:
+        '202':
+          description: Push executed or idempotent replay of an earlier push
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { $ref: '#/components/schemas/BatchStatus' }
+                  baseRecordId: { type: [string, 'null'] }
+                required: [status]
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Requirement is not eligible for push }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /api/analysis/{id}/retry:
     post:
       summary: Queue a new analysis attempt
