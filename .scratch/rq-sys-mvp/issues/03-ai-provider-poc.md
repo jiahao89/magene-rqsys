@@ -31,5 +31,5 @@ D-06 已于 2026-10-08 确认（详见 OPEN-DECISIONS.md）：
   1. `createDeepSeekProvider` 工厂读取空环境对象 `{}`，永远拿不到 env 凭证 → 修复为 `getAiProviderConfig()`（默认 process.env）。
   2. 生产提示词缺少精确 JSON 样例 → 模型输出结构错位（evidence 给字符串、missing_evidence 给数组）→ 修复为与 AnalysisSchema 一致的完整样例 + 约束说明（对齐 POC 提示词风格）。
   3. 校验失败原因被吞掉 → 修复为携带可诊断 detail（zod issues/原文断言失败原因）入 safe error。
-- 环境注意：用户 shell 环境导出了旧无效 `AI_API_KEY`（尾号 df18），Node `--env-file` 不覆盖已存在的环境变量，会遮蔽 `.env` 中的新 key——本地运行 AI 相关验证需 `env -u AI_API_KEY`。建议清理 shell profile 中的旧 key。
+- 环境注意：shell profile（`~/.zshrc`）曾导出旧 `AI_API_KEY`——实为阿里云 DashScope key（尾号 df18，非 DeepSeek key），挂在通用变量名下遮蔽 `.env` 中的新 DeepSeek key（Node `--env-file` 不覆盖已存在环境变量）。**已清理（2026-10-09）**：该行已从 `.zshrc` 移除并留说明注释，隔离登录 shell 验证通过；若仍需 DashScope 请改用 `DASHSCOPE_API_KEY` 重导出。当前 TRAE 会话仍继承旧变量直至重启，会话内 AI 验证暂需 `env -u AI_API_KEY`。
 - 边界：以上为本地脚本与生产适配器（注入 fetch）验证；妙搭运行时外呼仍待工单 00。
