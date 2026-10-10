@@ -1,11 +1,11 @@
 import type { Pool } from "pg";
-import type { FeishuUserDirectory, IdentityProvider } from "../application/ports.js";
+import { SourceProjectResolutionError, type FeishuUserDirectory, type IdentityProvider, type TeambitionSourceProjectResolver } from "../application/ports.js";
 import type { AuditEventRepository, AnalysisRunRepository, PipelineJobRepository, SourceConfigRepository, SyncBatchRepository, SyncItemRepository, PersonMappingRepository, RequirementQueryRepository, BasePushRunRepository, ModuleDictionaryRepository, PriorityRuleRepository, SourceSnapshotRepository } from "../application/repositories.js";
 import type { PersonMappingRecord, AnalysisRunRecord, ModuleDictionaryVersionRecord, PriorityRuleVersionRecord, RequirementRecord, SourceConfigRecord, SyncBatchRecord } from "../domain/persistence.js";
 import type { FeishuBasePushAdapter } from "../base/client.js";
 import { AuditListQuerySchema, BatchListQuerySchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
 import { randomUUID } from "node:crypto";
-import { SourceConfigUpdateSchema } from "../contracts/source.js";
+import { SourceConfigUpdateSchema, type ResolvedSourceConfigUpdate } from "../contracts/source.js";
 import { DictionaryCreateSchema, PriorityRuleCreateSchema } from "../contracts/rules.js";
 import { isDatabaseReady } from "../adapters/postgres/health.js";
 import { jsonError } from "./errors.js";
@@ -31,6 +31,7 @@ export interface ApiDependencies {
   database: Pool | null;
   identity: IdentityProvider | undefined;
   repositories: ApiRepositories | undefined;
+  teambitionSourceProjects?: TeambitionSourceProjectResolver;
   base?: FeishuBasePushAdapter;
   baseProjectId?: string;
   baseFields?: { projectId: string; requirementId: string; owner: string; source: Record<string,string>; ai: Record<string,string>; pm: string[] };
@@ -84,6 +85,24 @@ async function appendAudit(repositories: ApiRepositories, event: Parameters<ApiR
 }
 async function readJson(request: Request): Promise<unknown> { try { return await request.json(); } catch { return undefined; } }
 
+async function resolveSourceConfig(
+  update: ReturnType<typeof SourceConfigUpdateSchema.parse>,
+  dependencies: ApiDependencies,
+): Promise<ResolvedSourceConfigUpdate | Response> {
+  if (dependencies.teambitionSourceProjects) {
+    try {
+      const resolved = await dependencies.teambitionSourceProjects.resolveProject(update.projectName);
+      return { ...update, projectId: resolved.projectId, requirementTypeId: resolved.requirementTypeId };
+    } catch (cause) {
+      if (cause instanceof SourceProjectResolutionError) return jsonError("VALIDATION_FAILED", cause.message);
+      return jsonError("DEPENDENCY_UNAVAILABLE", "无法连接 Teambition 项目配置，请稍后重试。");
+    }
+  }
+  // Backward compatibility for existing API clients during migration. The Web form sends only projectName.
+  if (update.projectId && update.requirementTypeId) return update as ResolvedSourceConfigUpdate;
+  return jsonError("DEPENDENCY_UNAVAILABLE", "Teambition 项目自动识别尚未配置。");
+}
+
 export async function handleApiRequest(request: Request, dependencies: ApiDependencies): Promise<Response> {
   const url = new URL(request.url), method = request.method.toUpperCase(), repositories = dependencies.repositories;
   if (method === "GET" && url.pathname === "/api/health") return json({ status: "ok", service: "rq-sys-api" });
@@ -103,9 +122,10 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     // 受控初始化：MVP 只允许一个产品组来源（D-09）。
     const existing = await repositories.sources.list();
     if (existing.length > 0) return jsonError("CONFLICT");
+    const resolved = await resolveSourceConfig(parsed.data, dependencies); if (resolved instanceof Response) return resolved;
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
     let created: SourceConfigRecord;
-    try { created = await repositories.sources.create({ ...parsed.data, auditEvent: { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "source.created", entityType: "source_config", result: "succeeded", safeDetails: { sourceProjectId: parsed.data.projectId }, occurredAt: now } }); }
+    try { created = await repositories.sources.create({ ...resolved, auditEvent: { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "source.created", entityType: "source_config", result: "succeeded", safeDetails: { sourceProjectId: resolved.projectId }, occurredAt: now } }); }
     catch (cause) { return cause && typeof cause === "object" && "code" in cause && cause.code === "23505" && "constraint" in cause && typeof cause.constraint === "string" && cause.constraint.startsWith("source_configs_") ? jsonError("CONFLICT") : jsonError("DEPENDENCY_UNAVAILABLE"); }
     return json(sourceDto(created), 201);
   }
@@ -116,9 +136,15 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     if (!repositories) return jsonError("DEPENDENCY_UNAVAILABLE");
     const parsed = SourceConfigUpdateSchema.safeParse(await readJson(request)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
     const sourceId = decodeURIComponent(sourceMatch[1]!);
+    const current = await repositories.sources.get(sourceId);
+    if (!current) return jsonError("NOT_FOUND");
+    const resolved = parsed.data.projectName === current.externalProjectName
+      ? { ...parsed.data, projectId: current.externalProjectId, requirementTypeId: current.requirementTypeId }
+      : await resolveSourceConfig(parsed.data, dependencies);
+    if (resolved instanceof Response) return resolved;
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
     let updated: SourceConfigRecord | null;
-    try { updated = await repositories.sources.update(sourceId, parsed.data, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "source.updated", entityType: "source_config", result: "succeeded", safeDetails: { sourceProjectId: parsed.data.projectId }, occurredAt: now }); }
+    try { updated = await repositories.sources.update(sourceId, resolved, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "source.updated", entityType: "source_config", result: "succeeded", safeDetails: { sourceProjectId: resolved.projectId }, occurredAt: now }); }
     catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
     if (!updated) return jsonError("NOT_FOUND");
     return json(sourceDto(updated));

@@ -8,6 +8,20 @@ export interface TeambitionSourcePort {
   listRequirementTasks(config: SourceProjectConfig): Promise<TeambitionTaskRecord[]>;
 }
 
+export interface TeambitionSourceProjectResolver {
+  resolveProject(projectName: string): Promise<{ projectId: string; requirementTypeId: string }>;
+}
+
+export class SourceProjectResolutionError extends Error {
+  constructor(
+    readonly reason: "project_not_found" | "project_ambiguous" | "requirement_type_not_found" | "requirement_type_ambiguous",
+    message: string,
+  ) {
+    super(message);
+    this.name = "SourceProjectResolutionError";
+  }
+}
+
 export interface RequirementRepository {
   upsertSourceRequirement(
     requirement: NormalizedTeambitionRequirement,

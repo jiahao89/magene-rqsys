@@ -513,9 +513,9 @@ components:
       type: object
       properties:
         id: { type: string, format: uuid }
-        projectId: { type: string }
+        projectId: { type: string, readOnly: true, description: Resolved by the server from projectName. }
         projectName: { type: string }
-        requirementTypeId: { type: string }
+        requirementTypeId: { type: string, readOnly: true, description: Resolved by the server from the project's unique requirement task type. }
         enabled: { type: boolean }
         schedule:
           type: object
@@ -531,9 +531,7 @@ components:
     SourceConfigUpdate:
       type: object
       properties:
-        projectId: { type: string, minLength: 1 }
-        projectName: { type: string, minLength: 1 }
-        requirementTypeId: { type: string, minLength: 1 }
+        projectName: { type: string, minLength: 1, default: 室外产品-码表软固件需求池, description: Exact Teambition project name. The server resolves project and task type IDs. }
         enabled: { type: boolean }
         schedule:
           type: object
@@ -545,7 +543,7 @@ components:
           required: [enabled, weekday, time, timezone]
         ownerNames: { type: array, items: { type: string } }
         fieldMap: { type: object, additionalProperties: { type: string } }
-      required: [projectId, projectName, requirementTypeId, enabled, schedule, ownerNames, fieldMap]
+      required: [projectName, enabled, schedule, ownerNames, fieldMap]
     Requirement:
       type: object
       properties:

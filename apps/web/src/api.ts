@@ -129,9 +129,7 @@ export function publishPriorityRule(id: string, fetcher: typeof fetch = fetch): 
 }
 
 export interface SourceConfigUpdate {
-  projectId: string;
   projectName: string;
-  requirementTypeId: string;
   enabled: boolean;
   schedule: { enabled: boolean; weekday: number | null; time: string | null; timezone: string | null };
   ownerNames: string[];

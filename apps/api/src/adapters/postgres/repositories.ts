@@ -9,7 +9,7 @@ import type {
 } from "../../domain/persistence.js";
 import type { AnalysisState, OwnerState, PullState, PushState } from "../../domain/workflow.js";
 import { assertTransition } from "../../domain/transitions.js";
-import type { SourceConfigUpdate } from "../../contracts/source.js";
+import type { ResolvedSourceConfigUpdate } from "../../contracts/source.js";
 import type {
   AnalysisRunRepository, AuditEventInput, AuditEventRepository, BasePushRunRepository,
   ModuleDictionaryRepository, PersonMappingRepository, PmSnapshotRepository,
@@ -70,7 +70,7 @@ export class PostgresSourceConfigRepository implements SourceConfigRepository{
   constructor(private readonly pool:Pool){}
   async list(){const{rows}=await this.pool.query("SELECT * FROM source_configs ORDER BY created_at,id");return rows.map(sourceConfig);}
   async get(id:string){const{rows}=await this.pool.query("SELECT * FROM source_configs WHERE id=$1",[id]);return rows[0]?sourceConfig(rows[0]):null;}
-  async update(id:string,u:SourceConfigUpdate,auditEvent?:AuditEventInput){
+  async update(id:string,u:ResolvedSourceConfigUpdate,auditEvent?:AuditEventInput){
     const c=await this.pool.connect();
     try{
       await c.query("BEGIN");
@@ -80,7 +80,7 @@ export class PostgresSourceConfigRepository implements SourceConfigRepository{
       return rows[0]?sourceConfig(rows[0]):null;
     }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}
   }
-  async create(p:SourceConfigUpdate & {auditEvent?:AuditEventInput}):Promise<SourceConfigRecord>{
+  async create(p:ResolvedSourceConfigUpdate & {auditEvent?:AuditEventInput}):Promise<SourceConfigRecord>{
     const c=await this.pool.connect();
     try{
       await c.query("BEGIN");

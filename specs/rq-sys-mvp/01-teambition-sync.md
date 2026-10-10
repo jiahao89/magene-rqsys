@@ -19,6 +19,7 @@ Operators need a reliable weekly and manual import from one product-group Teambi
 ## Functional requirements
 
 - Scope is one dedicated product-group project. The initial run reads all requirements in that project; no-owner requirements are included.
+- Source setup asks the operator for the Teambition project name only. The form defaults to `室外产品-码表软固件需求池`; the server resolves the exact project and its unique requirement task type, then stores their IDs internally. A missing or ambiguous project/type must stop configuration save with a clear error rather than selecting an arbitrary source.
 - Weekly and manual triggers use the same pipeline and batch model. The batch records trigger source, actor where applicable, timestamps, counts, and errors.
 - Prefer a verified Teambition updated-time filter. If unavailable or unreliable, fetch the project set and compare stable IDs/content hashes.
 - Use project ID + Teambition requirement ID as the unique key in the application database and Feishu Base.

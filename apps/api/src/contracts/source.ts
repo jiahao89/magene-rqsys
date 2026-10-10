@@ -5,9 +5,10 @@ import { z } from "zod";
 export const ALLOWED_FIELD_MAP_KEYS = ["description", "acceptanceCriteria", "proposerName", "executorName"] as const;
 
 export const SourceConfigUpdateSchema = z.strictObject({
-  projectId: z.string().trim().min(1),
   projectName: z.string().trim().min(1),
-  requirementTypeId: z.string().trim().min(1),
+  // Transitional support for old clients; the workbench sends only projectName.
+  projectId: z.string().trim().min(1).optional(),
+  requirementTypeId: z.string().trim().min(1).optional(),
   enabled: z.boolean(),
   schedule: z.object({
     enabled: z.boolean(),
@@ -22,3 +23,7 @@ export const SourceConfigUpdateSchema = z.strictObject({
 export const IdempotencyKeySchema = z.string().trim().min(8).max(128);
 
 export type SourceConfigUpdate = z.infer<typeof SourceConfigUpdateSchema>;
+export type ResolvedSourceConfigUpdate = Omit<SourceConfigUpdate, "projectId" | "requirementTypeId"> & {
+  projectId: string;
+  requirementTypeId: string;
+};

@@ -91,8 +91,9 @@ function FeishuUserPicker({ disabled, onMap, saveLabel = "保存映射并入队�
 
 // ---------- 工单 16：数据源配置（创建唯一来源 / 更新现有配置） ----------
 
+const DEFAULT_TB_PROJECT_NAME = "室外产品-码表软固件需求池";
 const emptyUpdate: SourceConfigUpdate = {
-  projectId: "", projectName: "", requirementTypeId: "", enabled: false,
+  projectName: DEFAULT_TB_PROJECT_NAME, enabled: false,
   schedule: { enabled: false, weekday: null, time: null, timezone: null },
   ownerNames: [], fieldMap: {},
 };
@@ -100,7 +101,7 @@ const emptyUpdate: SourceConfigUpdate = {
 export function SourcesPanel({ sources, loadState, onRefresh }: { sources: SourceConfig[]; loadState: LoadState; onRefresh: () => void }) {
   const existing = sources[0];
   const [draft, setDraft] = useState<SourceConfigUpdate>(() => existing ? {
-    projectId: existing.projectId, projectName: existing.projectName, requirementTypeId: existing.requirementTypeId,
+    projectName: existing.projectName,
     enabled: existing.enabled, schedule: { ...existing.schedule }, ownerNames: [...existing.ownerNames], fieldMap: { ...existing.fieldMap },
   } : emptyUpdate);
   const [busy, setBusy] = useState(false);
@@ -113,7 +114,7 @@ export function SourcesPanel({ sources, loadState, onRefresh }: { sources: Sourc
     setBusy(true); setLoadError(null); setNotice(null);
     try {
       const saved = existing ? await updateSource(existing.id, draft) : await createSource(draft);
-      setDraft({ projectId: saved.projectId, projectName: saved.projectName, requirementTypeId: saved.requirementTypeId, enabled: saved.enabled, schedule: { ...saved.schedule }, ownerNames: [...saved.ownerNames], fieldMap: { ...saved.fieldMap } });
+      setDraft({ projectName: saved.projectName, enabled: saved.enabled, schedule: { ...saved.schedule }, ownerNames: [...saved.ownerNames], fieldMap: { ...saved.fieldMap } });
       setNotice(existing ? "来源配置已保存并从 API 重新读取一致。" : "来源已创建。MVP 只允许一个产品组来源。");
       onRefresh();
     } catch (cause) { setLoadError(errorText(cause)); }
@@ -121,12 +122,10 @@ export function SourcesPanel({ sources, loadState, onRefresh }: { sources: Sourc
   };
 
   return <section className="panel requirements-panel">
-    <div className="panel-heading"><div><h2>连接与数据源</h2><p>MVP 只有一个产品组来源；凭据保存在服务端，不在浏览器输入或保存。</p></div>{existing && <span className={`status-chip ${existing.enabled ? "status-live" : "status-muted"}`}><span />{existing.enabled ? "已启用" : "已停用"}</span>}</div>
+    <div className="panel-heading"><div><h2>连接与数据源</h2><p>填写 Teambition 项目名称；系统会自动匹配项目及需求任务类型。凭据保存在服务端。</p></div>{existing && <span className={`status-chip ${existing.enabled ? "status-live" : "status-muted"}`}><span />{existing.enabled ? "已启用" : "已停用"}</span>}</div>
     <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
     <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
-      <label className="rules-threshold"><span>Teambition 项目 ID</span><HeroInput aria-label="项目 ID" value={draft.projectId} onChange={(e) => set("projectId", e.target.value)} /></label>
-      <label className="rules-threshold"><span>项目名称</span><HeroInput aria-label="项目名称" value={draft.projectName} onChange={(e) => set("projectName", e.target.value)} /></label>
-      <label className="rules-threshold"><span>需求类型 ID</span><HeroInput aria-label="需求类型 ID" value={draft.requirementTypeId} onChange={(e) => set("requirementTypeId", e.target.value)} /></label>
+      <label className="rules-threshold"><span>Teambition 项目名称</span><HeroInput aria-label="项目名称" value={draft.projectName} onChange={(e) => set("projectName", e.target.value)} /></label>
       <label className="rules-threshold"><span>启用同步</span><input type="checkbox" aria-label="启用同步" checked={draft.enabled} onChange={(e) => set("enabled", e.target.checked)} /></label>
     </div>
     <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
@@ -142,7 +141,7 @@ export function SourcesPanel({ sources, loadState, onRefresh }: { sources: Sourc
     <div className="rules-form"><HeroButton className="button button-primary button-small" onPress={() => void save()} isDisabled={busy}>{existing ? "保存更新" : "创建来源"}</HeroButton></div>
     {loadState === "error" && <div className="table-empty"><strong>无法读取来源配置</strong><span>请检查 API 连接后重试。</span></div>}
     {!existing && loadState === "ready" && <div className="table-empty"><strong>尚未配置数据源</strong><span>填写上方配置并创建后，同步与 AI 分析才会启动。</span></div>}
-    {existing && <div className="table-scroll"><table><thead><tr><th>项目</th><th>项目 ID</th><th>需求类型</th><th>负责人</th><th>映射字段数</th></tr></thead><tbody><tr><td>{existing.projectName}</td><td className="mono-cell">{existing.projectId}</td><td className="mono-cell">{existing.requirementTypeId}</td><td>{existing.ownerNames.join("、") || "—"}</td><td>{Object.keys(existing.fieldMap).length}</td></tr></tbody></table></div>}
+    {existing && <div className="table-scroll"><table><thead><tr><th>项目</th><th>负责人</th><th>映射字段数</th></tr></thead><tbody><tr><td>{existing.projectName}</td><td>{existing.ownerNames.join("、") || "—"}</td><td>{Object.keys(existing.fieldMap).length}</td></tr></tbody></table></div>}
   </section>;
 }
 

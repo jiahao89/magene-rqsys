@@ -5,7 +5,7 @@
 
 import type { AuditEventRecord, BasePushRunRecord, BatchState, AnalysisRunRecord, ModuleDictionaryVersionRecord, PersonMappingRecord, PmSnapshotRecord, PipelineJobRecord, PipelineJobType, PriorityLevel, PriorityRuleVersionRecord, SourceConfigRecord, SourceSnapshotRecord, SyncBatchRecord, SyncItemAction, SyncItemRecord, SyncTrigger } from "../domain/persistence.js";
 import type { AnalysisState, OwnerState, PullState, PushState } from "../domain/workflow.js";
-import type { SourceConfigUpdate } from "../contracts/source.js";
+import type { ResolvedSourceConfigUpdate } from "../contracts/source.js";
 import type { RequirementRecord } from "../domain/persistence.js";
 
 export type AuditEventInput = Omit<AuditEventRecord, "entityId">;
@@ -14,9 +14,9 @@ export type AuditEventInput = Omit<AuditEventRecord, "entityId">;
 export interface SourceConfigRepository {
   list(): Promise<SourceConfigRecord[]>;
   get(id: string): Promise<SourceConfigRecord | null>;
-  update(id: string, update: SourceConfigUpdate, auditEvent?: AuditEventInput): Promise<SourceConfigRecord | null>;
+  update(id: string, update: ResolvedSourceConfigUpdate, auditEvent?: AuditEventInput): Promise<SourceConfigRecord | null>;
   // 受控初始化：MVP 只允许一个产品组来源；唯一性由调用方（HTTP 层）与部署流程共同保证。
-  create(input: SourceConfigUpdate & { auditEvent?: AuditEventInput }): Promise<SourceConfigRecord>;
+  create(input: ResolvedSourceConfigUpdate & { auditEvent?: AuditEventInput }): Promise<SourceConfigRecord>;
 }
 
 // sync_batches
