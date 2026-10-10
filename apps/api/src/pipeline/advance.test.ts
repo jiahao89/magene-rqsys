@@ -41,16 +41,16 @@ function makeAdvanceFixture(req: RequirementRecord, resolveMapping: boolean): Ad
 test("无负责人需求：分析终态后标记 not_required 并幂等入队推送（可空负责人推送）", async () => {
   const fixture = makeAdvanceFixture(requirement(), false);
   const advance = createAnalysisAdvancer(fixture);
-  assert.equal(await advance("req-1", "analyzed", "worker"), "queued");
+  assert.equal(await advance("req-1", "analyzed", "worker", 1), "queued");
   assert.deepEqual(fixture.ownerChanges, ["null:not_required"]);
-  assert.deepEqual(fixture.queuedJobs.map((j) => j.dedupeKey), ["base-push:req-1:v1"]);
+  assert.deepEqual(fixture.queuedJobs.map((j) => j.dedupeKey), ["base-push:req-1:sv1:av1"]);
   assert.deepEqual(fixture.auditResults, ["succeeded"]);
 });
 
 test("TB 有负责人且映射唯一：分析失败终态也入队推送（AI 不是门槛）", async () => {
   const fixture = makeAdvanceFixture(requirement({ executorUserId: "tb-user", pipeline: { pull: "synced", analysis: "failed_retryable", owner: "pending_mapping", push: "pending" } }), true);
   const advance = createAnalysisAdvancer(fixture);
-  assert.equal(await advance("req-1", "failed_retryable", "worker"), "queued");
+  assert.equal(await advance("req-1", "failed_retryable", "worker", 1), "queued");
   assert.deepEqual(fixture.ownerChanges, ["ou-user:auto_mapped"]);
   assert.deepEqual(fixture.auditResults, ["failed"]);
 });
@@ -58,17 +58,20 @@ test("TB 有负责人且映射唯一：分析失败终态也入队推送（AI �
 test("TB 有负责人但未匹配：等待人工映射，不入队推送", async () => {
   const fixture = makeAdvanceFixture(requirement({ executorUserId: "tb-user" }), false);
   const advance = createAnalysisAdvancer(fixture);
-  assert.equal(await advance("req-1", "analyzed", "worker"), "waiting_mapping");
+  assert.equal(await advance("req-1", "analyzed", "worker", 1), "waiting_mapping");
   assert.deepEqual(fixture.queuedJobs, []);
   assert.deepEqual(fixture.ownerChanges, []);
 });
 
-test("已推送或拉取未同步的需求不再重复推进（幂等/资格）", async () => {
+test("AI 成功重试可更新已推送需求；失败重试不重复推送，未同步需求不推进", async () => {
   const pushed = makeAdvanceFixture(requirement({ pipeline: { pull: "synced", analysis: "analyzed", owner: "auto_mapped", push: "pushed" } }), true);
-  assert.equal(await createAnalysisAdvancer(pushed)("req-1", "analyzed", "worker"), "not_eligible");
+  assert.equal(await createAnalysisAdvancer(pushed)("req-1", "analyzed", "worker", 2), "queued");
+  assert.equal(pushed.queuedJobs[0]?.dedupeKey, "base-push:req-1:sv1:av2");
+  const failedRetry = makeAdvanceFixture(requirement({ pipeline: { pull: "synced", analysis: "analyzed", owner: "auto_mapped", push: "pushed" } }), true);
+  assert.equal(await createAnalysisAdvancer(failedRetry)("req-1", "failed_retryable", "worker", 2), "not_eligible");
   const unsynced = makeAdvanceFixture(requirement({ pipeline: { pull: "pending", analysis: "analyzed", owner: "pending_mapping", push: "pending" } }), true);
-  assert.equal(await createAnalysisAdvancer(unsynced)("req-1", "analyzed", "worker"), "not_eligible");
-  assert.deepEqual(pushed.queuedJobs, []);
+  assert.equal(await createAnalysisAdvancer(unsynced)("req-1", "analyzed", "worker", 2), "not_eligible");
+  assert.deepEqual(failedRetry.queuedJobs, []);
 });
 
 interface PushFixture {
@@ -86,14 +89,18 @@ function makePushFixture(req: RequirementRecord, options: { resolveMapping?: boo
       get: async (_id: string) => req,
       setOwner: async (_id: string, owner: string | null, state: "pending_mapping" | "auto_mapped" | "manually_mapped" | "not_required") => { actions.push(`owner:${owner}:${state}`); },
       setPushState: async (_id: string, state: "pending" | "running" | "pushed" | "failed") => { actions.push(`push:${state}`); },
+      setBaseRecord: async (_id: string, recordId: string) => { actions.push(`base-record:${recordId}`); },
     } as unknown as BasePushServiceDeps["requirements"],
     people: { resolveActive: async () => options.resolveMapping ? mapping : null } as unknown as BasePushServiceDeps["people"],
     basePushes: {
       findByIdempotencyKey: async () => null,
       append: async (p: { requirementId: string; sourceVersion: number; pushVersion: number; idempotencyKey: string; startedAt: string }) => ({ id: "run-1", requirementId: p.requirementId, sourceVersion: p.sourceVersion, pushVersion: p.pushVersion, status: "running" as const, idempotencyKey: p.idempotencyKey, startedAt: p.startedAt, baseRecordId: null, safeErrorCode: null, safeErrorSummary: null, completedAt: null }),
+      restart: async () => null,
       updateResult: async (_id: string, r: { status: "pushed" | "failed" }) => { actions.push(`run:${r.status}`); return null; },
       latest: async () => options.lastPushVersion === undefined ? null : { id: "run-0", requirementId: req.id, sourceVersion: options.lastPushVersion, pushVersion: options.lastPushVersion, status: "pushed", idempotencyKey: "old", startedAt: "2026-10-08T00:00:00.000Z", baseRecordId: "rec-1", safeErrorCode: null, safeErrorSummary: null, completedAt: "2026-10-08T00:00:00.000Z" },
+      latestSuccessful: async () => options.lastPushVersion === undefined ? null : { id: "run-0", requirementId: req.id, sourceVersion: options.lastPushVersion, pushVersion: options.lastPushVersion, status: "pushed", idempotencyKey: "old", startedAt: "2026-10-08T00:00:00.000Z", baseRecordId: "rec-1", safeErrorCode: null, safeErrorSummary: null, completedAt: "2026-10-08T00:00:00.000Z" },
     } as unknown as BasePushServiceDeps["basePushes"],
+    sourceSnapshots: { getAtVersion: async () => options.lastPushVersion === undefined ? null : { id: "snapshot-1", requirementId: req.id, sourceVersion: options.lastPushVersion, sourceHash: "h", substantiveHash: "s", payload: {}, isSubstantiveChange: false, capturedAt: "2026-10-08T00:00:00.000Z" } } as never,
     audit: { append: async (e: { result: string; safeDetails: Record<string, unknown> }) => { audits.push({ result: e.result, safeDetails: e.safeDetails }); } } as unknown as BasePushServiceDeps["audit"],
     ...(options.latestAnalysis !== undefined ? { analyses: { latest: async () => options.latestAnalysis } as never } : {}),
     base: {
@@ -142,7 +149,7 @@ test("TB 无负责人：先 not_required 再空负责人推送，且新源版本
   assert.equal(sameVersion.pushedInputs[0]!.substantiveChanged, false);
 
   // 新源版本 → 实质变化，触发快照路径
-  const newVersion = makePushFixture(requirement({ baseRecordId: "rec-existing", sourceVersion: 2 }), { lastPushVersion: 1 });
+  const newVersion = makePushFixture(requirement({ baseRecordId: "rec-existing", sourceVersion: 2, substantiveHash: "changed-substantive" }), { lastPushVersion: 1 });
   await createBasePushService(newVersion.deps).pushRequirement("req-1", "k7");
   assert.equal(newVersion.pushedInputs[0]!.substantiveChanged, true);
 });

@@ -1,4 +1,4 @@
-# [ready-for-agent] 13 — AI 输出语义、优先级边界与隐私
+# [implemented-not-target-verified] 13 — AI 输出语义、优先级边界与隐私
 
 ## 目标
 
@@ -28,6 +28,6 @@
 - AI 失败、低置信度、空优先级均不阻止符合负责人规则的后续推送。
 - 新增分析契约/隐私/规则测试通过，`npm run typecheck`、`npm run build` 和 `git diff --check` 通过。
 
-## Blocked by
+## Target verification remains
 
 Ticket 03 的 provider/data-policy POC 已完成；目标 endpoint 可达性和保留策略实测属于 Ticket 09，不阻塞本地代码工作。

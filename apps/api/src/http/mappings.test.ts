@@ -19,7 +19,7 @@ function makeFixture(): ApiDependencies {
     items: { upsert: async () => { throw new Error("unused"); }, get: async () => null, listByBatch: async () => [] },
     jobs: { enqueue: async () => { throw new Error("unused"); }, claimNext: async () => null, reschedule: async () => null, complete: async () => null },
   };
-  return { database: null, repositories, identity: { requireActor: async () => ({ id: "actor-1", roles: ["operator"] }) }, now: () => new Date("2026-10-09T00:00:00.000Z") };
+  return { database: null, repositories, identity: { requireActor: async () => ({ id: "actor-1", roles: ["operator"] }) }, feishuUsers: { search: async (query) => query === "Ada" ? [{ openId: "ou-ada", name: "Ada", enName: "Ada Lovelace" }] : [] }, now: () => new Date("2026-10-09T00:00:00.000Z") };
 }
 const unauthenticated: ApiDependencies = { database: null, repositories: undefined, identity: undefined, now: undefined };
 
@@ -41,4 +41,21 @@ test("mappings list returns an empty page when no source is configured", async (
   const r = await handleApiRequest(new Request("http://localhost/api/mappings"), fixture);
   assert.equal(r.status, 200);
   assert.deepEqual(await r.json(), { items: [] });
+});
+
+test("searches Feishu users only for an authorized operator and returns minimal candidates", async () => {
+  const r = await handleApiRequest(new Request("http://localhost/api/feishu/users?q=%20Ada%20"), makeFixture());
+  assert.equal(r.status, 200);
+  assert.deepEqual(await r.json(), { items: [{ openId: "ou-ada", name: "Ada", enName: "Ada Lovelace" }] });
+});
+
+test("Feishu user search validates query, requires auth, and rejects read-only roles", async () => {
+  const invalid = await handleApiRequest(new Request("http://localhost/api/feishu/users?q=a"), makeFixture());
+  assert.equal(invalid.status, 400);
+  const unauth = await handleApiRequest(new Request("http://localhost/api/feishu/users?q=Ada"), unauthenticated);
+  assert.equal(unauth.status, 401);
+  const fixture = makeFixture();
+  fixture.identity = { requireActor: async () => ({ id: "reader", roles: ["pm"] }) };
+  const forbidden = await handleApiRequest(new Request("http://localhost/api/feishu/users?q=Ada"), fixture);
+  assert.equal(forbidden.status, 403);
 });

@@ -31,20 +31,20 @@ export const PIPELINE_TRANSITIONS: {
   },
   analysis: {
     pending: ["running"],
-    running: ["analyzed", "failed_retryable"],
-    analyzed: ["running"], // 源实质变化后的新分析版本
+    running: ["analyzed", "failed_retryable", "pending"], // 新源版本取代仍在运行的旧分析
+    analyzed: ["pending", "running"], // 新源版本先重置，再运行新分析版本
     failed_retryable: ["pending", "running"], // 新建分析版本重试
   },
   owner: {
     pending_mapping: ["auto_mapped", "manually_mapped", "not_required"],
-    auto_mapped: ["manually_mapped"], // 操作员可覆盖自动映射
-    manually_mapped: [], // 人工确认字段不被自动流程改写
+    auto_mapped: ["pending_mapping", "manually_mapped"], // TB 负责人变化后重解析；操作员可覆盖
+    manually_mapped: ["pending_mapping"], // 仅 TB 负责人变化时失效，普通源更新继续保留
     not_required: ["pending_mapping"], // 需求获得执行人后重新进入映射
   },
   push: {
     pending: ["running"],
-    running: ["pushed", "failed"],
-    pushed: ["running"], // 实质变化需要重新推送
+    running: ["pushed", "failed", "pending"], // 新源版本取代仍在运行的旧推送
+    pushed: ["pending", "running"], // 新源版本重置后重新推送；AI 重分析则直接重新推送
     failed: ["pending", "running"], // 重试
   },
 };

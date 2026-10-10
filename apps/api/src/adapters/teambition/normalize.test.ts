@@ -14,7 +14,7 @@ test("duplicate allowlisted custom field IDs use the last returned value determi
     { _customfieldid: FIELD_ID, type: "rtf", value: [{ meta: { html: "new" } }] },
   ];
   const normalized = normalizeTeambitionTask("project-1", task(raw), { description: FIELD_ID });
-  assert.deepEqual(normalized.mappedFields.description, raw[1]!.value);
+  assert.equal(normalized.mappedFields.description, "new");
   assert.deepEqual(normalized.sourcePayload.custom_fields, [{
     id: FIELD_ID,
     type: "rtf",
@@ -37,4 +37,15 @@ test("malformed serialized custom fields fail closed to an empty projection", ()
   const normalized = normalizeTeambitionTask("project-1", task("not-json"), { description: FIELD_ID });
   assert.deepEqual(normalized.mappedFields, {});
   assert.deepEqual(normalized.sourcePayload.custom_fields, []);
+});
+
+test("rtf fields become readable text and lookup fields retain proposer identity separately", () => {
+  const normalized = normalizeTeambitionTask("project-1", task([
+    { _customfieldid: "description", type: "rtf", value: [{ meta: { html: "<p>第一段</p><p>第二段 &amp; 结果</p>" } }] },
+    { _customfieldid: "proposer", type: "lookup", value: [{ _id: "record-id", title: "张三", meta: { userid: "tb-user-1" } }] },
+  ]), { description: "description", proposerName: "proposer" });
+  assert.equal(normalized.mappedFields.description, "第一段\n第二段 & 结果");
+  assert.equal(normalized.mappedFields.proposerName, "张三");
+  assert.equal(normalized.mappedFields.proposerUserId, "tb-user-1");
+  assert.equal(JSON.stringify(normalized.mappedFields).includes("record-id"), false);
 });

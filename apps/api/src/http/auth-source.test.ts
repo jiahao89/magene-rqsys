@@ -32,10 +32,14 @@ function makeFixture(actorRoles: string[]): AuthFixture {
   const sources: SourceConfigRecord[] = [];
   const auditEvents: { eventType: string; entityId: string }[] = [];
   let auditDown = false;
+  const persistAudit = async (event: { eventType: string; entityId?: string }, entityId = event.entityId ?? "") => {
+    if (auditDown) throw new Error("audit storage is down");
+    auditEvents.push({ eventType: event.eventType, entityId });
+  };
   const dictionaries = {
     list: async () => [{ version: 1, status: "draft" as const, entries: ["报表分析"], createdBy: "actor-1", createdAt: "2026-10-09T00:00:00.000Z", publishedAt: null }],
     get: async () => null,
-    create: async (p: { entries: unknown[]; createdBy: string; now: string }) => ({ version: 2, status: "draft" as const, entries: p.entries, createdBy: p.createdBy, createdAt: p.now, publishedAt: null }),
+    create: async (p: { entries: unknown[]; createdBy: string; now: string; auditEvent?: { eventType: string } }) => { const record = { version: 2, status: "draft" as const, entries: p.entries, createdBy: p.createdBy, createdAt: p.now, publishedAt: null }; if (p.auditEvent) await persistAudit(p.auditEvent, String(record.version)); return record; },
     publish: async () => { throw new Error("not used here"); },
   };
   const priorityRules = {
@@ -49,27 +53,30 @@ function makeFixture(actorRoles: string[]): AuthFixture {
     sources: {
       list: async () => sources,
       get: async (id) => sources.find((s) => s.id === id) ?? null,
-      update: async (id, u) => { const record = sources.find((s) => s.id === id); if (!record) return null; return { ...record, externalProjectId: u.projectId, externalProjectName: u.projectName, requirementTypeId: u.requirementTypeId, enabled: u.enabled, scheduleEnabled: u.schedule.enabled, scheduleWeekday: u.schedule.weekday, scheduleLocalTime: u.schedule.time, scheduleTimezone: u.schedule.timezone, ownerNames: u.ownerNames, fieldMap: u.fieldMap }; },
-      create: async (p) => { const record: SourceConfigRecord = { id: crypto.randomUUID(), provider: "teambition", externalProjectId: p.projectId, externalProjectName: p.projectName, requirementTypeId: p.requirementTypeId, enabled: p.enabled, scheduleEnabled: false, scheduleWeekday: null, scheduleLocalTime: null, scheduleTimezone: null, ownerNames: [], fieldMap: {}, createdAt: "2026-10-09T00:00:00.000Z", updatedAt: "2026-10-09T00:00:00.000Z" }; sources.push(record); return record; },
+      update: async (id, u, event) => { const record = sources.find((s) => s.id === id); if (!record) return null; if (event) await persistAudit(event, id); return { ...record, externalProjectId: u.projectId, externalProjectName: u.projectName, requirementTypeId: u.requirementTypeId, enabled: u.enabled, scheduleEnabled: u.schedule.enabled, scheduleWeekday: u.schedule.weekday, scheduleLocalTime: u.schedule.time, scheduleTimezone: u.schedule.timezone, ownerNames: u.ownerNames, fieldMap: u.fieldMap }; },
+      create: async (p) => { const record: SourceConfigRecord = { id: crypto.randomUUID(), provider: "teambition", externalProjectId: p.projectId, externalProjectName: p.projectName, requirementTypeId: p.requirementTypeId, enabled: p.enabled, scheduleEnabled: p.schedule.enabled, scheduleWeekday: p.schedule.weekday, scheduleLocalTime: p.schedule.time, scheduleTimezone: p.schedule.timezone, ownerNames: p.ownerNames, fieldMap: p.fieldMap, createdAt: "2026-10-09T00:00:00.000Z", updatedAt: "2026-10-09T00:00:00.000Z" }; if (p.auditEvent) await persistAudit(p.auditEvent, record.id); sources.push(record); return record; },
     },
     dictionaries, priorityRules,
-    audit: { append: async (e) => { if (auditDown) throw new Error("audit storage is down"); auditEvents.push({ eventType: e.eventType, entityId: e.entityId }); }, search: async () => [] },
+    audit: { append: async (e) => persistAudit(e), search: async () => [] },
     batches: { create: async () => { throw new Error("not used here"); }, get: async () => null, findByIdempotencyKey: async () => null, list: async () => ({ items: [], nextCursor: null }), complete: async () => null },
     items: { upsert: async () => { throw new Error("not used here"); }, get: async () => null, listByBatch: async () => [] },
     jobs: { enqueue: async () => { throw new Error("not used here"); }, claimNext: async () => null, reschedule: async () => null, complete: async () => null },
   };
   return { dependencies: { database: null, repositories, identity: { requireActor: async () => ({ id: "actor-1", roles: actorRoles }) }, now: () => new Date("2026-10-09T00:00:00.000Z") }, sources, auditEvents, failAudit: () => { auditDown = true; } };
 }
-const sourceBody = { projectId: "674e77e9ee4037da9d4b9f8e", projectName: "需求收集与管理", requirementTypeId: "674e7a7e5f95a1404621bb4c", enabled: true, schedule: { enabled: false, weekday: null, time: null, timezone: null }, ownerNames: ["李产品"], fieldMap: { requirementType: "cf-1" } };
+const sourceBody = { projectId: "674e77e9ee4037da9d4b9f8e", projectName: "需求收集与管理", requirementTypeId: "674e7a7e5f95a1404621bb4c", enabled: true, schedule: { enabled: true, weekday: 1, time: "09:30", timezone: "Asia/Shanghai" }, ownerNames: ["李产品"], fieldMap: { description: "cf-1" } };
 
 test("administrator creates the single source and reads it back consistently", async () => {
   const { dependencies, sources } = makeFixture(["administrator"]);
   const created = await handleApiRequest(new Request("http://localhost/api/sources", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(sourceBody) }), dependencies);
   assert.equal(created.status, 201);
   const listed = await handleApiRequest(new Request("http://localhost/api/sources"), dependencies);
-  const body = await listed.json() as { items: { projectId: string; projectName: string }[] };
+  const body = await listed.json() as { items: { projectId: string; projectName: string; schedule: typeof sourceBody.schedule; ownerNames: string[]; fieldMap: Record<string, string> }[] };
   assert.equal(body.items.length, 1);
   assert.equal(body.items[0]!.projectId, sourceBody.projectId);
+  assert.deepEqual(body.items[0]!.schedule, sourceBody.schedule);
+  assert.deepEqual(body.items[0]!.ownerNames, sourceBody.ownerNames);
+  assert.deepEqual(body.items[0]!.fieldMap, sourceBody.fieldMap);
   assert.equal(sources.length, 1);
   const duplicate = await handleApiRequest(new Request("http://localhost/api/sources", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(sourceBody) }), dependencies);
   assert.equal(duplicate.status, 409);
@@ -80,6 +87,8 @@ test("source creation rejects credential fields and sensitive field-map keys", a
   assert.equal(withCredential.status, 400);
   const withPersonalMap = await handleApiRequest(new Request("http://localhost/api/sources", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...sourceBody, fieldMap: { proposerPhone: "cf-9" } }) }), dependencies);
   assert.equal(withPersonalMap.status, 400);
+  const withUnapprovedMap = await handleApiRequest(new Request("http://localhost/api/sources", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...sourceBody, fieldMap: { privateAuditPayload: "cf-10" } }) }), dependencies);
+  assert.equal(withUnapprovedMap.status, 400);
 });
 test("role matrix: configuration and rules writes are restricted server-side", async () => {
   const bodies = { source: sourceBody, dictionary: { entries: ["报表分析"] } };
@@ -129,5 +138,6 @@ test("audit write failure does not report a successful publish or source creatio
   failAudit();
   const created = await handleApiRequest(new Request("http://localhost/api/sources", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(sourceBody) }), dependencies);
   assert.equal(created.status, 503);
+  assert.equal(dependencies.repositories && await dependencies.repositories.sources.list().then((items) => items.length), 0, "source mutation must roll back when its atomic audit write fails");
   assert.equal(auditEvents.length, 0);
 });

@@ -17,20 +17,23 @@ interface RulesFixture {
   dependencies: ApiDependencies;
   dictionaries: ModuleDictionaryVersionRecord[];
   rules: PriorityRuleVersionRecord[];
+  auditEvents: { eventType: string; entityType: string; entityId: string }[];
 }
 function makeFixture(): RulesFixture {
   const dictionaries: ModuleDictionaryVersionRecord[] = [dictionaryRecord()];
   const rules: PriorityRuleVersionRecord[] = [ruleRecord()];
+  const auditEvents: RulesFixture["auditEvents"] = [];
   const repositories: ApiRepositories = {
     dictionaries: {
       list: async () => dictionaries,
       get: async (version) => dictionaries.find((d) => d.version === version) ?? null,
-      create: async (p) => { const record = { version: Math.max(0, ...dictionaries.map((d) => d.version)) + 1, status: "draft" as const, entries: p.entries, createdBy: p.createdBy, createdAt: p.now, publishedAt: null }; dictionaries.push(record); return record; },
-      publish: async (version, publishedAt) => {
+      create: async (p) => { const record = { version: Math.max(0, ...dictionaries.map((d) => d.version)) + 1, status: "draft" as const, entries: p.entries, createdBy: p.createdBy, createdAt: p.now, publishedAt: null }; dictionaries.push(record); if (p.auditEvent) auditEvents.push({ eventType: p.auditEvent.eventType, entityType: p.auditEvent.entityType, entityId: String(record.version) }); return record; },
+      publish: async (version, publishedAt, auditEvent) => {
         const record = dictionaries.find((d) => d.version === version);
         if (!record || record.status !== "draft") throw new Error("publish requires an existing draft version");
         for (const other of dictionaries) if (other.status === "published" && other.version !== version) other.status = "retired";
         record.status = "published"; record.publishedAt = publishedAt;
+        if (auditEvent) auditEvents.push({ eventType: auditEvent.eventType, entityType: auditEvent.entityType, entityId: String(version) });
         return record;
       },
     },
@@ -38,12 +41,13 @@ function makeFixture(): RulesFixture {
       get: async (id) => rules.find((r) => r.id === id) ?? null,
       getPublished: async () => [...rules].reverse().find((r) => r.status === "published") ?? null,
       list: async () => rules,
-      create: async (p) => { const record = { id: crypto.randomUUID(), version: Math.max(0, ...rules.map((r) => r.version)) + 1, status: "draft" as const, rules: p.rules, validationEvidence: p.validationEvidence, createdBy: p.createdBy, createdAt: p.now, publishedAt: null }; rules.push(record); return record; },
-      publish: async (id, publishedAt) => {
+      create: async (p) => { const record = { id: crypto.randomUUID(), version: Math.max(0, ...rules.map((r) => r.version)) + 1, status: "draft" as const, rules: p.rules, validationEvidence: p.validationEvidence, createdBy: p.createdBy, createdAt: p.now, publishedAt: null }; rules.push(record); if (p.auditEvent) auditEvents.push({ eventType: p.auditEvent.eventType, entityType: p.auditEvent.entityType, entityId: record.id }); return record; },
+      publish: async (id, publishedAt, auditEvent) => {
         const record = rules.find((r) => r.id === id);
         if (!record || record.status !== "draft") throw new Error("publish requires an existing draft version");
         for (const other of rules) if (other.status === "published" && other.id !== id) other.status = "retired";
         record.status = "published"; record.publishedAt = publishedAt;
+        if (auditEvent) auditEvents.push({ eventType: auditEvent.eventType, entityType: auditEvent.entityType, entityId: id });
         return record;
       },
     },
@@ -53,7 +57,7 @@ function makeFixture(): RulesFixture {
     items: { upsert: async () => { throw new Error("not used in rules tests"); }, get: async () => null, listByBatch: async () => [] },
     jobs: { enqueue: async () => { throw new Error("not used in rules tests"); }, claimNext: async () => null, reschedule: async () => null, complete: async () => null },
   };
-  return { dependencies: { database: null, repositories, identity: { requireActor: async () => ({ id: "actor-1", roles: ["administrator"] }) }, now: () => new Date("2026-10-09T00:00:00.000Z") }, dictionaries, rules };
+  return { dependencies: { database: null, repositories, identity: { requireActor: async () => ({ id: "actor-1", roles: ["administrator"] }) }, now: () => new Date("2026-10-09T00:00:00.000Z") }, dictionaries, rules, auditEvents };
 }
 const unauthenticated: ApiDependencies = { database: null, repositories: undefined, identity: undefined, now: undefined };
 
@@ -101,12 +105,10 @@ test("publishing an unknown or non-draft dictionary version fails without mutati
   assert.equal(dictionaries.find((d) => d.version === 2)?.status, "published");
 });
 test("audits dictionary create and publish actions", async () => {
-  const events: { eventType: string; entityType: string; entityId: string }[] = [];
-  const { dependencies } = makeFixture();
-  (dependencies.repositories as ApiRepositories).audit = { append: async (e) => { events.push({ eventType: e.eventType, entityType: e.entityType, entityId: e.entityId }); }, search: async () => [] };
+  const { dependencies, auditEvents } = makeFixture();
   await handleApiRequest(new Request("http://localhost/api/rules/dictionary", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ entries: ["工单管理"] }) }), dependencies);
   await handleApiRequest(new Request("http://localhost/api/rules/dictionary/2/publish", { method: "POST" }), dependencies);
-  assert.deepEqual(events.map((e) => `${e.eventType}:${e.entityType}:${e.entityId}`), ["dictionary.created:module_dictionary:2", "dictionary.published:module_dictionary:2"]);
+  assert.deepEqual(auditEvents.map((e) => `${e.eventType}:${e.entityType}:${e.entityId}`), ["dictionary.created:module_dictionary:2", "dictionary.published:module_dictionary:2"]);
 });
 
 test("lists priority rule versions after authentication", async () => {
@@ -160,12 +162,10 @@ test("publishing an unknown or non-draft priority rule fails", async () => {
   assert.equal(conflict.status, 409);
 });
 test("audits priority rule create and publish actions", async () => {
-  const events: { eventType: string; entityType: string; entityId: string }[] = [];
-  const { dependencies } = makeFixture();
-  (dependencies.repositories as ApiRepositories).audit = { append: async (e) => { events.push({ eventType: e.eventType, entityType: e.entityType, entityId: e.entityId }); }, search: async () => [] };
+  const { dependencies, auditEvents } = makeFixture();
   await handleApiRequest(new Request("http://localhost/api/rules/priority", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ rules: { scoring: { user: { 强: 3, 中: 2 }, market: { 强: 3, 中: 2 }, business: { 强: 3, 中: 2 }, technology: { 强: 3, 中: 2 } }, thresholds: { p0: 4, p1: 3, p2: 1 } } }) }), dependencies);
   const created = (dependencies.repositories as ApiRepositories).priorityRules ? await (dependencies.repositories as ApiRepositories).priorityRules!.list() : [];
   await handleApiRequest(new Request(`http://localhost/api/rules/priority/${created[0]!.id}/publish`, { method: "POST" }), dependencies);
-  assert.deepEqual(events.map((e) => e.eventType), ["priority_rule.created", "priority_rule.published"]);
-  assert.ok(events.every((e) => e.entityType === "priority_rule"));
+  assert.deepEqual(auditEvents.map((e) => e.eventType), ["priority_rule.created", "priority_rule.published"]);
+  assert.ok(auditEvents.every((e) => e.entityType === "priority_rule"));
 });

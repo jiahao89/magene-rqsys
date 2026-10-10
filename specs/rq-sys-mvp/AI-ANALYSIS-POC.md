@@ -17,7 +17,7 @@
 | 端点 | `https://api.deepseek.com`（[OI] 兼容，`response_format={'type':'json_object'}`） |
 | POC 脚本 | `.scratch/rq-sys-mvp/poc/ai-analysis-poc.mjs`（原生 fetch + AbortController，零依赖） |
 | 运行结果 | `.scratch/rq-sys-mvp/poc/results/`（summary.json + 逐用例结果 + 出站载荷） |
-| 测试 key | 环境现有 `AI_API_KEY` 无效（DeepSeek 401，key 尾号 df18）；有效 key 由用户晚点提供，T1–T3 待补跑 |
+| 测试 key | 初轮使用的 `AI_API_KEY` 无效（DeepSeek 401）；2026-10-09 已用有效测试 key 补跑 T1–T3，详见 2.1。该本机 POC 不证明妙搭运行时已配置或读取同一 key。 |
 | 模块词典 | POC 测试词典 `test-dict-v1`：基础数据/数据可视化/报表分析/权限管理/集成对接 + fallback 其他/待分类 |
 
 ## 输入最小化与 PII 掩码（实测）
@@ -67,7 +67,13 @@ Spec 02 禁止发送姓名、用户 ID、联系方式。POC 在 `buildOutboundPa
   1. `createDeepSeekProvider` 工厂读取空环境对象，永远拿不到 env 凭证 → 修复为默认读 `process.env`。
   2. 生产提示词缺少精确 JSON 样例 → 模型输出结构错位 → 修复为与 AnalysisSchema 一致的完整样例 + 约束说明。
   3. 校验失败原因被吞掉 → 修复为携带可诊断 detail 入 safe error。
-- 环境注意：用户 shell profile 导出的旧无效 `AI_API_KEY`（尾号 df18）会遮蔽 `.env` 中的新 key（Node `--env-file` 不覆盖已存在环境变量）；本地运行 AI 验证需 `env -u AI_API_KEY`。
+- 环境注意：用户 shell profile 中旧的无效 `AI_API_KEY` 会遮蔽 `.env` 中的新 key（Node `--env-file` 不覆盖已存在环境变量）；本地运行 AI 验证需确保加载了正确的环境变量，且不得打印其值。
+
+### Credential/runtime boundary (2026-10-10)
+
+- `AI_API_KEY` is a generic environment-variable name. The current provider code defaults to DeepSeek's endpoint and `deepseek-flash`; an explicitly configured `AI_BASE_URL` or `AI_MODEL` can override those defaults. A key's appearance alone does not identify its provider.
+- The effective test key used for the 2026-10-09 local POC passed T1–T3 against DeepSeek. This is local POC evidence, not proof that the value currently edited in the Miaoda app is that key or that the deployed server runtime can read it.
+- The authenticated Miaoda editor currently marks `.env` modified. Its contents were not inspected. The app-scoped repository tracks a `.env` path; if a real key is in that file, do not commit or publish it. Use trusted server-side secret storage instead, and rotate the key if it has entered repository history.
 
 ### 3. 每次分析的版本可记录（provenance）
 

@@ -41,7 +41,7 @@ test("analysis 合法迁移：failed_retryable → pending/running（新建版�
   assert.equal(canTransition("analysis", "running", "failed_retryable"), true);
   assert.equal(canTransition("analysis", "failed_retryable", "pending"), true);
   assert.equal(canTransition("analysis", "analyzed", "running"), true);
-  assert.equal(canTransition("analysis", "analyzed", "pending"), false);
+  assert.equal(canTransition("analysis", "analyzed", "pending"), true); // 新源版本更新会使上一版本结果失效
 });
 
 test("owner 迁移：auto_mapped → manually_mapped 允许，人工映射不可被自动流程改写", () => {
@@ -51,7 +51,7 @@ test("owner 迁移：auto_mapped → manually_mapped 允许，人工映射不可
   assert.equal(canTransition("owner", "auto_mapped", "manually_mapped"), true);
   // 关键保护：manually_mapped 是迁移终点，自动流程不能改写
   assert.equal(canTransition("owner", "manually_mapped", "auto_mapped"), false);
-  assert.equal(canTransition("owner", "manually_mapped", "pending_mapping"), false);
+  assert.equal(canTransition("owner", "manually_mapped", "pending_mapping"), true); // TB 负责人实质变更后重新解析；无匹配时仓储保留 Base 手动负责人
   assert.equal(canTransition("owner", "not_required", "pending_mapping"), true);
 });
 

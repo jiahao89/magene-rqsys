@@ -23,7 +23,8 @@ export function createPostgresSyncPersistence(
         description: typeof input.mappedFields.description === "string" ? input.mappedFields.description : null,
         scope: typeof input.mappedFields.scope === "string" ? input.mappedFields.scope : null,
         acceptanceCriteria: typeof input.mappedFields.acceptanceCriteria === "string" ? input.mappedFields.acceptanceCriteria : null,
-        proposerUserId: input.sourceCreatorId,
+        // creator_id 是记录创建者，不等于业务提出人；提出人来自获批 lookup 字段的 meta.userid。
+        proposerUserId: typeof input.mappedFields.proposerUserId === "string" ? input.mappedFields.proposerUserId : null,
         proposerName: typeof input.mappedFields.proposerName === "string" ? input.mappedFields.proposerName : null,
         executorUserId: input.sourceExecutorId,
         executorName: typeof input.mappedFields.executorName === "string" ? input.mappedFields.executorName : null,
@@ -39,6 +40,7 @@ export function createPostgresSyncPersistence(
         substantiveHash: input.substantiveHash,
         sourceVersion: input.sourceVersion,
         latestBatchId: input.latestBatchId,
+        snapshot: input.snapshot,
       };
       const upserted = await repositories.requirements.upsertRequirement(sourceConfigId, input.sourceRequirementId, write);
       // 编排器只对新建/哈希变化的需求调用 upsert——全部记入 touched 供链式分析
@@ -62,7 +64,15 @@ export function createPostgresSyncPersistence(
       });
     },
     async completeBatch(batchId, result) {
-      await repositories.batches.complete(batchId, result);
+      const completed = await repositories.batches.complete(batchId, result);
+      if (!completed) throw new Error("Sync batch could not be completed");
+      await repositories.audit.append({
+        id: crypto.randomUUID(), actorId: completed.actorId, eventType: "sync.completed",
+        entityType: "sync_batch", entityId: batchId,
+        result: completed.status === "failed" || completed.failedCount > 0 ? "failed" : "succeeded",
+        safeDetails: { trigger: completed.triggerType, reason: completed.status },
+        occurredAt: result.completedAt,
+      });
     },
     touchedRequirements() {
       return touched;

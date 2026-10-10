@@ -35,21 +35,22 @@ The upstream requirements-definition document has 28 fields across basic informa
 
 ## 5. Acceptance boundary and next steps
 
-As of 2026-10-09, the local RQ-Sys implementation checkout is `main` at `f5dbd69`. A fresh local run passed API tests (174/174), Web tests (15/15), typecheck, production build, and `git diff --check`, after a two-axis (standards/spec) code review of `ef9a288..HEAD`. This is local verification only and does not establish Miaoda, Teambition, AI-provider, or Feishu Base runtime acceptance.
+As of 2026-10-10, the local RQ-Sys checkout contains platform-neutral implementations for the MVP API, sync/analysis/owner/Base-push pipeline, retries/audit, rules, and workbench. The latest recheck passed API unit tests (183/183; PostgreSQL integration excluded because its configured database target was not confirmed isolated), Web tests (20/20), typecheck, production build, and Miaoda adapter tests (5/5), lint, and production build. This proves local code paths only; it does not establish Miaoda, Teambition, AI-provider, Feishu contact search, Base automation, or end-to-end target acceptance. See [LOCAL-AND-TARGET-STATUS.md](LOCAL-AND-TARGET-STATUS.md) for exact verification boundaries.
 
-The dedicated Miaoda app is `app_17fqkjwyx1u` (`full_stack`). Its `dev` database currently has 13 empty tables matching the broad object/column shape of `database/migrations/0001_initial.sql`; `+db-changelog-list` shows the DDL and a subsequent PUBLISH entry, database quota reads successfully, and `+env-list` returns no variables. A `finished` release exists for commit `1a2910bb6d678c3fe0b3cbb568d3ab6c9ecef7c8`, but that commit is a Miaoda scaffold/workbench shell, not the RQ-Sys API implementation checkout. `+automation-list` returns no triggers. `+member-settings-get` currently returns `feature_not_available` for this app type.
+The dedicated Miaoda app is `app_17fqkjwyx1u`. Release `7694878567301549280` reports `finished` for `rq-sys-miaoda/sprint/default` commit `be2d20a448d20634b3d0a564aecb109ca5757202`. An earlier online trace showed `/api/sources` HTTP 500 with `DEPTH_ZERO_SELF_SIGNED_CERT` under old commit `6773cc4`. A fresh authenticated workbench reload shows “API 已连接” and “尚未配置数据源”; the frontend only enters ready after health and source-list GETs succeed, confirming the app-mediated read path and an empty source list. No matching trace/runtime commit has been captured: local CLI trace/log lookups failed because `open.feishu.cn` did not resolve. Direct address-bar access returns the platform CSRF-header error and is not a valid substitute for the app request. Online managed DB has 13 expected tables, a publish changelog, and no pending dev→main schema diff; no source config exists.
+
+The user selected Teambition project `室外产品-码表软固件需求池` (project ID `6960a3187384fa11aa07d7e6` from its authenticated page URL; UI count `311/314`). The skill's read-only API request could not connect, so task type and project-specific field mapping remain unverified; prior API evidence belongs to a different project. The user provisionally set Monday 09:00 `Asia/Shanghai` and limited test notifications to themselves. No source, sync, Base write, notification, or schedule was created/enabled. The Miaoda editor shows `.env` modified, but its contents were not inspected; the app-scoped Git repository tracks a `.env` path, so do not commit/publish any real key from it. This also does not prove server-side secret injection.
 
 ### Remaining external gates
 
-- Tickets 10/11: platform authorization service must provision and propagate `spark:app:read` / `spark:app:write`; then execute the prescribed probe on a user-designated safe test app.
-- Ticket 00: complete supported target-runtime verification for DB driver/connection, migrations and schema constraints, backups/retention, scheduled jobs/recovery, secret injection, observability/quotas, UI artifact hosting, and HeroUI version lock.
+- Ticket 00: when local DNS/observability access is restored, correlate the fresh successful app-mediated health/source GETs to the active runtime commit; don't repeat release or call TLS repair accepted based solely on `finished`.
 - Identity: keep the identity adapter unimplemented until the target Miaoda token/session contract is verified; API production authorization remains blocked without it.
-- Ticket 09: run approved test-environment end-to-end acceptance for Teambition import, DeepSeek, Feishu Base writes/snapshots/owner/notification dedupe, scheduler, identity, failures and retries.
-- Resolve and record D-02 (Base PM workflow architecture), D-03 (field-by-field source mapping), and D-10 (business timezone/window) before affected production behavior.
+- Ticket 09: after DB runtime succeeds and safe test fixtures plus administrator-controlled server secrets are available, run approved dev-environment end-to-end acceptance for Teambition import, DeepSeek, Feishu Base writes/snapshots/owner/notification dedupe, scheduler, identity, failures and retries. Notifications remain limited to the user.
+- Resolve and record D-02 (Base PM workflow architecture) and D-03 (project-specific field mapping) before affected production behavior. D-10 has a provisional user-selected value; scheduler runtime/recovery remains unverified.
 
 - The initial handoff claim that there are no code items is stale: a 2026-10-09 pass found and fixed a Teambition custom-field duplicate-normalization bug.
-- `rq-sys-miaoda/` is a separate, clean local Git checkout whose remote is the app-specific Miaoda repository; its history contains only Miaoda scaffold/config commits plus commit `1a2910b` adding a workspace/database-page shell. It is not the `jiahao89/magene-rqsys` implementation checkout and must not be treated as if it contains the RQ-Sys backend.
-- Do not claim any connector, schedule, runtime API, or end-to-end slice is “integrated” until it has target-environment evidence. The MVP explicitly excludes the complete 28-field model; roadmap expansion requires an approved field dictionary (D-01).
+- `rq-sys-miaoda/` is a separate, clean app-scoped Miaoda Git repo; release evidence from it must not be confused with the GitHub implementation checkout.
+- Do not claim any connector, schedule, runtime API, or end-to-end slice is “integrated” until it has target-environment evidence. The MVP excludes the complete 28-field model; roadmap expansion requires an approved field dictionary (D-01).
 
 ## PRD traceability
 
@@ -76,11 +77,11 @@ The dedicated Miaoda app is `app_17fqkjwyx1u` (`full_stack`). Its `dev` database
 
 ## Current codebase seam
 
-The local workspace now contains a TypeScript API foundation, a PostgreSQL migration, and an OpenAPI contract. The foundation currently implements only health/readiness probes; business handlers and target Miaoda adapters remain unimplemented. The former `rq-sys-web` React prototype was mock-backed and had no real TB, Base, or model integration, so it was removed during the 2026-10-08 requirements-stage cleanup. The actual GitHub implementation repository still needs to be opened and inspected before choosing a UI baseline or claiming the local scaffold is the production source.
+The local checkout (`origin`: `jiahao89/magene-rqsys`) now contains the TypeScript modular API, PostgreSQL schema/repositories, OpenAPI contract, Teambition/AI/Feishu Base adapters, worker/retry/scheduler logic, and a HeroUI workbench. The Web owner-mapping flow now searches the Feishu contact directory through the server and requires explicit candidate selection; it no longer asks the operator to type an Open ID.
 
-The technical design and `design.md` refer to HeroUI v3 + Tailwind v4. The removed UI prototype used shadcn/Base UI + Tailwind v4. Keep the component-library decision open until the GitHub repository and target Miaoda import/runtime are checked; record the final choice in an ADR.
+The server identity adapter remains deliberately unimplemented until the Miaoda session/token contract is verified. The worker's local polling is for development only. The target Miaoda database/runtime/scheduler/identity and app credentials, Feishu contact-search permission, real integrations and notification automation remain unverified; do not describe local code as deployed or integrated.
 
-The proposed Miaoda-first implementation architecture is documented in [TECHNICAL-PLAN-MIAODA.md](TECHNICAL-PLAN-MIAODA.md). It remains subject to target-tenant POC and verification against the GitHub repository.
+D-08 is resolved by ADR-001: the current local Web baseline is HeroUI v3 + Tailwind v4. Compatibility with Miaoda hosting/import remains part of Ticket 00. The proposed Miaoda-first deployment architecture is documented in [TECHNICAL-PLAN-MIAODA.md](TECHNICAL-PLAN-MIAODA.md) and still requires target-tenant verification.
 
 ## Completion definition
 

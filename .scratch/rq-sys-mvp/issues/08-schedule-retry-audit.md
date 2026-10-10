@@ -1,4 +1,4 @@
-# [blocked: 00, 05, 06, 07] 08 — 每周定时同步、重试与审计
+# [implemented-not-target-verified] 08 — 每周定时同步、重试与审计
 
 ## 目标
 把已验证的手动流程可靠地交给妙搭调度，并支持故障恢复和操作追溯。
@@ -15,7 +15,7 @@
 - 分析首轮终态后推送可继续，后续分析重试不阻塞。
 - 用户可区分源同步、AI 分析、Base 推送三类状态；不显示无法证实的 Base PM 状态回读。
 
-## Blocked by
+## Target verification remains
 Ticket 00’s target scheduler POC and Tickets 05–07’s vertical slices remain prerequisites for target acceptance. Per user-approved scope, the platform-neutral scheduler/retry/audit worker code may be implemented and tested locally first.
 
 ## Approved partial scope and local evidence (2026-10-08)
@@ -34,3 +34,7 @@ Ticket 00’s target scheduler POC and Tickets 05–07’s vertical slices remai
 - 不变量 1 补全：claim 决策新增同 (sourceConfigId, teambitionRequirementId) 身份活跃互斥——不同幂等键（如新调度窗口或手动触发）在已有活跃 run 时不再创建重复工作；终态 run 同键拒绝、新键（下一窗口）可建新 run。
 - 其他修复：contracts/pipeline.ts 严格度与 openapi 对齐（去掉契约没有的 minLength、`z.iso.datetime({ offset: true })` 接受偏移量）；scheduler/due.ts 窗口起点改用窗口时刻的时区偏移换算（跨夏令时回退边界不再偏移 1 小时，新增回归测试）；删除 scheduler/idempotency.ts 中间层与 in-memory-storage 死代码；jobs 层词汇与持久层对齐（sourceConfigId/teambitionRequirementId/queued/owner）；提取 lease 到期计算重复；统一 randomUUID 导入。
 - 修复后 67 个测试全部通过，typecheck/build 通过。
+
+## Latest local status (2026-10-10)
+
+The earlier 2026-10-08 statement that scheduling/worker/retry/audit were not wired is historical and superseded for local code. PostgreSQL jobs, worker dispatch, fencing, source schedule calculation, retry APIs, safe audit persistence and local polling are implemented and locally verified. Local polling is development-only; durable Miaoda automation, restart/recovery and audit persistence are not target-verified under Tickets 00/09.

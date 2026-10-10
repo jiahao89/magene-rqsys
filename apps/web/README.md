@@ -15,7 +15,9 @@ Open <http://127.0.0.1:5173>. The API and browser app remain local; no deploy wo
 
 ## Current UI scope
 
-The Overview reads API health, source config, batches and requirement pipeline state; it submits manual sync requests using the API's idempotency header. Requirements and Batches are data-backed. Source settings show read-only state until the API supports source creation/configuration UI. Owner mapping, Rules and Audit show explicit API-not-ready states instead of mock records. The current API skeleton only serves health/readiness and the implemented batch/source endpoints; unavailable contract routes are surfaced as errors and do not create fake counts or status.
+The workbench is wired to the API for source configuration, manual sync, batch detail and item retry, requirement search/detail, AI-analysis retry, owner mapping, rules, and audit. Owner mapping searches Feishu through the server-side `/api/feishu/users` adapter and requires an operator to select a returned candidate before saving. Only the candidate's Open ID, display name, and optional English name are returned to the browser; the app secret and access token remain server-side.
+
+The local server identity provider is intentionally a placeholder until the Miaoda session/token contract is verified. Protected routes therefore cannot be treated as a ready-to-use local or production login flow. Feishu user search also requires the app's contact-search permission and server-side `FEISHU_APP_ID` / `FEISHU_APP_SECRET`. Target Miaoda persistence, identity, scheduler/background execution, Feishu permissions, and end-to-end integrations remain acceptance gates; local API responses and tests are not target-environment evidence.
 
 ## Verify
 

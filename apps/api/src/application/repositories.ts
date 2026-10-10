@@ -8,13 +8,15 @@ import type { AnalysisState, OwnerState, PullState, PushState } from "../domain/
 import type { SourceConfigUpdate } from "../contracts/source.js";
 import type { RequirementRecord } from "../domain/persistence.js";
 
+export type AuditEventInput = Omit<AuditEventRecord, "entityId">;
+
 // source_configs
 export interface SourceConfigRepository {
   list(): Promise<SourceConfigRecord[]>;
   get(id: string): Promise<SourceConfigRecord | null>;
-  update(id: string, update: SourceConfigUpdate): Promise<SourceConfigRecord | null>;
+  update(id: string, update: SourceConfigUpdate, auditEvent?: AuditEventInput): Promise<SourceConfigRecord | null>;
   // 受控初始化：MVP 只允许一个产品组来源；唯一性由调用方（HTTP 层）与部署流程共同保证。
-  create(input: { projectId: string; projectName: string; requirementTypeId: string; enabled: boolean }): Promise<SourceConfigRecord>;
+  create(input: SourceConfigUpdate & { auditEvent?: AuditEventInput }): Promise<SourceConfigRecord>;
 }
 
 // sync_batches
@@ -30,8 +32,10 @@ export interface SyncBatchRepository {
   findByIdempotencyKey(sourceConfigId: string, key: string): Promise<SyncBatchRecord | null>;
   list(query: {
     status?: BatchState;
+    since?: string;
+    until?: string;
     limit: number;
-    cursor?: string;
+    cursor?: SyncBatchSearchCursor;
   }): Promise<{ items: SyncBatchRecord[]; nextCursor: string | null }>;
   complete(
     id: string,
@@ -44,6 +48,11 @@ export interface SyncBatchRepository {
       completedAt: string;
     },
   ): Promise<SyncBatchRecord | null>;
+}
+
+export interface SyncBatchSearchCursor {
+  startedAt: string;
+  id: string;
 }
 
 // sync_items
@@ -75,6 +84,7 @@ export interface SourceSnapshotRepository {
     capturedAt: string;
   }): Promise<SourceSnapshotRecord>;
   latest(requirementId: string): Promise<SourceSnapshotRecord | null>;
+  getAtVersion(requirementId: string, sourceVersion: number): Promise<SourceSnapshotRecord | null>;
 }
 
 // analysis_runs（只追加新版本，不覆盖旧版本）
@@ -158,9 +168,11 @@ export interface BasePushRunRepository {
       completedAt: string;
     },
   ): Promise<BasePushRunRecord | null>;
+  restart(id: string, startedAt: string): Promise<BasePushRunRecord | null>;
   findByIdempotencyKey(key: string): Promise<BasePushRunRecord | null>;
   // 需求最近一次推送尝试（含失败）——用于实质变化判断：仅当本次源版本新于上次推送版本时读 PM 快照
   latest(requirementId: string): Promise<BasePushRunRecord | null>;
+  latestSuccessful(requirementId: string): Promise<BasePushRunRecord | null>;
 }
 
 // pipeline_jobs（dedupe_key 唯一；claim 用租约语义，与 jobs/ 模块决策逻辑配合）
@@ -172,6 +184,7 @@ export interface PipelineJobRepository {
     availableAt: string;
     maxAttempts?: number;
   }): Promise<PipelineJobRecord>;
+  findByDedupeKey?(key: string): Promise<PipelineJobRecord | null>;
   claimNext(workerId: string, leaseMs: number, now: string): Promise<PipelineJobRecord | null>;
   // 失败重排：状态回到 queued，available_at 按退避推迟；超出最大尝试由 worker 判定终态。
   // expectedAttempt 是 fencing 令牌：仅当 attempt_count 仍等于认领时的值才允许更新（工单 15）。
@@ -212,16 +225,16 @@ export interface AuditEventRepository {
 export interface ModuleDictionaryRepository {
   list(): Promise<ModuleDictionaryVersionRecord[]>;
   get(version: number): Promise<ModuleDictionaryVersionRecord | null>;
-  create(input: { entries: unknown[]; createdBy: string; now: string }): Promise<ModuleDictionaryVersionRecord>;
-  publish(version: number, publishedAt: string): Promise<ModuleDictionaryVersionRecord>;
+  create(input: { entries: unknown[]; createdBy: string; now: string; auditEvent?: AuditEventInput }): Promise<ModuleDictionaryVersionRecord>;
+  publish(version: number, publishedAt: string, auditEvent?: AuditEventInput): Promise<ModuleDictionaryVersionRecord>;
 }
 
 export interface PriorityRuleRepository {
   get(id: string): Promise<PriorityRuleVersionRecord | null>;
   getPublished(): Promise<PriorityRuleVersionRecord | null>;
   list(): Promise<PriorityRuleVersionRecord[]>;
-  create(input: { rules: Record<string, unknown>; validationEvidence: unknown[]; createdBy: string; now: string }): Promise<PriorityRuleVersionRecord>;
-  publish(id: string, publishedAt: string): Promise<PriorityRuleVersionRecord>;
+  create(input: { rules: Record<string, unknown>; validationEvidence: unknown[]; createdBy: string; now: string; auditEvent?: AuditEventInput }): Promise<PriorityRuleVersionRecord>;
+  publish(id: string, publishedAt: string, auditEvent?: AuditEventInput): Promise<PriorityRuleVersionRecord>;
 }
 
 // requirements 查询与状态迁移（handlers 与 worker 共用）
@@ -244,6 +257,9 @@ export interface RequirementQueryRepository {
     analysisState?: AnalysisState;
     ownerState?: OwnerState;
     pushState?: PushState;
+    batchId?: string;
+    since?: string;
+    until?: string;
     limit: number;
     cursor?: RequirementSearchCursor;
   }): Promise<{ items: RequirementRecord[]; nextCursor: string | null }>;

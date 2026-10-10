@@ -1,4 +1,4 @@
-# [blocked] 04 — 持久化领域模型与服务端 API 基础
+# [implemented-not-target-verified] 04 — 持久化领域模型与服务端 API 基础
 
 ## 目标
 建立可持久追踪同步、分析、映射、推送和审计的服务端数据/接口基础，供后续纵向切片复用。
@@ -22,7 +22,7 @@
 - 写操作能审计 actor、对象、动作、结果与时间。
 - 数据库与部署配置基于 Ticket 00 的实测结论，不假设本地文件长期持久。
 
-## Blocked by
+## Target verification remains
 Ticket 00 remains a blocker for target Miaoda implementation and acceptance. Per user-approved scope, local platform-neutral API/schema work may proceed without claiming the MVP ticket complete.
 
 ## Local evidence (2026-10-08)
@@ -48,3 +48,7 @@ User approved proceeding with platform-neutral local code for Ticket 04 and the 
 - 双轴代码审查后补齐错误契约：openapi.yaml components 新增 Error schema（{error:{code,message}}）与各错误响应 content（BadRequest/Unauthorized/Forbidden/NotFound/Conflict/InternalError/RouteNotImplemented/ServiceUnavailable），PUT sources/{id} 与 PUT requirements/{id}/owner 接线 401/403。
 - contracts/pipeline.ts 严格度与契约对齐：移除契约没有的 minLength/min(1)（tbUserId/tbDisplayName/cursor/entityId），since/until 用 `z.iso.datetime({ offset: true })` 接受 date-time 允许的偏移量。
 - audit 事件模型合并为单一 DDL 对齐形状（AuditEventRecord），消除 audit/event.ts 与 application/repositories.ts 的双轨抽象。
+
+## Latest local status (2026-10-10)
+
+The earlier 2026-10-08 notes are historical and superseded for local implementation status. PostgreSQL schema/repositories and public APIs now cover source configuration, sync/batches/items, requirements/snapshots, analysis, mappings, Base push, rules, audit and jobs. Full local PostgreSQL integration tests pass. Target Miaoda persistence, identity, scheduler and recovery remain unverified under Tickets 00/09.

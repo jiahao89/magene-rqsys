@@ -14,7 +14,9 @@ import { buildPriorityRule } from "./analysis/priority-rule.js";
 import { createDueSyncJobs } from "./scheduler/due-jobs.js";
 import { FeishuBasePushAdapter } from "./base/client.js";
 import { FeishuBitableClient } from "./base/transport.js";
+import { FeishuUserDirectoryClient } from "./adapters/feishu/directory-client.js";
 import { createBasePushService } from "./base/push-service.js";
+import { basePushIdempotencyKey } from "./application/idempotency-keys.js";
 import { createAnalysisAdvancer } from "./pipeline/advance.js";
 import type { SourceProjectConfig } from "./domain/workflow.js";
 
@@ -51,7 +53,7 @@ const syncJobRunner: SyncJobRunner | undefined = repositories ? async (job) => {
     for (const touched of persistence.touchedRequirements()) {
       await repositories.jobs.enqueue({
         jobType: "analysis", dedupeKey: `analysis:${touched.id}:v${touched.sourceVersion}`,
-        payload: { requirementId: touched.id, actorId: job.actorId }, availableAt: now,
+        payload: { requirementId: touched.id, sourceVersion: touched.sourceVersion, actorId: job.actorId }, availableAt: now,
       });
     }
   }
@@ -63,6 +65,8 @@ const analysisJobHandler: ((job: { payload: Record<string, unknown> }) => Promis
   if (typeof requirementId !== "string") throw new Error("Invalid analysis job payload");
   const requirement = await repositories.requirements.get(requirementId);
   if (!requirement) throw new Error("Analysis requirement was not found");
+  const targetSourceVersion = job.payload.sourceVersion;
+  if (typeof targetSourceVersion === "number" && targetSourceVersion !== requirement.sourceVersion) return;
   const source = await repositories.sources.get(requirement.sourceConfigId);
   if (!source) throw new Error("Analysis source configuration was not found");
   const published = (await repositories.dictionaries.list()).find((version) => version.status === "published");
@@ -74,7 +78,7 @@ const analysisJobHandler: ((job: { payload: Record<string, unknown> }) => Promis
   await repositories.requirements.updateAnalysisState(requirement.id, "running");
   const run = await runAnalysis({
     requirementId: requirement.id, sourceVersion: requirement.sourceVersion, sourcePersisted: true,
-    title: requirement.title, description: requirement.description ?? "", context: requirement.scope ?? "",
+    title: requirement.title, description: requirement.description ?? "", context: [requirement.scope, requirement.acceptanceCriteria].filter((value): value is string => Boolean(value)).join("\n\n"),
     // 文本中可能出现的姓名（配置名单 + 需求 proposer/executor）一律掩码；用户 ID 不进 prompt
     piiMarkers: [...source.ownerNames, requirement.proposerName, requirement.executorName].filter((x): x is string => Boolean(x)),
     dictionary, priorityRule,
@@ -83,7 +87,7 @@ const analysisJobHandler: ((job: { payload: Record<string, unknown> }) => Promis
   // 工单 14：首次分析进入可见终态后继续负责人处理与 Base 推送——AI 不是推送门槛。
   // 无负责人 → not_required 直接入队；有负责人且映射唯一 → auto_mapped 入队；未匹配 → 等待人工映射。
   if (advanceAfterAnalysis) {
-    await advanceAfterAnalysis(requirement.id, run.status === "analyzed" ? "analyzed" : "failed_retryable", typeof job.payload.actorId === "string" ? job.payload.actorId : null);
+    await advanceAfterAnalysis(requirement.id, run.status === "analyzed" ? "analyzed" : "failed_retryable", typeof job.payload.actorId === "string" ? job.payload.actorId : null, run.analysisVersion);
   }
 } : undefined;
 
@@ -111,6 +115,9 @@ function parseBaseFields(raw: string | undefined): typeof DEFAULT_BASE_FIELDS {
   }
 }
 const baseFields = parseBaseFields(process.env.BASE_FIELDS_JSON);
+const feishuUserDirectory = process.env.FEISHU_APP_ID && process.env.FEISHU_APP_SECRET
+  ? new FeishuUserDirectoryClient({ appId: process.env.FEISHU_APP_ID, appSecret: process.env.FEISHU_APP_SECRET })
+  : undefined;
 const baseClient = process.env.FEISHU_APP_ID && process.env.FEISHU_APP_SECRET && process.env.BASE_APP_TOKEN && process.env.BASE_TABLE_ID
   ? new FeishuBitableClient({
       appId: process.env.FEISHU_APP_ID, appSecret: process.env.FEISHU_APP_SECRET,
@@ -134,12 +141,16 @@ const basePushJobHandler: ((job: { payload: Record<string, unknown> }) => Promis
   if (typeof requirementId !== "string") throw new Error("Invalid base_push job payload");
   const requirement = await repositories.requirements.get(requirementId);
   if (!requirement) throw new Error("Base push requirement was not found");
+  const expectedSourceVersion = job.payload.sourceVersion;
+  if (typeof expectedSourceVersion === "number" && expectedSourceVersion !== requirement.sourceVersion) return;
+  const latestAnalysis = await repositories.analyses.latest(requirement.id);
+  const expectedAnalysisVersion = job.payload.analysisVersion;
+  if (typeof expectedAnalysisVersion === "number" && expectedAnalysisVersion !== (latestAnalysis?.analysisVersion ?? 0)) return;
   const service = createBasePushService({
     requirements: repositories.requirements, people: repositories.people, basePushes: repositories.basePushes,
-    audit: repositories.audit, analyses: repositories.analyses, base: baseAdapter, baseProjectId, baseFields, actorId: null,
+    audit: repositories.audit, analyses: repositories.analyses, sourceSnapshots: repositories.sourceSnapshots, base: baseAdapter, baseProjectId, baseFields, actorId: typeof job.payload.actorId === "string" ? job.payload.actorId : null,
   });
-  // 幂等键与 owner handler 的入队键一致：base-push:{reqId}:v{version}
-  const outcome = await service.pushRequirement(requirementId, `base-push:${requirementId}:v${requirement.sourceVersion}`);
+  const outcome = await service.pushRequirement(requirementId, basePushIdempotencyKey(requirementId, requirement.sourceVersion, latestAnalysis?.analysisVersion ?? 0));
   if (outcome.kind === "error") throw new Error("Base push failed; retry is available.");
   // conflict：pull 未同步或等待人工映射——等待不是失败，人工映射持久化后会重新入队
 } : undefined;
@@ -166,7 +177,7 @@ const server = createServer(async (incoming, outgoing) => {
     const request = new Request(`http://${incoming.headers.host ?? "localhost"}${incoming.url ?? "/"}`, {
       method: incoming.method ?? "GET", headers, ...(body.length > 0 ? { body } : {}),
     });
-    const dependencies: ApiDependencies = { database, repositories, identity, now: undefined };
+    const dependencies: ApiDependencies = { database, repositories, identity, ...(feishuUserDirectory ? { feishuUsers: feishuUserDirectory } : {}), now: undefined };
     const response = await handleApiRequest(request, dependencies);
     outgoing.statusCode = response.status;
     response.headers.forEach((value, key) => outgoing.setHeader(key, value));

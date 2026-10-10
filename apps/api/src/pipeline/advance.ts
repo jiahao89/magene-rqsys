@@ -7,6 +7,7 @@
 import { randomUUID } from "node:crypto";
 import type { RequirementQueryRepository, PersonMappingRepository, PipelineJobRepository, AuditEventRepository } from "../application/repositories.js";
 import { normalizeOwnerName } from "../owner/mapping.js";
+import { basePushIdempotencyKey } from "../application/idempotency-keys.js";
 
 export interface AdvanceDeps {
   requirements: RequirementQueryRepository;
@@ -20,10 +21,10 @@ export type AdvanceOutcome = "queued" | "waiting_mapping" | "not_eligible";
 
 export function createAnalysisAdvancer(deps: AdvanceDeps) {
   const now = deps.now ?? (() => new Date());
-  return async function advanceAfterAnalysisTerminal(requirementId: string, analysisStatus: "analyzed" | "failed_retryable", actorId: string | null): Promise<AdvanceOutcome> {
+  return async function advanceAfterAnalysisTerminal(requirementId: string, analysisStatus: "analyzed" | "failed_retryable", actorId: string | null, analysisVersion: number): Promise<AdvanceOutcome> {
     const req = await deps.requirements.get(requirementId);
     if (!req || req.pipeline.pull !== "synced") return "not_eligible";
-    if (req.pipeline.push === "pushed" || req.pipeline.push === "running") return "not_eligible";
+    if (req.pipeline.push === "running" || (req.pipeline.push === "pushed" && analysisStatus !== "analyzed")) return "not_eligible";
 
     const hasTbOwner = Boolean(req.executorUserId || req.executorName);
     let waitingMapping = false;
@@ -45,18 +46,18 @@ export function createAnalysisAdvancer(deps: AdvanceDeps) {
       await deps.audit.append({
         id: randomUUID(), actorId, eventType: "analysis.terminal", entityType: "requirement", entityId: req.id,
         result: analysisStatus === "analyzed" ? "succeeded" : "failed",
-        safeDetails: { analysisStatus, push: "waiting_owner_mapping", sourceVersion: req.sourceVersion }, occurredAt,
+        safeDetails: { analysisStatus, analysisVersion, push: "waiting_owner_mapping", sourceVersion: req.sourceVersion }, occurredAt,
       });
       return "waiting_mapping";
     }
     await deps.jobs.enqueue({
-      jobType: "base_push", dedupeKey: `base-push:${req.id}:v${req.sourceVersion}`,
-      payload: { requirementId: req.id, actorId }, availableAt: occurredAt,
+      jobType: "base_push", dedupeKey: basePushIdempotencyKey(req.id, req.sourceVersion, analysisVersion),
+      payload: { requirementId: req.id, actorId, sourceVersion: req.sourceVersion, analysisVersion }, availableAt: occurredAt,
     });
     await deps.audit.append({
       id: randomUUID(), actorId, eventType: "analysis.terminal", entityType: "requirement", entityId: req.id,
       result: analysisStatus === "analyzed" ? "succeeded" : "failed",
-      safeDetails: { analysisStatus, push: "queued", sourceVersion: req.sourceVersion }, occurredAt,
+      safeDetails: { analysisStatus, analysisVersion, push: "queued", sourceVersion: req.sourceVersion }, occurredAt,
     });
     return "queued";
   };

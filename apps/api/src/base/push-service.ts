@@ -9,7 +9,7 @@
 // - PM 快照仅在源版本新于上次推送时读取保存（实质变化协议）。
 
 import { randomUUID } from "node:crypto";
-import type { RequirementQueryRepository, PersonMappingRepository, BasePushRunRepository, AuditEventRepository, AnalysisRunRepository } from "../application/repositories.js";
+import type { RequirementQueryRepository, PersonMappingRepository, BasePushRunRepository, AuditEventRepository, AnalysisRunRepository, SourceSnapshotRepository } from "../application/repositories.js";
 import type { FeishuBasePushAdapter } from "./client.js";
 import { normalizeOwnerName } from "../owner/mapping.js";
 
@@ -19,6 +19,7 @@ export interface BasePushServiceDeps {
   basePushes: BasePushRunRepository;
   audit: AuditEventRepository;
   analyses?: AnalysisRunRepository;
+  sourceSnapshots: SourceSnapshotRepository;
   base: FeishuBasePushAdapter;
   baseProjectId: string;
   baseFields: { projectId: string; requirementId: string; owner: string; source: Record<string, string>; ai: Record<string, string>; pm: string[] };
@@ -34,6 +35,10 @@ export type PushOutcome =
 
 export function createBasePushService(deps: BasePushServiceDeps) {
   const now = deps.now ?? (() => new Date());
+  const auditPushSuccess = (requirementId: string, sourceVersion: number, created: boolean, replay: boolean) => deps.audit.append({
+    id: randomUUID(), actorId: deps.actorId, eventType: "base.push", entityType: "requirement", entityId: requirementId,
+    result: "succeeded", safeDetails: { created, replay, sourceVersion }, occurredAt: now().toISOString(),
+  });
   return {
     async pushRequirement(requirementId: string, idempotencyKey: string): Promise<PushOutcome> {
       const req = await deps.requirements.get(requirementId);
@@ -41,7 +46,10 @@ export function createBasePushService(deps: BasePushServiceDeps) {
       if (req.pipeline.pull !== "synced") return { kind: "conflict" };
 
       const previous = await deps.basePushes.findByIdempotencyKey(idempotencyKey);
-      if (previous) return { kind: "pushed", status: previous.status, baseRecordId: previous.baseRecordId, created: false };
+      if (previous?.status === "pushed") {
+        await auditPushSuccess(req.id, req.sourceVersion, false, true);
+        return { kind: "pushed", status: "pushed", baseRecordId: previous.baseRecordId, created: false };
+      }
 
       const ownerLookup = req.executorUserId
         ? { tbUserId: req.executorUserId }
@@ -64,15 +72,34 @@ export function createBasePushService(deps: BasePushServiceDeps) {
         await deps.requirements.setOwner(req.id, null, "not_required");
       }
 
-      const run = await deps.basePushes.append({
-        requirementId: req.id, sourceVersion: req.sourceVersion, pushVersion: req.sourceVersion,
-        idempotencyKey, startedAt: now().toISOString(),
-      });
-      // 实质变化协议：仅当 Base 已有记录且本次源版本新于上次推送版本时，才读取并保存 PM 快照
-      const lastPush = await deps.basePushes.latest(req.id);
-      const substantiveChanged = Boolean(req.baseRecordId) && (lastPush?.sourceVersion ?? 0) < req.sourceVersion;
+      const startedAt = now().toISOString();
+      const lastSuccessfulPush = await deps.basePushes.latestSuccessful(req.id);
+      const previousSource = lastSuccessfulPush
+        ? await deps.sourceSnapshots.getAtVersion(req.id, lastSuccessfulPush.sourceVersion)
+        : null;
+      // 比较实质字段 hash 而不是 sourceVersion：负责人/状态/时间等元数据更新不应重置 PM 状态。
+      // 找不到既有快照时按实质变更处理，避免在不确定时覆盖 PM 工作。
+      const substantiveChanged = Boolean(req.baseRecordId) && (
+        !lastSuccessfulPush || !previousSource || previousSource.substantiveHash !== req.substantiveHash
+      );
+      const latestPush = previous ? null : await deps.basePushes.latest(req.id);
+      const run = previous
+        ? await deps.basePushes.restart(previous.id, startedAt)
+        : await deps.basePushes.append({
+            requirementId: req.id, sourceVersion: req.sourceVersion, pushVersion: (latestPush?.pushVersion ?? 0) + 1,
+            idempotencyKey, startedAt,
+          });
+      if (!run) {
+        const current = await deps.basePushes.findByIdempotencyKey(idempotencyKey);
+        if (current?.status === "pushed") {
+          await auditPushSuccess(req.id, req.sourceVersion, false, true);
+          return { kind: "pushed", status: "pushed", baseRecordId: current.baseRecordId, created: false };
+        }
+        return { kind: "conflict" };
+      }
 
-      await deps.requirements.setPushState(req.id, "running");
+      if (req.pipeline.push !== "running") await deps.requirements.setPushState(req.id, "running");
+      let pushedResult: { recordId: string; created: boolean };
       try {
         // 最新已分析版本映射 AI 字段：P0–P3 原样传递（不丢弃 P3）；无分析版本时不写 AI 字段
         const latestAnalysis = await deps.analyses?.latest(req.id) ?? null;
@@ -83,7 +110,7 @@ export function createBasePushService(deps: BasePushServiceDeps) {
               analysisVersion: latestAnalysis.analysisVersion,
             }
           : {};
-        const pushed = await deps.base.push({
+        pushedResult = await deps.base.push({
           projectId: deps.baseProjectId, requirementId: req.teambitionRequirementId,
           title: req.title, description: req.description,
           owner: mapping ? { userId: mapping.feishuUserId, idType: mapping.feishuIdType } : null,
@@ -92,24 +119,22 @@ export function createBasePushService(deps: BasePushServiceDeps) {
           sourceValues: { scope: req.scope, acceptanceCriteria: req.acceptanceCriteria, sourceStatusId: req.sourceStatusId, sourceUrl: req.sourceUrl },
           aiValues: ai,
         });
-        await deps.basePushes.updateResult(run.id, { status: "pushed", baseRecordId: pushed.recordId, completedAt: now().toISOString() });
+        await deps.basePushes.updateResult(run.id, { status: "pushed", baseRecordId: pushedResult.recordId, completedAt: now().toISOString() });
+        await deps.requirements.setBaseRecord(req.id, pushedResult.recordId, now().toISOString());
         await deps.requirements.setPushState(req.id, "pushed");
         // 推送时解析到负责人则推进 owner 状态（已达目标状态时跳过，避免非法迁移）
         if (mapping) {
           const targetOwnerState = mapping.matchMethod === "manual" ? "manually_mapped" : "auto_mapped";
           if (req.pipeline.owner !== targetOwnerState) await deps.requirements.setOwner(req.id, mapping.feishuUserId, targetOwnerState);
         }
-        await deps.audit.append({
-          id: randomUUID(), actorId: deps.actorId, eventType: "base.push",
-          entityType: "requirement", entityId: req.id, result: "succeeded",
-          safeDetails: { created: pushed.created, sourceVersion: req.sourceVersion }, occurredAt: now().toISOString(),
-        });
-        return { kind: "pushed", status: "pushed", baseRecordId: pushed.recordId, created: pushed.created };
       } catch {
         await deps.basePushes.updateResult(run.id, { status: "failed", safeErrorCode: "BASE_PUSH_FAILED", safeErrorSummary: "Base update failed; retry is available.", completedAt: now().toISOString() });
         await deps.requirements.setPushState(req.id, "failed");
+        await deps.audit.append({ id: randomUUID(), actorId: deps.actorId, eventType: "base.push", entityType: "requirement", entityId: req.id, result: "failed", safeDetails: { sourceVersion: req.sourceVersion, errorClass: "base_push_failed" }, occurredAt: now().toISOString() });
         return { kind: "error" };
       }
+      await auditPushSuccess(req.id, req.sourceVersion, pushedResult.created, false);
+      return { kind: "pushed", status: "pushed", baseRecordId: pushedResult.recordId, created: pushedResult.created };
     },
   };
 }

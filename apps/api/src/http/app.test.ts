@@ -3,6 +3,7 @@ import test from "node:test";
 import type { AuditEventRecord, SourceConfigRecord, SyncBatchRecord, SyncItemRecord } from "../domain/persistence.js";
 import type { ApiDependencies, ApiRepositories } from "./app.js";
 import { handleApiRequest } from "./app.js";
+import { encodeBatchCursor } from "../application/batch-cursor.js";
 
 const source: SourceConfigRecord = { id: "11111111-1111-4111-8111-111111111111", provider: "teambition", externalProjectId: "p1", externalProjectName: "Project", requirementTypeId: "type1", enabled: true, scheduleEnabled: false, scheduleWeekday: null, scheduleLocalTime: null, scheduleTimezone: null, ownerNames: ["Lee"], fieldMap: { title: "name" }, createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z" };
 const batch: SyncBatchRecord = { id: "22222222-2222-4222-8222-222222222222", sourceConfigId: source.id, triggerType: "manual", actorId: "actor-1", idempotencyKey: "request-key-0001", status: "running", startedAt: "2026-10-08T00:00:00.000Z", completedAt: null, totalCount: 0, succeededCount: 0, failedCount: 0, errorSummary: null, createdAt: "2026-10-08T00:00:00.000Z" };
@@ -14,7 +15,7 @@ function makeDependencies(): ApiDependencies {
  const batches: SyncBatchRecord[] = [];
  const repositories: ApiRepositories = {
   sources: { list: async () => [source], get: async (id) => id === source.id ? source : null, update: async (id, u) => id === source.id ? { ...source, externalProjectId: u.projectId, externalProjectName: u.projectName, requirementTypeId: u.requirementTypeId, enabled: u.enabled, scheduleEnabled: u.schedule.enabled, scheduleWeekday: u.schedule.weekday, scheduleLocalTime: u.schedule.time, scheduleTimezone: u.schedule.timezone, ownerNames: u.ownerNames, fieldMap: u.fieldMap } : null, create: async () => source },
-  batches: { create: async (p) => { const b = { ...batch, ...p, id: `batch-${batches.length + 1}` }; batches.push(b); return b; }, get: async (id) => batches.find((b) => b.id === id) ?? (id === batch.id ? batch : null), findByIdempotencyKey: async (sid, key) => batches.find((b) => b.sourceConfigId === sid && b.idempotencyKey === key) ?? null, list: async ({ status, limit, cursor }) => { const rows = batches.filter((b) => !status || b.status === status); const start = cursor ? rows.findIndex((b) => b.id === cursor) + 1 : 0; const items = rows.slice(start, start + limit); return { items, nextCursor: start + limit < rows.length ? items.at(-1)?.id ?? null : null }; }, complete: async () => null },
+  batches: { create: async (p) => { const b = { ...batch, ...p, id: `batch-${batches.length + 1}` }; batches.push(b); return b; }, get: async (id) => batches.find((b) => b.id === id) ?? (id === batch.id ? batch : null), findByIdempotencyKey: async (sid, key) => batches.find((b) => b.sourceConfigId === sid && b.idempotencyKey === key) ?? null, list: async ({ status, limit, cursor }) => { const rows = batches.filter((b) => !status || b.status === status); const start = cursor ? rows.findIndex((b) => b.id === cursor.id) + 1 : 0; const items = rows.slice(start, start + limit); return { items, nextCursor: start + limit < rows.length ? items.at(-1)?.id ?? null : null }; }, complete: async () => null },
   items: { upsert: async () => item, get: async () => item, listByBatch: async (id) => id === batch.id ? [item] : [] },
   audit: { append: async () => undefined, search: async () => [auditEvent] },
   jobs: { enqueue: async (p) => ({ ...p, id: "job-1", status: "queued", attemptCount: 0, maxAttempts: p.maxAttempts ?? 3, lockedUntil: null, lastErrorCode: null, lastErrorSummary: null, createdAt: p.availableAt, updatedAt: p.availableAt }), claimNext: async () => null, reschedule: async () => null, complete: async () => null },
@@ -32,6 +33,37 @@ test("rejects protected routes without an identity provider", async () => { cons
 test("updates source config after authentication", async () => { const r = await handleApiRequest(new Request(`http://localhost/api/sources/${source.id}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId: "p2", projectName: "Updated", requirementTypeId: "t2", enabled: false, schedule: { enabled: true, weekday: 1, time: "09:30", timezone: "Asia/Shanghai" }, ownerNames: [], fieldMap: {} }) }), makeDependencies()); assert.equal(r.status, 200); assert.equal((await r.json() as { projectId: string }).projectId, "p2"); });
 test("queues a sync once and returns the batch for an idempotent repeat", async () => { const d = makeDependencies(); const req = () => new Request("http://localhost/api/sync/run", { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": "request-key-0001" }, body: JSON.stringify({ sourceId: source.id }) }); const first = await handleApiRequest(req(), d); assert.equal(first.status, 202); assert.deepEqual(await first.json(), { batchId: "batch-1", status: "running" }); const dup = await handleApiRequest(req(), d); assert.equal(dup.status, 202); assert.deepEqual(await dup.json(), { batchId: "batch-1", status: "running" }); });
 test("lists and retrieves batches with items", async () => { const d = makeDependencies(); assert.equal((await handleApiRequest(new Request("http://localhost/api/batches?limit=10"), d)).status, 200); const r = await handleApiRequest(new Request(`http://localhost/api/batches/${batch.id}`), d); assert.equal(r.status, 200); assert.deepEqual((await r.json() as { items: SyncItemRecord[] }).items, [item]); });
+test("failed item retry is idempotent across repeated requests", async () => {
+  const d = makeDependencies();
+  let created = 0, enqueued = 0, audits = 0;
+  let retryBatch: SyncBatchRecord | null = null;
+  d.repositories!.items.get = async () => ({ ...item, status: "failed" });
+  d.repositories!.batches.create = async (params) => { created += 1; retryBatch = { ...batch, ...params, id: "retry-batch", status: "running" }; return retryBatch; };
+  d.repositories!.batches.findByIdempotencyKey = async (_sourceId, key) => key === "retry-key-123" ? retryBatch : null;
+  d.repositories!.jobs.enqueue = async (params) => { enqueued += 1; return { ...params, id: "retry-job", status: "queued", attemptCount: 0, maxAttempts: 3, lockedUntil: null, lastErrorCode: null, lastErrorSummary: null, createdAt: params.availableAt, updatedAt: params.availableAt }; };
+  d.repositories!.jobs.findByDedupeKey = async () => enqueued ? { id: "retry-job", jobType: "sync", dedupeKey: "sync:retry-batch", payload: {}, status: "queued", attemptCount: 0, maxAttempts: 3, availableAt: "2026-10-08T00:00:00.000Z", lockedUntil: null, lastErrorCode: null, lastErrorSummary: null, createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z" } : null;
+  d.repositories!.audit.append = async () => { audits += 1; };
+  const request = () => new Request(`http://localhost/api/items/${item.id}/retry`, { method: "POST", headers: { "Idempotency-Key": "retry-key-123" } });
+  const first = await handleApiRequest(request(), d);
+  const second = await handleApiRequest(request(), d);
+  assert.equal(first.status, 202);
+  assert.equal(second.status, 202);
+  assert.equal(created, 1);
+  assert.equal(enqueued, 1);
+  assert.equal(audits, 1);
+});
+test("batch and requirement list routes pass time, batch and stable cursor filters to repositories", async () => {
+ const d = makeDependencies(); let batchQuery: unknown; let requirementQuery: unknown;
+ d.repositories!.batches.list = async (query) => { batchQuery = query; return { items: [], nextCursor: null }; };
+ d.repositories!.requirements!.search = async (query) => { requirementQuery = query; return { items: [], nextCursor: null }; };
+ const batchCursor = { startedAt: "2026-01-01T00:00:00.000Z", id: batch.id };
+ const batchResponse = await handleApiRequest(new Request(`http://localhost/api/batches?since=2026-01-01T00%3A00%3A00Z&until=2026-01-02T00%3A00%3A00Z&cursor=${encodeURIComponent(encodeBatchCursor(batchCursor))}`), d);
+ assert.equal(batchResponse.status, 200);
+ assert.deepEqual(batchQuery, { limit: 25, since: "2026-01-01T00:00:00Z", until: "2026-01-02T00:00:00Z", cursor: batchCursor });
+ const requirementResponse = await handleApiRequest(new Request(`http://localhost/api/requirements?batchId=${batch.id}&pullState=synced&since=2026-01-01T00%3A00%3A00Z&until=2026-01-02T00%3A00%3A00Z`), d);
+ assert.equal(requirementResponse.status, 200);
+ assert.deepEqual(requirementQuery, { batchId: batch.id, pullState: "synced", since: "2026-01-01T00:00:00Z", until: "2026-01-02T00:00:00Z", limit: 25 });
+});
 test("lists audit events", async () => { const r = await handleApiRequest(new Request("http://localhost/api/audit?entityId=foo&limit=10"), makeDependencies()); assert.equal(r.status, 200); assert.deepEqual(await r.json(), { items: [auditEvent] }); });
 test("requirement detail returns the full analysis version history (spec 02 prior versions)", async () => {
   const r = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`), makeDependencies());

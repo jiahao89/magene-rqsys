@@ -116,6 +116,12 @@ paths:
         - name: status
           in: query
           schema: { $ref: '#/components/schemas/BatchStatus' }
+        - name: since
+          in: query
+          schema: { type: string, format: date-time }
+        - name: until
+          in: query
+          schema: { type: string, format: date-time }
         - name: limit
           in: query
           schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
@@ -141,8 +147,13 @@ paths:
       summary: Retry one failed item
       parameters:
         - $ref: '#/components/parameters/Id'
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 8, maxLength: 128 }
       responses:
         '202': { description: Retry accepted }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '409': { description: Item is not retryable }
@@ -165,6 +176,17 @@ paths:
         - name: pushState
           in: query
           schema: { $ref: '#/components/schemas/PushState' }
+        - name: batchId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: since
+          in: query
+          description: Inclusive lower bound for the requirement's latest sync time (last_seen_at).
+          schema: { type: string, format: date-time }
+        - name: until
+          in: query
+          description: Inclusive upper bound for the requirement's latest sync time (last_seen_at).
+          schema: { type: string, format: date-time }
         - name: limit
           in: query
           schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
@@ -209,7 +231,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
   /api/requirements/{id}/push:
     post:
-      summary: Push a requirement to Feishu Base (idempotent by Idempotency-Key)
+      summary: Queue a Feishu Base push retry; the queue deduplicates by source and analysis version
       parameters:
         - $ref: '#/components/parameters/Id'
         - name: Idempotency-Key
@@ -218,15 +240,15 @@ paths:
           schema: { type: string, minLength: 8, maxLength: 128 }
       responses:
         '202':
-          description: Push executed or idempotent replay of an earlier push
+          description: Push accepted for asynchronous execution
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  status: { $ref: '#/components/schemas/BatchStatus' }
-                  baseRecordId: { type: [string, 'null'] }
-                required: [status]
+                  requirementId: { type: string, format: uuid }
+                  status: { type: string, enum: [queued] }
+                required: [requirementId, status]
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -285,6 +307,38 @@ paths:
                         createdBy: { type: [string, 'null'] }
                         updatedAt: { type: string, format: date-time }
         '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/feishu/users:
+    get:
+      summary: Search Feishu users for manual owner mapping
+      description: Requires an operator role and the server-side Feishu contact-search permission. Returns only same-tenant Open IDs and display names.
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema: { type: string, minLength: 2, maxLength: 100 }
+      responses:
+        '200':
+          description: Feishu user candidates
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    maxItems: 20
+                    items:
+                      type: object
+                      properties:
+                        openId: { type: string }
+                        name: { type: string }
+                        enName: { type: string }
+                      required: [openId, name]
+                required: [items]
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /api/rules/dictionary:
     get:
       summary: List module dictionary versions

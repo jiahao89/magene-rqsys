@@ -1,8 +1,8 @@
-# [ready-for-agent] 12 — API 接线、角色校验与数据源初始化
+# [implemented-not-target-verified] 12 — API 接线、角色校验与数据源初始化
 
 ## 目标
 
-让现有 API contract、repository 和规则页面真正接通，并确保所有写操作在服务端按角色授权。此票只实现平台中立的接口与策略；妙搭身份 provider 仍须通过 Ticket 00 验证。
+让现有 API contract、repository 和规则页面真正接通，并确保所有写操作在服务端按角色授权。此票只实现平台中立的接口与策略；妙搭身份 provider 必须保持未实现，直至目标身份合同得到验证。
 
 ## 依据
 

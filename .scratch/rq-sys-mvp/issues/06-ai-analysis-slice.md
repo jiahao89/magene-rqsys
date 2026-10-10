@@ -1,4 +1,4 @@
-# [blocked: 03, 05] 06 — AI 分析纵向切片
+# [implemented-not-target-verified] 06 — AI 分析纵向切片
 
 ## 目标
 对已落库的源需求生成可追溯的分析建议，并在 Web 需求详情显示结果和状态。
@@ -15,7 +15,7 @@
 - 超时后的再次分析作为非阻塞重试，不延迟首次结果驱动的后续处理。
 - 人工确认字段与 AI 建议字段分开保存，重跑不会覆盖人工值。
 
-## Blocked by
+## Target verification remains
 Ticket 03（provider 与数据策略获批并验证）、Ticket 05（真实源数据已落库）。
 
 ## Local implementation evidence (2026-10-08)
@@ -24,3 +24,7 @@ Ticket 03（provider 与数据策略获批并验证）、Ticket 05（真实源�
 - Added analysis orchestration that refuses to run before source snapshot persistence, appends a new attempt/version each run, records safe failures as retryable, and leaves PM-owned fields outside the write path. Added an adapter over the existing `AnalysisRunRepository` append/complete/latest/list methods; no schema migration or external DB write was performed.
 - Verification: analysis-specific tests pass (8/8), executed with `AI_API_KEY` removed. Isolated strict TypeScript check passed for provider/contract/service/tests. Stub fetch only; no model API call was made and no credential value was printed or added to the repository.
 - Boundaries: full-project `npm run typecheck` and `npm test` remain blocked by unrelated local files (`adapters/postgres/repositories.ts` duplicate method implementations; existing failing Postgres mapping and owner mapping tests). This slice is local pure-code groundwork only; provider approval/reachability, persistent database wiring, pipeline invocation, public retry API, and target Miaoda acceptance remain blocked.
+
+## Latest local status (2026-10-10)
+
+The earlier 2026-10-08 blocker note is historical and superseded for local implementation. Analysis is wired into the persisted worker pipeline, exposes structured results/history and a retry API, and continues to owner/push handling after the first analysis terminal result. This turn did not execute a live provider call. Target provider, data-retention and Miaoda acceptance remain Ticket 09 gates.

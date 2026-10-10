@@ -46,6 +46,8 @@ test("分页查询默认 limit 与契约一致（batches 25 / audit 50）", () =
 test("BatchListQuery status 只接受契约枚举", () => {
   assert.ok(BatchListQuerySchema.safeParse({ status: "partial_failure" }).success);
   assert.ok(!BatchListQuerySchema.safeParse({ status: "unknown" }).success);
+  assert.ok(BatchListQuerySchema.safeParse({ since: "2026-01-01T00:00:00Z", until: "2026-01-02T00:00:00+08:00" }).success);
+  assert.ok(!BatchListQuerySchema.safeParse({ since: "yesterday" }).success);
 });
 
 test("RequirementListQuery 四阶段状态枚举与契约一致，q 最长 200", () => {
@@ -60,6 +62,9 @@ test("RequirementListQuery 四阶段状态枚举与契约一致，q 最长 200",
   assert.ok(!RequirementListQuerySchema.safeParse({ ownerState: "bad" }).success);
   assert.ok(RequirementListQuerySchema.safeParse({ q: "a".repeat(200) }).success);
   assert.ok(!RequirementListQuerySchema.safeParse({ q: "a".repeat(201) }).success);
+  assert.ok(RequirementListQuerySchema.safeParse({ batchId: "33333333-3333-4333-8333-333333333333", since: "2026-01-01T00:00:00Z", until: "2026-01-02T00:00:00Z" }).success);
+  assert.ok(!RequirementListQuerySchema.safeParse({ batchId: "" }).success);
+  assert.ok(!RequirementListQuerySchema.safeParse({ until: "not-a-date" }).success);
 });
 
 test("AuditListQuery since/until 接受 UTC 与偏移量时间戳（RFC 3339 date-time）", () => {

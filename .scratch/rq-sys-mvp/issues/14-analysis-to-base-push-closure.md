@@ -1,4 +1,4 @@
-# [blocked: 12, 13] 14 — 闭合分析到飞书 Base 推送链路
+# [implemented-not-target-verified] 14 — 闭合分析到飞书 Base 推送链路
 
 ## 目标
 
@@ -30,6 +30,6 @@
 - 手动负责人映射在持久化成功后才入队；任一步失败都返回准确可重试状态，不留下虚假的成功。
 - 使用 fake adapter 覆盖本地场景；真实 Feishu Base 验收仍以 Ticket 09 的测试环境证据为准。
 
-## Blocked by
+## Target verification remains
 
-Tickets 12、13。Ticket 02 的 Base schema/upsert POC 已完成。
+Ticket 02 的 Base schema/upsert POC 已完成；真实 Base/自动化执行证据属于 Ticket 09。

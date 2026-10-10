@@ -25,6 +25,8 @@ const CursorSchema = z.string();
 // GET /api/batches 查询参数
 export const BatchListQuerySchema = z.object({
   status: z.enum(["running", "succeeded", "partial_failure", "failed"]).optional(),
+  since: z.iso.datetime({ offset: true }).optional(),
+  until: z.iso.datetime({ offset: true }).optional(),
   limit: LimitSchema.default(25),
   cursor: CursorSchema.optional(),
 });
@@ -36,6 +38,9 @@ export const RequirementListQuerySchema = z.object({
   analysisState: z.enum(["pending", "running", "analyzed", "failed_retryable"]).optional(),
   ownerState: z.enum(["pending_mapping", "auto_mapped", "manually_mapped", "not_required"]).optional(),
   pushState: z.enum(["pending", "running", "pushed", "failed"]).optional(),
+  batchId: z.uuid().optional(),
+  since: z.iso.datetime({ offset: true }).optional(),
+  until: z.iso.datetime({ offset: true }).optional(),
   limit: LimitSchema.default(25),
   cursor: CursorSchema.optional(),
 });
@@ -46,6 +51,11 @@ export const AuditListQuerySchema = z.object({
   since: z.iso.datetime({ offset: true }).optional(),
   until: z.iso.datetime({ offset: true }).optional(),
   limit: LimitSchema.default(50),
+});
+
+// GET /api/feishu/users — keep directory search bounded and avoid logging user data.
+export const FeishuUserSearchQuerySchema = z.object({
+  q: z.string().trim().min(2).max(100),
 });
 
 // 同步运行请求的 Idempotency-Key header（openapi: minLength 8, maxLength 128）

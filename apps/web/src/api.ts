@@ -19,6 +19,12 @@ export interface SyncRunResponse {
   status: "running" | "succeeded" | "partial_failure" | "failed";
 }
 
+export interface FeishuUserCandidate {
+  openId: string;
+  name: string;
+  enName?: string;
+}
+
 export type PublishStatus = "draft" | "published" | "retired";
 
 export interface DictionaryVersion {
@@ -179,8 +185,8 @@ export function getBatch(id: string, fetcher: typeof fetch = fetch): Promise<Bat
   return requestJson<BatchDetail>(`/api/batches/${id}`, fetcher);
 }
 
-export function retrySyncItem(id: string, fetcher: typeof fetch = fetch): Promise<{ batchId: string; status: string }> {
-  return postJson<{ batchId: string; status: string }>(`/api/items/${id}/retry`, null, fetcher);
+export function retrySyncItem(id: string, fetcher: typeof fetch = fetch, idempotencyKey: string = crypto.randomUUID()): Promise<{ batchId: string; status: string }> {
+  return postJson<{ batchId: string; status: string }>(`/api/items/${id}/retry`, null, fetcher, { "Idempotency-Key": idempotencyKey });
 }
 
 export function getRequirement(id: string, fetcher: typeof fetch = fetch): Promise<RequirementDetail> {
@@ -191,12 +197,18 @@ export function retryAnalysis(id: string, fetcher: typeof fetch = fetch): Promis
   return postJson<{ requirementId: string; status: string }>(`/api/analysis/${id}/retry`, null, fetcher);
 }
 
-export function pushRequirement(id: string, fetcher: typeof fetch = fetch, idempotencyKey: string = crypto.randomUUID()): Promise<{ status: string; baseRecordId: string | null; created?: boolean }> {
-  return postJson<{ status: string; baseRecordId: string | null; created?: boolean }>(`/api/requirements/${id}/push`, null, fetcher, { "Idempotency-Key": idempotencyKey });
+export function pushRequirement(id: string, fetcher: typeof fetch = fetch, idempotencyKey: string = crypto.randomUUID()): Promise<{ requirementId: string; status: string }> {
+  return postJson<{ requirementId: string; status: string }>(`/api/requirements/${id}/push`, null, fetcher, { "Idempotency-Key": idempotencyKey });
 }
 
 export function setOwner(id: string, input: { feishuUserId: string; feishuIdType: "open_id" | "user_id" | "union_id" }, fetcher: typeof fetch = fetch): Promise<{ requirementId: string; ownerState: string; status: string }> {
   return putJson<{ requirementId: string; ownerState: string; status: string }>(`/api/requirements/${id}/owner`, input, fetcher);
+}
+
+export async function searchFeishuUsers(query: string, fetcher: typeof fetch = fetch): Promise<FeishuUserCandidate[]> {
+  const params = new URLSearchParams({ q: query.trim() });
+  const result = await requestJson<{ items: FeishuUserCandidate[] }>(`/api/feishu/users?${params.toString()}`, fetcher);
+  return result.items;
 }
 
 export interface AuditEvent {
@@ -262,14 +274,14 @@ function buildSearch(query: Record<string, string | number | undefined>): string
   return suffix ? `?${suffix}` : "";
 }
 
-export async function listRequirements(params: { q?: string; ownerState?: string; analysisState?: string; limit?: number; cursor?: string; fetcher?: typeof fetch } = {}): Promise<{ items: RequirementSummary[]; nextCursor: string | null }> {
-  const { fetcher = fetch, q, ownerState, analysisState, limit, cursor } = params;
-  return requestJson<{ items: RequirementSummary[]; nextCursor: string | null }>(`/api/requirements${buildSearch({ q, ownerState, analysisState, limit, cursor })}`, fetcher);
+export async function listRequirements(params: { q?: string; pullState?: string; ownerState?: string; analysisState?: string; pushState?: string; batchId?: string; since?: string; until?: string; limit?: number; cursor?: string; fetcher?: typeof fetch } = {}): Promise<{ items: RequirementSummary[]; nextCursor: string | null }> {
+  const { fetcher = fetch, q, pullState, ownerState, analysisState, pushState, batchId, since, until, limit, cursor } = params;
+  return requestJson<{ items: RequirementSummary[]; nextCursor: string | null }>(`/api/requirements${buildSearch({ q, pullState, ownerState, analysisState, pushState, batchId, since, until, limit, cursor })}`, fetcher);
 }
 
-export async function listBatches(params: { status?: string; limit?: number; cursor?: string; fetcher?: typeof fetch } = {}): Promise<{ items: BatchSummary[]; nextCursor: string | null }> {
-  const { fetcher = fetch, status, limit, cursor } = params;
-  return requestJson<{ items: BatchSummary[]; nextCursor: string | null }>(`/api/batches${buildSearch({ status, limit, cursor })}`, fetcher);
+export async function listBatches(params: { status?: string; since?: string; until?: string; limit?: number; cursor?: string; fetcher?: typeof fetch } = {}): Promise<{ items: BatchSummary[]; nextCursor: string | null }> {
+  const { fetcher = fetch, status, since, until, limit, cursor } = params;
+  return requestJson<{ items: BatchSummary[]; nextCursor: string | null }>(`/api/batches${buildSearch({ status, since, until, limit, cursor })}`, fetcher);
 }
 
 export interface PersonMapping {

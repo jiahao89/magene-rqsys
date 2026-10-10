@@ -1,4 +1,4 @@
-# [blocked: 12, 14] 15 — Pipeline 幂等、重试与 Worker 租约安全
+# [implemented-not-target-verified] 15 — Pipeline 幂等、重试与 Worker 租约安全
 
 ## 目标
 
@@ -28,6 +28,6 @@
 - 新增 job/repository/API 测试覆盖竞争与故障场景；有数据库实现的路径提供可运行集成验证说明，不连接未授权的外部数据库。
 - `npm run typecheck`、`npm run build` 和 `git diff --check` 通过。
 
-## Blocked by
+## Target verification remains
 
-Tickets 12、14。妙搭 worker/scheduler 的实际耐久性验证属于 Tickets 00/09。
+妙搭 worker/scheduler 的实际耐久性验证属于 Tickets 00/09。

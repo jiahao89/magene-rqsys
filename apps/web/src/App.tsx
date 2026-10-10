@@ -1,12 +1,19 @@
 import { useCallback, useEffect, useState } from "react";
-import { Activity, ArrowDownToLine, ArrowRight, Check, ChevronDown, CircleAlert, CircleHelp, Clock3, Command, Database, FileClock, FolderSync, Gauge, GitBranch, Layers3, ListChecks, LoaderCircle, Play, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Users, X } from "lucide-react";
+import { Activity, ArrowDownToLine, ArrowRight, Check, ChevronDown, CircleAlert, CircleHelp, Clock3, Command, Database, FileClock, FolderSync, Gauge, GitBranch, Layers3, ListChecks, LoaderCircle, Moon, Play, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Sun, Users, X } from "lucide-react";
 import { ApiError, createDictionaryDraft, createPriorityRuleDraft, getHealth, listDictionaryVersions, listPriorityRules, listSources, publishDictionaryVersion, publishPriorityRule, runSync, type DictionaryVersion, type PriorityRuleVersion, type PublishStatus, type SourceConfig } from "./api";
 import { AuditPanel, BatchesPanel, MappingsPanel, PanelErrorBoundary, RequirementsPanel, SourcesPanel } from "./panels";
+import { stateLabel } from "./state-labels";
 
 type Batch = { id: string; status: string; totalCount: number; succeededCount: number; failedCount: number; startedAt?: string; completedAt?: string; errorSummary?: string };
 type Requirement = { id: string; sourceRequirementId: string; title: string; sourceVersion: number; pipeline: { pull: string; analysis: string; owner: string; push: string }; analysis?: { module?: string; confidence?: string } | null };
 type Page = "Overview" | "Requirements" | "Batches" | "Sources" | "Mappings" | "Rules" | "Audit";
 type LoadState = "loading" | "ready" | "error";
+type Theme = "light" | "dark";
+
+function readStoredTheme(): Theme {
+  try { return window.localStorage?.getItem("rq-sys-theme") === "dark" ? "dark" : "light"; }
+  catch { return "light"; }
+}
 
 const navigation: { label: Page; icon: typeof Gauge }[] = [
   { label: "Overview", icon: Gauge }, { label: "Requirements", icon: ListChecks }, { label: "Batches", icon: FolderSync },
@@ -27,11 +34,6 @@ async function apiJson<T>(path: string): Promise<T> {
 
 const stageLabels = { pull: "拉取", analysis: "AI 分析", owner: "负责人", push: "推送" } as const;
 
-function stateLabel(state: string): string {
-  const map: Record<string, string> = { pending: "等待中", running: "进行中", synced: "已完成", analyzed: "已完成", pushed: "已推送", failed: "失败", failed_retryable: "待重试", partial_failure: "部分失败", succeeded: "已完成", pending_mapping: "待匹配", auto_mapped: "已匹配", manually_mapped: "手动匹配", not_required: "无需匹配" };
-  return map[state] ?? state;
-}
-
 function StagePill({ stage, value }: { stage: keyof typeof stageLabels; value: string }) {
   const tone = value === "failed" || value === "failed_retryable" ? "failed" : value === "pending" || value === "pending_mapping" ? "pending" : value === "running" ? "running" : "done";
   return <span className={`stage-pill ${tone}`}><span className="stage-dot" />{stageLabels[stage]} · {stateLabel(value)}</span>;
@@ -39,6 +41,7 @@ function StagePill({ stage, value }: { stage: keyof typeof stageLabels; value: s
 
 function App() {
   const [page, setPage] = useState<Page>("Overview");
+  const [theme, setTheme] = useState<Theme>(readStoredTheme);
   const [health, setHealth] = useState<LoadState>("loading");
   const [sources, setSources] = useState<SourceConfig[]>([]);
   const [batches, setBatches] = useState<Batch[]>([]);
@@ -72,6 +75,10 @@ function App() {
   }, []);
 
   useEffect(() => { void loadData(); }, [loadData]);
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try { window.localStorage?.setItem("rq-sys-theme", theme); } catch { /* Storage can be disabled by the browser. */ }
+  }, [theme]);
 
   const handleRunSync = async () => {
     const source = sources.find((item) => item.enabled);
@@ -105,7 +112,7 @@ function App() {
       </aside>
 
       <main className="main-area">
-        <header className="topbar"><div className="breadcrumbs"><span>工作区</span><span className="crumb-sep">/</span><strong>{pageTitles[page]}</strong></div><div className="topbar-actions"><span className={`connection-state ${health}`}><span className="connection-dot" />{health === "ready" ? "API 已连接" : health === "loading" ? "正在检查 API" : "API 未连接"}</span><span className="topbar-divider" /><button className="icon-button" aria-label="帮助"><CircleHelp size={17} /></button><button className="icon-button" aria-label="活动记录"><Activity size={17} /></button><div className="top-avatar">J</div></div></header>
+        <header className="topbar"><div className="breadcrumbs"><span>工作区</span><span className="crumb-sep">/</span><strong>{pageTitles[page]}</strong></div><div className="topbar-actions"><span className={`connection-state ${health}`}><span className="connection-dot" />{health === "ready" ? "API 已连接" : health === "loading" ? "正在检查 API" : "API 未连接"}</span><span className="topbar-divider" /><button className="icon-button" aria-label={theme === "dark" ? "切换浅色主题" : "切换深色主题"} aria-pressed={theme === "dark"} onClick={() => setTheme((current) => current === "dark" ? "light" : "dark")}><>{theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}</></button><button className="icon-button" aria-label="帮助"><CircleHelp size={17} /></button><button className="icon-button" aria-label="活动记录"><Activity size={17} /></button><div className="top-avatar">J</div></div></header>
 
         <div className="content-area">
           <PanelErrorBoundary>

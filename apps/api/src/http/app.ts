@@ -1,16 +1,17 @@
 import type { Pool } from "pg";
-import type { IdentityProvider } from "../application/ports.js";
-import type { AuditEventRepository, AnalysisRunRepository, PipelineJobRepository, SourceConfigRepository, SyncBatchRepository, SyncItemRepository, PersonMappingRepository, RequirementQueryRepository, BasePushRunRepository, ModuleDictionaryRepository, PriorityRuleRepository } from "../application/repositories.js";
+import type { FeishuUserDirectory, IdentityProvider } from "../application/ports.js";
+import type { AuditEventRepository, AnalysisRunRepository, PipelineJobRepository, SourceConfigRepository, SyncBatchRepository, SyncItemRepository, PersonMappingRepository, RequirementQueryRepository, BasePushRunRepository, ModuleDictionaryRepository, PriorityRuleRepository, SourceSnapshotRepository } from "../application/repositories.js";
 import type { PersonMappingRecord, AnalysisRunRecord, ModuleDictionaryVersionRecord, PriorityRuleVersionRecord, RequirementRecord, SourceConfigRecord, SyncBatchRecord } from "../domain/persistence.js";
 import type { FeishuBasePushAdapter } from "../base/client.js";
-import { AuditListQuerySchema, BatchListQuerySchema, OwnerMappingUpdateSchema, RequirementListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
+import { AuditListQuerySchema, BatchListQuerySchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
 import { randomUUID } from "node:crypto";
 import { SourceConfigUpdateSchema } from "../contracts/source.js";
 import { DictionaryCreateSchema, PriorityRuleCreateSchema } from "../contracts/rules.js";
 import { isDatabaseReady } from "../adapters/postgres/health.js";
 import { jsonError } from "./errors.js";
 import { decodeRequirementCursor } from "../application/requirement-cursor.js";
-import { createBasePushService } from "../base/push-service.js";
+import { decodeBatchCursor } from "../application/batch-cursor.js";
+import { basePushIdempotencyKey } from "../application/idempotency-keys.js";
 
 export interface ApiRepositories {
   sources: SourceConfigRepository;
@@ -22,6 +23,7 @@ export interface ApiRepositories {
   requirements?: RequirementQueryRepository;
   basePushes?: BasePushRunRepository;
   analyses?: AnalysisRunRepository;
+  sourceSnapshots?: SourceSnapshotRepository;
   dictionaries?: ModuleDictionaryRepository;
   priorityRules?: PriorityRuleRepository;
 }
@@ -32,6 +34,7 @@ export interface ApiDependencies {
   base?: FeishuBasePushAdapter;
   baseProjectId?: string;
   baseFields?: { projectId: string; requirementId: string; owner: string; source: Record<string,string>; ai: Record<string,string>; pm: string[] };
+  feishuUsers?: FeishuUserDirectory;
   now: (() => Date) | undefined;
 }
 function json(body: unknown, status = 200): Response { return Response.json(body, { status }); }
@@ -100,12 +103,10 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     // 受控初始化：MVP 只允许一个产品组来源（D-09）。
     const existing = await repositories.sources.list();
     if (existing.length > 0) return jsonError("CONFLICT");
-    let created: SourceConfigRecord;
-    try { created = await repositories.sources.create({ projectId: parsed.data.projectId, projectName: parsed.data.projectName, requirementTypeId: parsed.data.requirementTypeId, enabled: parsed.data.enabled }); }
-    catch { return jsonError("CONFLICT"); }
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
-    const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "source.created", entityType: "source_config", entityId: created.id, result: "succeeded", safeDetails: { projectId: created.externalProjectId }, occurredAt: now });
-    if (auditFailure) return auditFailure;
+    let created: SourceConfigRecord;
+    try { created = await repositories.sources.create({ ...parsed.data, auditEvent: { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "source.created", entityType: "source_config", result: "succeeded", safeDetails: { sourceProjectId: parsed.data.projectId }, occurredAt: now } }); }
+    catch (cause) { return cause && typeof cause === "object" && "code" in cause && cause.code === "23505" && "constraint" in cause && typeof cause.constraint === "string" && cause.constraint.startsWith("source_configs_") ? jsonError("CONFLICT") : jsonError("DEPENDENCY_UNAVAILABLE"); }
     return json(sourceDto(created), 201);
   }
   const sourceMatch = url.pathname.match(/^\/api\/sources\/([^/]+)$/);
@@ -114,8 +115,13 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     if (forbid(auth.actor, "manage_config")) return jsonError("FORBIDDEN");
     if (!repositories) return jsonError("DEPENDENCY_UNAVAILABLE");
     const parsed = SourceConfigUpdateSchema.safeParse(await readJson(request)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
-    const updated = await repositories.sources.update(decodeURIComponent(sourceMatch[1]!), parsed.data);
-    return updated ? json(sourceDto(updated)) : jsonError("NOT_FOUND");
+    const sourceId = decodeURIComponent(sourceMatch[1]!);
+    const now = (dependencies.now ?? (() => new Date()))().toISOString();
+    let updated: SourceConfigRecord | null;
+    try { updated = await repositories.sources.update(sourceId, parsed.data, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "source.updated", entityType: "source_config", result: "succeeded", safeDetails: { sourceProjectId: parsed.data.projectId }, occurredAt: now }); }
+    catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
+    if (!updated) return jsonError("NOT_FOUND");
+    return json(sourceDto(updated));
   }
   if (method === "POST" && url.pathname === "/api/sync/run") {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
@@ -131,6 +137,8 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
       if (previous.status === "running") return json({ batchId: previous.id, status: previous.status }, 202);
       try { await repositories.jobs.enqueue({ jobType: "sync", dedupeKey: `sync:${source.id}:${key.data}`, payload: { batchId: previous.id, sourceId: source.id, triggerType: "manual", actorId: auth.actor.id }, availableAt: startedAt }); }
       catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
+      const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "sync.retry_requested", entityType: "sync_batch", entityId: previous.id, result: "succeeded", safeDetails: { trigger: "manual" }, occurredAt: startedAt });
+      if (auditFailure) return auditFailure;
       return json({ batchId: previous.id, status: previous.status }, 202);
     }
     const active = await repositories.batches.list({ status: "running", limit: 100 });
@@ -147,6 +155,8 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
       await repositories.batches.complete(created.id, { status: "failed", totalCount: 0, succeededCount: 0, failedCount: 0, errorSummary: "Job enqueue failed; repeat the same idempotent request to recover.", completedAt: startedAt });
       return jsonError("DEPENDENCY_UNAVAILABLE");
     }
+    const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "sync.requested", entityType: "sync_batch", entityId: created.id, result: "succeeded", safeDetails: { trigger: "manual" }, occurredAt: startedAt });
+    if (auditFailure) return auditFailure;
     return json({ batchId: created.id, status: "running" }, 202);
   }
   if (method === "GET" && url.pathname === "/api/batches") {
@@ -154,7 +164,8 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     if (!repositories) return jsonError("DEPENDENCY_UNAVAILABLE");
     const query = Object.fromEntries(url.searchParams.entries()); if (query.limit !== undefined) query.limit = String(Number(query.limit));
     const parsed = BatchListQuerySchema.safeParse(query); if (!parsed.success) return jsonError("VALIDATION_FAILED");
-    const page = await repositories.batches.list({ limit: parsed.data.limit, ...(parsed.data.status === undefined ? {} : { status: parsed.data.status }), ...(parsed.data.cursor === undefined ? {} : { cursor: parsed.data.cursor }) }); return json({ items: page.items.map(batchDto), nextCursor: page.nextCursor });
+    const batchCursor = decodeBatchCursor(parsed.data.cursor);
+    const page = await repositories.batches.list({ limit: parsed.data.limit, ...(parsed.data.status === undefined ? {} : { status: parsed.data.status }), ...(parsed.data.since === undefined ? {} : { since: parsed.data.since }), ...(parsed.data.until === undefined ? {} : { until: parsed.data.until }), ...(batchCursor === undefined ? {} : { cursor: batchCursor }) }); return json({ items: page.items.map(batchDto), nextCursor: page.nextCursor });
   }
   const batchMatch = url.pathname.match(/^\/api\/batches\/([^/]+)$/);
   if (method === "GET" && batchMatch) {
@@ -181,9 +192,7 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     if (!repositories?.dictionaries) return jsonError("DEPENDENCY_UNAVAILABLE");
     const body = DictionaryCreateSchema.safeParse(await readJson(request)); if (!body.success) return jsonError("VALIDATION_FAILED");
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
-    const created = await repositories.dictionaries.create({ entries: body.data.entries, createdBy: auth.actor.id, now });
-    const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "dictionary.created", entityType: "module_dictionary", entityId: String(created.version), result: "succeeded", safeDetails: { entryCount: created.entries.length }, occurredAt: now });
-    if (auditFailure) return auditFailure;
+    const created = await repositories.dictionaries.create({ entries: body.data.entries, createdBy: auth.actor.id, now, auditEvent: { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "dictionary.created", entityType: "module_dictionary", result: "succeeded", safeDetails: { entryCount: body.data.entries.length }, occurredAt: now } });
     return json(dictionaryDto(created), 201);
   }
   const dictionaryPublishMatch = url.pathname.match(/^\/api\/rules\/dictionary\/(\d+)\/publish$/);
@@ -196,9 +205,7 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     if (!existing) return jsonError("NOT_FOUND");
     if (existing.status !== "draft") return jsonError("CONFLICT");
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
-    const published = await repositories.dictionaries.publish(version, now);
-    const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "dictionary.published", entityType: "module_dictionary", entityId: String(version), result: "succeeded", safeDetails: { entryCount: published.entries.length }, occurredAt: now });
-    if (auditFailure) return auditFailure;
+    const published = await repositories.dictionaries.publish(version, now, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "dictionary.published", entityType: "module_dictionary", result: "succeeded", safeDetails: { entryCount: existing.entries.length }, occurredAt: now });
     return json(dictionaryDto(published));
   }
   if (method === "GET" && url.pathname === "/api/rules/priority") {
@@ -212,9 +219,7 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     if (!repositories?.priorityRules) return jsonError("DEPENDENCY_UNAVAILABLE");
     const body = PriorityRuleCreateSchema.safeParse(await readJson(request)); if (!body.success) return jsonError("VALIDATION_FAILED");
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
-    const created = await repositories.priorityRules.create({ rules: body.data.rules, validationEvidence: body.data.validationEvidence ?? [], createdBy: auth.actor.id, now });
-    const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "priority_rule.created", entityType: "priority_rule", entityId: created.id, result: "succeeded", safeDetails: { version: created.version }, occurredAt: now });
-    if (auditFailure) return auditFailure;
+    const created = await repositories.priorityRules.create({ rules: body.data.rules, validationEvidence: body.data.validationEvidence ?? [], createdBy: auth.actor.id, now, auditEvent: { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "priority_rule.created", entityType: "priority_rule", result: "succeeded", safeDetails: {}, occurredAt: now } });
     return json(priorityRuleDto(created), 201);
   }
   const rulePublishMatch = url.pathname.match(/^\/api\/rules\/priority\/([^/]+)\/publish$/);
@@ -227,9 +232,7 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     if (!existing) return jsonError("NOT_FOUND");
     if (existing.status !== "draft") return jsonError("CONFLICT");
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
-    const published = await repositories.priorityRules.publish(id, now);
-    const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "priority_rule.published", entityType: "priority_rule", entityId: id, result: "succeeded", safeDetails: { version: published.version }, occurredAt: now });
-    if (auditFailure) return auditFailure;
+    const published = await repositories.priorityRules.publish(id, now, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "priority_rule.published", entityType: "priority_rule", result: "succeeded", safeDetails: {}, occurredAt: now });
     return json(priorityRuleDto(published));
   }
   if (method === "GET" && url.pathname === "/api/mappings") {
@@ -240,13 +243,22 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const items = source ? await repositories.people.listActive(source.id) : [];
     return json({ items: items.map(mappingDto) });
   }
+  if (method === "GET" && url.pathname === "/api/feishu/users") {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (forbid(auth.actor, "operate")) return jsonError("FORBIDDEN");
+    if (!dependencies.feishuUsers) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const parsed = FeishuUserSearchQuerySchema.safeParse({ q: url.searchParams.get("q") ?? "" });
+    if (!parsed.success) return jsonError("VALIDATION_FAILED");
+    try { return json({ items: (await dependencies.feishuUsers.search(parsed.data.q)).slice(0, 20) }); }
+    catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
+  }
   if (method === "GET" && url.pathname === "/api/requirements") {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
     const query = Object.fromEntries(url.searchParams.entries());
     const parsed = RequirementListQuerySchema.safeParse(query); if (!parsed.success) return jsonError("VALIDATION_FAILED");
     const cursor = decodeRequirementCursor(parsed.data.cursor);
-    const page = await repositories.requirements.search({ ...(parsed.data.q === undefined ? {} : { q: parsed.data.q }), ...(parsed.data.pullState === undefined ? {} : { pullState: parsed.data.pullState }), ...(parsed.data.analysisState === undefined ? {} : { analysisState: parsed.data.analysisState }), ...(parsed.data.ownerState === undefined ? {} : { ownerState: parsed.data.ownerState }), ...(parsed.data.pushState === undefined ? {} : { pushState: parsed.data.pushState }), limit: parsed.data.limit, ...(cursor === undefined ? {} : { cursor }) });
+    const page = await repositories.requirements.search({ ...(parsed.data.q === undefined ? {} : { q: parsed.data.q }), ...(parsed.data.pullState === undefined ? {} : { pullState: parsed.data.pullState }), ...(parsed.data.analysisState === undefined ? {} : { analysisState: parsed.data.analysisState }), ...(parsed.data.ownerState === undefined ? {} : { ownerState: parsed.data.ownerState }), ...(parsed.data.pushState === undefined ? {} : { pushState: parsed.data.pushState }), ...(parsed.data.batchId === undefined ? {} : { batchId: parsed.data.batchId }), ...(parsed.data.since === undefined ? {} : { since: parsed.data.since }), ...(parsed.data.until === undefined ? {} : { until: parsed.data.until }), limit: parsed.data.limit, ...(cursor === undefined ? {} : { cursor }) });
     return json({ items: page.items.map(requirementSearchDto), nextCursor: page.nextCursor });
   }
   const requirementMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)$/);
@@ -266,15 +278,27 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const item = await repositories.items.get(decodeURIComponent(itemRetryMatch[1]!)); if (!item) return jsonError("NOT_FOUND");
     if (item.status !== "failed") return jsonError("CONFLICT");
     const batch = await repositories.batches.get(item.batchId); if (!batch) return jsonError("NOT_FOUND");
+    const key = SyncIdempotencyHeaderSchema.safeParse(request.headers.get("Idempotency-Key")); if (!key.success) return jsonError("VALIDATION_FAILED");
     const startedAt = (dependencies.now ?? (() => new Date()))().toISOString();
-    let retryBatch: SyncBatchRecord;
-    try { retryBatch = await repositories.batches.create({ sourceConfigId: batch.sourceConfigId, triggerType: "manual", actorId: auth.actor.id, idempotencyKey: `retry:${item.id}:${randomUUID()}`, startedAt }); }
-    catch { return jsonError("CONFLICT"); }
+    let retryBatch = await repositories.batches.findByIdempotencyKey(batch.sourceConfigId, key.data);
+    if (!retryBatch) {
+      try { retryBatch = await repositories.batches.create({ sourceConfigId: batch.sourceConfigId, triggerType: "manual", actorId: auth.actor.id, idempotencyKey: key.data, startedAt }); }
+      catch {
+        retryBatch = await repositories.batches.findByIdempotencyKey(batch.sourceConfigId, key.data);
+        if (!retryBatch) return jsonError("CONFLICT");
+      }
+    }
+    const retryDedupeKey = `sync:${retryBatch.id}`;
+    const priorJob = await repositories.jobs.findByDedupeKey?.(retryDedupeKey);
+    if (priorJob && ["queued", "running"].includes(priorJob.status)) return json({ batchId: retryBatch.id, status: "queued" }, 202);
+    if (priorJob?.status === "succeeded") return json({ batchId: retryBatch.id, status: retryBatch.status }, 202);
     try { await repositories.jobs.enqueue({ jobType: "sync", dedupeKey: `sync:${retryBatch.id}`, payload: { batchId: retryBatch.id, sourceId: batch.sourceConfigId, triggerType: "manual", actorId: auth.actor.id, onlyIds: [item.teambitionRequirementId] }, availableAt: startedAt }); }
     catch {
       await repositories.batches.complete(retryBatch.id, { status: "failed", totalCount: 1, succeededCount: 0, failedCount: 1, errorSummary: "Job enqueue failed; repeat the retry to recover.", completedAt: startedAt });
       return jsonError("DEPENDENCY_UNAVAILABLE");
     }
+    const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "sync.item.retry_requested", entityType: "sync_item", entityId: item.id, result: "succeeded", safeDetails: { sourceRequirementId: item.teambitionRequirementId, trigger: "manual" }, occurredAt: startedAt });
+    if (auditFailure) return auditFailure;
     return json({ batchId: retryBatch.id, status: "queued" }, 202);
   }
   const analysisRetryMatch = url.pathname.match(/^\/api\/analysis\/([^/]+)\/retry$/);
@@ -283,16 +307,21 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     if (forbid(auth.actor, "operate")) return jsonError("FORBIDDEN");
     if (!repositories?.requirements || !repositories.jobs) return jsonError("DEPENDENCY_UNAVAILABLE");
     const req = await repositories.requirements.get(decodeURIComponent(analysisRetryMatch[1]!)); if (!req) return jsonError("NOT_FOUND");
+    if (req.pipeline.pull !== "synced" || req.pipeline.analysis !== "failed_retryable") return jsonError("CONFLICT");
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
-    try { await repositories.jobs.enqueue({ jobType: "analysis", dedupeKey: `analysis:${req.id}:${randomUUID()}`, payload: { requirementId: req.id, actorId: auth.actor.id }, availableAt: now }); }
+    const latestAnalysis = await repositories.analyses?.latest(req.id) ?? null;
+    const priorAnalysisVersion = latestAnalysis?.analysisVersion ?? 0;
+    try { await repositories.jobs.enqueue({ jobType: "analysis", dedupeKey: `analysis:${req.id}:sv${req.sourceVersion}:after${priorAnalysisVersion}`, payload: { requirementId: req.id, sourceVersion: req.sourceVersion, actorId: auth.actor.id }, availableAt: now }); }
     catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
+    const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "analysis.retry_requested", entityType: "requirement", entityId: req.id, result: "succeeded", safeDetails: { sourceVersion: req.sourceVersion, priorAnalysisVersion }, occurredAt: now });
+    if (auditFailure) return auditFailure;
     return json({ requirementId: req.id, status: "queued" }, 202);
   }
   const ownerMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/owner$/);
   if (method === "PUT" && ownerMatch) {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (forbid(auth.actor, "operate")) return jsonError("FORBIDDEN");
-    if (!repositories?.people || !repositories.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
+    if (!repositories?.people || !repositories.requirements || !repositories.jobs || !repositories.audit) return jsonError("DEPENDENCY_UNAVAILABLE");
     const body = OwnerMappingUpdateSchema.safeParse(await readJson(request)); if (!body.success) return jsonError("VALIDATION_FAILED");
     const req = await repositories.requirements.get(decodeURIComponent(ownerMatch[1]!)); if (!req) return jsonError("NOT_FOUND");
     if (req.pipeline.pull !== "synced") return jsonError("CONFLICT");
@@ -300,26 +329,30 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     // 工单 14：人工映射持久化成功后再入队推送——任一步失败不留虚假成功
     const mapping = await repositories.people.upsertManual({ sourceConfigId:req.sourceConfigId, teambitionUserId:body.data.tbUserId ?? req.executorUserId, teambitionDisplayName:body.data.tbDisplayName ?? req.executorName, feishuUserId:body.data.feishuUserId, feishuIdType:body.data.feishuIdType, createdBy:auth.actor.id, now });
     await repositories.requirements.setOwner(req.id,mapping.feishuUserId,"manually_mapped");
-    await repositories.jobs.enqueue({jobType:"base_push",dedupeKey:`base-push:${req.id}:v${req.sourceVersion}`,payload:{requirementId:req.id,actorId:auth.actor.id},availableAt:now});
-    await repositories.audit.append({id:crypto.randomUUID(),actorId:auth.actor.id,eventType:"owner.manually_mapped",entityType:"requirement",entityId:req.id,result:"succeeded",safeDetails:{mappingId:mapping.id,feishuIdType:mapping.feishuIdType},occurredAt:now});
+    const latestAnalysis = await repositories.analyses?.latest(req.id) ?? null;
+    const analysisVersion = latestAnalysis?.analysisVersion ?? 0;
+    await repositories.jobs.enqueue({jobType:"base_push",dedupeKey:basePushIdempotencyKey(req.id,req.sourceVersion,analysisVersion),payload:{requirementId:req.id,sourceVersion:req.sourceVersion,analysisVersion,actorId:auth.actor.id},availableAt:now});
+    const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "owner.manually_mapped", entityType: "requirement", entityId: req.id, result: "succeeded", safeDetails: {}, occurredAt: now });
+    if (auditFailure) return auditFailure;
     return json({requirementId:req.id,ownerState:"manually_mapped",status:"queued"});
   }
   const pushMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/push$/);
   if (method === "POST" && pushMatch) {
     const auth = await actorFor(request,dependencies); if ("response" in auth) return auth.response;
     if (forbid(auth.actor, "operate")) return jsonError("FORBIDDEN");
-    if (!repositories?.requirements || !repositories.basePushes || !repositories.people || !repositories.audit || !dependencies.base || !dependencies.baseProjectId || !dependencies.baseFields) return jsonError("DEPENDENCY_UNAVAILABLE");
+    if (!repositories?.requirements || !repositories.jobs || !repositories.audit) return jsonError("DEPENDENCY_UNAVAILABLE");
     const key = SyncIdempotencyHeaderSchema.safeParse(request.headers.get("Idempotency-Key")); if (!key.success) return jsonError("VALIDATION_FAILED");
-    const service = createBasePushService({
-      requirements: repositories.requirements, people: repositories.people, basePushes: repositories.basePushes,
-      audit: repositories.audit, ...(repositories.analyses ? { analyses: repositories.analyses } : {}), base: dependencies.base, baseProjectId: dependencies.baseProjectId,
-      baseFields: dependencies.baseFields, actorId: auth.actor.id, ...(dependencies.now ? { now: dependencies.now } : {}),
-    });
-    const outcome = await service.pushRequirement(decodeURIComponent(pushMatch[1]!), key.data);
-    if (outcome.kind === "not_found") return jsonError("NOT_FOUND");
-    if (outcome.kind === "conflict") return jsonError("CONFLICT");
-    if (outcome.kind === "error") return jsonError("DEPENDENCY_UNAVAILABLE");
-    return json({ status: outcome.status, baseRecordId: outcome.baseRecordId, created: outcome.created }, 202);
+    const req = await repositories.requirements.get(decodeURIComponent(pushMatch[1]!)); if (!req) return jsonError("NOT_FOUND");
+    if (req.pipeline.pull !== "synced" || req.pipeline.owner === "pending_mapping" || !["pending", "failed"].includes(req.pipeline.push)) return jsonError("CONFLICT");
+    const latestAnalysis = await repositories.analyses?.latest(req.id) ?? null;
+    const analysisVersion = latestAnalysis?.analysisVersion ?? 0;
+    const now = (dependencies.now ?? (() => new Date()))().toISOString();
+    const dedupeKey = basePushIdempotencyKey(req.id, req.sourceVersion, analysisVersion);
+    try { await repositories.jobs.enqueue({ jobType: "base_push", dedupeKey, payload: { requirementId: req.id, sourceVersion: req.sourceVersion, analysisVersion, actorId: auth.actor.id }, availableAt: now }); }
+    catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
+    const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "base.push.retry_requested", entityType: "requirement", entityId: req.id, result: "succeeded", safeDetails: { sourceVersion: req.sourceVersion, analysisVersion }, occurredAt: now });
+    if (auditFailure) return auditFailure;
+    return json({ requirementId: req.id, status: "queued" }, 202);
   }
   return jsonError("ROUTE_NOT_IMPLEMENTED");
 }

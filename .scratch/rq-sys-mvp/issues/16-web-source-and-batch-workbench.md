@@ -1,4 +1,4 @@
-# [blocked: 12, 15] 16 — Web 数据源配置与同步批次工作台
+# [implemented-not-target-verified] 16 — Web 数据源配置与同步批次工作台
 
 ## 目标
 
@@ -28,6 +28,6 @@
 - 对当前页面行为及新增流程有组件/API mock contract tests；运行页面连接本地 API 可手动核验。
 - `npm run typecheck`、`npm run build` 和 `git diff --check` 通过。
 
-## Blocked by
+## Target verification remains
 
-Tickets 12、15。Miaoda真实身份、调度和目标应用发布由 Tickets 00/09 验收。
+Miaoda真实身份、调度和目标应用发布由 Tickets 00/09 验收。

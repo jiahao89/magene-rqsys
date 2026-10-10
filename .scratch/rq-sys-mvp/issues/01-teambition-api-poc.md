@@ -1,4 +1,4 @@
-# [done: 2026-10-08] 01 — 验证 Teambition API 与字段映射
+# [partially-verified: 2026-10-10; selected project differs from prior POC] 01 — 验证 Teambition API 与字段映射
 
 ## 目标
 在指定产品组项目中验证初始全量同步和后续增量/重复同步所需的真实 API 契约。
@@ -16,6 +16,7 @@
 
 ## Follow-up observations
 - 需求 ID 跨周稳定性、删除记录发现、附件引用内部结构与来源 URL 语义、网关在更大规模下的限流仍是持续观察项；当前未阻塞 MVP 当前数据集的基础字段映射。证据和 caveats 见 `specs/rq-sys-mvp/TEAMBITION-LIVE-POC.md`。
+- The previous field-map evidence was collected from `需求收集与管理`, not the newly selected `室外产品-码表软固件需求池` (project ID `6960a3187384fa11aa07d7e6`). On 2026-10-10 the authenticated UI showed `311/314`; an approved read-only skill retry confirmed requirement type ID `6960a3b76586dfa001dc14df` and the complete project-level custom-field ID/name catalog (16 fields). The skill does not return field types, enum values, or task-type bindings; no task records were fetched. Verify those items plus the raw row count/pagination before claiming this ticket complete. Details: `specs/rq-sys-mvp/TEAMBITION-LIVE-POC.md`.
 
 ## 不在范围
 写入 Teambition、标题推断 ID、或引入 PRD 外字段。

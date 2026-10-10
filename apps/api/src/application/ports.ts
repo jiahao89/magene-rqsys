@@ -22,3 +22,12 @@ export interface IdentityProvider {
   }>;
 }
 
+export interface FeishuUserCandidate {
+  openId: string;
+  name: string;
+  enName?: string;
+}
+
+export interface FeishuUserDirectory {
+  search(query: string): Promise<FeishuUserCandidate[]>;
+}
