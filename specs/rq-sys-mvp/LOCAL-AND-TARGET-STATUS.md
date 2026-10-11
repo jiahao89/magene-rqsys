@@ -36,6 +36,40 @@
 
 `apps/api/src` (canonical) and `rq-sys-miaoda/server/rqsys` share the RQ-Sys modules but differ by build system (tsc/ESM-with-extension vs NestJS/SWC-extensionless) and platform adapters (pg vs Drizzle, local identity seam vs Miaoda `userContext`). `npm run check:alignment` normalises import extensions and asserts: **19/19 declared shared modules are identical** (Base write path, analysis contract/provider/service/priority-rule/repository-adapter, owner mapping, retry policy, scheduler due/due-jobs, sync hashes, job claim, ports, audit storage, contracts/rules, workflow/persistence domain), 28 modules are byte-identical overall, 19 declared platform adaptations genuinely differ (9 more currently coincide), and 4 modules are root-only by design (`application/batch-cursor.ts`, `application/idempotency-keys.ts`, `db/migrate.ts`, `http/local-identity.ts` — the last must not exist in the app repo because the target uses Miaoda's trusted context). The check exits non-zero on any undeclared drift.
 
+## Full-flow run (2026-10-11, local, dev credentials, real external services)
+
+Ran the real pipeline against the dev environment's credentials, exercised end to end:
+
+- **Source creation**: `POST /api/sources` with project name only returned `201`; server resolved
+  `6960a3187384fa11aa07d7e6` / requirement type `6960a3b76586dfa001dc14df` and persisted them.
+- **Teambition sync**: a real `POST /api/sync/run` imported **311/311 rows, no failures**, with 311
+  source snapshots. All four statuses are included, so no completed/archived filter is applied.
+  `page`/`limit` pagination parameters are rejected by the gateway (HTTP 500), so a single call
+  returns the complete set.
+- **AI analysis**: the dev `AI_API_KEY` works — provider smoke `SMOKE-OK` with `priority=null`
+  (correct: no calibrated rule published), plus 3 real analyses reaching `analyzed`.
+- **Base write (adapter, managed identity)**: `PUSH1 created=true` → `PUSH2 created=false` with
+  `pmStatusReset=待处理` → PM confirmation fields unpolluted → `CLEANUP-OK`. The POC Base was left
+  with zero leftover records.
+- **Defect found and fixed by this run**: single-select fields were written as arrays. Real Feishu
+  rejects that on update (`1254062`, "the value of 'Single Option' must be a string"), so
+  substantive-change PM resets silently failed. Now single-select writes a string and multi-select
+  an array, verified against the live Base.
+- **Owner gating confirmed as designed**: all 309 owned requirements stayed at
+  `owner_state=pending_mapping` and were not pushed; the 2 no-owner rows advanced to
+  `not_required` and triggered a push.
+- **Blocked at the last hop**: the app's Feishu tenant token has no Base scope — `bitable` v1
+  returns `403 / 91403`, `base` v3 returns a required-scope error. Both no-owner pushes therefore
+  failed (`BASE_PUSH_FAILED` → `max_attempts_reached`) and no `base_record_id` was recorded. This is
+  the app-credential path only; the earlier adapter smoke used `lark-cli` user identity and does not
+  prove it. See `deployment/EXTERNAL-BLOCKER-RUNBOOK.md` B-6.
+- **Analysis flakiness**: for a title-only requirement the model intermittently returns empty
+  `facts[].evidence` or quotes text absent from the source, which the validator rejects. Analysis
+  failure did **not** block the push, as required, but it burns up to 5 identical retries. See B-7.
+- **Local-only knob added**: `RQSYS_MAX_ANALYSIS_PER_SYNC` bounds how many requirements are queued
+  for analysis during local development; import and snapshots always cover every requirement. Unset
+  by default and must not be set in the target environment.
+
 ## Verification completed locally
 
 Latest local run: root API 231/231 (including the isolated local PostgreSQL integration suite), Web 36/36, typecheck and build passed; Miaoda route/adapter 41/41, server/client typecheck passed. Regression coverage includes safe-Base fixture gating, failed-job recovery, version-scoped analysis retry, weekly-schedule next-run computation (business timezone, DST boundary, invalid timezone/time format), the Spec 04 workbench additions (scheduler-status card, connection self-check that never asserts credential validity, copyable Base record reference), the local-development identity seam (disabled by default, refused in production, loopback-only), and visible Base single-select omissions. Target release health/source-list reads succeeded, but no target test record, model request, Base write, or notification has been made.

@@ -33,7 +33,8 @@ test("snapshots before substantive update and only then resets PM status", async
   await adapter.push({ projectId: "p", requirementId: "r", title: "New", owner: null, sourceVersion: 2, substantiveChanged: true, idempotencyKey: "p:r:v2" });
   assert.deepEqual(fake.calls, ["find", "snapshot", "update"]);
   assert.deepEqual((snapshots[0] as { pmValues: unknown }).pmValues, { "PM状态": "已采纳", "PM确认模块": "M", "PM确认优先级": null, "处理人": null, "处理时间": null, "结构化备注": "Note" });
-  assert.deepEqual(fake.row()?.fields["PM状态"], ["待处理"]);
+  // 单选字段必须写字符串：真实环境 PUT 数组会被飞书以 1254062 拒绝
+  assert.equal(fake.row()?.fields["PM状态"], "待处理");
   assert.equal(fake.row()?.fields["PM确认模块"], "M");
 });
 
@@ -51,11 +52,11 @@ test("serializes Base selects and text metadata, while an unavailable module opt
     aiValues: { module: "待分类", priority: "P2", analysisVersion: 4 },
   });
   const fields = fake.row()!.fields;
-  assert.deepEqual(fields["AI优先级建议"], ["P2"]);
+  assert.equal(fields["AI优先级建议"], "P2");
   assert.equal(fields["AI分析版本"], "4");
   assert.equal(fields["AI模块建议"], undefined);
   assert.equal(fields["源版本"], "3");
-  assert.deepEqual(fields["推送状态"], ["已推送"]);
+  assert.equal(fields["推送状态"], "已推送");
   assert.equal(fields["最后推送时间"], Date.parse("2026-10-11T01:00:00.000Z"));
 });
 
@@ -119,5 +120,5 @@ test("reports no omissions when every value fits the Base options", async () => 
     substantiveChanged: false, idempotencyKey: "p:r:v1", aiValues: { module: "其他", priority: "P1" },
   });
   assert.deepEqual(result.omittedFields, []);
-  assert.deepEqual(fake.row()!.fields["AI优先级建议"], ["P1"]);
+  assert.equal(fake.row()!.fields["AI优先级建议"], "P1");
 });

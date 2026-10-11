@@ -96,6 +96,24 @@ git -C rq-sys-miaoda grep -n "飞书平台或集成服务拒绝" -- client/src/r
 
 ## B-2　Teambition 返回 311 行 vs UI 显示 `311/314`
 
+### 2026-10-11 实测结论（部分关闭）
+
+用 dev 环境的网关凭据直接探测（只读）：
+
+| 查询 | 结果 |
+|---|---|
+| `getProjectTasks?project_id=<PID>`（不带任务类型） | 23 行 |
+| `getProjectTasks?project_id=<PID>&scenariofield_config_id=<需求类型>` | **311 行** |
+| 其中 `id` 唯一且非空 | **311/311**，无缺失 |
+| 状态分布（`taskflow_status_id`） | 307 / 2 / 1 / 1（四个状态，**不含完成/归档过滤**） |
+| `page` / `limit` / `page_size` 参数 | HTTP **500**（网关不支持分页参数） |
+
+**可以确定的部分**：代码侧没有施加完成/归档过滤（311 行覆盖全部四个状态），
+`id` 全部唯一非空，且分页参数不被网关接受——因此**没有证据表明 311 是被截断的结果**。
+
+**仍未解释的部分**：UI 的 `311/314`。仅差 3 条，且网关单次返回完整数组、无法翻页，
+在没有 UI 端可见范围说明的情况下无法进一步归因。
+
 ### 现状证据
 
 - 只读查询返回 311 条记录，`id` 唯一且非空；UI 显示 `311/314`。
@@ -136,9 +154,24 @@ grep -nE "hasMore|nextCursor|page|limit" apps/api/src/adapters/teambition/client
 
 ---
 
-## B-3　`AI_API_KEY` 失效，任何环境都未成功推理
+## B-3　`AI_API_KEY` —— **已用 dev 环境密钥验证可用（2026-10-11）**
 
-### 现状证据
+### 2026-10-11 实测结论（已关闭）
+
+用 dev 环境的 `AI_API_KEY` 跑生产 provider 路径：
+
+```
+SMOKE-OK {"module":"报表分析","confidence":"高","priority":null,"evidenceCount":3,
+          "inferenceLabeled":true,"factsCount":3,"blindSpotsCount":6}
+```
+
+随后完整流程中另有 **3 次真实分析成功**（`analysis_runs.status='analyzed'`）。
+`priority` 为 `null` 符合预期——未发布校准规则时不产生 P0–P3。
+
+注意：本地 `.env` 里那份旧密钥仍是失效的（`auth_error`）；可用的是**妙搭 dev 环境**中的那份。
+Agent 未写入任何平台环境变量，仅读取。
+
+### 历史现状证据（保留）
 
 - 本地 provider 冒烟返回 `SMOKE-FAIL auth_error`（本地 key 已失效）。
 - 目标 runtime 是否加载密钥、能否出网，从未验证过；没有任何一次成功的模型调用。
@@ -208,6 +241,86 @@ node --import=tsx --test apps/api/src/base/push-service.test.ts  # 含审计记�
 - 词典与规则各发布一个版本；
 - 发布前确认新增模块已**同时**加入 Base 字段与 `BASE_FIELDS_JSON.selectOptions.module`
   （代码会对不在白名单内的取值记录省略，但不会替你补选项）。
+
+---
+
+## B-6　飞书应用凭据缺少 Base（多维表格）权限 —— 阻塞 app 端 Base 写入
+
+### 现状证据（2026-10-11 实测）
+
+用 dev 环境的 `FEISHU_APP_ID`/`FEISHU_APP_SECRET` 换取 tenant token 后直接调用：
+
+| 调用 | 结果 |
+|---|---|
+| `GET /open-apis/bitable/v1/apps/{app}/tables/{tbl}/fields` | HTTP **403**, code **91403** Forbidden |
+| `GET /open-apis/bitable/v1/apps/{app}/tables/{tbl}/records` | HTTP **403**, code **91403** Forbidden |
+| `GET /open-apis/base/v3/bases/{app}/tables/{tbl}/records` | HTTP **400**, code **99991672** “Access denied. One of the following scopes is required: [base…]” |
+
+tenant token 本身获取成功（`code: 0`），因此问题不是凭据错误，而是**该飞书应用未被授予多维表格权限**。
+
+**影响**：完整流程跑到 Base 推送必然失败——本地实测 `base_push_runs` 连续 5 次 `failed`
+（`BASE_PUSH_FAILED` → 重试到 `max_attempts_reached`），`requirements.base_record_id` 始终为空。
+此前 Ticket 09 记录的“Base transport/adapter 真实冒烟通过”走的是 **lark-cli 用户身份代理**，
+不是 app 凭据；两者不能互相证明。
+
+### 无需凭据即可执行的检查
+
+```sh
+# 代码侧：确认当前实现确实用 app 凭据换取 tenant token
+grep -n "tenant_access_token" apps/api/src/base/transport.ts
+```
+
+### 需要谁做什么
+
+飞书应用管理员在开发者后台为该应用开通多维表格权限（`bitable:app` 及记录读写），
+发布应用版本，并确认 tenant token 生效。
+
+### 完成判据
+
+```sh
+# 换 token 后直接调用，期望 HTTP 200 且 code 0
+curl -sS -H "Authorization: Bearer <tenant_token>" \
+  "https://open.feishu.cn/open-apis/bitable/v1/apps/<app_token>/tables/<table_id>/fields"
+```
+
+返回 200 后，重跑本地完整流程即可观察到 `base_push_runs.status = 'pushed'` 与
+`requirements.base_record_id` 非空。
+
+---
+
+## B-7　AI 分析对「只有标题」的需求偶发校验失败
+
+### 现状证据（2026-10-11 实测）
+
+同一输入（`title="海外码表地图问题"`，无描述/范围/验收标准）重复调用：
+一次成功（`facts=[{text,evidence}]`），一次失败并记录：
+
+```
+AI provider returned invalid or unsupported analysis output
+  (facts.1.evidence: Too small: expected string to have >=1 characters; ...)
+AI provider returned invalid or unsupported analysis output
+  (Analysis evidence does not occur in source text)
+```
+
+原因是模型偶发返回空 `evidence`，或引用了原文中不存在的片段；校验规则见
+`apps/api/src/analysis/contract.ts`（`facts[].evidence` 至少 1 字符、`evidence` 至少 1 条）
+与 `apps/api/src/analysis/provider.ts`（evidence 必须出现于源文本）。
+
+**影响是有限的**：按既定不变量，分析失败**不阻塞**推送——实测中该需求仍推进到
+`owner_state=not_required` 并触发了 Base 推送。但每次失败会消耗最多 5 次重试，而输入完全相同，
+重试对确定性校验失败没有意义。
+
+### 需要谁决策
+
+1. 保持现状（可接受：不阻塞主链路，仅产生噪声与少量重试开销）；或
+2. 放宽/区分校验（例如允许空 evidence 时降级为 `待分类` + 低置信度，而不是判失败）；或
+3. 对「确定性校验失败」不再重试，避免无意义重试。
+
+### 无需凭据即可执行的检查
+
+```sh
+node --import=tsx --test apps/api/src/analysis/analysis.test.ts
+```
 
 ---
 

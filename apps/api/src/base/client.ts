@@ -17,6 +17,11 @@ export interface BaseFieldMap {
   ai: Record<string, string>;
   pm: string[];
   metadata?: Record<string, string>;
+  /// 字段名 → 该字段是否为「多选」。
+  /// 单选（含 PM 状态、推送状态、AI 模块/优先级建议）在飞书 API 中必须写字符串：真实环境实测
+  /// bitable v1 对单选的 PUT 会以 1254062 拒绝数组，读回时也返回字符串。
+  /// 未列出的字段按单选处理——这是更严格且与飞书存储一致的形态。
+  multiSelect?: Record<string, boolean>;
   selectOptions?: Record<string, string[]>;
 }
 
@@ -58,6 +63,14 @@ export interface BasePushResult {
 export class FeishuBasePushAdapter {
   constructor(private readonly client: BaseClient, private readonly fields: BaseFieldMap, private readonly snapshots?: PmSnapshotWriter) {}
 
+  /**
+   * 单选字段写字符串，多选字段写字符串数组。
+   * 历史实现一律写数组，导致单选字段的 PUT 被飞书以 1254062 拒绝——即"推送成功但 PM 状态从未重置"。
+   */
+  private selectValue(fieldName: string, value: string): string | string[] {
+    return this.fields.multiSelect?.[fieldName] === true ? [value] : value;
+  }
+
   async push(input: BasePushInput): Promise<BasePushResult> {
     const omittedFields: OmittedField[] = [];
     const key = { projectId: input.projectId, requirementId: input.requirementId };
@@ -88,13 +101,13 @@ export class FeishuBasePushAdapter {
         omittedFields.push({ field, value: text, reason: "not_in_base_select_options" });
         continue;
       }
-      if (name === "module" || name === "priority") delta[field] = [text];
+      if (name === "module" || name === "priority") delta[field] = this.selectValue(field, text);
       else if (name === "analysisVersion") delta[field] = text;
       else delta[field] = value;
     }
     const metadata = this.fields.metadata ?? {};
     if (metadata.sourceVersion) delta[metadata.sourceVersion] = String(input.sourceVersion);
-    if (metadata.pushState) delta[metadata.pushState] = ["已推送"];
+    if (metadata.pushState) delta[metadata.pushState] = this.selectValue(metadata.pushState, "已推送");
     if (metadata.lastPushedAt && input.pushedAt) {
       const timestamp = Date.parse(input.pushedAt);
       if (!Number.isFinite(timestamp)) throw new Error("Invalid Base push timestamp");
@@ -111,7 +124,7 @@ export class FeishuBasePushAdapter {
       await this.snapshots.savePmSnapshot({ requirementId: input.requirementId, sourceVersion: input.sourceVersion, baseRecordId: existing.recordId, pmValues });
       // PM 状态字段来自配置映射（pm 数组首项），不硬编码字段名
       const pmStatusField = this.fields.pm[0];
-      if (pmStatusField) delta[pmStatusField] = ["待处理"];
+      if (pmStatusField) delta[pmStatusField] = this.selectValue(pmStatusField, "待处理");
     }
     // Unmapped and empty TB ownership never erases a human-assigned Base owner.
     if (input.owner === null) delete delta[this.fields.owner];

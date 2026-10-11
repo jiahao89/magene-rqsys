@@ -61,8 +61,14 @@ const syncJobRunner: SyncJobRunner | undefined = repositories ? async (job) => {
   // 打通同步 → AI 分析链路：为新建/实质变更的需求创建分析任务（按源版本幂等去重）
   if (result.status !== "failed") {
     const now = new Date().toISOString();
+    // 本地开发专用上限：只限制「入队分析」的数量，不同步范围。导入与快照始终覆盖全部需求，
+    // 因此验收时不会看到"只同步了一部分"的假象。默认 0 = 不限制；目标环境不要设置。
+    const analysisCap = Number(process.env.RQSYS_MAX_ANALYSIS_PER_SYNC ?? 0);
+    let queued = 0;
     for (const touched of persistence.touchedRequirements()) {
       if (touched.analysisRequired) {
+        if (analysisCap > 0 && queued >= analysisCap) continue;
+        queued += 1;
         await repositories.jobs.enqueue({
           jobType: "analysis", dedupeKey: `analysis:${touched.id}:v${touched.sourceVersion}`,
           payload: { requirementId: touched.id, sourceVersion: touched.sourceVersion, substantiveHash: touched.substantiveHash, actorId: job.actorId }, availableAt: now,
