@@ -3,9 +3,10 @@
 ## 最新状态（2026-10-11，覆盖下方旧日期汇总）
 - 用户要求继续直至 MVP 完成，安全 E2E 已获授权；项目安全门要求目标写操作先 dry-run，再由用户确认具体执行。
 - 本地登录与数据边界已按最新决定更新：登录必需、无 RQ-Sys app roles；固定 Teambition 项目名；只用已核验的最小字段；模块词典先空置，优先级规则发布前保持空值。
-- 根仓和 Miaoda app 当前工作树已有同步功能修改，发布尚未完成。最新本地验证：root API 218/218、Web 21/21、typecheck/build 通过；Miaoda route 38/38、lint、server/client typecheck、production build 通过。新增覆盖 safe POC Base fixture guard、周计划终态失败恢复、版本级分析重试。
+- 根仓 `main` commit `5790d80` 与 Miaoda app `sprint/default` commit `87a2444` 已分别提交并 push，应用 release 尚未创建。最新本地验证：root API 218/218、Web 21/21、typecheck/build 通过；Miaoda route 38/38、lint、server/client typecheck、production build 通过。新增覆盖 safe POC Base fixture guard、周计划终态失败恢复、版本级分析重试。
 - 目标安全验收环境使用固定 synthetic fixture + POC Base `OddqbqBeOamFjFsR5IXcJdjknmd` / `tblxbyvbdLGVnLaO`。当前 dev Base 配置与该 POC 不一致，尚未改动；正式 Base、真实 TB 需求和干系人均不得用于本次测试。
-- POC Base 已启用负责人变更通知 workflow；只有 owner assignment 通知事件已被验证，目标 app 侧的 synthetic upsert/通知仍待验收。周计划为周一 09:00 `Asia/Shanghai`；Miaoda recovery trigger 尚未创建。
+- POC Base 已启用负责人变更通知 workflow；只有 owner assignment 通知事件已被验证，目标 app 侧的 synthetic upsert/通知仍待验收。周计划为周一 09:00 `Asia/Shanghai`；recovery trigger 尚未创建。
+- 新 app release、3 项 dev env 更新和 disabled 30-minute recovery automation 的 dry-run 全部返回 `ok=true`；等用户基于这些实际变更预览明确确认后执行。
 - 项目内 Teambition skill 对目标需求类型调用一次 `getProjectTasks` 并返回 311 条，UI 显示 `311/314`；差异和 gateway 截断行为尚未解释。安全 fixture 不访问真实需求，不能用 synthetic E2E 代替这个完整性确认。
 
 ## 目标

@@ -23,7 +23,7 @@
 
 ## Target environment observations
 
-- Current RQ-Sys Miaoda app is `app_17fqkjwyx1u`; latest finished release is `7694878567301549280` on old app commit `be2d20a`. Root GitHub `main` and nested Miaoda `sprint/default` are separate repositories. Both contain local changes that have not yet been committed/pushed/released.
+- Current RQ-Sys Miaoda app is `app_17fqkjwyx1u`; latest finished release remains `7694878567301549280` on old app commit `be2d20a`. Root GitHub `main` commit `5790d80` and nested Miaoda `sprint/default` commit `87a2444` are separately committed and pushed. The new Miaoda release has not been created.
 - Dev and online environments list the expected integration variable names. Values were not printed. The configured Base token/table do not match the safe POC Base, so app-mediated writes must not run until dev is deliberately redirected to the POC Base.
 - The safe POC Base is app token `OddqbqBeOamFjFsR5IXcJdjknmd`, table `tblxbyvbdLGVnLaO`. Its field types/options were read-only verified. Its owner-change workflow is enabled. Do not use the formal `TB需求池` table for synthetic acceptance.
 - Local fixture route `POST /api/dev/fixtures/sync` is enabled only when `RQSYS_ENABLE_TEST_FIXTURES=true` and the configured Base app/table identifiers exactly match the isolated POC Base. It ignores request data and enqueues one fixed synthetic requirement. Configure it in dev only; do not point the online app at the POC Base.
@@ -35,10 +35,10 @@ Latest run: root API 218/218 (including the isolated local PostgreSQL integratio
 
 ## Remaining target acceptance steps
 
-1. Commit and push root and Miaoda app repositories separately; run Miaoda release dry-run and obtain explicit confirmation before release.
-2. After release, dry-run dev-only Base configuration (`BASE_APP_TOKEN`/`BASE_TABLE_ID` → POC Base; `RQSYS_ENABLE_TEST_FIXTURES=true`) and obtain explicit confirmation before writing app environment variables.
+1. Root and Miaoda code commits are pushed. Miaoda release dry-run passed for `sprint/default`; obtain explicit confirmation before creating the release.
+2. Dry-runs passed for the three dev-only variables (`BASE_APP_TOKEN`/`BASE_TABLE_ID` → POC Base; `RQSYS_ENABLE_TEST_FIXTURES=true`). Obtain explicit confirmation before writing app environment variables.
 3. Run the fixed synthetic fixture through the signed-in app, verify sync → AI → Base upsert, confirm no real TB row was fetched, and assign only the current user to verify the POC Base notification.
-4. Dry-run creation of disabled 30-minute recovery trigger; obtain explicit confirmation before creating it. Exercise recovery in dev and verify a missed weekly window can be resumed.
+4. Dry-run creation of the disabled 30-minute recovery trigger passed; obtain explicit confirmation before creating it. Exercise recovery in dev and verify a missed weekly window can be resumed.
 5. Keep the actual Monday 09:00 sync disabled until the synthetic acceptance is clean. Do not publish a product module dictionary or a priority rule until the user supplies/approves its contents.
 
 All local completion claims are distinct from target-environment proof. Until those steps finish, the integration is “implemented locally, not verified in target environment.”
