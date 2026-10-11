@@ -14,7 +14,7 @@
 ## 范围
 
 - 在现有 Overview、Sources、Batches 页面基础上补齐缺失交互，不重做已有 API-backed 页面。
-- Source 页面支持读取/创建/更新一个专用 Teambition 项目、负责人姓名名单、字段映射白名单和周计划；凭据只显示安全的自检状态，不在浏览器输入或保存。
+- Source 页面支持读取/创建/更新一个专用 Teambition 项目：客户端仅维护项目名称（默认 `室外产品-码表软固件需求池`）和周计划/启用状态；服务端解析项目 ID、需求类型 ID并保留内部 mapping。客户端不编辑负责人名单、字段映射或凭据。
 - 支持手动全量同步，显示返回的 batch ID，并从服务端刷新真实进度。
 - 批次列表/详情显示触发者、触发方式、时间、总数、成功/失败数、逐条错误与允许的重试动作；数据不得来自 mock counter。
 - 显示 loading、empty、partial failure、permission denied、API error 等可恢复状态。
@@ -31,3 +31,10 @@
 ## Target verification remains
 
 Miaoda真实身份、调度和目标应用发布由 Tickets 00/09 验收。
+
+## Latest local implementation evidence (2026-10-11)
+
+- 来源表单默认项目名为 `室外产品-码表软固件需求池`；客户端只提交项目名称、启用状态和周计划，不要求录入内部 ID，也不暴露 owner/field map。默认周计划为周一 09:00 `Asia/Shanghai`，保持未启用，等待目标调度验收。
+- 新建来源会持久化已解析配置、周计划、负责人名单、字段映射与审计事件；妙搭 app 的来源创建也已修正为写入完整配置，不再丢弃这些设置。
+- root Web 创建/更新表单有 API mock contract 覆盖；主仓 Web 21 项测试通过。妙搭 app 路由测试覆盖来源创建请求和 Postgres 参数持久化；`test:rqsys-route` 24/24 通过。
+- 妙搭 app `type:check`、`lint`、`build:prod` 通过；目标身份、线上来源写入、手动同步与周调度仍未验收。

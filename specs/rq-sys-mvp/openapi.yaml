@@ -46,7 +46,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
     post:
       summary: Create the single product-group source (controlled initialization)
-      description: Only an administrator may create the source. The MVP allows exactly one source; the request body accepts only the whitelisted configuration fields and never credentials.
+      description: Any signed-in Feishu user may create the single MVP source. The request body accepts only whitelisted configuration fields and never credentials.
       requestBody:
         required: true
         content:
@@ -310,7 +310,7 @@ paths:
   /api/feishu/users:
     get:
       summary: Search Feishu users for manual owner mapping
-      description: Requires an operator role and the server-side Feishu contact-search permission. Returns only same-tenant Open IDs and display names.
+      description: Requires Feishu login and the server-side Feishu contact-search permission. Returns only same-tenant Open IDs and display names.
       parameters:
         - name: q
           in: query
@@ -453,7 +453,7 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
     Forbidden:
-      description: Identity is valid but lacks the required role
+      description: Feishu platform or integration denied access; RQ-Sys does not apply app-level roles
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
@@ -513,9 +513,7 @@ components:
       type: object
       properties:
         id: { type: string, format: uuid }
-        projectId: { type: string, readOnly: true, description: Resolved by the server from projectName. }
-        projectName: { type: string }
-        requirementTypeId: { type: string, readOnly: true, description: Resolved by the server from the project's unique requirement task type. }
+        projectName: { type: string, description: Teambition project selected by the source configuration. }
         enabled: { type: boolean }
         schedule:
           type: object
@@ -525,9 +523,7 @@ components:
             time: { type: [string, 'null'], format: time }
             timezone: { type: [string, 'null'] }
           required: [enabled, weekday, time, timezone]
-        ownerNames: { type: array, items: { type: string } }
-        fieldMap: { type: object, additionalProperties: { type: string } }
-      required: [id, projectId, projectName, requirementTypeId, enabled, schedule, ownerNames, fieldMap]
+      required: [id, projectName, enabled, schedule]
     SourceConfigUpdate:
       type: object
       properties:
@@ -541,9 +537,7 @@ components:
             time: { type: [string, 'null'], format: time }
             timezone: { type: [string, 'null'] }
           required: [enabled, weekday, time, timezone]
-        ownerNames: { type: array, items: { type: string } }
-        fieldMap: { type: object, additionalProperties: { type: string } }
-      required: [projectName, enabled, schedule, ownerNames, fieldMap]
+      required: [projectName, enabled, schedule]
     Requirement:
       type: object
       properties:

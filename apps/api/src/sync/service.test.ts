@@ -5,7 +5,7 @@ import type { SourceProjectConfig } from "../domain/workflow.js";
 
 
 const config: SourceProjectConfig = { id: "cfg", projectId: "project", projectName: "Project", requirementTypeId: "type", enabled: true, schedule: { enabled: false, weekday: null, time: null, timezone: null }, ownerNames: [], fieldMap: { description: "allowed" } };
-const task = (id: string, content: string) => ({ id, content, created: "2026-01-01", custom_fields: [{ _customfieldid: "allowed", value: "yes" }, { _customfieldid: "private", value: "secret" }], private_provider_field: "secret" });
+const task = (id: string, content: string, extra: Record<string, unknown> = {}) => ({ id, content, created: "2026-01-01", custom_fields: [{ _customfieldid: "allowed", value: "yes" }, { _customfieldid: "private", value: "secret" }], private_provider_field: "secret", ...extra });
 const capturedPayloads: Record<string, unknown>[] = [];
 
 function harness(tasks: ReturnType<typeof task>[], failId?: string, pages?: Array<{ items: ReturnType<typeof task>[]; hasMore: boolean; nextCursor: string | null }>) {
@@ -76,4 +76,29 @@ test("does not expose unmapped provider custom fields in normalized payload", as
   const payload = capturedPayloads[0];
   assert.deepEqual(payload?.custom_fields, [{ id: "allowed", type: null, value: "yes", values: null }]);
   assert.equal(payload?.private_provider_field, undefined);
+});
+
+test("marks new and substantive changes for AI, while metadata-only updates remain push-only", async () => {
+  const writes: boolean[] = [];
+  let current = task("one", "Stable requirement", { executor_id: "owner-a", taskflow_status_id: "open" });
+  let previous: { id: string; sourceVersion: number; sourceHash: string; substantiveHash: string } | null = null;
+  const source: SyncSourceReader = { async listRequirements() { return { items: [current], hasMore: false, nextCursor: null }; } };
+  const persistence: SyncPersistence = {
+    async findRequirement() { return previous; },
+    async upsertRequirement(input) {
+      writes.push(input.analysisRequired);
+      previous = { id: "db-one", sourceVersion: input.sourceVersion, sourceHash: input.sourceHash, substantiveHash: input.substantiveHash };
+      return { id: "db-one", created: input.sourceVersion === 1 };
+    },
+    async appendSourceSnapshot() {},
+    async writeSyncItem() {},
+    async completeBatch() {},
+  };
+  const orchestrator = new SyncOrchestrator(source, persistence);
+  await orchestrator.run({ batchId: "first", sourceConfigId: config.id, config });
+  current = task("one", "Stable requirement", { executor_id: "owner-b", taskflow_status_id: "done" });
+  await orchestrator.run({ batchId: "metadata", sourceConfigId: config.id, config });
+  current = task("one", "Changed requirement", { executor_id: "owner-b", taskflow_status_id: "done" });
+  await orchestrator.run({ batchId: "content", sourceConfigId: config.id, config });
+  assert.deepEqual(writes, [true, false, true]);
 });

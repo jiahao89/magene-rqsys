@@ -106,7 +106,7 @@ function makePushFixture(req: RequirementRecord, options: { resolveMapping?: boo
     base: {
       push: async (input: { owner: unknown; aiValues?: Record<string, unknown>; substantiveChanged: boolean }) => { actions.push("base:push"); pushedInputs.push({ owner: input.owner, aiValues: input.aiValues ?? {}, substantiveChanged: input.substantiveChanged }); return { recordId: "base-1", created: !req.baseRecordId }; },
     } as unknown as FeishuBasePushAdapter,
-    baseProjectId: "bp", baseFields: { projectId: "P", requirementId: "R", owner: "O", source: {}, ai: { module: "AI模块建议", priority: "AI优先级建议", analysisVersion: "AI分析版本" }, pm: ["PM状态"] },
+    sourceProjectId: "bp", baseFields: { projectId: "P", requirementId: "R", owner: "O", source: {}, ai: { module: "AI模块建议", priority: "AI优先级建议", analysisVersion: "AI分析版本" }, pm: ["PM状态"] },
     actorId: null, now: () => new Date("2026-10-09T00:00:00.000Z"),
   };
   return { deps, actions, pushedInputs, audits };

@@ -23,7 +23,7 @@ function deps() {
     sourceSnapshots: { getAtVersion: async () => null },
   } as unknown as ApiRepositories & { people: { upsertManual: (p: unknown) => Promise<PersonMappingRecord> }; requirements: { get: (id: string) => Promise<RequirementRecord | null>; setOwner: (id: string, owner: string | null, state: RequirementRecord["pipeline"]["owner"]) => Promise<RequirementRecord>; setBaseRecord: (id: string, record: string, pushedAt: string) => Promise<void>; setPushState: (id: string, state: string) => Promise<void> }; basePushes: { findByIdempotencyKey: (key: string) => Promise<null>; append: (row: unknown) => Promise<{ id: string }>; restart: (id: string, startedAt: string) => Promise<null>; latestSuccessful: () => Promise<null>; updateResult: (id: string, row: { status: string; baseRecordId?: string; completedAt: string }) => Promise<unknown> } };
   const base = { push: async (input: { owner: unknown }) => { actions.push(`base:${JSON.stringify(input.owner)}`); return { recordId: "base-1", created: false }; } } as unknown as FeishuBasePushAdapter;
-  const dependencies = { database: null, repositories, identity: { requireActor: async () => ({ id: "operator", roles: ["operator"] }) }, now: () => new Date("2026-10-09T00:00:00.000Z"), base, baseProjectId:"base-project", baseFields:{projectId:"project",requirementId:"requirement",owner:"owner",source:{},ai:{},pm:[]} } as unknown as ApiDependencies & { base: FeishuBasePushAdapter };
+  const dependencies = { database: null, repositories, identity: { requireActor: async () => ({ id: "operator" }) }, now: () => new Date("2026-10-09T00:00:00.000Z"), base, baseFields:{projectId:"project",requirementId:"requirement",owner:"owner",source:{},ai:{},pm:[]} } as unknown as ApiDependencies & { base: FeishuBasePushAdapter };
   return { dependencies, actions, savedMapping: () => savedMapping, queued: () => queued, audited: () => audited };
 }
 
@@ -33,7 +33,7 @@ test("manual owner mapping persists mapping, marks manually mapped, enqueues pus
   assert.equal(response.status, 200);
   assert.equal((await response.json() as { status: string }).status, "queued");
   assert.equal((h.savedMapping() as { createdBy: string }).createdBy, "operator");
-  assert.deepEqual(h.queued(), { jobType: "base_push", dedupeKey: "base-push:req-1:sv1:av0", payload: { requirementId: "req-1", sourceVersion: 1, analysisVersion: 0, actorId: "operator" }, availableAt: "2026-10-09T00:00:00.000Z" });
+  assert.deepEqual(h.queued(), { jobType: "base_push", dedupeKey: "base-push:req-1:sv1:av0:mapping:map-1", payload: { requirementId: "req-1", sourceVersion: 1, analysisVersion: 0, idempotencyKey: "base-push:req-1:sv1:av0:mapping:map-1", actorId: "operator" }, availableAt: "2026-10-09T00:00:00.000Z" });
   assert.equal((h.audited() as { eventType: string }).eventType, "owner.manually_mapped");
 });
 
@@ -50,7 +50,7 @@ test("push API queues the asynchronous Base push and deduplicates by requirement
   const first = await handleApiRequest(request(), h.dependencies);
   assert.equal(first.status, 202);
   assert.deepEqual(await first.json(), { requirementId: "req-1", status: "queued" });
-  assert.deepEqual(h.queued(), { jobType: "base_push", dedupeKey: "base-push:req-1:sv1:av0", payload: { requirementId: "req-1", sourceVersion: 1, analysisVersion: 0, actorId: "operator" }, availableAt: "2026-10-09T00:00:00.000Z" });
+  assert.deepEqual(h.queued(), { jobType: "base_push", dedupeKey: "base-push:req-1:sv1:av0:retry:req-1:v1", payload: { requirementId: "req-1", sourceVersion: 1, analysisVersion: 0, idempotencyKey: "base-push:req-1:sv1:av0:retry:req-1:v1", actorId: "operator" }, availableAt: "2026-10-09T00:00:00.000Z" });
   assert.equal(h.actions.some((action) => action.startsWith("base:")), false, "the HTTP route must not call Feishu synchronously");
   const replay = await handleApiRequest(request(), h.dependencies);
   assert.equal(replay.status, 202);

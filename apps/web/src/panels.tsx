@@ -33,6 +33,13 @@ function timeLabel(value: string | null | undefined): string {
   return value ? new Date(value).toLocaleString("zh-CN") : "—";
 }
 
+function scheduleLabel(schedule: SourceConfig["schedule"]): string {
+  if (!schedule.enabled) return "未启用";
+  const weekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+  const weekday = weekdays[(schedule.weekday ?? 1) - 1] ?? "每周";
+  return `${weekday} ${schedule.time ?? "时间未设置"} ${schedule.timezone ?? ""}`.trim();
+}
+
 function FeishuUserPicker({ disabled, onMap, saveLabel = "保存映射并入队推送" }: {
   disabled: boolean;
   onMap: (user: FeishuUserCandidate) => Promise<void>;
@@ -94,15 +101,14 @@ function FeishuUserPicker({ disabled, onMap, saveLabel = "保存映射并入队�
 const DEFAULT_TB_PROJECT_NAME = "室外产品-码表软固件需求池";
 const emptyUpdate: SourceConfigUpdate = {
   projectName: DEFAULT_TB_PROJECT_NAME, enabled: false,
-  schedule: { enabled: false, weekday: null, time: null, timezone: null },
-  ownerNames: [], fieldMap: {},
+  schedule: { enabled: false, weekday: 1, time: "09:00", timezone: "Asia/Shanghai" },
 };
 
 export function SourcesPanel({ sources, loadState, onRefresh }: { sources: SourceConfig[]; loadState: LoadState; onRefresh: () => void }) {
   const existing = sources[0];
   const [draft, setDraft] = useState<SourceConfigUpdate>(() => existing ? {
     projectName: existing.projectName,
-    enabled: existing.enabled, schedule: { ...existing.schedule }, ownerNames: [...existing.ownerNames], fieldMap: { ...existing.fieldMap },
+    enabled: existing.enabled, schedule: { ...existing.schedule },
   } : emptyUpdate);
   const [busy, setBusy] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -114,7 +120,7 @@ export function SourcesPanel({ sources, loadState, onRefresh }: { sources: Sourc
     setBusy(true); setLoadError(null); setNotice(null);
     try {
       const saved = existing ? await updateSource(existing.id, draft) : await createSource(draft);
-      setDraft({ projectName: saved.projectName, enabled: saved.enabled, schedule: { ...saved.schedule }, ownerNames: [...saved.ownerNames], fieldMap: { ...saved.fieldMap } });
+      setDraft({ projectName: saved.projectName, enabled: saved.enabled, schedule: { ...saved.schedule } });
       setNotice(existing ? "来源配置已保存并从 API 重新读取一致。" : "来源已创建。MVP 只允许一个产品组来源。");
       onRefresh();
     } catch (cause) { setLoadError(errorText(cause)); }
@@ -130,18 +136,14 @@ export function SourcesPanel({ sources, loadState, onRefresh }: { sources: Sourc
     </div>
     <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
       <label className="rules-threshold"><span>周计划（1–7，周一为 1）</span><HeroInput aria-label="周计划星期" type="number" min={1} max={7} value={draft.schedule.weekday ?? ""} onChange={(e) => set("schedule", { ...draft.schedule, weekday: e.target.value === "" ? null : Number(e.target.value) })} /></label>
-      <label className="rules-threshold"><span>执行时间（HH:MM）</span><HeroInput aria-label="执行时间" placeholder="09:30" value={draft.schedule.time ?? ""} onChange={(e) => set("schedule", { ...draft.schedule, time: e.target.value === "" ? null : e.target.value })} /></label>
+      <label className="rules-threshold"><span>执行时间（HH:MM）</span><HeroInput aria-label="执行时间" placeholder="09:00" value={draft.schedule.time ?? ""} onChange={(e) => set("schedule", { ...draft.schedule, time: e.target.value === "" ? null : e.target.value })} /></label>
       <label className="rules-threshold"><span>时区</span><HeroInput aria-label="时区" placeholder="Asia/Shanghai" value={draft.schedule.timezone ?? ""} onChange={(e) => set("schedule", { ...draft.schedule, timezone: e.target.value === "" ? null : e.target.value })} /></label>
       <label className="rules-threshold"><span>启用周计划</span><input type="checkbox" aria-label="启用周计划" checked={draft.schedule.enabled} onChange={(e) => set("schedule", { ...draft.schedule, enabled: e.target.checked })} /></label>
     </div>
-    <div className="rules-form" style={{ alignItems: "flex-end" }}>
-      <label className="rules-threshold" style={{ flex: 1 }}><span>产品组负责人名单（每行一个）</span><HeroTextArea aria-label="负责人名单" className="rules-textarea" rows={2} value={draft.ownerNames.join("\n")} onChange={(e) => set("ownerNames", e.target.value.split("\n").map((line) => line.trim()).filter(Boolean))} /></label>
-      <label className="rules-threshold" style={{ flex: 1 }}><span>字段映射（每行「领域字段=Teambition 字段 ID」；个人/联系/凭据字段会被服务端拒绝）</span><HeroTextArea aria-label="字段映射" className="rules-textarea" rows={2} value={Object.entries(draft.fieldMap).map(([k, v]) => `${k}=${v}`).join("\n")} onChange={(e) => { const next: Record<string, string> = {}; for (const line of e.target.value.split("\n")) { const [key, ...rest] = line.split("="); if (key?.trim() && rest.length) next[key.trim()] = rest.join("=").trim(); } set("fieldMap", next); }} /></label>
-    </div>
     <div className="rules-form"><HeroButton className="button button-primary button-small" onPress={() => void save()} isDisabled={busy}>{existing ? "保存更新" : "创建来源"}</HeroButton></div>
     {loadState === "error" && <div className="table-empty"><strong>无法读取来源配置</strong><span>请检查 API 连接后重试。</span></div>}
-    {!existing && loadState === "ready" && <div className="table-empty"><strong>尚未配置数据源</strong><span>填写上方配置并创建后，同步与 AI 分析才会启动。</span></div>}
-    {existing && <div className="table-scroll"><table><thead><tr><th>项目</th><th>负责人</th><th>映射字段数</th></tr></thead><tbody><tr><td>{existing.projectName}</td><td>{existing.ownerNames.join("、") || "—"}</td><td>{Object.keys(existing.fieldMap).length}</td></tr></tbody></table></div>}
+    {!existing && loadState === "ready" && <div className="table-empty"><strong>尚未配置数据源</strong><span>填写项目名称并创建后，可手动同步；周计划启用后按设定执行。</span></div>}
+    {existing && <div className="table-scroll"><table><thead><tr><th>项目</th><th>定时同步</th></tr></thead><tbody><tr><td>{existing.projectName}</td><td>{scheduleLabel(existing.schedule)}</td></tr></tbody></table></div>}
   </section>;
 }
 
@@ -230,9 +232,17 @@ const analysisStateOptions = [["", "全部分析状态"], ["analyzed", "已分�
 const pullStateOptions = [["", "全部同步状态"], ["pending", "等待同步"], ["running", "同步中"], ["synced", "已同步"], ["failed", "同步失败"]] as const;
 const pushStateOptions = [["", "全部推送状态"], ["pending", "等待推送"], ["running", "推送中"], ["pushed", "已推送"], ["failed", "推送失败"]] as const;
 
+interface AnalysisRecommendation {
+  recommendation?: unknown;
+  rationale?: unknown;
+  evidence?: unknown;
+  missing_evidence?: unknown;
+}
+
 interface AnalysisStructured {
   module?: unknown; priority?: unknown; confidence?: unknown; confidence_reason?: unknown;
   evidence?: unknown; facts?: unknown; inferences?: unknown; missing_inputs?: unknown; blind_spots?: unknown;
+  recommendations?: Partial<Record<"user" | "market" | "business" | "technology", AnalysisRecommendation>>;
 }
 
 export function RequirementsPanel({ onRefresh }: { onRefresh: () => void }) {
@@ -307,6 +317,12 @@ function RequirementDetailCard({ selected, structured, busy, onClose, onAct }: {
   const inferences = Array.isArray(structured.inferences) ? structured.inferences as { text?: string }[] : [];
   const missingInputs = Array.isArray(structured.missing_inputs) ? structured.missing_inputs.filter((x): x is string => typeof x === "string") : [];
   const blindSpots = Array.isArray(structured.blind_spots) ? structured.blind_spots.filter((x): x is string => typeof x === "string") : [];
+  const dimensionRecommendations = [
+    ["U · 用户", structured.recommendations?.user],
+    ["M · 市场", structured.recommendations?.market],
+    ["S · 商业", structured.recommendations?.business],
+    ["C · 技术", structured.recommendations?.technology],
+  ] as const;
   return <div className="config-source" style={{ flexDirection: "column", alignItems: "stretch" }}>
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><strong>{selected.title}（REQ-{selected.sourceRequirementId} · v{selected.sourceVersion}）</strong><HeroButton className="button button-secondary button-small" onPress={onClose}>收起</HeroButton></div>
     <span>拉取 {selected.pipeline.pull} · AI 分析 {selected.pipeline.analysis} · 负责人 {selected.pipeline.owner} · 推送 {selected.pipeline.push}{selected.baseRecordId ? ` · Base 记录 ${selected.baseRecordId}` : ""}</span>
@@ -315,6 +331,15 @@ function RequirementDetailCard({ selected, structured, busy, onClose, onAct }: {
       <tr><td>优先级建议</td><td>{typeof structured.priority === "string" ? structured.priority : "空（未发布有效校准规则时保持为空）"}</td></tr>
       <tr><td>置信度</td><td>{typeof structured.confidence === "string" ? structured.confidence : "—"}{typeof structured.confidence_reason === "string" ? ` · ${structured.confidence_reason}` : ""}</td></tr>
       <tr><td>原文证据</td><td>{evidence.length ? evidence.join("；") : "—"}</td></tr>
+      {dimensionRecommendations.map(([label, result]) => {
+        const recommendationEvidence = Array.isArray(result?.evidence) ? result.evidence.filter((item): item is string => typeof item === "string") : [];
+        return <tr key={label}><td>{label}</td><td>
+          <strong>{typeof result?.recommendation === "string" ? result.recommendation : "—"}</strong>
+          {typeof result?.rationale === "string" && <div>理由：{result.rationale}</div>}
+          {recommendationEvidence.length > 0 && <div>证据：{recommendationEvidence.join("；")}</div>}
+          {result?.missing_evidence === true && <div>证据不足：需要补充信息</div>}
+        </td></tr>;
+      })}
       <tr><td>事实（来自源文本）</td><td>{facts.length ? facts.map((f) => typeof f.text === "string" ? f.text : "").filter(Boolean).join("；") || "—" : "—"}</td></tr>
       <tr><td>AI 推断（非事实）</td><td>{inferences.length ? inferences.map((i) => typeof i.text === "string" ? `【AI 推断】${i.text}` : "").filter(Boolean).join("；") || "—" : "—"}</td></tr>
       <tr><td>缺失信息</td><td>{missingInputs.length ? missingInputs.join("；") || "—" : "—"}</td></tr>

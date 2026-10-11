@@ -26,7 +26,7 @@ function makeHarness(options: { req?: RequirementRecord; previous?: BasePushRunR
   const req = options.req ?? requirement();
   const calls: string[] = [];
   let existing = options.previous ?? null;
-  let baseInput: { substantiveChanged: boolean } | null = null;
+  let baseInput: { projectId: string; substantiveChanged: boolean } | null = null;
   let savedBaseRecord: string | null = null;
   const currentRun = pushRun({ id: "push-current", status: "running", sourceVersion: req.sourceVersion, idempotencyKey: "push:req-1:v2", baseRecordId: null });
   const service = createBasePushService({
@@ -48,8 +48,8 @@ function makeHarness(options: { req?: RequirementRecord; previous?: BasePushRunR
     } as never,
     sourceSnapshots: { getAtVersion: async () => options.sourceSnapshot ?? null } as never,
     audit: { append: async () => { calls.push("audit"); } } as never,
-    base: { push: async (input: { substantiveChanged: boolean }) => { calls.push("base"); baseInput = input; return { recordId: "record-2", created: false }; } } as unknown as FeishuBasePushAdapter,
-    baseProjectId: "tb-project",
+    base: { push: async (input: { projectId: string; substantiveChanged: boolean }) => { calls.push("base"); baseInput = input; return { recordId: "record-2", created: false }; } } as unknown as FeishuBasePushAdapter,
+    sourceProjectId: "verified-source-project",
     baseFields: { projectId: "project", requirementId: "requirement", owner: "owner", source: {}, ai: {}, pm: ["PM状态"] },
     actorId: "operator-1", now: () => new Date("2026-10-10T00:00:00.000Z"),
   });
@@ -75,4 +75,11 @@ test("substantive source updates snapshot against the last successful push and p
   assert.equal(result.kind, "pushed");
   assert.equal(h.baseInput?.substantiveChanged, true);
   assert.equal(h.savedBaseRecord, "record-2");
+});
+
+test("uses the configured Teambition source project ID as the Base project key", async () => {
+  const h = makeHarness();
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.equal(h.baseInput?.projectId, "verified-source-project");
 });

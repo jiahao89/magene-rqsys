@@ -5,13 +5,9 @@ export interface HealthResponse {
 
 export interface SourceConfig {
   id: string;
-  projectId: string;
   projectName: string;
-  requirementTypeId: string;
   enabled: boolean;
   schedule: { enabled: boolean; weekday: number | null; time: string | null; timezone: string | null };
-  ownerNames: string[];
-  fieldMap: Record<string, string>;
 }
 
 export interface SyncRunResponse {
@@ -132,8 +128,6 @@ export interface SourceConfigUpdate {
   projectName: string;
   enabled: boolean;
   schedule: { enabled: boolean; weekday: number | null; time: string | null; timezone: string | null };
-  ownerNames: string[];
-  fieldMap: Record<string, string>;
 }
 
 export function createSource(update: SourceConfigUpdate, fetcher: typeof fetch = fetch): Promise<SourceConfig> {

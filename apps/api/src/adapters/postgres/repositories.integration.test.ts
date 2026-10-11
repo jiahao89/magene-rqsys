@@ -39,13 +39,13 @@ test("changed source upsert atomically snapshots, resets analysis and push, and 
     await ctx.repos.requirements.updateAnalysisState(first.id,"running");await ctx.repos.requirements.updateAnalysisState(first.id,"analyzed");
     await ctx.repos.requirements.setPushState(first.id,"running");await ctx.repos.requirements.setPushState(first.id,"pushed");
     const batch2=await ctx.repos.batches.create({sourceConfigId:source.id,triggerType:"manual",actorId:null,idempotencyKey:"source-version-0002",startedAt:"2026-10-09T00:00:00Z"});
-    const second=await ctx.repos.requirements.upsertRequirement(source.id,"task-owner",requirementWrite(source.id,batch2.id,{teambitionRequirementId:"task-owner",executorUserId:"tb-owner-1",executorName:"Ada",sourceHash:"c".repeat(64),sourceVersion:2,snapshot:{payload:{version:2},isSubstantiveChange:true,capturedAt:"2026-10-09T00:00:00Z"}}));
+    const second=await ctx.repos.requirements.upsertRequirement(source.id,"task-owner",requirementWrite(source.id,batch2.id,{teambitionRequirementId:"task-owner",executorUserId:"tb-owner-1",executorName:"Ada",sourceHash:"c".repeat(64),substantiveHash:"e".repeat(64),sourceVersion:2,snapshot:{payload:{version:2},isSubstantiveChange:true,capturedAt:"2026-10-09T00:00:00Z"}}));
     await ctx.repos.batches.complete(batch2.id,{status:"succeeded",totalCount:1,succeededCount:1,failedCount:0,errorSummary:null,completedAt:"2026-10-09T00:00:01Z"});
     const afterContentUpdate=await ctx.repos.requirements.get(second.id);
     assert.equal(afterContentUpdate?.pipeline.analysis,"pending");assert.equal(afterContentUpdate?.pipeline.push,"pending");assert.equal(afterContentUpdate?.pipeline.owner,"manually_mapped");
     assert.equal((await ctx.repos.sourceSnapshots.latest(second.id))?.sourceVersion,2);
     const batch3=await ctx.repos.batches.create({sourceConfigId:source.id,triggerType:"manual",actorId:null,idempotencyKey:"source-version-0003",startedAt:"2026-10-10T00:00:00Z"});
-    await ctx.repos.requirements.upsertRequirement(source.id,"task-owner",requirementWrite(source.id,batch3.id,{teambitionRequirementId:"task-owner",executorUserId:"tb-owner-2",executorName:"Bea",sourceHash:"d".repeat(64),sourceVersion:3,snapshot:{payload:{version:3},isSubstantiveChange:false,capturedAt:"2026-10-10T00:00:00Z"}}));
+    await ctx.repos.requirements.upsertRequirement(source.id,"task-owner",requirementWrite(source.id,batch3.id,{teambitionRequirementId:"task-owner",executorUserId:"tb-owner-2",executorName:"Bea",sourceHash:"d".repeat(64),substantiveHash:"e".repeat(64),sourceVersion:3,snapshot:{payload:{version:3},isSubstantiveChange:false,capturedAt:"2026-10-10T00:00:00Z"}}));
     assert.equal((await ctx.repos.requirements.get(second.id))?.pipeline.owner,"pending_mapping");
     assert.equal((await ctx.repos.sourceSnapshots.latest(second.id))?.sourceVersion,3);
   }finally{await cleanup(ctx);}

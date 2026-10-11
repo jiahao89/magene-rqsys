@@ -142,6 +142,13 @@ test("maskPii covers extra identity markers: platform user IDs, ID cards and @me
   assert.equal(maskPii("订单 2026-Q3 增长 20%", []).includes("2026-Q3"), true);
 });
 
+test("maskPii redacts a person name embedded in a labeled Teambition feedback title", () => {
+  const masked = maskPii("【Beta反馈】【C506V1.902】【反馈人-苗子-13142065636】希望增加骑行模式", []);
+  assert.equal(masked.includes("苗子"), false);
+  assert.equal(masked.includes("13142065636"), false);
+  assert.match(masked, /反馈人.*姓名已掩码/u);
+});
+
 test("outbound model payload carries no names, user IDs, contacts, credentials or attachment content (ticket 13)", async () => {
   let outbound = "";
   const fetchStub: FetchLike = async (_input, init) => {

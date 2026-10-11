@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, getHealth, listBatches, listRequirements, listSources, retrySyncItem, runSync, searchFeishuUsers, type SourceConfig } from "./api";
 
 const source: SourceConfig = {
-  id: "source-1", projectId: "project-1", projectName: "Product", requirementTypeId: "requirements",
-  enabled: true, schedule: { enabled: false, weekday: null, time: null, timezone: null }, ownerNames: [], fieldMap: {},
+  id: "source-1", projectName: "Product",
+  enabled: true, schedule: { enabled: false, weekday: null, time: null, timezone: null },
 };
 
 afterEach(() => vi.restoreAllMocks());

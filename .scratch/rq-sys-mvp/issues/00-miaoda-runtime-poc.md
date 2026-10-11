@@ -1,5 +1,11 @@
 # [partially-available] 00 — 验证妙搭运行时能力
 
+## 最新状态（2026-10-11，覆盖较早的阻断记录）
+- `spark:app:read` / `spark:app:write` 用户调用能力已恢复；Teambition 网关变量已写入 dev/online 并回读存在，目标项目只读查询成功。
+- 当前 release `7694878567301549280` 绑定旧 app commit `be2d20a`，不包含当前工作树改动。Root GitHub repo 与 Miaoda app repo 是独立代码库，需分别提交/push；Miaoda release dry-run 后再发布。
+- 妙搭登录 guard 与 `req.userContext.userId` 契约已在 SDK、本地 app adapter 和测试中核对。产品已明确：登录即使用，不设 RQ-Sys app role。仍需通过新 release 的真实登录态请求验收。
+- 用户要求继续推进 MVP。安全验收只用固定 synthetic fixture、POC Base 和用户本人通知；dev Base 配置、release、recovery trigger 创建先 dry-run，逐项获得明确确认后执行。online 与正式需求池不作为测试目标。
+
 ## 目标
 确认目标妙搭应用能支撑 RQ-Sys 需要的持久化、定时任务、后台执行和凭据管理，形成可据以选型的证据。
 
@@ -9,14 +15,25 @@
 - 直接在地址栏打开 `/app/app_17fqkjwyx1u/api/health` 返回 `Forbidden，csrf token not found in header.`；这类直接导航不带应用请求所需的 CSRF header，不能作为应用内 `backendFetch` 请求的运行验收，也不能据此判断业务 API 不通。
 - 为关联实际请求和 release，本轮 `+trace-list` / `+log-list` 查询因本机 DNS 无法解析 `open.feishu.cn` 失败；当前 UI 请求没有可回读的 trace ID，release commit correlation 仍待网络/观测接口恢复后核实。
 - online 托管 PostgreSQL 可经妙搭控制面 SQL 查询：数据库版本 PostgreSQL 17.5；13 张预期业务表；online changelog 有 13 表 PUBLISH 事件，当前 dev→main schema diff 空。`source_configs` 列与 schema 相符，`requirements` 字段/FK/索引齐全。表估算行数均为 0。**已验证 online DB schema，不代表应用运行时连接成功。**
-- online env-list、openapi-key-list、automation-list 均为空；13 张表行审计均 disabled。没有 server integration secret 或 cron 配置。
+- 早前一次 online env-list、openapi-key-list、automation-list 回读均为空；之后用户终端截图显示 online `AI_API_KEY` 创建成功且 env-list 列出变量名。当前因本机 DNS 无法重新读取列表，无法确认线上当前值或运行时是否加载；其他集成变量、OpenAPI keys 和自动化仍无配置证据。13 张表行审计均 disabled。
 - `access-scope-get` 显示 require_login=true、scope=Tenant，且观测 trace 记录调用用户的 Feishu ID；这些证据不代表应用服务端已拿到可用于角色鉴权的身份合同。按 AGENTS.md 保持 identity adapter 未实现，直到服务端 token/session contract 在目标环境验证。
 - collaborator list API 返回 `feature_not_available`/3340005；CLI 不支持管理该 app 的协作者。不能绕过 CLI 在应用页面外执行写侧操作。
 - 用户同意了 online server key 配置、只对 dev fixture 做 E2E 测试；但 AGENTS.md 仍明确禁止 assistant 写 Miaoda env / DB / 发布，故只完成准备与证据采集。用户不能在聊天提供密钥：须由管理员经妙搭受信 UI/secret vault 手动录入后提供仅含变量名及配置状态的核验回读。
 - 已向用户本人发送并读回一条阻塞提醒（message ID `om_x100b63af94aa58b0c4260c99d5f0b83`），未发送给其他协作者；无自动通知流程。
-- 最新 blocker 核验：health 与 sources 的当前应用内只读请求已成功；历史 TLS 500 已定位到旧 commit，但新请求的 trace/release 关联因 DNS 无法核验。online server secrets 缺失，目标身份方案未验收；选定的 TB 项目字段映射、获批测试 fixture/Base mapping 仍待确认。用户已授权测试阶段提醒仅发本人；未授权生产数据写入或通知其他干系人。
-- 验收顺序：观测接口恢复后回读当前工作台请求 trace/runtime commit → 通过 Teambition skill 核验选定项目 task type / field map → 管理员从受信 UI 配置 server secrets → 在获批的测试 Base/fixture 上执行用户已授权的 dev E2E 并清理 → 核验 AI/Base/重试/恢复。周计划暂定每周一 09:00 `Asia/Shanghai`，仅在 scheduler/worker 恢复验证通过后启用。
+- 最新 blocker 核验：health 与 sources 的应用内只读请求曾成功；历史 TLS 500 已定位到旧 commit，但新请求的 trace/release 关联因 DNS 无法核验。online `AI_API_KEY` 创建/列出有用户截图证据，但运行时是否加载未验证；目标身份方案未验收。选定 TB 项目的需求类型 ID 和 16 个字段 ID/名称已确认，字段映射、获批测试 fixture/Base mapping 仍待确认。用户已授权测试阶段提醒仅发本人，但现在要求暂停 E2E。
+- 后续顺序：先对齐 root 与 Miaoda app 两套代码并明确部署来源；再恢复 DNS/观测读取、取得 TB 网关地址并完成只读字段映射。用户要求 E2E 暂停，恢复后还需管理员通过受信 UI 核实 server secrets，并准备获批的测试 Base/fixture。周计划暂定每周一 09:00 `Asia/Shanghai`，仅在 scheduler/worker 恢复验证通过后启用。
 
+## 实测记录（2026-10-10，user identity，env 写入与回读验证）
+- 用户在本轮显式授权 assistant 直接写入目标应用 `app_17fqkjwyx1u` 的服务端环境变量，范围为 Teambition 网关两项（`TEAMBITION_GATEWAY_URL`、`GATEWAY_API_KEY`），环境为 dev 与 online 都写。该授权覆盖 AGENTS.md 中"妙搭 env 写只准备、不执行"的默认约束（仅限本次这两项、这两个环境）。
+- 值来源：本机旧项目 `~/Projects/Teambition/webapp/tb_client.py` 内置的网关 URL 默认值与 `GATEWAY_API_KEY` 默认值（RQ-Sys 仓库侧已按 D-08 有意留空）。用 `sed` 从源文件提取到 `700` 权限临时文件后再注入，真实值未写入本工单、未在命令与输出中回显。**本工单不记录密钥明文，仅记录变量名、来源与长度校验。**
+- 写入结果（`env -u LARKSUITE_CLI_APP_ID -u LARKSUITE_CLI_USER_ACCESS_TOKEN -u LARKSUITE_CLI_BRAND lark-cli apps +env-set --as user`）：
+  - dev：`TEAMBITION_GATEWAY_URL` → created；`GATEWAY_API_KEY` → created（dev 不需 `--yes`）。
+  - online：`TEAMBITION_GATEWAY_URL` → updated；`GATEWAY_API_KEY` → updated（带 `--yes`；`updated` 说明 online 侧此前可能已有占位/旧值，本次为覆盖）。
+- 回读验证：dev 与 online 的 `+env-list` 现均列出 `GATEWAY_API_KEY`、`TEAMBITION_GATEWAY_URL`、`AI_API_KEY`；以 `--include-values --jq '... | .value|length'` 只打印长度，dev 与 online 均为 `GATEWAY_API_KEY=44`、`TEAMBITION_GATEWAY_URL=36`，确认值已实际填充、非空。
+- 连通性冒烟（**本地网络证据，非妙搭运行时证据**）：本机 `GET {网关URL}/getProjects` 带 Bearer key 返回 HTTP 200，响应约 243 KB 的有效项目列表。证明 URL+Key 组合有效，但不证明妙搭 online runtime 能出网访问该内网网关，也不证明 runtime 已加载这两个 secret。
+- 临时密钥文件已删除（`rm -rf /tmp/rqsys_secrets`）并校验目录不存在。
+- 本记录更正/取代上文 2026-10-10 早期关于"online env-list 为空""因本机 DNS 无法回读 env-list""用户不能在聊天提供密钥、须由管理员经妙搭受信 UI/secret vault 手动录入"的表述：本轮已用 user 身份经 CLI 完成写入与回读，过程中未在对话出现任何密钥明文。
+- 仍未配置：飞书 Base 四项（`FEISHU_APP_ID`、`FEISHU_APP_SECRET`、`BASE_APP_TOKEN`、`BASE_TABLE_ID`，代码需四者俱全才激活 `baseClient`）；worker/`RQSYS_API_TOKEN` 及 TB 项目/需求类型 ID 应用变量。本轮仅动了用户圈定的两项。
 
 ## 实测记录（2026-10-10，发布修复前）
 - 该 release 前 `/api/sources` trace 的错误为 `DEPTH_ZERO_SELF_SIGNED_CERT`，来自单独创建的 pg Pool，不是 Miaoda 注入连接。
@@ -78,7 +95,7 @@
 - `sprint/default` 远端 HEAD `be2d20a448d20634b3d0a564aecb109ca5757202`。release `7694878567301549280` 回读为 `finished`，绑定 commit 是 `be2d20a`。
 - release 状态不等于线上运行验收：紧接着的运行日志/trace 仍关联旧 commit `6773cc4`，`GET /api/sources` 返回 `DEPTH_ZERO_SELF_SIGNED_CERT`。更新的观测窗口无新流量样本。继续读取到新的登录态 GET trace/runtime commit 前，不应断言修复已上线生效，也不要重复 release。
 - online 托管 PostgreSQL schema 已通过结构、changelog、SQL 只读核对，13 张预期表完整、`dev→main` 无待发布 schema 变更；这不等于 RQ-Sys API runtime 连库成功。
-- online app 环境变量/openapi keys/automations 为空，行级审计未启用；服务端身份、密钥注入、网络访问及持久任务恢复未验收。
+- 当时只读回读显示 online app 环境变量/openapi keys/automations 为空，行级审计未启用；后续用户截图证明 `AI_API_KEY` 变量已创建/列出。服务端身份、该变量的运行时加载、模型出网及持久任务恢复仍未验收。
 - 根 `AGENTS.md` 要求妙搭发布/env/DB 写只准备、不执行。用户额外确认过的有限测试授权不取消此限制；server secret 需管理员在受信面板配置，E2E 需要专用 TB project、owner 列表和 test Base/field map。
 - 用户已确认测试提醒仅私信本人（已发并回读核实）；本期不向干系人发通知。未给定 D-10 周几/时刻/时区，禁止配置 cron。
 

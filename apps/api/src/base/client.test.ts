@@ -33,8 +33,30 @@ test("snapshots before substantive update and only then resets PM status", async
   await adapter.push({ projectId: "p", requirementId: "r", title: "New", owner: null, sourceVersion: 2, substantiveChanged: true, idempotencyKey: "p:r:v2" });
   assert.deepEqual(fake.calls, ["find", "snapshot", "update"]);
   assert.deepEqual((snapshots[0] as { pmValues: unknown }).pmValues, { "PM状态": "已采纳", "PM确认模块": "M", "PM确认优先级": null, "处理人": null, "处理时间": null, "结构化备注": "Note" });
-  assert.equal(fake.row()?.fields["PM状态"], "待处理");
+  assert.deepEqual(fake.row()?.fields["PM状态"], ["待处理"]);
   assert.equal(fake.row()?.fields["PM确认模块"], "M");
+});
+
+test("serializes Base selects and text metadata, while an unavailable module option does not block push", async () => {
+  const fake = fakeBase();
+  const adapter = new FeishuBasePushAdapter(fake.client, {
+    projectId: "TB项目ID", requirementId: "TB需求ID", owner: "执行人",
+    source: { title: "标题" }, ai: { module: "AI模块建议", priority: "AI优先级建议", analysisVersion: "AI分析版本" },
+    pm: [], metadata: { sourceVersion: "源版本", pushState: "推送状态", lastPushedAt: "最后推送时间" },
+    selectOptions: { module: ["其他"], priority: ["P0", "P1", "P2"] },
+  });
+  await adapter.push({
+    projectId: "p", requirementId: "r", title: "Title", owner: null, sourceVersion: 3,
+    pushedAt: "2026-10-11T01:00:00.000Z", substantiveChanged: false, idempotencyKey: "p:r:v3",
+    aiValues: { module: "待分类", priority: "P2", analysisVersion: 4 },
+  });
+  const fields = fake.row()!.fields;
+  assert.deepEqual(fields["AI优先级建议"], ["P2"]);
+  assert.equal(fields["AI分析版本"], "4");
+  assert.equal(fields["AI模块建议"], undefined);
+  assert.equal(fields["源版本"], "3");
+  assert.deepEqual(fields["推送状态"], ["已推送"]);
+  assert.equal(fields["最后推送时间"], Date.parse("2026-10-11T01:00:00.000Z"));
 });
 
 test("snapshot failure leaves existing Base row untouched", async () => {

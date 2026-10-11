@@ -25,7 +25,7 @@ describe("RQ-Sys local workbench", () => {
       .mockResolvedValueOnce(Response.json({ status: "ok", service: "rq-sys-api" }))
       .mockResolvedValueOnce(Response.json({ items: [{
         id: "source-1", projectId: "project-1", projectName: "产品需求", requirementTypeId: "req-type",
-        enabled: true, schedule: { enabled: false, weekday: null, time: null, timezone: null }, ownerNames: [], fieldMap: {},
+        enabled: true, schedule: { enabled: false, weekday: null, time: null, timezone: null },
       }] }))
       .mockResolvedValueOnce(Response.json({ items: [] }))
       .mockResolvedValueOnce(Response.json({ items: [] }));

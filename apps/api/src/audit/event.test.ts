@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { InMemoryAuditStorage } from "./storage.js";
-import { createAuditEvent, redactSafeDetails } from "./event.js";
+import { AuditEventSchema, createAuditEvent, redactSafeDetails } from "./event.js";
 
 test("不变量5：审计事件捕获 actor/entity/result/timestamp（DDL 对齐形状）", () => {
   const event = createAuditEvent({
@@ -46,6 +46,17 @@ test("不变量5：result 枚举与 DDL CHECK 对齐（succeeded/failed/denied�
     }).result,
     "denied",
   );
+});
+
+test("source configuration audit actions are part of the controlled event vocabulary", () => {
+  assert.equal(AuditEventSchema.safeParse({
+    id: "event-1", actorId: "admin-1", eventType: "source.created", entityType: "source_config",
+    entityId: "source-1", result: "succeeded", occurredAt: "2026-10-11T00:00:00.000Z", safeDetails: {},
+  }).success, true);
+  assert.equal(AuditEventSchema.safeParse({
+    id: "event-2", actorId: "admin-1", eventType: "source.config_updated", entityType: "source_config",
+    entityId: "source-1", result: "succeeded", occurredAt: "2026-10-11T00:00:00.000Z", safeDetails: {},
+  }).success, true);
 });
 
 test("不变量5：禁止字段被脱敏（密钥/联系方式/原始载荷）", () => {

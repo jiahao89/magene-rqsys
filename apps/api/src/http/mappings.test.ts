@@ -19,7 +19,7 @@ function makeFixture(): ApiDependencies {
     items: { upsert: async () => { throw new Error("unused"); }, get: async () => null, listByBatch: async () => [] },
     jobs: { enqueue: async () => { throw new Error("unused"); }, claimNext: async () => null, reschedule: async () => null, complete: async () => null },
   };
-  return { database: null, repositories, identity: { requireActor: async () => ({ id: "actor-1", roles: ["operator"] }) }, feishuUsers: { search: async (query) => query === "Ada" ? [{ openId: "ou-ada", name: "Ada", enName: "Ada Lovelace" }] : [] }, now: () => new Date("2026-10-09T00:00:00.000Z") };
+  return { database: null, repositories, identity: { requireActor: async () => ({ id: "actor-1" }) }, feishuUsers: { search: async (query) => query === "Ada" ? [{ openId: "ou-ada", name: "Ada", enName: "Ada Lovelace" }] : [] }, now: () => new Date("2026-10-09T00:00:00.000Z") };
 }
 const unauthenticated: ApiDependencies = { database: null, repositories: undefined, identity: undefined, now: undefined };
 
@@ -49,13 +49,13 @@ test("searches Feishu users only for an authorized operator and returns minimal 
   assert.deepEqual(await r.json(), { items: [{ openId: "ou-ada", name: "Ada", enName: "Ada Lovelace" }] });
 });
 
-test("Feishu user search validates query, requires auth, and rejects read-only roles", async () => {
+test("Feishu user search validates query and is available to any authenticated user", async () => {
   const invalid = await handleApiRequest(new Request("http://localhost/api/feishu/users?q=a"), makeFixture());
   assert.equal(invalid.status, 400);
   const unauth = await handleApiRequest(new Request("http://localhost/api/feishu/users?q=Ada"), unauthenticated);
   assert.equal(unauth.status, 401);
   const fixture = makeFixture();
-  fixture.identity = { requireActor: async () => ({ id: "reader", roles: ["pm"] }) };
-  const forbidden = await handleApiRequest(new Request("http://localhost/api/feishu/users?q=Ada"), fixture);
-  assert.equal(forbidden.status, 403);
+  fixture.identity = { requireActor: async () => ({ id: "logged-in-user" }) };
+  const allowed = await handleApiRequest(new Request("http://localhost/api/feishu/users?q=Ada"), fixture);
+  assert.equal(allowed.status, 200);
 });

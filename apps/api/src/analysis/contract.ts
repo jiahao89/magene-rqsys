@@ -32,6 +32,7 @@ const SECRET = /\b(?:sk-[A-Za-z0-9_-]{8,}|(?:api[_-]?key|token|secret)\s*[:=]\s*
 const ID_CARD = /\b\d{6}(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:[0-2]\d|3[01])\d{3}[\dXx]\b/g;
 const PLATFORM_USER_ID = /(?<![\w\d])[0-9a-f]{24}(?![\w\d])/gi;
 const MENTION = /(^|\s)@[\w\u4e00-\u9fa5-]{2,30}/g;
+const LABELLED_PERSON_NAME = /((?:反馈人|联系人|提出人|申请人|用户姓名|姓名)\s*[-－‐‑‒–—−:：]\s*)[^-－‐‑‒–—−\s【】,:：；;]+/giu;
 
 export function maskPii(text: string, markers: string[]): string {
   let masked = text;
@@ -44,6 +45,7 @@ export function maskPii(text: string, markers: string[]): string {
     .replace(ID_CARD, "（证件号已掩码）")
     .replace(PLATFORM_USER_ID, "（用户ID已掩码）")
     .replace(MENTION, "$1（提及已掩码）")
+    .replace(LABELLED_PERSON_NAME, "$1（姓名已掩码）")
     .replace(SECRET, "（敏感信息已掩码）");
 }
 

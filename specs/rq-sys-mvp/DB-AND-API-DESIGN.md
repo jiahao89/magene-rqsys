@@ -47,7 +47,7 @@ DDL：[`../../database/migrations/0001_initial.sql`](../../database/migrations/0
 
 ## API 分层
 
-HTTP 路径与现有 Spec 保持一致，公共健康检查除外。写 API 需要由部署平台身份适配器提供 actor，并在服务端校验角色；当前骨架尚未接入身份 provider，不能部署为生产接口。
+HTTP 路径与现有 Spec 保持一致，公共健康检查除外。所有业务 API 需要 Feishu 登录；actor 由 Miaoda 服务端注入的 `req.userContext.userId` 提供。MVP 不实现应用角色矩阵，登录用户均可使用全部功能。部署后仍须验证未登录请求会被拒绝、已登录请求能正确注入 actor。
 
 | API | 作用 | 幂等/权限要点 |
 |---|---|---|

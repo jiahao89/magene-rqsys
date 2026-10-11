@@ -30,10 +30,7 @@ export interface RequirementRepository {
 }
 
 export interface IdentityProvider {
-  requireActor(request: Request): Promise<{
-    id: string;
-    roles: string[];
-  }>;
+  requireActor(request: Request): Promise<{ id: string }>;
 }
 
 export interface FeishuUserCandidate {

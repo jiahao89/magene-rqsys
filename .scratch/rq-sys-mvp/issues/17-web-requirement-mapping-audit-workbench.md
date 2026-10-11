@@ -34,3 +34,15 @@
 ## Target verification remains
 
 目标 Feishu 通讯录搜索权限、身份和映射链路需在 Ticket 09 的真实环境验收。
+
+## Latest local implementation evidence (2026-10-10)
+
+- root Web 与妙搭 app 均提供服务端 Feishu 用户搜索和可搜索选择器；妙搭端要求操作员角色、只返回同租户用户身份字段，并缓存租户 token，不回显联系方式或原始 provider 错误。
+- 需求池的同步/分析/负责人/推送状态、批次 ID 与最近同步时间筛选已接入服务端查询；妙搭 app 路由和 SQL 参数测试覆盖筛选传递及边界。
+- 妙搭 app 路由回归 13/13 通过；server/client 类型检查、lint、生产构建均通过。主仓 Web 测试 21/21 通过。
+- 以上是本地代码证据；通讯录权限、租户结果可见性、身份注入和目标 app 映射/推送仍需 Ticket 09 验收。
+
+## 2026-10-11 PRD gap closure
+
+- Requirements detail in both root Web and Miaoda app now renders all four U/M/S/C recommendations with each rationale, evidence quote, and explicit missing-evidence marker. Root Web test first failed because the dimension rows were absent, then passed after the change.
+- Root Web detail contract test, full typecheck/build and Miaoda client typecheck/build remain required for final local verification; the target app has not been released.

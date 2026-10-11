@@ -57,7 +57,7 @@ function makeFixture(): RulesFixture {
     items: { upsert: async () => { throw new Error("not used in rules tests"); }, get: async () => null, listByBatch: async () => [] },
     jobs: { enqueue: async () => { throw new Error("not used in rules tests"); }, claimNext: async () => null, reschedule: async () => null, complete: async () => null },
   };
-  return { dependencies: { database: null, repositories, identity: { requireActor: async () => ({ id: "actor-1", roles: ["administrator"] }) }, now: () => new Date("2026-10-09T00:00:00.000Z") }, dictionaries, rules, auditEvents };
+  return { dependencies: { database: null, repositories, identity: { requireActor: async () => ({ id: "actor-1" }) }, now: () => new Date("2026-10-09T00:00:00.000Z") }, dictionaries, rules, auditEvents };
 }
 const unauthenticated: ApiDependencies = { database: null, repositories: undefined, identity: undefined, now: undefined };
 

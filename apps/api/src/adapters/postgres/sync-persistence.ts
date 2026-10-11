@@ -2,15 +2,15 @@ import type { SyncPersistence } from "../../sync/service.js";
 import type { PostgresRepositories, RequirementRowWrite } from "./repositories.js";
 
 export interface PostgresSyncPersistence extends SyncPersistence {
-  // 本次批次中新建或实质变更的需求（unchanged 不入列）——用于同步完成后链式创建分析任务
-  touchedRequirements(): Array<{ id: string; sourceVersion: number }>;
+  // 本次批次中有源版本变化的需求；analysisRequired=false 表示只需更新 Base 元数据。
+  touchedRequirements(): Array<{ id: string; sourceVersion: number; substantiveHash: string; analysisRequired: boolean }>;
 }
 
 export function createPostgresSyncPersistence(
   repositories: PostgresRepositories,
   sourceConfigId: string,
 ): PostgresSyncPersistence {
-  const touched: Array<{ id: string; sourceVersion: number }> = [];
+  const touched: Array<{ id: string; sourceVersion: number; substantiveHash: string; analysisRequired: boolean }> = [];
   return {
     async findRequirement(sourceConfigId, sourceRequirementId) {
       return repositories.requirements.findForSync(sourceConfigId, sourceRequirementId);
@@ -43,8 +43,8 @@ export function createPostgresSyncPersistence(
         snapshot: input.snapshot,
       };
       const upserted = await repositories.requirements.upsertRequirement(sourceConfigId, input.sourceRequirementId, write);
-      // 编排器只对新建/哈希变化的需求调用 upsert——全部记入 touched 供链式分析
-      touched.push({ id: upserted.id, sourceVersion: upserted.sourceVersion });
+      // 编排器只对新建/哈希变化的需求调用 upsert；元数据变化也要更新 Base，但不重跑 AI。
+      touched.push({ id: upserted.id, sourceVersion: upserted.sourceVersion, substantiveHash: input.substantiveHash, analysisRequired: input.analysisRequired });
       return upserted;
     },
     async appendSourceSnapshot(input) {

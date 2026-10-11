@@ -21,7 +21,7 @@ export interface BasePushServiceDeps {
   analyses?: AnalysisRunRepository;
   sourceSnapshots: SourceSnapshotRepository;
   base: FeishuBasePushAdapter;
-  baseProjectId: string;
+  sourceProjectId: string;
   baseFields: { projectId: string; requirementId: string; owner: string; source: Record<string, string>; ai: Record<string, string>; pm: string[] };
   actorId: string | null;
   now?: () => Date;
@@ -110,13 +110,16 @@ export function createBasePushService(deps: BasePushServiceDeps) {
               analysisVersion: latestAnalysis.analysisVersion,
             }
           : {};
+        const sourceCreatedAt = req.sourceCreatedAt ? Date.parse(req.sourceCreatedAt) : Number.NaN;
         pushedResult = await deps.base.push({
-          projectId: deps.baseProjectId, requirementId: req.teambitionRequirementId,
+          projectId: deps.sourceProjectId, requirementId: req.teambitionRequirementId,
           title: req.title, description: req.description,
           owner: mapping ? { userId: mapping.feishuUserId, idType: mapping.feishuIdType } : null,
-          sourceVersion: req.sourceVersion, substantiveChanged,
+          sourceVersion: req.sourceVersion, pushedAt: now().toISOString(), substantiveChanged,
           idempotencyKey,
-          sourceValues: { scope: req.scope, acceptanceCriteria: req.acceptanceCriteria, sourceStatusId: req.sourceStatusId, sourceUrl: req.sourceUrl },
+          sourceValues: {
+            ...(Number.isFinite(sourceCreatedAt) ? { createdAt: sourceCreatedAt } : {}),
+          },
           aiValues: ai,
         });
         await deps.basePushes.updateResult(run.id, { status: "pushed", baseRecordId: pushedResult.recordId, completedAt: now().toISOString() });

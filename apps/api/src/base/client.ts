@@ -16,6 +16,8 @@ export interface BaseFieldMap {
   source: Record<string, string>;
   ai: Record<string, string>;
   pm: string[];
+  metadata?: Record<string, string>;
+  selectOptions?: Record<string, string[]>;
 }
 
 export interface BasePushInput {
@@ -25,6 +27,7 @@ export interface BasePushInput {
   description?: string | null;
   owner: { userId: string; idType: "open_id" | "user_id" | "union_id" } | null;
   sourceVersion: number;
+  pushedAt?: string;
   substantiveChanged: boolean;
   idempotencyKey: string;
   sourceValues?: Record<string, unknown>;
@@ -53,7 +56,21 @@ export class FeishuBasePushAdapter {
     }
     for (const [name, value] of Object.entries(input.aiValues ?? {})) {
       const field = this.fields.ai[name];
-      if (field) delta[field] = value;
+      if (!field || value === null || value === undefined) continue;
+      const allowed = this.fields.selectOptions?.[name];
+      if (allowed && !allowed.includes(String(value))) continue;
+      if (name === "module" && value === "待分类" && !allowed?.includes("待分类")) continue;
+      if (name === "module" || name === "priority") delta[field] = [String(value)];
+      else if (name === "analysisVersion") delta[field] = String(value);
+      else delta[field] = value;
+    }
+    const metadata = this.fields.metadata ?? {};
+    if (metadata.sourceVersion) delta[metadata.sourceVersion] = String(input.sourceVersion);
+    if (metadata.pushState) delta[metadata.pushState] = ["已推送"];
+    if (metadata.lastPushedAt && input.pushedAt) {
+      const timestamp = Date.parse(input.pushedAt);
+      if (!Number.isFinite(timestamp)) throw new Error("Invalid Base push timestamp");
+      delta[metadata.lastPushedAt] = timestamp;
     }
     if (!existing) {
       const created = await this.client.create(delta);
@@ -66,7 +83,7 @@ export class FeishuBasePushAdapter {
       await this.snapshots.savePmSnapshot({ requirementId: input.requirementId, sourceVersion: input.sourceVersion, baseRecordId: existing.recordId, pmValues });
       // PM 状态字段来自配置映射（pm 数组首项），不硬编码字段名
       const pmStatusField = this.fields.pm[0];
-      if (pmStatusField) delta[pmStatusField] = "待处理";
+      if (pmStatusField) delta[pmStatusField] = ["待处理"];
     }
     // Unmapped and empty TB ownership never erases a human-assigned Base owner.
     if (input.owner === null) delete delta[this.fields.owner];

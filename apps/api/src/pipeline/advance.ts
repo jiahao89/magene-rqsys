@@ -62,3 +62,70 @@ export function createAnalysisAdvancer(deps: AdvanceDeps) {
     return "queued";
   };
 }
+
+// Source metadata (owner/status/timestamps) still needs a Base upsert, but must
+// not create a new AI version or reset PM fields. This path resolves ownership
+// against the current TB identity before scheduling the push.
+export function createSourceMetadataAdvancer(deps: AdvanceDeps, options: { now?: () => Date } = {}) {
+  const now = options.now ?? deps.now ?? (() => new Date());
+  return async function advanceSourceMetadata(
+    requirementId: string,
+    actorId: string | null,
+    analysisVersion: number,
+  ): Promise<AdvanceOutcome> {
+    const req = await deps.requirements.get(requirementId);
+    if (!req || req.pipeline.pull !== "synced") return "not_eligible";
+
+    let ownerState = req.pipeline.owner;
+    const ownerLookup = req.executorUserId
+      ? { tbUserId: req.executorUserId }
+      : req.executorName
+        ? { normalizedName: normalizeOwnerName(req.executorName) }
+        : null;
+
+    if (!ownerLookup) {
+      if (ownerState !== "not_required") {
+        if (ownerState !== "pending_mapping") {
+          await deps.requirements.setOwner(req.id, null, "pending_mapping");
+          ownerState = "pending_mapping";
+        }
+        await deps.requirements.setOwner(req.id, null, "not_required");
+        ownerState = "not_required";
+      }
+    } else if (ownerState !== "manually_mapped") {
+      const mapping = await deps.people.resolveActive(req.sourceConfigId, ownerLookup);
+      if (!mapping) {
+        if (ownerState !== "pending_mapping") {
+          await deps.requirements.setOwner(req.id, null, "pending_mapping");
+          ownerState = "pending_mapping";
+        }
+      } else {
+        const mappedState = mapping.matchMethod === "manual" ? "manually_mapped" : "auto_mapped";
+        if (ownerState !== mappedState) {
+          if (ownerState === "not_required") {
+            await deps.requirements.setOwner(req.id, null, "pending_mapping");
+            ownerState = "pending_mapping";
+          }
+          await deps.requirements.setOwner(req.id, mapping.feishuUserId, mappedState);
+          ownerState = mappedState;
+        }
+      }
+    }
+
+    if (ownerState === "pending_mapping") return "waiting_mapping";
+    if (req.pipeline.push !== "pending" && req.pipeline.push !== "failed") return "not_eligible";
+
+    const occurredAt = now().toISOString();
+    await deps.jobs.enqueue({
+      jobType: "base_push",
+      dedupeKey: basePushIdempotencyKey(req.id, req.sourceVersion, analysisVersion),
+      payload: { requirementId: req.id, actorId, sourceVersion: req.sourceVersion, analysisVersion },
+      availableAt: occurredAt,
+    });
+    await deps.audit.append({
+      id: randomUUID(), actorId, eventType: "source.metadata.updated", entityType: "requirement", entityId: req.id,
+      result: "succeeded", safeDetails: { sourceVersion: req.sourceVersion, push: "queued" }, occurredAt,
+    });
+    return "queued";
+  };
+}

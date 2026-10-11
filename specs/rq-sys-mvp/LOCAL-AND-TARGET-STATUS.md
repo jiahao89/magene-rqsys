@@ -1,52 +1,44 @@
-# RQ-Sys local implementation and target acceptance status (2026-10-10, refreshed)
+# RQ-Sys MVP implementation and acceptance status (2026-10-11)
 
-## Implemented and locally verified
+## Product decisions aligned
 
-| Check | Result | Evidence |
+- Login is required. Every signed-in Feishu tenant user can use all RQ-Sys functions; MVP has no app roles, per-user authorization, or pre-seeded user allowlist. The server actor comes only from Miaoda's trusted user context.
+- The source is fixed to Teambition project `室外产品-码表软固件需求池` (`6960a3187384fa11aa07d7e6`). The Web form maintains the project name and schedule; the server resolves project/task-type IDs.
+- The minimum field map and Base write allowlist are in [TEAMBITION-LIVE-POC.md](./TEAMBITION-LIVE-POC.md). Source identity is `(project ID, requirement ID)`; only title is sent to AI, created time is source metadata, and owner is used only for mapping. No unverified custom fields enter AI or Base.
+- Module dictionary starts empty and is maintained through the versioned dictionary screen/API. Until the user supplies the product taxonomy, the analyzer returns `其他` or `待分类`; `待分类` remains in Web/DB and is omitted from Base single-select. The POC Base has four module options (`需求澄清`、`方案设计`、`缺陷修复`、`其他`); add new entries to both the Base field and `BASE_FIELDS_JSON.selectOptions.module` before publishing them.
+- Priority stays blank until a validated U/M/S/C scoring rule is published. Current POC Base priority options are P0/P1/P2; do not publish any rule that may emit P3 until Base is updated.
+- Monday 09:00 `Asia/Shanghai` is the chosen sync schedule. Persisted due jobs, bounded queue draining, and a Miaoda recovery automation are implemented locally. The target recovery trigger is not yet configured or verified.
+- Test notification recipient is the user only. Never sync actual Teambition rows or notify stakeholders for this acceptance pass.
+
+## Local implementation
+
+| Area | Current evidence | Boundary |
 |---|---|---|
-| API unit tests | Passed (183/183 across 32 files); PostgreSQL integration excluded in this recheck | Node test runner; avoided the integration helper because the configured `DATABASE_URL` target was not verified as isolated |
-| Web tests | Passed (20/20) | `npm test` |
-| API/Web typecheck | Passed | `npm run typecheck` |
-| Production builds | Passed | `npm run build` |
-| Diff whitespace check | Passed after documentation update | `git diff --check` |
-| Feishu owner selection | Implemented locally | Protected server-side directory-search API, minimal candidate projection, Web search/selection UI, and fake-fetch/API/component tests |
-| Miaoda adapter regression checks | Passed (5/5) | App repo `npm run test:rqsys-route`; mount-prefix, parameter binding, Drizzle query/transaction and rollback paths |
-| Miaoda app lint and production build | Passed | App repo `npm run lint` and `npm run build:prod` |
+| Login/access | Root API and Miaoda adapter require a trusted signed-in actor; tests cover 401, any logged-in user, and ignoring forged identity headers. | Must verify after the new app release. |
+| Teambition | Read-only project lookup found 311 requirements with unique nonempty IDs; fixed project name resolves to the selected project. The skill's `getProjectTasks` wrapper returns one array and exposes no pagination controls. | Target response count and UI total differ (311 vs 314); the intended row set and gateway truncation behavior are unresolved. Synthetic acceptance must not fetch real rows. |
+| AI and mapping | Analysis output is versioned; PII/user identifiers are excluded; U/M/S/C suggestions carry reasons/evidence; empty module dictionary is supported. | Target model call remains pending. |
+| Base | Field serialization, idempotent upsert, owner mapping, substantive-change snapshot/PM reset, queue retry, and safe select/date serialization have local regression coverage. | POC Base direct transport smoke is not app-mediated acceptance. |
+| Notification/schedule | POC Base has enabled owner-change workflow `POC-执行人变更通知`; durable queue recovery is wired to a Miaoda automation handler. Terminal failed/cancelled jobs are reopened by a repeated recovery poll. | Only owner-assignment notification is proven in the Base workflow; initial push, substantive update, empty-owner assignment, and TB owner-change events remain unverified. No target recovery trigger has been run. |
+| Web | Source, batch, requirement, owner-mapping, dictionary/rule and audit workbench are wired to APIs; requirement detail shows U/M/S/C reasons/evidence. | Target release currently does not contain this working tree. |
 
-The previous repository status recorded a 196-test API + PostgreSQL integration run. This recheck does not repeat that database integration suite; the current evidence is 183 API unit tests plus the other checks above.
+## Target environment observations
 
-The local code covers the platform-neutral MVP API, Teambition import pipeline, structured AI analysis, owner mapping, Feishu Base adapter, schedule/retry/audit logic and the Web workbench. Local tests do not prove external credentials, network access, target permissions, or production execution.
+- Current RQ-Sys Miaoda app is `app_17fqkjwyx1u`; latest finished release is `7694878567301549280` on old app commit `be2d20a`. Root GitHub `main` and nested Miaoda `sprint/default` are separate repositories. Both contain local changes that have not yet been committed/pushed/released.
+- Dev and online environments list the expected integration variable names. Values were not printed. The configured Base token/table do not match the safe POC Base, so app-mediated writes must not run until dev is deliberately redirected to the POC Base.
+- The safe POC Base is app token `OddqbqBeOamFjFsR5IXcJdjknmd`, table `tblxbyvbdLGVnLaO`. Its field types/options were read-only verified. Its owner-change workflow is enabled. Do not use the formal `TB需求池` table for synthetic acceptance.
+- Local fixture route `POST /api/dev/fixtures/sync` is enabled only when `RQSYS_ENABLE_TEST_FIXTURES=true` and the configured Base app/table identifiers exactly match the isolated POC Base. It ignores request data and enqueues one fixed synthetic requirement. Configure it in dev only; do not point the online app at the POC Base.
+- No RQ-Sys recovery trigger is currently configured. Desired trigger is a disabled 30-minute recovery poll in `Asia/Shanghai`; the user-facing weekly schedule remains Monday 09:00.
 
-## Miaoda target evidence (2026-10-10)
+## Verification completed locally
 
-- Release `7694878567301549280` is `finished` and binds app commit `be2d20a448d20634b3d0a564aecb109ca5757202`. This only verifies release state.
-- The historical `/api/sources` HTTP 500 with `DEPTH_ZERO_SELF_SIGNED_CERT` is associated with old commit `6773cc4`. On 2026-10-10, a fresh authenticated workbench reload showed “API 已连接” and “尚未配置数据源” without an error banner. Its load path awaits health and source-list calls before showing ready, so the app-mediated `/api/health` and `/api/sources` GETs succeeded and the source list is empty; this verifies the current handler's source DB read path, not writes or full E2E. Direct address-bar navigation to `/api/health` returns the platform CSRF-header error and is not the same request path. CLI trace/log lookup could not resolve `open.feishu.cn`, so request-to-release commit correlation remains open.
-- Online Miaoda-managed PostgreSQL schema contains the expected 13 tables; the changelog has a publish event; `dev→main` schema diff is empty. Table structure reads match expected fields/indexes. The RQ-Sys handler's runtime DB read path for `source_configs` succeeded through the authenticated workbench; DB writes, transaction behavior and persistence across the full pipeline remain unverified.
-- Online environment variables and OpenAPI keys are empty; automations are empty; all 13 table row-audit settings are disabled. No server integration credentials are configured.
-- App requires login and has tenant-level access, but the source identity adapter remains deliberately unimplemented. No verified server user/session contract is available yet.
-- No target E2E data writes, Teambition sync, AI provider request, Base write, scheduler, or notification automation has been tested. A reminder was sent only to the user; no stakeholder was notified.
+Latest run: root API 218/218 (including the isolated local PostgreSQL integration suite), Web 21/21, typecheck and build passed; Miaoda route/adapter 38/38, lint, server/client typecheck and production build passed. Regression coverage includes safe-Base fixture gating, failed-job recovery, and version-scoped analysis retry. No target test data or notification has been written/sent in this pass.
 
-### Follow-up observation (2026-10-10)
+## Remaining target acceptance steps
 
-- The authenticated online RQ-Sys workbench was refreshed; it renders “API 已连接” and “尚未配置数据源” without an error banner. The client marks itself ready only after its health and source-list GETs succeed, so the current app-mediated GET path and empty source read are verified. No source was created and no sync was run. Direct navigation to the endpoint is rejected by the platform CSRF guard; CLI trace lookup failed due local DNS, leaving exact request-to-release correlation open.
-- User selected Teambition project `室外产品-码表软固件需求池`; the authenticated project page URL identifies `6960a3187384fa11aa07d7e6`, and the UI shows `311/314`. The project-local skill request to its API gateway failed to connect in this shell; task type and field map are unknown. The previous live POC is for a different project.
-- User provisionally chose Monday 09:00 `Asia/Shanghai`; test notifications are limited to the user. The target scheduler remains disabled/unverified.
-- The Miaoda code editor shows `.env` as modified. Its contents were not opened; this does not prove runtime secret injection. The app-scoped Git repository tracks a `.env` path. If the edited file contains a real key, do not commit or publish it; use trusted server-side secret storage and rotate it if it has entered Git history. The code defaults to DeepSeek, but that does not verify the identity of an unseen key.
+1. Commit and push root and Miaoda app repositories separately; run Miaoda release dry-run and obtain explicit confirmation before release.
+2. After release, dry-run dev-only Base configuration (`BASE_APP_TOKEN`/`BASE_TABLE_ID` → POC Base; `RQSYS_ENABLE_TEST_FIXTURES=true`) and obtain explicit confirmation before writing app environment variables.
+3. Run the fixed synthetic fixture through the signed-in app, verify sync → AI → Base upsert, confirm no real TB row was fetched, and assign only the current user to verify the POC Base notification.
+4. Dry-run creation of disabled 30-minute recovery trigger; obtain explicit confirmation before creating it. Exercise recovery in dev and verify a missed weekly window can be resumed.
+5. Keep the actual Monday 09:00 sync disabled until the synthetic acceptance is clean. Do not publish a product module dictionary or a priority rule until the user supplies/approves its contents.
 
-## Not implemented or not verified in target
-
-- Identity adapter remains intentionally unimplemented pending target Miaoda session/token contract and must stay so until then.
-- The development worker poller is not a durable Miaoda scheduler. Weekly trigger, worker restarts, retry recovery, and audit retention need target verification; the provisional business schedule is Monday 09:00 `Asia/Shanghai`.
-- Feishu user search needs server-side `FEISHU_APP_ID` / `FEISHU_APP_SECRET` and contact-search permission; the target app's contact scope/result visibility are not verified.
-- Base schema mapping, PM snapshot/write permission, notification automation, DeepSeek provider, Teambition gateway, and full deployed import→analysis→mapping/push flow remain Ticket 09 acceptance work.
-- App-scoped Miaoda repo `rq-sys-miaoda/` is separate from the GitHub implementation checkout. Do not confuse their source histories or releases.
-
-## Next blockers
-
-1. Once local DNS/observability access is restored, read back the fresh app-mediated health/source GET traces and correlate runtime commit. Do not create another release to address stale/ambiguous traces.
-2. If a new trace on `be2d20a` again shows a TLS certificate error, provide that trace/log to Miaoda support. Do not disable certificate validation or inject an independent DB URL.
-3. A Miaoda administrator manually sets required server-side integration secrets through the trusted secret UI; report only variable names/configured status. Do not provide values in chat. Assistant must not set app env variables, execute Miaoda DB writes, or create releases under `AGENTS.md`.
-4. After the runtime GET succeeds, provide a dedicated test Teambition project/owner allowlist and a test Base/table plus approved field mapping. Run only authorized dev fixtures; send no notices except to the user.
-5. Verify durable trigger/worker restart behavior before enabling the provisional Monday 09:00 `Asia/Shanghai` schedule.
-
-All RQ-Sys modules remain “implemented, not verified in target environment” unless explicit target evidence proves otherwise. Do not call any module Miaoda-integrated.
+All local completion claims are distinct from target-environment proof. Until those steps finish, the integration is “implemented locally, not verified in target environment.”

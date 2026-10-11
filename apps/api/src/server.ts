@@ -17,14 +17,14 @@ import { FeishuBitableClient } from "./base/transport.js";
 import { FeishuUserDirectoryClient } from "./adapters/feishu/directory-client.js";
 import { createBasePushService } from "./base/push-service.js";
 import { basePushIdempotencyKey } from "./application/idempotency-keys.js";
-import { createAnalysisAdvancer } from "./pipeline/advance.js";
+import { createAnalysisAdvancer, createSourceMetadataAdvancer } from "./pipeline/advance.js";
 import type { SourceProjectConfig } from "./domain/workflow.js";
 
 const port = Number(process.env.PORT ?? 8787);
 const database = createPool(process.env.DATABASE_URL);
 const repositories = database ? new PostgresRepositories(database) : undefined;
 const identity = repositories ? {
-  async requireActor(_request: Request): Promise<{ id: string; roles: string[] }> {
+  async requireActor(_request: Request): Promise<{ id: string }> {
     // Replace with the deployment's verified token/session identity adapter.
     throw new Error("No verified identity provider is configured");
   },
@@ -53,10 +53,15 @@ const syncJobRunner: SyncJobRunner | undefined = repositories ? async (job) => {
   if (result.status !== "failed") {
     const now = new Date().toISOString();
     for (const touched of persistence.touchedRequirements()) {
-      await repositories.jobs.enqueue({
-        jobType: "analysis", dedupeKey: `analysis:${touched.id}:v${touched.sourceVersion}`,
-        payload: { requirementId: touched.id, sourceVersion: touched.sourceVersion, actorId: job.actorId }, availableAt: now,
-      });
+      if (touched.analysisRequired) {
+        await repositories.jobs.enqueue({
+          jobType: "analysis", dedupeKey: `analysis:${touched.id}:v${touched.sourceVersion}`,
+          payload: { requirementId: touched.id, sourceVersion: touched.sourceVersion, substantiveHash: touched.substantiveHash, actorId: job.actorId }, availableAt: now,
+        });
+      } else {
+        const latestAnalysis = await repositories.analyses.latest(touched.id);
+        await advanceAfterMetadataSync?.(touched.id, job.actorId, latestAnalysis?.analysisVersion ?? 0);
+      }
     }
   }
   return result;
@@ -67,8 +72,8 @@ const analysisJobHandler: ((job: { payload: Record<string, unknown> }) => Promis
   if (typeof requirementId !== "string") throw new Error("Invalid analysis job payload");
   const requirement = await repositories.requirements.get(requirementId);
   if (!requirement) throw new Error("Analysis requirement was not found");
-  const targetSourceVersion = job.payload.sourceVersion;
-  if (typeof targetSourceVersion === "number" && targetSourceVersion !== requirement.sourceVersion) return;
+  const targetSubstantiveHash = job.payload.substantiveHash;
+  if (typeof targetSubstantiveHash === "string" && targetSubstantiveHash !== requirement.substantiveHash) return;
   const source = await repositories.sources.get(requirement.sourceConfigId);
   if (!source) throw new Error("Analysis source configuration was not found");
   const published = (await repositories.dictionaries.list()).find((version) => version.status === "published");
@@ -85,6 +90,8 @@ const analysisJobHandler: ((job: { payload: Record<string, unknown> }) => Promis
     piiMarkers: [...source.ownerNames, requirement.proposerName, requirement.executorName].filter((x): x is string => Boolean(x)),
     dictionary, priorityRule,
   }, { repository: new AnalysisRepositoryAdapter(repositories.analyses), provider });
+  const current = await repositories.requirements.get(requirement.id);
+  if (!current || current.substantiveHash !== requirement.substantiveHash) return;
   await repositories.requirements.updateAnalysisState(requirement.id, run.status === "analyzed" ? "analyzed" : "failed_retryable");
   // 工单 14：首次分析进入可见终态后继续负责人处理与 Base 推送——AI 不是推送门槛。
   // 无负责人 → not_required 直接入队；有负责人且映射唯一 → auto_mapped 入队；未匹配 → 等待人工映射。
@@ -96,9 +103,17 @@ const analysisJobHandler: ((job: { payload: Record<string, unknown> }) => Promis
 // ---- Feishu Base 推送装配：env 凭证齐全时构建真实 transport（工单 00/W7 目标环境验证）----
 const DEFAULT_BASE_FIELDS = {
   projectId: "TB项目ID", requirementId: "TB需求ID", owner: "执行人",
-  source: { title: "标题", description: "需求说明", scope: "范围说明", acceptanceCriteria: "验收标准", proposerName: "提出人", statusId: "TB状态", sourceUrl: "TB链接" } as Record<string, string>,
+  // The selected TB project's custom-field type/binding is unverified. Only map
+  // standard fields whose semantics and the Base column type are verified.
+  source: { title: "标题", createdAt: "TB创建时间" } as Record<string, string>,
   ai: { module: "AI模块建议", priority: "AI优先级建议", analysisVersion: "AI分析版本" } as Record<string, string>,
   pm: ["PM状态", "PM确认模块", "PM确认优先级", "处理人", "处理时间", "结构化备注"] as string[],
+  metadata: { sourceVersion: "源版本", pushState: "推送状态", lastPushedAt: "最后推送时间" } as Record<string, string>,
+  selectOptions: {
+    // Verified against the safe POC Base schema; override via BASE_FIELDS_JSON
+    // together with Base options when the product module dictionary changes.
+    module: ["需求澄清", "方案设计", "缺陷修复", "其他"], priority: ["P0", "P1", "P2"],
+  } as Record<string, string[]>,
 };
 function parseBaseFields(raw: string | undefined): typeof DEFAULT_BASE_FIELDS {
   if (!raw) return DEFAULT_BASE_FIELDS;
@@ -111,6 +126,8 @@ function parseBaseFields(raw: string | undefined): typeof DEFAULT_BASE_FIELDS {
       source: { ...DEFAULT_BASE_FIELDS.source, ...(parsed.source ?? {}) },
       ai: { ...DEFAULT_BASE_FIELDS.ai, ...(parsed.ai ?? {}) },
       pm: Array.isArray(parsed.pm) ? parsed.pm : DEFAULT_BASE_FIELDS.pm,
+      metadata: { ...DEFAULT_BASE_FIELDS.metadata, ...(parsed.metadata ?? {}) },
+      selectOptions: { ...DEFAULT_BASE_FIELDS.selectOptions, ...(parsed.selectOptions ?? {}) },
     };
   } catch {
     return DEFAULT_BASE_FIELDS;
@@ -132,17 +149,20 @@ const baseAdapter = baseClient && repositories
       async savePmSnapshot(input) { await repositories.pmSnapshots.append({ ...input, capturedAt: new Date().toISOString() }); },
     })
   : undefined;
-const baseProjectId = process.env.BASE_PROJECT_ID ?? null;
-
 const advanceAfterAnalysis = repositories ? createAnalysisAdvancer({
   requirements: repositories.requirements, people: repositories.people, jobs: repositories.jobs, audit: repositories.audit,
 }) : undefined;
+const advanceAfterMetadataSync = repositories ? createSourceMetadataAdvancer({
+  requirements: repositories.requirements, people: repositories.people, jobs: repositories.jobs, audit: repositories.audit,
+}) : undefined;
 
-const basePushJobHandler: ((job: { payload: Record<string, unknown> }) => Promise<void>) | undefined = repositories && baseAdapter && baseProjectId ? async (job) => {
+const basePushJobHandler: ((job: { payload: Record<string, unknown> }) => Promise<void>) | undefined = repositories && baseAdapter ? async (job) => {
   const requirementId = job.payload.requirementId;
   if (typeof requirementId !== "string") throw new Error("Invalid base_push job payload");
   const requirement = await repositories.requirements.get(requirementId);
   if (!requirement) throw new Error("Base push requirement was not found");
+  const source = await repositories.sources.get(requirement.sourceConfigId);
+  if (!source?.externalProjectId) throw new Error("Base push source project is not configured");
   const expectedSourceVersion = job.payload.sourceVersion;
   if (typeof expectedSourceVersion === "number" && expectedSourceVersion !== requirement.sourceVersion) return;
   const latestAnalysis = await repositories.analyses.latest(requirement.id);
@@ -150,9 +170,12 @@ const basePushJobHandler: ((job: { payload: Record<string, unknown> }) => Promis
   if (typeof expectedAnalysisVersion === "number" && expectedAnalysisVersion !== (latestAnalysis?.analysisVersion ?? 0)) return;
   const service = createBasePushService({
     requirements: repositories.requirements, people: repositories.people, basePushes: repositories.basePushes,
-    audit: repositories.audit, analyses: repositories.analyses, sourceSnapshots: repositories.sourceSnapshots, base: baseAdapter, baseProjectId, baseFields, actorId: typeof job.payload.actorId === "string" ? job.payload.actorId : null,
+    audit: repositories.audit, analyses: repositories.analyses, sourceSnapshots: repositories.sourceSnapshots, base: baseAdapter, sourceProjectId: source.externalProjectId, baseFields, actorId: typeof job.payload.actorId === "string" ? job.payload.actorId : null,
   });
-  const outcome = await service.pushRequirement(requirementId, basePushIdempotencyKey(requirementId, requirement.sourceVersion, latestAnalysis?.analysisVersion ?? 0));
+  const idempotencyKey = typeof job.payload.idempotencyKey === "string"
+    ? job.payload.idempotencyKey
+    : basePushIdempotencyKey(requirementId, requirement.sourceVersion, latestAnalysis?.analysisVersion ?? 0);
+  const outcome = await service.pushRequirement(requirementId, idempotencyKey);
   if (outcome.kind === "error") throw new Error("Base push failed; retry is available.");
   // conflict：pull 未同步或等待人工映射——等待不是失败，人工映射持久化后会重新入队
 } : undefined;

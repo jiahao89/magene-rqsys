@@ -2,7 +2,7 @@
 
 Status: [ready-for-agent] subject to the target Teambition API POC.
 
-Read-only live metadata evidence for the selected `需求收集与管理` project is recorded in [TEAMBITION-LIVE-POC.md](./TEAMBITION-LIVE-POC.md). It confirms the task ID and current response shape, but does not close field-semantic, pagination, update-time, or cross-time ID-stability gates.
+Read-only live metadata evidence for the selected `室外产品-码表软固件需求池` project is recorded in [TEAMBITION-LIVE-POC.md](./TEAMBITION-LIVE-POC.md). It confirms the requirement task ID and one 311-record response with unique IDs, but does not close field-semantic, pagination, update-time, or cross-time ID-stability gates.
 
 ## Problem and outcome
 
@@ -10,7 +10,7 @@ Operators need a reliable weekly and manual import from one product-group Teambi
 
 ## User stories
 
-1. As an administrator, I want to configure one dedicated Teambition project and a weekly schedule, so that the source is synchronized without recurring manual work.
+1. As a signed-in Feishu user, I want to configure the Teambition project name and weekly schedule, so that the source is synchronized without recurring manual work.
 2. As a PM Leader or designated operator, I want to start a manual sync, so that urgent source changes do not wait for the next schedule.
 3. As an operator, I want the first run to import all requirements in the selected project, including requirements without an owner, so that the initial data set is complete.
 4. As an operator, I want later runs to detect new and changed requirements, so that the workbench remains current without duplicate records.

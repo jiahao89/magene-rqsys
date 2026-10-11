@@ -2,7 +2,6 @@ import type { Pool } from "pg";
 import { SourceProjectResolutionError, type FeishuUserDirectory, type IdentityProvider, type TeambitionSourceProjectResolver } from "../application/ports.js";
 import type { AuditEventRepository, AnalysisRunRepository, PipelineJobRepository, SourceConfigRepository, SyncBatchRepository, SyncItemRepository, PersonMappingRepository, RequirementQueryRepository, BasePushRunRepository, ModuleDictionaryRepository, PriorityRuleRepository, SourceSnapshotRepository } from "../application/repositories.js";
 import type { PersonMappingRecord, AnalysisRunRecord, ModuleDictionaryVersionRecord, PriorityRuleVersionRecord, RequirementRecord, SourceConfigRecord, SyncBatchRecord } from "../domain/persistence.js";
-import type { FeishuBasePushAdapter } from "../base/client.js";
 import { AuditListQuerySchema, BatchListQuerySchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
 import { randomUUID } from "node:crypto";
 import { SourceConfigUpdateSchema, type ResolvedSourceConfigUpdate } from "../contracts/source.js";
@@ -32,15 +31,12 @@ export interface ApiDependencies {
   identity: IdentityProvider | undefined;
   repositories: ApiRepositories | undefined;
   teambitionSourceProjects?: TeambitionSourceProjectResolver;
-  base?: FeishuBasePushAdapter;
-  baseProjectId?: string;
-  baseFields?: { projectId: string; requirementId: string; owner: string; source: Record<string,string>; ai: Record<string,string>; pm: string[] };
   feishuUsers?: FeishuUserDirectory;
   now: (() => Date) | undefined;
 }
 function json(body: unknown, status = 200): Response { return Response.json(body, { status }); }
 function sourceDto(source: SourceConfigRecord) {
-  return { id: source.id, projectId: source.externalProjectId, projectName: source.externalProjectName, requirementTypeId: source.requirementTypeId, enabled: source.enabled, schedule: { enabled: source.scheduleEnabled, weekday: source.scheduleWeekday, time: source.scheduleLocalTime, timezone: source.scheduleTimezone }, ownerNames: source.ownerNames, fieldMap: source.fieldMap };
+  return { id: source.id, projectName: source.externalProjectName, enabled: source.enabled, schedule: { enabled: source.scheduleEnabled, weekday: source.scheduleWeekday, time: source.scheduleLocalTime, timezone: source.scheduleTimezone } };
 }
 function batchDto(batch: SyncBatchRecord) {
   return { id: batch.id, status: batch.status, triggerType: batch.triggerType, actorId: batch.actorId, totalCount: batch.totalCount, succeededCount: batch.succeededCount, failedCount: batch.failedCount, startedAt: batch.startedAt, completedAt: batch.completedAt, errorSummary: batch.errorSummary };
@@ -66,18 +62,6 @@ async function actorFor(request: Request, dependencies: ApiDependencies) {
   catch { return { response: jsonError("UNAUTHORIZED") } as const; }
 }
 
-// 服务端角色矩阵（Spec 04 角色表）：授权必须在这里发生，不能只靠隐藏 Web 控件。
-// manage_config：来源配置写（Administrator）；manage_rules：词典/规则维护与发布（Administrator、PM Leader）；
-// operate：手动同步、批次重试、分析重试、负责人映射与推送（Administrator、PM Leader、Designated operator）。
-type RoleAction = "manage_config" | "manage_rules" | "operate";
-const ROLE_MATRIX: Record<RoleAction, readonly string[]> = {
-  manage_config: ["administrator"],
-  manage_rules: ["administrator", "pm_leader"],
-  operate: ["administrator", "pm_leader", "operator"],
-};
-function forbid(actor: { id: string; roles: string[] }, action: RoleAction): boolean {
-  return !actor.roles.some((role) => ROLE_MATRIX[action].includes(role));
-}
 // 审计与业务写入保持一致：审计写失败时不返回虚假成功（工单 12 验收）。
 async function appendAudit(repositories: ApiRepositories, event: Parameters<ApiRepositories["audit"]["append"]>[0]): Promise<Response | null> {
   try { await repositories.audit.append(event); return null; }
@@ -88,18 +72,20 @@ async function readJson(request: Request): Promise<unknown> { try { return await
 async function resolveSourceConfig(
   update: ReturnType<typeof SourceConfigUpdateSchema.parse>,
   dependencies: ApiDependencies,
+  current?: SourceConfigRecord,
 ): Promise<ResolvedSourceConfigUpdate | Response> {
+  if (current && update.projectName === current.externalProjectName) {
+    return { ...update, projectId: current.externalProjectId, requirementTypeId: current.requirementTypeId, ownerNames: current.ownerNames, fieldMap: current.fieldMap };
+  }
   if (dependencies.teambitionSourceProjects) {
     try {
       const resolved = await dependencies.teambitionSourceProjects.resolveProject(update.projectName);
-      return { ...update, projectId: resolved.projectId, requirementTypeId: resolved.requirementTypeId };
+      return { ...update, projectId: resolved.projectId, requirementTypeId: resolved.requirementTypeId, ownerNames: [], fieldMap: {} };
     } catch (cause) {
       if (cause instanceof SourceProjectResolutionError) return jsonError("VALIDATION_FAILED", cause.message);
       return jsonError("DEPENDENCY_UNAVAILABLE", "无法连接 Teambition 项目配置，请稍后重试。");
     }
   }
-  // Backward compatibility for existing API clients during migration. The Web form sends only projectName.
-  if (update.projectId && update.requirementTypeId) return update as ResolvedSourceConfigUpdate;
   return jsonError("DEPENDENCY_UNAVAILABLE", "Teambition 项目自动识别尚未配置。");
 }
 
@@ -116,7 +102,6 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
   }
   if (method === "POST" && url.pathname === "/api/sources") {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (forbid(auth.actor, "manage_config")) return jsonError("FORBIDDEN");
     if (!repositories) return jsonError("DEPENDENCY_UNAVAILABLE");
     const parsed = SourceConfigUpdateSchema.safeParse(await readJson(request)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
     // 受控初始化：MVP 只允许一个产品组来源（D-09）。
@@ -132,26 +117,22 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
   const sourceMatch = url.pathname.match(/^\/api\/sources\/([^/]+)$/);
   if (method === "PUT" && sourceMatch) {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (forbid(auth.actor, "manage_config")) return jsonError("FORBIDDEN");
     if (!repositories) return jsonError("DEPENDENCY_UNAVAILABLE");
     const parsed = SourceConfigUpdateSchema.safeParse(await readJson(request)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
     const sourceId = decodeURIComponent(sourceMatch[1]!);
     const current = await repositories.sources.get(sourceId);
     if (!current) return jsonError("NOT_FOUND");
-    const resolved = parsed.data.projectName === current.externalProjectName
-      ? { ...parsed.data, projectId: current.externalProjectId, requirementTypeId: current.requirementTypeId }
-      : await resolveSourceConfig(parsed.data, dependencies);
+    const resolved = await resolveSourceConfig(parsed.data, dependencies, current);
     if (resolved instanceof Response) return resolved;
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
     let updated: SourceConfigRecord | null;
-    try { updated = await repositories.sources.update(sourceId, resolved, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "source.updated", entityType: "source_config", result: "succeeded", safeDetails: { sourceProjectId: resolved.projectId }, occurredAt: now }); }
+    try { updated = await repositories.sources.update(sourceId, resolved, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "source.config_updated", entityType: "source_config", result: "succeeded", safeDetails: { sourceProjectId: resolved.projectId }, occurredAt: now }); }
     catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
     if (!updated) return jsonError("NOT_FOUND");
     return json(sourceDto(updated));
   }
   if (method === "POST" && url.pathname === "/api/sync/run") {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (forbid(auth.actor, "operate")) return jsonError("FORBIDDEN");
     if (!repositories) return jsonError("DEPENDENCY_UNAVAILABLE");
     const body = SyncRunRequestSchema.safeParse(await readJson(request)), key = SyncIdempotencyHeaderSchema.safeParse(request.headers.get("Idempotency-Key"));
     if (!body.success || !key.success) return jsonError("VALIDATION_FAILED");
@@ -214,7 +195,6 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
   }
   if (method === "POST" && url.pathname === "/api/rules/dictionary") {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (forbid(auth.actor, "manage_rules")) return jsonError("FORBIDDEN");
     if (!repositories?.dictionaries) return jsonError("DEPENDENCY_UNAVAILABLE");
     const body = DictionaryCreateSchema.safeParse(await readJson(request)); if (!body.success) return jsonError("VALIDATION_FAILED");
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
@@ -224,7 +204,6 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
   const dictionaryPublishMatch = url.pathname.match(/^\/api\/rules\/dictionary\/(\d+)\/publish$/);
   if (method === "POST" && dictionaryPublishMatch) {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (forbid(auth.actor, "manage_rules")) return jsonError("FORBIDDEN");
     if (!repositories?.dictionaries) return jsonError("DEPENDENCY_UNAVAILABLE");
     const version = Number(dictionaryPublishMatch[1]);
     const existing = await repositories.dictionaries.get(version);
@@ -241,7 +220,6 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
   }
   if (method === "POST" && url.pathname === "/api/rules/priority") {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (forbid(auth.actor, "manage_rules")) return jsonError("FORBIDDEN");
     if (!repositories?.priorityRules) return jsonError("DEPENDENCY_UNAVAILABLE");
     const body = PriorityRuleCreateSchema.safeParse(await readJson(request)); if (!body.success) return jsonError("VALIDATION_FAILED");
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
@@ -251,7 +229,6 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
   const rulePublishMatch = url.pathname.match(/^\/api\/rules\/priority\/([^/]+)\/publish$/);
   if (method === "POST" && rulePublishMatch) {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (forbid(auth.actor, "manage_rules")) return jsonError("FORBIDDEN");
     if (!repositories?.priorityRules) return jsonError("DEPENDENCY_UNAVAILABLE");
     const id = decodeURIComponent(rulePublishMatch[1]!);
     const existing = await repositories.priorityRules.get(id);
@@ -271,7 +248,6 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
   }
   if (method === "GET" && url.pathname === "/api/feishu/users") {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (forbid(auth.actor, "operate")) return jsonError("FORBIDDEN");
     if (!dependencies.feishuUsers) return jsonError("DEPENDENCY_UNAVAILABLE");
     const parsed = FeishuUserSearchQuerySchema.safeParse({ q: url.searchParams.get("q") ?? "" });
     if (!parsed.success) return jsonError("VALIDATION_FAILED");
@@ -299,7 +275,6 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
   const itemRetryMatch = url.pathname.match(/^\/api\/items\/([^/]+)\/retry$/);
   if (method === "POST" && itemRetryMatch) {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (forbid(auth.actor, "operate")) return jsonError("FORBIDDEN");
     if (!repositories?.items || !repositories.batches || !repositories.jobs) return jsonError("DEPENDENCY_UNAVAILABLE");
     const item = await repositories.items.get(decodeURIComponent(itemRetryMatch[1]!)); if (!item) return jsonError("NOT_FOUND");
     if (item.status !== "failed") return jsonError("CONFLICT");
@@ -330,7 +305,6 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
   const analysisRetryMatch = url.pathname.match(/^\/api\/analysis\/([^/]+)\/retry$/);
   if (method === "POST" && analysisRetryMatch) {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (forbid(auth.actor, "operate")) return jsonError("FORBIDDEN");
     if (!repositories?.requirements || !repositories.jobs) return jsonError("DEPENDENCY_UNAVAILABLE");
     const req = await repositories.requirements.get(decodeURIComponent(analysisRetryMatch[1]!)); if (!req) return jsonError("NOT_FOUND");
     if (req.pipeline.pull !== "synced" || req.pipeline.analysis !== "failed_retryable") return jsonError("CONFLICT");
@@ -346,7 +320,6 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
   const ownerMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/owner$/);
   if (method === "PUT" && ownerMatch) {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (forbid(auth.actor, "operate")) return jsonError("FORBIDDEN");
     if (!repositories?.people || !repositories.requirements || !repositories.jobs || !repositories.audit) return jsonError("DEPENDENCY_UNAVAILABLE");
     const body = OwnerMappingUpdateSchema.safeParse(await readJson(request)); if (!body.success) return jsonError("VALIDATION_FAILED");
     const req = await repositories.requirements.get(decodeURIComponent(ownerMatch[1]!)); if (!req) return jsonError("NOT_FOUND");
@@ -357,7 +330,8 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     await repositories.requirements.setOwner(req.id,mapping.feishuUserId,"manually_mapped");
     const latestAnalysis = await repositories.analyses?.latest(req.id) ?? null;
     const analysisVersion = latestAnalysis?.analysisVersion ?? 0;
-    await repositories.jobs.enqueue({jobType:"base_push",dedupeKey:basePushIdempotencyKey(req.id,req.sourceVersion,analysisVersion),payload:{requirementId:req.id,sourceVersion:req.sourceVersion,analysisVersion,actorId:auth.actor.id},availableAt:now});
+    const idempotencyKey = basePushIdempotencyKey(req.id,req.sourceVersion,analysisVersion,`mapping:${mapping.id}`);
+    await repositories.jobs.enqueue({jobType:"base_push",dedupeKey:idempotencyKey,payload:{requirementId:req.id,sourceVersion:req.sourceVersion,analysisVersion,idempotencyKey,actorId:auth.actor.id},availableAt:now});
     const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "owner.manually_mapped", entityType: "requirement", entityId: req.id, result: "succeeded", safeDetails: {}, occurredAt: now });
     if (auditFailure) return auditFailure;
     return json({requirementId:req.id,ownerState:"manually_mapped",status:"queued"});
@@ -365,7 +339,6 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
   const pushMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/push$/);
   if (method === "POST" && pushMatch) {
     const auth = await actorFor(request,dependencies); if ("response" in auth) return auth.response;
-    if (forbid(auth.actor, "operate")) return jsonError("FORBIDDEN");
     if (!repositories?.requirements || !repositories.jobs || !repositories.audit) return jsonError("DEPENDENCY_UNAVAILABLE");
     const key = SyncIdempotencyHeaderSchema.safeParse(request.headers.get("Idempotency-Key")); if (!key.success) return jsonError("VALIDATION_FAILED");
     const req = await repositories.requirements.get(decodeURIComponent(pushMatch[1]!)); if (!req) return jsonError("NOT_FOUND");
@@ -373,8 +346,8 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const latestAnalysis = await repositories.analyses?.latest(req.id) ?? null;
     const analysisVersion = latestAnalysis?.analysisVersion ?? 0;
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
-    const dedupeKey = basePushIdempotencyKey(req.id, req.sourceVersion, analysisVersion);
-    try { await repositories.jobs.enqueue({ jobType: "base_push", dedupeKey, payload: { requirementId: req.id, sourceVersion: req.sourceVersion, analysisVersion, actorId: auth.actor.id }, availableAt: now }); }
+    const idempotencyKey = basePushIdempotencyKey(req.id, req.sourceVersion, analysisVersion, `retry:${key.data}`);
+    try { await repositories.jobs.enqueue({ jobType: "base_push", dedupeKey: idempotencyKey, payload: { requirementId: req.id, sourceVersion: req.sourceVersion, analysisVersion, idempotencyKey, actorId: auth.actor.id }, availableAt: now }); }
     catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
     const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "base.push.retry_requested", entityType: "requirement", entityId: req.id, result: "succeeded", safeDetails: { sourceVersion: req.sourceVersion, analysisVersion }, occurredAt: now });
     if (auditFailure) return auditFailure;

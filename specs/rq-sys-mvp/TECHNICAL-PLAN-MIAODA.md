@@ -52,7 +52,7 @@ The earlier 2026-10-08 TRAE authorization-service report that Spark scopes were 
 | 任务调度 | 首选妙搭自动化任务；任务状态/条目状态落 PostgreSQL | 妙搭官方资料介绍可配置定时任务并执行应用代码。仍需实测时区、执行时限、重复触发、失败记录、并发和重试能力。 |
 | 前端服务端状态 | 使用 TanStack Query 管理 API 缓存、刷新和变更失效；简单表单状态保留在组件/表单层 | 工作台需要查看批次进度、阶段状态和重试结果。只在需要异步服务端状态时使用，不额外引入 Redux。 |
 | API 契约校验 | 服务端校验为准；TypeScript DTO 与 Zod schema 可放共享契约模块 | 浏览器校验只改善体验，权限和业务校验必须在服务端重复执行。避免前后端各自维护不同枚举。 |
-| 认证与授权 | 复用妙搭/飞书身份；每个服务端入口都做角色和资源授权 | 仅用前端隐藏按钮不构成授权。若妙搭无法可靠提供操作者身份，需要在 POC 阶段确定替代认证方式。 |
+| 认证与授权 | 复用妙搭/飞书登录；服务端从平台可信上下文读取 actor ID；MVP 不做应用角色或用户权限矩阵 | 未登录拒绝；所有已登录租户用户可用全部 MVP 功能。禁止信任客户端提交的身份 header。 |
 | 日志与审计 | 妙搭日志用于运行诊断；业务审计事件长期落业务数据库 | 日志和审计不是同一数据；API token、个人 ID、电话邮箱必须脱敏。 |
 
 React 官方建议新项目优先使用框架，并列出 React Router 7 与 Vite 的组合；当前仓库已经是 React Router + Vite，且工作台没有公开 SEO 页面、后端计划由妙搭承载，因此建议先保留 CSR SPA，把边界控制在一个前端和一个妙搭后端。[React：Creating a React App](https://react.dev/learn/creating-a-react-app)

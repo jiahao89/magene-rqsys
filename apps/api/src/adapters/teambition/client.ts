@@ -108,15 +108,13 @@ export class TeambitionClient implements TeambitionSourceProjectResolver {
     const project = projects[0]!;
     const scenarioFields = namedEntities(await this.getJson("getProjectScenarioFieldConfigs", { project_id: project.id }));
     const candidates = scenarioFields.filter(({ name }) => /需求|requirement/i.test(name) && !/缺陷|bug|defect/i.test(name));
-    const exact = candidates.filter(({ name }) => ["需求", "requirement"].includes(normalizeName(name).toLocaleLowerCase()));
-    const selected = exact.length === 1 ? exact : exact.length > 1 ? exact : candidates;
-    if (selected.length === 0) {
+    if (candidates.length === 0) {
       throw new SourceProjectResolutionError("requirement_type_not_found", `项目“${projectName}”中没有可识别的需求任务类型。`);
     }
-    if (selected.length > 1) {
+    if (candidates.length > 1) {
       throw new SourceProjectResolutionError("requirement_type_ambiguous", `项目“${projectName}”中存在多个需求任务类型，无法自动确定同步范围。`);
     }
-    return { projectId: project.id, requirementTypeId: selected[0]!.id };
+    return { projectId: project.id, requirementTypeId: candidates[0]!.id };
   }
 
   async listRequirementTasks(config: SourceProjectConfig): Promise<TeambitionTaskRecord[]> {

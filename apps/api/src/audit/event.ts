@@ -19,6 +19,7 @@ export const AuditActionSchema = z.enum([
   "stage.failed",
   "source.pushed_to_base",
   "source.push_skipped",
+  "source.created",
   "source.config_updated",
   "owner.manually_mapped",
 ]);
