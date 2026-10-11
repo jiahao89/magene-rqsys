@@ -22,7 +22,8 @@ const pushRun = (overrides: Partial<BasePushRunRecord> = {}): BasePushRunRecord 
   safeErrorSummary: null, startedAt: "2026-10-08T00:00:00.000Z", completedAt: "2026-10-08T00:00:01.000Z", ...overrides,
 });
 
-function makeHarness(options: { req?: RequirementRecord; previous?: BasePushRunRecord | null; lastSuccessful?: BasePushRunRecord | null; sourceSnapshot?: SourceSnapshotRecord | null } = {}) {
+function makeHarness(options: { req?: RequirementRecord; previous?: BasePushRunRecord | null; lastSuccessful?: BasePushRunRecord | null; sourceSnapshot?: SourceSnapshotRecord | null; omittedFields?: { field: string; value: string; reason: "not_in_base_select_options" | "category_omitted_by_policy" }[] } = {}) {
+  const auditEvents: { eventType: string; result: string; safeDetails: Record<string, unknown> }[] = [];
   const req = options.req ?? requirement();
   const calls: string[] = [];
   let existing = options.previous ?? null;
@@ -47,13 +48,13 @@ function makeHarness(options: { req?: RequirementRecord; previous?: BasePushRunR
       restart: async (id: string, startedAt: string) => { calls.push("restart"); const restarted = { ...(existing ?? currentRun), id, status: "running" as const, startedAt, completedAt: null, safeErrorCode: null, safeErrorSummary: null }; existing = restarted; return restarted; },
     } as never,
     sourceSnapshots: { getAtVersion: async () => options.sourceSnapshot ?? null } as never,
-    audit: { append: async () => { calls.push("audit"); } } as never,
-    base: { push: async (input: { projectId: string; substantiveChanged: boolean }) => { calls.push("base"); baseInput = input; return { recordId: "record-2", created: false }; } } as unknown as FeishuBasePushAdapter,
+    audit: { append: async (event: { eventType: string; result: string; safeDetails: Record<string, unknown> }) => { calls.push("audit"); auditEvents.push(event); } } as never,
+    base: { push: async (input: { projectId: string; substantiveChanged: boolean }) => { calls.push("base"); baseInput = input; return { recordId: "record-2", created: false, omittedFields: options.omittedFields ?? [] }; } } as unknown as FeishuBasePushAdapter,
     sourceProjectId: "verified-source-project",
     baseFields: { projectId: "project", requirementId: "requirement", owner: "owner", source: {}, ai: {}, pm: ["PM状态"] },
     actorId: "operator-1", now: () => new Date("2026-10-10T00:00:00.000Z"),
   });
-  return { service, calls, get baseInput() { return baseInput; }, get savedBaseRecord() { return savedBaseRecord; } };
+  return { service, calls, auditEvents, get baseInput() { return baseInput; }, get savedBaseRecord() { return savedBaseRecord; } };
 }
 
 test("retrying the same failed Base push executes the upsert instead of reporting the failure as success", async () => {
@@ -82,4 +83,29 @@ test("uses the configured Teambition source project ID as the Base project key",
   const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
   assert.equal(result.kind, "pushed");
   assert.equal(h.baseInput?.projectId, "verified-source-project");
+});
+
+test("records a rejected select value in the push audit instead of hiding it", async () => {
+  const h = makeHarness({
+    omittedFields: [{ field: "AI优先级建议", value: "P3", reason: "not_in_base_select_options" }],
+  });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.deepEqual(result.kind === "pushed" ? result.omittedFields : null, [
+    { field: "AI优先级建议", value: "P3", reason: "not_in_base_select_options" },
+  ]);
+  // 推送仍然成功，但审计必须解释「成功却没有写入该字段」。
+  const success = h.auditEvents.find((event) => event.eventType === "base.push" && event.result === "succeeded");
+  assert.ok(success);
+  assert.match(String(success.safeDetails.reason), /omitted_fields:AI优先级建议=P3\(not_in_base_select_options\)/);
+});
+
+test("keeps the success audit free of an omission reason when nothing was skipped", async () => {
+  const h = makeHarness();
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.deepEqual(result.kind === "pushed" ? result.omittedFields : null, []);
+  const success = h.auditEvents.find((event) => event.eventType === "base.push" && event.result === "succeeded");
+  assert.ok(success);
+  assert.equal(success.safeDetails.reason, undefined);
 });

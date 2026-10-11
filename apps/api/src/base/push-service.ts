@@ -6,11 +6,12 @@
 //   TB 有负责人且解析唯一 → 推送该负责人；有负责人但未匹配 → 等待人工映射（conflict，不推送、不误报）。
 // - AI 字段：最新已分析版本映射 module/priority/analysisVersion；P0–P3 原样传递（不丢弃 P3），
 //   priority 为 null 时不写该字段（不制造伪优先级，也不清空 Base 已有建议）。
+// - 被 Base 单选项拒绝的取值不伪造降级值，但也不静默丢弃：记入推送结果的 omittedFields 与审计。
 // - PM 快照仅在源版本新于上次推送时读取保存（实质变化协议）。
 
 import { randomUUID } from "node:crypto";
 import type { RequirementQueryRepository, PersonMappingRepository, BasePushRunRepository, AuditEventRepository, AnalysisRunRepository, SourceSnapshotRepository } from "../application/repositories.js";
-import type { FeishuBasePushAdapter } from "./client.js";
+import type { FeishuBasePushAdapter, OmittedField } from "./client.js";
 import { normalizeOwnerName } from "../owner/mapping.js";
 
 export interface BasePushServiceDeps {
@@ -28,17 +29,27 @@ export interface BasePushServiceDeps {
 }
 
 export type PushOutcome =
-  | { kind: "pushed"; status: string; baseRecordId: string | null; created: boolean }
+  | { kind: "pushed"; status: string; baseRecordId: string | null; created: boolean; omittedFields: OmittedField[] }
   | { kind: "not_found" }
   | { kind: "conflict" } // pull 未同步，或 TB 负责人未匹配等待人工映射
   | { kind: "error" }; // 推送失败（safe error 已记录，可重试）
 
 export function createBasePushService(deps: BasePushServiceDeps) {
   const now = deps.now ?? (() => new Date());
-  const auditPushSuccess = (requirementId: string, sourceVersion: number, created: boolean, replay: boolean) => deps.audit.append({
-    id: randomUUID(), actorId: deps.actorId, eventType: "base.push", entityType: "requirement", entityId: requirementId,
-    result: "succeeded", safeDetails: { created, replay, sourceVersion }, occurredAt: now().toISOString(),
-  });
+  // 审计 safeDetails 只保留扁平原始类型（白名单 + 禁止嵌套），因此省略信息以字符串摘要写入既有
+  // `reason` 键：既不改动脱敏契约，也让「推送成功但某字段未写入」可追溯。
+  const omissionSummary = (omittedFields: OmittedField[]): string | null => omittedFields.length
+    ? `omitted_fields:${omittedFields.map((item) => `${item.field}=${item.value}(${item.reason})`).join(",")}`
+    : null;
+  const auditPushSuccess = (requirementId: string, sourceVersion: number, created: boolean, replay: boolean, omittedFields: OmittedField[] = []) => {
+    const reason = omissionSummary(omittedFields);
+    return deps.audit.append({
+      id: randomUUID(), actorId: deps.actorId, eventType: "base.push", entityType: "requirement", entityId: requirementId,
+      result: "succeeded",
+      safeDetails: { created, replay, sourceVersion, ...(reason ? { reason } : {}) },
+      occurredAt: now().toISOString(),
+    });
+  };
   return {
     async pushRequirement(requirementId: string, idempotencyKey: string): Promise<PushOutcome> {
       const req = await deps.requirements.get(requirementId);
@@ -47,8 +58,9 @@ export function createBasePushService(deps: BasePushServiceDeps) {
 
       const previous = await deps.basePushes.findByIdempotencyKey(idempotencyKey);
       if (previous?.status === "pushed") {
-        await auditPushSuccess(req.id, req.sourceVersion, false, true);
-        return { kind: "pushed", status: "pushed", baseRecordId: previous.baseRecordId, created: false };
+        // 重放沿用既有结果；省略字段的说明来自本次审计记录，不在此处重新推断。
+        await auditPushSuccess(req.id, req.sourceVersion, false, true, []);
+        return { kind: "pushed", status: "pushed", baseRecordId: previous.baseRecordId, created: false, omittedFields: [] };
       }
 
       const ownerLookup = req.executorUserId
@@ -92,14 +104,14 @@ export function createBasePushService(deps: BasePushServiceDeps) {
       if (!run) {
         const current = await deps.basePushes.findByIdempotencyKey(idempotencyKey);
         if (current?.status === "pushed") {
-          await auditPushSuccess(req.id, req.sourceVersion, false, true);
-          return { kind: "pushed", status: "pushed", baseRecordId: current.baseRecordId, created: false };
+          await auditPushSuccess(req.id, req.sourceVersion, false, true, []);
+          return { kind: "pushed", status: "pushed", baseRecordId: current.baseRecordId, created: false, omittedFields: [] };
         }
         return { kind: "conflict" };
       }
 
       if (req.pipeline.push !== "running") await deps.requirements.setPushState(req.id, "running");
-      let pushedResult: { recordId: string; created: boolean };
+      let pushedResult: { recordId: string; created: boolean; omittedFields: OmittedField[] };
       try {
         // 最新已分析版本映射 AI 字段：P0–P3 原样传递（不丢弃 P3）；无分析版本时不写 AI 字段
         const latestAnalysis = await deps.analyses?.latest(req.id) ?? null;
@@ -136,8 +148,8 @@ export function createBasePushService(deps: BasePushServiceDeps) {
         await deps.audit.append({ id: randomUUID(), actorId: deps.actorId, eventType: "base.push", entityType: "requirement", entityId: req.id, result: "failed", safeDetails: { sourceVersion: req.sourceVersion, errorClass: "base_push_failed" }, occurredAt: now().toISOString() });
         return { kind: "error" };
       }
-      await auditPushSuccess(req.id, req.sourceVersion, pushedResult.created, false);
-      return { kind: "pushed", status: "pushed", baseRecordId: pushedResult.recordId, created: pushedResult.created };
+      await auditPushSuccess(req.id, req.sourceVersion, pushedResult.created, false, pushedResult.omittedFields);
+      return { kind: "pushed", status: "pushed", baseRecordId: pushedResult.recordId, created: pushedResult.created, omittedFields: pushedResult.omittedFields };
     },
   };
 }

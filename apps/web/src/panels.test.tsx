@@ -1,6 +1,6 @@
 // 工单 16/17 面板测试：数据全部来自 mock API；覆盖正向、权限拒绝与详情/重试交互。
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { BatchesPanel, MappingsPanel, RequirementsPanel, SourcesPanel } from "./panels";
 import type { SourceConfig } from "./api";
 
@@ -69,7 +69,7 @@ describe("SourcesPanel (ticket 16)", () => {
     expect(updateBody).not.toHaveProperty("fieldMap");
   });
 
-  it("shows an explicit permission state instead of faking success on 403", async () => {
+  it("shows an explicit server-rejection state instead of faking success on 403", async () => {
     fetchMock.mockImplementation(async (input, init) => {
       const path = typeof input === "string" ? input : new Request(input).url;
       if (path === "/api/sources/source-1" && init?.method === "PUT") {
@@ -81,7 +81,30 @@ describe("SourcesPanel (ticket 16)", () => {
     render(<SourcesPanel sources={[source]} loadState="ready" onRefresh={() => undefined} />);
     fireEvent.click(screen.getByRole("button", { name: "保存更新" }));
 
-    expect(await screen.findByText(/没有权限执行此操作/)).toBeInTheDocument();
+    // 服务端拒绝必须原样暴露：既不伪造成成功，也不归因为本地不存在的角色矩阵。
+    expect(await screen.findByText(/服务端拒绝了此操作（FORBIDDEN）/)).toBeInTheDocument();
+  });
+
+  it("shows a configuration self-check that never claims to have validated credentials", async () => {
+    render(<SourcesPanel sources={[source]} loadState="ready" onRefresh={() => undefined} />);
+    const selfCheck = screen.getByRole("group", { name: "连接自检" });
+
+    expect(within(selfCheck).getByText("Teambition 项目名称")).toBeInTheDocument();
+    expect(within(selfCheck).getByText("周计划配置")).toBeInTheDocument();
+    expect(within(selfCheck).getByText("同步开关")).toBeInTheDocument();
+    expect(within(selfCheck).getAllByText(/服务端凭据/).length).toBeGreaterThan(0);
+    // 凭据只存在于服务端：此处不得出现「有效」结论。
+    expect(within(selfCheck).queryByText(/凭据有效/)).not.toBeInTheDocument();
+  });
+
+  it("summarises the saved schedule instead of the unsaved draft", () => {
+    const scheduled = { ...source, enabled: true, schedule: { enabled: true, weekday: 1, time: "09:00", timezone: "Asia/Shanghai" } };
+    render(<SourcesPanel sources={[scheduled]} loadState="ready" onRefresh={() => undefined} />);
+    const selfCheck = screen.getByRole("group", { name: "连接自检" });
+
+    // 自检读取已保存配置：应显示计划摘要，而不是「周计划未启用」。
+    expect(within(selfCheck).getByText("周一 09:00 Asia/Shanghai")).toBeInTheDocument();
+    expect(within(selfCheck).queryByText(/周计划未启用/)).not.toBeInTheDocument();
   });
 });
 
@@ -226,6 +249,25 @@ describe("RequirementsPanel (ticket 17)", () => {
     expect(screen.getAllByText(/证据不足/)).toHaveLength(2);
     expect(screen.getByText("S · 商业")).toBeInTheDocument();
     expect(screen.getByText("C · 技术")).toBeInTheDocument();
+  });
+
+  it("exposes the Base record as a copyable reference without claiming PM state is readable", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path.startsWith("/api/requirements/req-1")) {
+        return jsonOk({ ...row, baseRecordId: "recvxwGs5Js0PA", analysis: null, analyses: [] });
+      }
+      return jsonOk({ items: [row], nextCursor: null });
+    });
+
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    fireEvent.click(await screen.findByRole("button", { name: "查看" }));
+
+    expect(await screen.findByText("recvxwGs5Js0PA")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "复制记录 ID" })).toBeInTheDocument();
+    // Base 链接需要凭据，工作台拿不到：必须说明去哪看 PM 状态，而不是暗示已读回。
+    expect(screen.getByText(/请在飞书 Base 中查看/)).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Base/ })).not.toBeInTheDocument();
   });
 
   it("passes server-side search and filters to the requirements API", async () => {

@@ -22,6 +22,9 @@
 - Keep external credentials server-side; use stubs for local provider tests. Do not make real AI provider calls without authorized test credentials.
 - For PostgreSQL repository integration tests, use the real local PostgreSQL in a unique temporary schema and drop only that schema on cleanup; never use pg-mem as proof of PostgreSQL behavior.
 - Run typecheck, relevant tests, full suite, build, and `git diff --check` before claiming local completion. Do not alter or deploy the Miaoda app while Spark write access remains blocked.
+- To exercise the workbench against the real local API, set `RQSYS_LOCAL_IDENTITY` for both processes (see `README.md`). It is loopback-only, refuses to activate under `NODE_ENV=production`, and is never target evidence.
+- When a change touches a module shared with the app runtime, mirror it into `rq-sys-miaoda/server/rqsys` and run `npm run check:alignment`; it fails on any undeclared behavioural drift between the two repositories.
+- External blockers (dev runtime alignment, Teambition row count, AI key, P3 policy, empty taxonomy) each have executable steps in `deployment/EXTERNAL-BLOCKER-RUNBOOK.md`. Do not mark the MVP complete while those remain open.
 
 ## Required gates
 

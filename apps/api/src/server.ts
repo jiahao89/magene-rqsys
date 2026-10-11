@@ -18,17 +18,26 @@ import { FeishuUserDirectoryClient } from "./adapters/feishu/directory-client.js
 import { createBasePushService } from "./base/push-service.js";
 import { basePushIdempotencyKey } from "./application/idempotency-keys.js";
 import { createAnalysisAdvancer, createSourceMetadataAdvancer } from "./pipeline/advance.js";
+import { createLocalIdentityProvider, describeLocalIdentity } from "./http/local-identity.js";
 import type { SourceProjectConfig } from "./domain/workflow.js";
 
 const port = Number(process.env.PORT ?? 8787);
 const database = createPool(process.env.DATABASE_URL);
 const repositories = database ? new PostgresRepositories(database) : undefined;
-const identity = repositories ? {
+// 身份：默认 fail-closed。仅当显式设置 RQSYS_LOCAL_IDENTITY 且非生产环境时才启用本地开发身份，
+// 目标环境的可信身份由妙搭 controller 注入 req.userContext 后写入同名请求头。
+const localIdentityUserId = process.env.RQSYS_LOCAL_IDENTITY;
+const identity = repositories ? (createLocalIdentityProvider({
+  userId: localIdentityUserId,
+  nodeEnv: process.env.NODE_ENV,
+  headerName: process.env.RQSYS_LOCAL_IDENTITY_HEADER,
+}) ?? {
   async requireActor(_request: Request): Promise<{ id: string }> {
     // Replace with the deployment's verified token/session identity adapter.
     throw new Error("No verified identity provider is configured");
   },
-} : undefined;
+}) : undefined;
+const localIdentityNotice = describeLocalIdentity(localIdentityUserId, process.env.NODE_ENV);
 let teambitionSourceProjects: TeambitionClient | undefined;
 try { teambitionSourceProjects = new TeambitionClient(); } catch { /* source setup will report the unavailable gateway */ }
 
@@ -213,7 +222,10 @@ const server = createServer(async (incoming, outgoing) => {
     outgoing.end(JSON.stringify(errorBody("INTERNAL")));
   }
 });
-server.listen(port, "0.0.0.0", () => process.stdout.write(`RQ-Sys API listening on :${port}\n`));
+server.listen(port, "0.0.0.0", () => {
+  process.stdout.write(`RQ-Sys API listening on :${port}\n`);
+  if (localIdentityNotice) process.stdout.write(`${localIdentityNotice}\n`);
+});
 
 // 本地开发轮询循环：WORKER_POLL_MS 未设置时不启动（不作为生产调度证据；目标环境定时触发由妙搭 automation 承担）
 const workerPollMs = Number(process.env.WORKER_POLL_MS ?? 0);

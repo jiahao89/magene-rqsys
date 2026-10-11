@@ -54,6 +54,63 @@ describe("RQ-Sys local workbench", () => {
     expect(screen.getByText("还没有同步批次")).toBeInTheDocument();
   });
 
+  it("surfaces the server rejection on source save without inventing a local role model", async () => {
+    fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/sources") {
+        if (init?.method === "POST") return Response.json({ error: { code: "FORBIDDEN", message: "Denied." } }, { status: 403 });
+        return Response.json({ items: [] });
+      }
+      return Response.json({ items: [] });
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "数据源配置" }));
+    fireEvent.change(await screen.findByLabelText("项目名称"), { target: { value: "产品需求池" } });
+    fireEvent.click(screen.getByRole("button", { name: "创建来源" }));
+
+    // 目标环境曾出现服务端拒绝；工作台必须原样暴露，且不声称存在本地角色矩阵。
+    expect(await screen.findByText(/服务端拒绝了此操作（FORBIDDEN）/)).toBeInTheDocument();
+  });
+
+  it("shows the configured plan and its next planned time from the source schedule", async () => {
+    fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/sources") return Response.json({ items: [{
+        id: "source-1", projectName: "产品需求", enabled: true,
+        schedule: { enabled: true, weekday: 1, time: "09:00", timezone: "Asia/Shanghai" },
+      }] });
+      return Response.json({ items: [] });
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText("计划已配置")).toBeInTheDocument();
+    expect(screen.getByText("下次计划同步")).toBeInTheDocument();
+    expect(screen.getByText(/\d{4}年\d{1,2}月\d{1,2}日/)).toBeInTheDocument();
+    // 只描述计划，不宣称目标环境已经或能够执行。
+    expect(screen.getByText(/不代表目标环境已执行/)).toBeInTheDocument();
+  });
+
+  it("reports why a saved schedule cannot produce a next run instead of guessing one", async () => {
+    fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/sources") return Response.json({ items: [{
+        id: "source-1", projectName: "产品需求", enabled: true,
+        schedule: { enabled: true, weekday: 1, time: "09:00", timezone: "Not/AZone" },
+      }] });
+      return Response.json({ items: [] });
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText(/无法识别的时区：Not\/AZone/)).toBeInTheDocument();
+    expect(screen.queryByText("下次计划同步")).not.toBeInTheDocument();
+  });
+
   it("manages dictionary drafts and publishes a version from the Rules page", async () => {
     type DictionaryRow = { version: number; status: string; entries: string[]; createdBy: string; createdAt: string; publishedAt: string | null };
     const dictionaryVersions: DictionaryRow[] = [];

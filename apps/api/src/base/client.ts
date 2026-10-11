@@ -38,10 +38,28 @@ export interface PmSnapshotWriter {
   savePmSnapshot(input: { requirementId: string; sourceVersion: number; baseRecordId: string; pmValues: Record<string, unknown> }): Promise<void>;
 }
 
+/**
+ * 一次推送中被有意跳过的字段。
+ * 设计取舍：绝不为了写成功而伪造取值（例如把 P3 降级成 P2，或把未知模块写成「其他」），
+ * 但也绝不允许静默丢失——跳过的字段必须显式返回，供推送运行记录与审计使用。
+ */
+export interface OmittedField {
+  field: string;
+  value: string;
+  reason: "not_in_base_select_options" | "category_omitted_by_policy";
+}
+
+export interface BasePushResult {
+  recordId: string;
+  created: boolean;
+  omittedFields: OmittedField[];
+}
+
 export class FeishuBasePushAdapter {
   constructor(private readonly client: BaseClient, private readonly fields: BaseFieldMap, private readonly snapshots?: PmSnapshotWriter) {}
 
-  async push(input: BasePushInput): Promise<{ recordId: string; created: boolean }> {
+  async push(input: BasePushInput): Promise<BasePushResult> {
+    const omittedFields: OmittedField[] = [];
     const key = { projectId: input.projectId, requirementId: input.requirementId };
     const existing = await this.client.findByRequirementKey(key);
     const delta: Record<string, unknown> = {
@@ -57,11 +75,21 @@ export class FeishuBasePushAdapter {
     for (const [name, value] of Object.entries(input.aiValues ?? {})) {
       const field = this.fields.ai[name];
       if (!field || value === null || value === undefined) continue;
+      const text = String(value);
       const allowed = this.fields.selectOptions?.[name];
-      if (allowed && !allowed.includes(String(value))) continue;
-      if (name === "module" && value === "待分类" && !allowed?.includes("待分类")) continue;
-      if (name === "module" || name === "priority") delta[field] = [String(value)];
-      else if (name === "analysisVersion") delta[field] = String(value);
+      // 「待分类」表示证据不足，按策略不写入 Base 单选；这是有意的分类省略，不是取值不合法。
+      if (name === "module" && value === "待分类") {
+        omittedFields.push({ field, value: text, reason: "category_omitted_by_policy" });
+        continue;
+      }
+      // 取值不在 Base 单选项内（例如规则产出 P3 而目标字段只有 P0–P2）：跳过但必须记录，
+      // 不伪造降级值，也不让调用方误以为该字段已写入。
+      if (allowed && !allowed.includes(text)) {
+        omittedFields.push({ field, value: text, reason: "not_in_base_select_options" });
+        continue;
+      }
+      if (name === "module" || name === "priority") delta[field] = [text];
+      else if (name === "analysisVersion") delta[field] = text;
       else delta[field] = value;
     }
     const metadata = this.fields.metadata ?? {};
@@ -74,7 +102,7 @@ export class FeishuBasePushAdapter {
     }
     if (!existing) {
       const created = await this.client.create(delta);
-      return { recordId: created.recordId, created: true };
+      return { recordId: created.recordId, created: true, omittedFields };
     }
 
     if (input.substantiveChanged) {
@@ -88,6 +116,6 @@ export class FeishuBasePushAdapter {
     // Unmapped and empty TB ownership never erases a human-assigned Base owner.
     if (input.owner === null) delete delta[this.fields.owner];
     const updated = await this.client.update(existing.recordId, delta);
-    return { recordId: updated.recordId, created: false };
+    return { recordId: updated.recordId, created: false, omittedFields };
   }
 }

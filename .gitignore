@@ -9,5 +9,9 @@ npm-debug.log*
 plugins/
 rq-sys-tech-design/
 
+# Separate app-scoped Miaoda runtime repo (own git history, released from sprint/default).
+# Ignored so a root `git add -A` can never vendor it into this repository.
+rq-sys-miaoda/
+
 __pycache__/
 *.py[cod]

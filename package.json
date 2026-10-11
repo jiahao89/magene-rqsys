@@ -12,7 +12,8 @@
     "build": "npm --workspace @rq-sys/api run build && npm --workspace @rq-sys/web run build",
     "typecheck": "npm --workspace @rq-sys/api run typecheck && npm --workspace @rq-sys/web run typecheck",
     "db:migrate": "npm --workspace @rq-sys/api run db:migrate",
-    "test": "npm --workspace @rq-sys/api run test && npm --workspace @rq-sys/web run test"
+    "test": "npm --workspace @rq-sys/api run test && npm --workspace @rq-sys/web run test",
+    "check:alignment": "node scripts/check-repo-alignment.mjs"
   },
   "engines": {
     "node": ">=22"

@@ -3,6 +3,7 @@ import { Activity, ArrowDownToLine, ArrowRight, Check, ChevronDown, CircleAlert,
 import { ApiError, createDictionaryDraft, createPriorityRuleDraft, getHealth, listDictionaryVersions, listPriorityRules, listSources, publishDictionaryVersion, publishPriorityRule, runSync, type DictionaryVersion, type PriorityRuleVersion, type PublishStatus, type SourceConfig } from "./api";
 import { AuditPanel, BatchesPanel, MappingsPanel, PanelErrorBoundary, RequirementsPanel, SourcesPanel } from "./panels";
 import { stateLabel } from "./state-labels";
+import { checkScheduleHealth, describeCountdown, formatInZone, nextRunAt, type WeeklySchedule } from "./schedule";
 
 type Batch = { id: string; status: string; totalCount: number; succeededCount: number; failedCount: number; startedAt?: string; completedAt?: string; errorSummary?: string };
 type Requirement = { id: string; sourceRequirementId: string; title: string; sourceVersion: number; pipeline: { pull: string; analysis: string; owner: string; push: string }; analysis?: { module?: string; confidence?: string } | null };
@@ -39,6 +40,32 @@ function StagePill({ stage, value }: { stage: keyof typeof stageLabels; value: s
   return <span className={`stage-pill ${tone}`}><span className="stage-dot" />{stageLabels[stage]} · {stateLabel(value)}</span>;
 }
 
+/**
+ * 调度状态卡片：展示计划配置是否可用与下次计划时刻。
+ * 只描述「已配置的计划」，不代表目标环境已执行或能够执行——绝对时刻来自本地纯计算。
+ */
+export function SchedulerHealthPanel({ schedule, now, loadState, onConfigure }: { schedule?: WeeklySchedule; now: Date; loadState: LoadState; onConfigure: () => void }) {
+  const health = checkScheduleHealth(schedule);
+  const next = health.active ? nextRunAt(schedule, now) : null;
+  const tone = loadState === "loading" ? "status-muted" : health.active ? "status-live" : "status-muted";
+  const toneLabel = loadState === "loading" ? "读取中" : health.active ? "计划已配置" : "未生效";
+  return <section className="panel scheduler-panel">
+    <div className="panel-heading"><div><h2>调度状态</h2><p>周计划配置与下次计划时刻 · 不代表目标环境已执行</p></div><span className={`status-chip ${tone}`}><span />{toneLabel}</span></div>
+    <div className="scheduler-body">
+      {loadState === "loading" && <p className="scheduler-note">正在读取来源配置与计划设置。</p>}
+      {loadState !== "loading" && !health.active && <p className="scheduler-note">{health.reason}。<button className="link-button" onClick={onConfigure}>前往数据源配置 <ArrowRight size={13} /></button></p>}
+      {loadState !== "loading" && health.active && <>
+        <div className="scheduler-next">
+          <span className="micro-label">下次计划同步</span>
+          <strong>{next ? formatInZone(next, schedule!.timezone!) : "无法计算"}</strong>
+          {next && <span className="scheduler-countdown"><Clock3 size={13} />{describeCountdown(next, now)}</span>}
+        </div>
+        <p className="scheduler-note">计划由来源配置与服务端调度共同决定；本卡片只反映已保存的配置，执行结果以同步批次记录为准。</p>
+      </>}
+    </div>
+  </section>;
+}
+
 function App() {
   const [page, setPage] = useState<Page>("Overview");
   const [theme, setTheme] = useState<Theme>(readStoredTheme);
@@ -50,12 +77,15 @@ function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
+  // 计划预测基于「本次数据读取完成的时刻」，避免渲染期间读取挂钟导致结果不稳定。
+  const [loadedAt, setLoadedAt] = useState(() => new Date());
 
   const loadData = useCallback(async () => {
     setHealth("loading"); setError(null);
     try {
       await getHealth();
       setHealth("ready");
+      setLoadedAt(new Date());
       const sourceRows = await listSources();
       // 各端点独立容错：个别端点未实现（501）时不拖垮整页
       const [batchPage, requirementPage] = await Promise.allSettled([
@@ -108,11 +138,11 @@ function App() {
         <nav className="main-nav" aria-label="主导航">{navigation.map(({ label, icon: Icon }) => <button key={label} className={`nav-item ${page === label ? "active" : ""}`} onClick={() => setPage(label)}><Icon size={17} strokeWidth={1.8} /><span>{({ Overview: "总览", Requirements: "需求池", Batches: "同步批次", Sources: "数据源配置", Mappings: "负责人映射", Rules: "分类规则", Audit: "审计日志" } as Record<Page, string>)[label]}</span>{label === "Batches" && batches.length > 0 && <span className="nav-count">{batches.length}</span>}</button>)}</nav>
         <div className="sidebar-spacer" />
         <div className="side-help"><div className="help-icon"><CircleHelp size={17} /></div><div><strong>需要帮助？</strong><span>查看本地运行指南</span></div><ArrowRight size={15} /></div>
-        <div className="user-profile"><div className="user-avatar">J</div><div className="user-copy"><strong>本地操作员</strong><span>管理员</span></div><button className="icon-button profile-menu" aria-label="账户菜单"><Settings2 size={17} /></button></div>
+        <div className="user-profile"><div className="user-avatar">R</div><div className="user-copy"><strong>已登录用户</strong><span>租户内可用 · 无应用角色</span></div><button className="icon-button profile-menu" aria-label="账户菜单"><Settings2 size={17} /></button></div>
       </aside>
 
       <main className="main-area">
-        <header className="topbar"><div className="breadcrumbs"><span>工作区</span><span className="crumb-sep">/</span><strong>{pageTitles[page]}</strong></div><div className="topbar-actions"><span className={`connection-state ${health}`}><span className="connection-dot" />{health === "ready" ? "API 已连接" : health === "loading" ? "正在检查 API" : "API 未连接"}</span><span className="topbar-divider" /><button className="icon-button" aria-label={theme === "dark" ? "切换浅色主题" : "切换深色主题"} aria-pressed={theme === "dark"} onClick={() => setTheme((current) => current === "dark" ? "light" : "dark")}><>{theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}</></button><button className="icon-button" aria-label="帮助"><CircleHelp size={17} /></button><button className="icon-button" aria-label="活动记录"><Activity size={17} /></button><div className="top-avatar">J</div></div></header>
+        <header className="topbar"><div className="breadcrumbs"><span>工作区</span><span className="crumb-sep">/</span><strong>{pageTitles[page]}</strong></div><div className="topbar-actions"><span className={`connection-state ${health}`}><span className="connection-dot" />{health === "ready" ? "API 已连接" : health === "loading" ? "正在检查 API" : "API 未连接"}</span><span className="topbar-divider" /><button className="icon-button" aria-label={theme === "dark" ? "切换浅色主题" : "切换深色主题"} aria-pressed={theme === "dark"} onClick={() => setTheme((current) => current === "dark" ? "light" : "dark")}><>{theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}</></button><button className="icon-button" aria-label="帮助"><CircleHelp size={17} /></button><button className="icon-button" aria-label="活动记录"><Activity size={17} /></button><div className="top-avatar">R</div></div></header>
 
         <div className="content-area">
           <PanelErrorBoundary>
@@ -139,6 +169,8 @@ function App() {
             ].map(({ name, detail, value, color, icon: Icon }, index) => <div className="pipeline-row" key={name}><div className={`pipeline-icon ${color}`}><Icon size={16} /></div><div className="pipeline-copy"><strong>{name}</strong><span>{detail}</span></div><div className="pipeline-progress"><div className="progress-track"><span style={{ width: `${total ? Math.round(value / total * 100) : 0}%` }} /></div><small>{value} / {total}</small></div>{index < 3 && <span className="pipeline-connector" />}</div>)}</div><div className="pipeline-foot"><span className="pipeline-health"><span />{health === "ready" ? "状态来自当前 API" : "等待 API 连接"}</span><span className="pipeline-note">AI 失败不会阻止推送</span></div></section>
 
               <section className="panel latest-panel"><div className="panel-heading"><div><h2>最近同步</h2><p>最新批次执行情况</p></div><button className="link-button" onClick={() => setPage("Batches")}>全部批次 <ArrowRight size={14} /></button></div>{latestBatch ? <div className="latest-content"><div className="batch-status-line"><span className={`batch-status-icon ${latestBatch.status === "failed" ? "danger" : latestBatch.status === "running" ? "live" : "success"}`}>{latestBatch.status === "running" ? <LoaderCircle size={16} className="spin" /> : latestBatch.status === "failed" ? <CircleAlert size={16} /> : <Check size={16} />}</span><div><strong>{latestBatch.status === "running" ? "同步进行中" : latestBatch.status === "partial_failure" ? "部分完成" : latestBatch.status === "failed" ? "同步失败" : "同步完成"}</strong><span>批次 {latestBatch.id}</span></div><span className="batch-status-tag">{stateLabel(latestBatch.status)}</span></div><div className="latest-counts"><div><strong>{latestBatch.totalCount}</strong><span>总需求</span></div><div><strong>{latestBatch.succeededCount}</strong><span>已完成</span></div><div><strong className={latestBatch.failedCount ? "text-danger" : ""}>{latestBatch.failedCount}</strong><span>失败</span></div></div><div className="latest-timestamp"><Clock3 size={14} />{latestBatch.startedAt ? new Date(latestBatch.startedAt).toLocaleString("zh-CN") : "等待批次时间"}<button className="link-button" onClick={() => setPage("Batches")}>查看详情</button></div></div> : <div className="empty-state compact"><span className="empty-icon"><Clock3 size={20} /></span><strong>{health === "loading" ? "正在加载批次" : "还没有同步批次"}</strong><span>{health === "ready" ? "手动启动同步后，批次进度会显示在这里。" : "连接 API 后可查看实际批次记录。"}</span></div>}</section></div>
+
+            <SchedulerHealthPanel schedule={sources[0]?.schedule} now={loadedAt} loadState={health} onConfigure={() => setPage("Sources")} />
 
             <section className="panel requirements-panel"><div className="panel-heading requirements-heading"><div><h2>最近处理的需求</h2><p>每个阶段状态分别展示，分析失败不会隐藏已推送结果</p></div><div className="table-actions"><label className="search-box"><Search size={15} /><input aria-label="搜索需求" placeholder="搜索需求名称…" value={query} onChange={(event) => setQuery(event.target.value)} /><kbd>⌘ K</kbd></label><button className="button button-secondary button-small" onClick={() => setPage("Requirements")}>查看全部</button></div></div><RequirementsTable rows={shownRequirements.slice(0, 5)} loading={health === "loading"} /></section>
             <footer className="page-footer"><span>RQ-Sys MVP <span className="footer-dot">·</span> 本地开发工作区</span><span><ShieldCheck size={14} />状态由 API 返回；不展示飞书 PM 处理状态</span></footer>

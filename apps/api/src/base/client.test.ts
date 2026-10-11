@@ -67,3 +67,57 @@ test("snapshot failure leaves existing Base row untouched", async () => {
   assert.deepEqual(fake.calls, ["find", "snapshot"]);
   assert.deepEqual(fake.row(), before);
 });
+
+test("reports an out-of-options select value instead of silently dropping it", async () => {
+  const fake = fakeBase();
+  const adapter = new FeishuBasePushAdapter(fake.client, {
+    projectId: "TB项目ID", requirementId: "TB需求ID", owner: "执行人",
+    source: { title: "标题" }, ai: { module: "AI模块建议", priority: "AI优先级建议" },
+    pm: [], selectOptions: { module: ["需求澄清", "其他"], priority: ["P0", "P1", "P2"] },
+  });
+  // P3 是合法 schema 取值，但目标 Base 字段只有 P0–P2。
+  const result = await adapter.push({
+    projectId: "p", requirementId: "r", title: "Title", owner: null, sourceVersion: 1,
+    substantiveChanged: false, idempotencyKey: "p:r:v1",
+    aiValues: { module: "全新模块", priority: "P3" },
+  });
+  // 两个字段都被跳过：不伪造降级值，也不写入。
+  assert.equal(fake.row()!.fields["AI优先级建议"], undefined);
+  assert.equal(fake.row()!.fields["AI模块建议"], undefined);
+  // 但跳过必须可见，调用方不能误以为已写入。
+  assert.deepEqual(result.omittedFields, [
+    { field: "AI模块建议", value: "全新模块", reason: "not_in_base_select_options" },
+    { field: "AI优先级建议", value: "P3", reason: "not_in_base_select_options" },
+  ]);
+});
+
+test("distinguishes the deliberate 待分类 omission from a rejected value", async () => {
+  const fake = fakeBase();
+  const adapter = new FeishuBasePushAdapter(fake.client, {
+    projectId: "TB项目ID", requirementId: "TB需求ID", owner: "执行人",
+    source: { title: "标题" }, ai: { module: "AI模块建议" }, pm: [],
+    selectOptions: { module: ["需求澄清", "其他"] },
+  });
+  const result = await adapter.push({
+    projectId: "p", requirementId: "r", title: "Title", owner: null, sourceVersion: 1,
+    substantiveChanged: false, idempotencyKey: "p:r:v1", aiValues: { module: "待分类" },
+  });
+  assert.deepEqual(result.omittedFields, [
+    { field: "AI模块建议", value: "待分类", reason: "category_omitted_by_policy" },
+  ]);
+});
+
+test("reports no omissions when every value fits the Base options", async () => {
+  const fake = fakeBase();
+  const adapter = new FeishuBasePushAdapter(fake.client, {
+    projectId: "TB项目ID", requirementId: "TB需求ID", owner: "执行人",
+    source: { title: "标题" }, ai: { module: "AI模块建议", priority: "AI优先级建议" }, pm: [],
+    selectOptions: { module: ["其他"], priority: ["P0", "P1", "P2"] },
+  });
+  const result = await adapter.push({
+    projectId: "p", requirementId: "r", title: "Title", owner: null, sourceVersion: 1,
+    substantiveChanged: false, idempotencyKey: "p:r:v1", aiValues: { module: "其他", priority: "P1" },
+  });
+  assert.deepEqual(result.omittedFields, []);
+  assert.deepEqual(fake.row()!.fields["AI优先级建议"], ["P1"]);
+});

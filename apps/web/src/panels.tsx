@@ -5,6 +5,7 @@ import { useCallback, useEffect, useId, useRef, useState, Component, type Keyboa
 import { Button as HeroButton, Input as HeroInput, TextArea as HeroTextArea } from "@heroui/react";
 import { RefreshCw, X } from "lucide-react";
 import { stateLabel } from "./state-labels";
+import { checkScheduleHealth } from "./schedule";
 import {
   ApiError, createSource, getBatch, getRequirement, listAudit, listBatches, listMappings, listRequirements, pushRequirement,
   retryAnalysis, retrySyncItem, searchFeishuUsers, setOwner, updateSource,
@@ -16,7 +17,7 @@ export type LoadState = "loading" | "ready" | "error";
 
 function errorText(cause: unknown): string {
   if (cause instanceof ApiError) {
-    if (cause.status === 403) return `没有权限执行此操作（${cause.code}）。角色校验由服务端强制执行。`;
+    if (cause.status === 403) return `服务端拒绝了此操作（${cause.code}）。MVP 要求飞书登录；拒绝原因以服务端为准，工作台不会绕过。`;
     return `${cause.message}（${cause.code}）`;
   }
   return "操作失败：无法连接本地 API。";
@@ -104,6 +105,31 @@ const emptyUpdate: SourceConfigUpdate = {
   schedule: { enabled: false, weekday: 1, time: "09:00", timezone: "Asia/Shanghai" },
 };
 
+// ---------- Spec 04 连接自检：只反映已保存配置，不声称已校验服务端凭据 ----------
+
+/**
+ * 连接自检清单。凭据校验发生在服务端；凭据值不下发浏览器，
+ * 因此这里只展示「配置是否完整/合法」，绝不显示任何凭据内容或有效/无效结论。
+ */
+function ConnectionSelfCheck({ existing, draft }: { existing?: SourceConfig; draft: SourceConfigUpdate }) {
+  const schedule = existing ? existing.schedule : draft.schedule;
+  const scheduleHealth = checkScheduleHealth(schedule);
+  const checks = [
+    { label: "Teambition 项目名称", ok: Boolean((existing?.projectName ?? draft.projectName).trim()), detail: existing ? "已保存到服务端" : "保存后由服务端解析项目与需求任务类型" },
+    { label: "周计划配置", ok: scheduleHealth.active, detail: scheduleHealth.active ? scheduleLabel(schedule) : scheduleHealth.reason ?? "未配置" },
+    { label: "同步开关", ok: Boolean(existing?.enabled), detail: existing?.enabled ? "允许手动同步" : "未启用，手动同步会被拒绝" },
+  ];
+  return <div className="self-check" role="group" aria-label="连接自检">
+    <div className="self-check-head"><strong>连接自检</strong><span>只反映已保存配置；服务端凭据与外部连通性不在此处断言</span></div>
+    <ul className="self-check-list">{checks.map((check) => <li key={check.label}>
+      <span className={`self-check-dot ${check.ok ? "ok" : "pending"}`} />
+      <span className="self-check-label">{check.label}</span>
+      <span className="self-check-detail">{check.detail}</span>
+    </li>)}</ul>
+    <p className="self-check-note">服务端凭据（Teambition 网关、AI 服务、飞书 Base）保存在服务端环境，不写入浏览器也不回显；其有效性以实际同步批次与推送结果为准。</p>
+  </div>;
+}
+
 export function SourcesPanel({ sources, loadState, onRefresh }: { sources: SourceConfig[]; loadState: LoadState; onRefresh: () => void }) {
   const existing = sources[0];
   const [draft, setDraft] = useState<SourceConfigUpdate>(() => existing ? {
@@ -141,6 +167,7 @@ export function SourcesPanel({ sources, loadState, onRefresh }: { sources: Sourc
       <label className="rules-threshold"><span>启用周计划</span><input type="checkbox" aria-label="启用周计划" checked={draft.schedule.enabled} onChange={(e) => set("schedule", { ...draft.schedule, enabled: e.target.checked })} /></label>
     </div>
     <div className="rules-form"><HeroButton className="button button-primary button-small" onPress={() => void save()} isDisabled={busy}>{existing ? "保存更新" : "创建来源"}</HeroButton></div>
+    {loadState === "ready" && <ConnectionSelfCheck existing={existing} draft={draft} />}
     {loadState === "error" && <div className="table-empty"><strong>无法读取来源配置</strong><span>请检查 API 连接后重试。</span></div>}
     {!existing && loadState === "ready" && <div className="table-empty"><strong>尚未配置数据源</strong><span>填写项目名称并创建后，可手动同步；周计划启用后按设定执行。</span></div>}
     {existing && <div className="table-scroll"><table><thead><tr><th>项目</th><th>定时同步</th></tr></thead><tbody><tr><td>{existing.projectName}</td><td>{scheduleLabel(existing.schedule)}</td></tr></tbody></table></div>}
@@ -308,6 +335,28 @@ export function RequirementsPanel({ onRefresh }: { onRefresh: () => void }) {
   </section>;
 }
 
+/**
+ * Base 记录引用。工作台只拿得到 record ID，拿不到 Base app token（凭据不下发浏览器），
+ * 因此提供可复制的引用，而不是伪造一个打不开的链接。
+ */
+function BaseRecordReference({ recordId }: { recordId: string | null }) {
+  const [copied, setCopied] = useState(false);
+  if (!recordId) return <span className="base-ref-empty">尚未写入飞书 Base</span>;
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(recordId);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch { setCopied(false); }
+  };
+  return <span className="base-ref">
+    <span className="micro-label">Base 记录</span>
+    <code className="base-ref-id">{recordId}</code>
+    <button className="link-button" onClick={() => void copy()}>{copied ? "已复制" : "复制记录 ID"}</button>
+    <span className="base-ref-hint">PM 处理状态与通知送达请在飞书 Base 中查看；本工作台不读取这些字段。</span>
+  </span>;
+}
+
 function RequirementDetailCard({ selected, structured, busy, onClose, onAct }: {
   selected: RequirementDetail; structured: AnalysisStructured; busy: boolean; onClose: () => void;
   onAct: (action: () => Promise<string>, detailId: string) => Promise<void>;
@@ -325,7 +374,8 @@ function RequirementDetailCard({ selected, structured, busy, onClose, onAct }: {
   ] as const;
   return <div className="config-source" style={{ flexDirection: "column", alignItems: "stretch" }}>
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><strong>{selected.title}（REQ-{selected.sourceRequirementId} · v{selected.sourceVersion}）</strong><HeroButton className="button button-secondary button-small" onPress={onClose}>收起</HeroButton></div>
-    <span>拉取 {selected.pipeline.pull} · AI 分析 {selected.pipeline.analysis} · 负责人 {selected.pipeline.owner} · 推送 {selected.pipeline.push}{selected.baseRecordId ? ` · Base 记录 ${selected.baseRecordId}` : ""}</span>
+    <span>拉取 {selected.pipeline.pull} · AI 分析 {selected.pipeline.analysis} · 负责人 {selected.pipeline.owner} · 推送 {selected.pipeline.push}</span>
+    <BaseRecordReference recordId={selected.baseRecordId} />
     <div className="table-scroll"><table><thead><tr><th>AI 建议</th><th>内容</th></tr></thead><tbody>
       <tr><td>模块建议</td><td>{typeof structured.module === "string" ? structured.module : "—"}</td></tr>
       <tr><td>优先级建议</td><td>{typeof structured.priority === "string" ? structured.priority : "空（未发布有效校准规则时保持为空）"}</td></tr>

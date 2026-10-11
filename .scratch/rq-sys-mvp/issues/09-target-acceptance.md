@@ -1,13 +1,28 @@
-# [partially executed: local suites green; target Base read/write smoke passed; runtime/identity/alignment still open] 09 — 目标环境端到端验收
+# [blocked: dev workspace must be aligned to published commit 87a2444; the "role check" 403 was client-side copy in an older build, not platform ACL] 09 — 目标环境端到端验收
+
+## FORBIDDEN 归因更新（2026-10-11，本轮回溯结论）
+
+`403` 是**服务端真实返回**的，但“角色校验由服务端强制执行”这句话**不是服务端写的**——它来自客户端硬编码文案。历史回溯（`git grep` 全历史，`rq-sys-miaoda`）：
+
+- 该字符串位于 `client/src/rqsys/panels.tsx`，存在于尚未发布的提交 `1deb70d`、`5e6dbc3`、`ae4c452`、`6773cc4`、`be2d20a`、`b2ea3d8` 等；
+- 已发布的 `87a2444` 已改为：“飞书平台或集成服务拒绝了此请求（code）。请检查应用授权与目标资源访问权限。”；
+- **服务端在任何提交里都没有 RQ-Sys 角色逻辑**：`87a2444` 的 `server/rqsys/http/app.ts` 中 `forbid|role` 计数为 0；root 仓从未包含该字符串。
+
+**结论修正**：dev preview 显示“角色校验”文案，是因为它运行的是**未发布的旧客户端构建**；这不构成“妙搭平台存在角色/ACL 拦截”的证据。因此：
+
+1. 不要再把该 403 归因为平台角色策略或 ACL，也不必等待平台侧“解除拦截”；
+2. 首要动作是把 dev 工作区对齐到已发布 commit `87a2444`（保留其既有 `.env` 与 `server/database/schema.ts` 未提交改动），然后重试创建来源；
+3. 若对齐后仍返回 403，应按新文案核查**飞书平台/集成资源授权**与运行 commit，而不是应用角色矩阵。
 
 ## 最新状态（2026-10-11，覆盖下方旧日期汇总）
-- 用户要求继续直至 MVP 完成，安全 E2E 已获授权；项目安全门要求目标写操作先 dry-run，再由用户确认具体执行。
-- 本地登录与数据边界已按最新决定更新：登录必需、无 RQ-Sys app roles；固定 Teambition 项目名；只用已核验的最小字段；模块词典先空置，优先级规则发布前保持空值。
-- 根仓 `main` commit `5790d80` 与 Miaoda app `sprint/default` commit `87a2444` 已分别提交并 push，应用 release 尚未创建。最新本地验证：root API 218/218、Web 21/21、typecheck/build 通过；Miaoda route 38/38、lint、server/client typecheck、production build 通过。新增覆盖 safe POC Base fixture guard、周计划终态失败恢复、版本级分析重试。
-- 目标安全验收环境使用固定 synthetic fixture + POC Base `OddqbqBeOamFjFsR5IXcJdjknmd` / `tblxbyvbdLGVnLaO`。当前 dev Base 配置与该 POC 不一致，尚未改动；正式 Base、真实 TB 需求和干系人均不得用于本次测试。
-- POC Base 已启用负责人变更通知 workflow；只有 owner assignment 通知事件已被验证，目标 app 侧的 synthetic upsert/通知仍待验收。周计划为周一 09:00 `Asia/Shanghai`；recovery trigger 尚未创建。
-- 新 app release、3 项 dev env 更新和 disabled 30-minute recovery automation 的 dry-run 全部返回 `ok=true`；等用户基于这些实际变更预览明确确认后执行。
-- 项目内 Teambition skill 对目标需求类型调用一次 `getProjectTasks` 并返回 311 条，UI 显示 `311/314`；差异和 gateway 截断行为尚未解释。安全 fixture 不访问真实需求，不能用 synthetic E2E 代替这个完整性确认。
+- 用户已确认按实际 dry-run 预览执行。Miaoda release `7695216916613073890` 已完成，commit 为 `87a2444a4ee2c802d40cf6d63a53c3a915b22196`；线上工作台加载成功，显示“API 已连接”，数据源列表为空，配置表单只维护项目名称并默认 `室外产品-码表软固件需求池`。
+- 已在 **dev** 环境写入 `BASE_APP_TOKEN`、`BASE_TABLE_ID` 和 `RQSYS_ENABLE_TEST_FIXTURES=true`，指向批准的 POC Base；env-list 仅核对变量名，未回显任何值。Online 环境变量未改。
+- 已创建 `rqsysWeeklySyncRecovery`，`*/30 * * * *`、`Asia/Shanghai`、状态 `disabled`。来源配置和周一 09:00 计划均未创建/启用，因此不会触发真实同步。
+- 目标安全验收仍未执行：没有调用模型、创建 POC Base 测试记录、写 Base 或发送通知。目标 Base workflow `POC-执行人变更通知` 先前只读确认已启用；app 侧 owner assignment 事件未验证。
+- 发布版工作正常，但 Miaoda 编辑器 dev preview 属于分歧工作区，仍显示旧版 ID/字段映射表单。误启动的合并会话已取消，`git merge --abort` 成功；预览可加载并显示 API 已连接；未提交/推送，原有 `.env`、`server/database/schema.ts` 未提交改动保留。仅尝试在预览中创建未启用周计划的 dev 来源，服务端返回 `FORBIDDEN`（提示角色校验由服务端执行）；来源未创建。随后已清空未提交表单，周计划保持关闭。
+- 发布代码的 RQ-Sys controller 只要求妙搭登录，未实现应用角色判断；因此当前 403 尚不能归因到该代码中的角色策略，可能是妙搭平台/目标 runtime 的权限拦截或运行代码与发布 commit 不一致。不得绕过这条服务端拒绝；需先核实 target ACL/runtime commit，并按“租户内所有已登录用户可用”的已批准产品范围调整。
+- 下一步：先由具备相应权限的维护者核实/解除目标 dev runtime 的角色拦截，并对齐 dev preview 到 `87a2444`，且保留上述两项既有未提交改动；再创建 schedule-disabled 来源，运行固定合成夹具，验证同步→AI→POC Base→仅通知当前用户，最后验证恢复触发器。
+- Teambition skill 查询返回 311 条，而 UI 显示 `311/314`；需在启用真实周同步前查清差异。合成夹具不访问真实需求，不能替代这一完整性核验。
 
 ## 目标
 在妙搭 dev / 指定安全测试环境用最小化真实需求验证 MVP 主链路及降级路径。生产应用与真实协作者不作为验证对象。
