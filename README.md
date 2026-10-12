@@ -46,5 +46,6 @@ The check verifies that the declared shared modules (Base write path, analysis, 
 - Teambition live metadata check: [`specs/rq-sys-mvp/TEAMBITION-LIVE-POC.md`](specs/rq-sys-mvp/TEAMBITION-LIVE-POC.md)
 - API contract: [`specs/rq-sys-mvp/openapi.yaml`](specs/rq-sys-mvp/openapi.yaml)
 - Externally blocked items and how to clear them: [`deployment/EXTERNAL-BLOCKER-RUNBOOK.md`](deployment/EXTERNAL-BLOCKER-RUNBOOK.md)
+- Step-by-step target acceptance checklist (run after a successful release): [`deployment/TARGET-ACCEPTANCE-CHECKLIST.md`](deployment/TARGET-ACCEPTANCE-CHECKLIST.md)
 - Agent workflow and constraints: [`AGENTS.md`](AGENTS.md)
 

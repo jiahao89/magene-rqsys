@@ -14,7 +14,7 @@
 
 ### 当前唯一阻塞：发布 `cd64e8d` 平台侧失败
 
-- `+release-create`（带 `--branch sprint/default` 与不带该参数）共尝试 5 次，均返回 `code 500000049`（"Something went wrong. Please try again later."），**未返回 `release_id`**，因此没有可轮询的发布记录。
+- `+release-create`（带 `--branch sprint/default` 与不带该参数）至 2026-10-12 中午已尝试 **8 次**（时间跨度约 1 小时，含一次冷却后重试），每次均返回 `code 500000049`（"Something went wrong. Please try again later."），**未返回 `release_id`**，因此没有可轮询的发布记录。最近一次 `log_id`：`202610121151461CAA2511243A7506DA31`。
 - 已排除的本地因素：`git` 与 `origin/sprint/default` 完全一致（`cd64e8d`，ahead/behind = 0/0）；`+db-env-diff` 无待发布结构变更；`npm run build:prod` 通过；推送提交不含 `.env` 或密钥。
 - **未确定的原因不作猜测。** 另记录一个本地可复现的观察：平台部署构建命令 `npm run build`（`scripts/build.sh`）在步骤 0 `npx fullstack-cli action-plugin init` 处进入交互式提问（"What do you want to create?"）并以 `ERR_USE_AFTER_CLOSE` 退出；该脚本为 CLI 自动生成，本次未改动。此现象是否与线上发布失败相关尚未证实。
 - 建议由用户在妙搭编辑器侧发布，或携 `log_id`（如 `2026101211035665FC73895B15ACF98711`）向平台支持核对。
