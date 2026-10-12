@@ -38,3 +38,13 @@ Ticket 00’s target scheduler POC and Tickets 05–07’s vertical slices remai
 ## Latest local status (2026-10-10)
 
 The earlier 2026-10-08 statement that scheduling/worker/retry/audit were not wired is historical and superseded for local code. PostgreSQL jobs, worker dispatch, fencing, source schedule calculation, retry APIs, safe audit persistence and local polling are implemented and locally verified. Local polling is development-only; durable Miaoda automation, restart/recovery and audit persistence are not target-verified under Tickets 00/09.
+
+## Target trigger drill (2026-10-12)
+
+`rqsysWeeklySyncRecovery` was enabled for exactly one cron window and then disabled again, to verify delivery and handler wiring in the target runtime rather than only in local code:
+
+- Safety precondition confirmed in code: `createDueSyncJobs` skips any source with `!enabled || !scheduleEnabled`, and the single Dev source has `schedule_enabled=false` with zero `queued` jobs. So `pollOnce` could not create real sync work.
+- Runtime evidence: `instance_id 17695618791489929242`, `app_env=runtime`, phases `dispatch` / `trigger` / `action` all `succeed` (`action` `duration_ms 663`), completed `2026-10-12T03:35:31Z` for the 11:30 `Asia/Shanghai` window. The app-side handler logged `RQ-Sys scheduled work poll completed` from `RqsysAutomation` at the same instant.
+- No side effects: Dev counts identical before and after (batches 10, jobs 27, queued 0, running batches 0). Trigger re-disabled and read back as `disabled`.
+
+Still open for this ticket: missed-week *recovery* with an actually enabled weekly schedule, durable worker restart behaviour, and audit retention — all requiring an approved safe test source.

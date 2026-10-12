@@ -19,10 +19,22 @@
 - **未确定的原因不作猜测。** 另记录一个本地可复现的观察：平台部署构建命令 `npm run build`（`scripts/build.sh`）在步骤 0 `npx fullstack-cli action-plugin init` 处进入交互式提问（"What do you want to create?"）并以 `ERR_USE_AFTER_CLOSE` 退出；该脚本为 CLI 自动生成，本次未改动。此现象是否与线上发布失败相关尚未证实。
 - 建议由用户在妙搭编辑器侧发布，或携 `log_id`（如 `2026101211035665FC73895B15ACF98711`）向平台支持核对。
 
+### 恢复触发器演练：**已实跑并通过**（2026-10-12）
+
+本轮在确认安全前提后完成了此前一直搁置的恢复触发器演练：
+
+- **安全前提（代码级确认）**：`createDueSyncJobs` 对 `!source.enabled || !source.scheduleEnabled` 的来源直接跳过；Dev 唯一来源 `enabled=true` 但 `schedule_enabled=false`（时间 09:00、周一、`Asia/Shanghai`），且 `pipeline_jobs` 无 `queued` 作业。因此 `pollOnce`（= `createDueSyncJobs` + `drainReadyJobs`）在当前状态下不会创建任何真实同步工作。这修正了我此前"启用触发器可能触发真实同步、风险不可控"的判断。
+- **演练过程**：`+automation-enable` 启用 → 等待一个 cron 窗口（`*/30 * * * *`、`Asia/Shanghai`）→ 回读证据 → `+automation-disable` 复原。
+- **证据（线上 runtime 日志）**：`instance_id 17695618791489929242`，`app_env=runtime`，三个阶段全部 `succeed`——`phase=dispatch`（`duration_ms 10851`）、`phase=trigger`、`phase=action`（`duration_ms 663`），完成时间 `2026-10-12T03:35:31Z`（即本地 11:35:31，对应 11:30 窗口）。同刻 `module=app_server` 记录到应用侧 handler 日志：`RQ-Sys scheduled work poll completed`（来源 `RqsysAutomation`）。
+- **无副作用**：演练前后 Dev 计数一致（batches 10、jobs 27、queued 0、running_batches 0），证明恢复路径在周计划关闭时确实不产生工作。
+- **已复原**：触发器回读为 `disabled`，周计划仍关闭。
+
+结论：**触发器的定时投递、handler 接线与"周计划关闭时不启动真实同步"这一安全性质均已验证。** 仍未验证的是"错过的周窗口能被真正恢复"——那需要先有一个启用中的周计划，属于真实同步范围，须在安全测试来源获批后再做。
+
 ### 仍未验收（本次无法由本人完成）
 
 - 发布版 runtime 的 app-mediated 完整 E2E（source → sync → AI → Base → 仅通知本人）。
-- 恢复触发器演练：`rqsysWeeklySyncRecovery` 仍为 `disabled`，未启用、未演练。
+- 恢复触发器的**错窗恢复**语义（触发器投递本身已通过，见上）。
 - Teambition `311` vs UI `311/314` 的 3 条差异未解释。
 - 模块词典与优先级规则仍为空（需产品内容）；P3 与线上 `AI优先级建议`（仅 P0–P2）冲突未决。
 - 周计划与干系人通知保持关闭。
