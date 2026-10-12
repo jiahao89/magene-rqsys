@@ -28,6 +28,21 @@ const unauthenticated: ApiDependencies = { database: null, repositories: undefin
 test("liveness reports the API service", async () => { const r = await handleApiRequest(new Request("http://localhost/api/health"), unauthenticated); assert.equal(r.status, 200); assert.deepEqual(await r.json(), { status: "ok", service: "rq-sys-api" }); });
 
 test("readiness reports unavailable when no database is configured", async () => { const r = await handleApiRequest(new Request("http://localhost/api/health/ready"), unauthenticated); assert.equal(r.status, 503); assert.deepEqual(await r.json(), { status: "not_ready", reason: "database_unavailable_or_not_configured" }); });
+test("test fixture status requires authentication and reports only its availability", async () => {
+ const unauthenticatedResponse = await handleApiRequest(new Request("http://localhost/api/dev/fixtures/status"), unauthenticated);
+ assert.equal(unauthenticatedResponse.status, 401);
+
+ const d = makeDependencies();
+ d.enableTestFixtures = true;
+ const enabledResponse = await handleApiRequest(new Request("http://localhost/api/dev/fixtures/status"), d);
+ assert.equal(enabledResponse.status, 200);
+ assert.deepEqual(await enabledResponse.json(), { enabled: true });
+
+ d.enableTestFixtures = false;
+ const disabledResponse = await handleApiRequest(new Request("http://localhost/api/dev/fixtures/status"), d);
+ assert.equal(disabledResponse.status, 200);
+ assert.deepEqual(await disabledResponse.json(), { enabled: false });
+});
 test("lists only user-maintained source settings after injected identity authentication", async () => { const r = await handleApiRequest(new Request("http://localhost/api/sources"), makeDependencies()); assert.equal(r.status, 200); assert.deepEqual(await r.json(), { items: [{ id: source.id, projectName: "Project", enabled: true, schedule: { enabled: false, weekday: null, time: null, timezone: null } }] }); });
 test("rejects protected routes without an identity provider", async () => { const r = await handleApiRequest(new Request("http://localhost/api/sources"), unauthenticated); assert.equal(r.status, 401); });
 test("updates source settings by project name while keeping server-owned IDs and metadata", async () => { const d = makeDependencies(); const r = await handleApiRequest(new Request(`http://localhost/api/sources/${source.id}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectName: "Project", enabled: false, schedule: { enabled: true, weekday: 1, time: "09:30", timezone: "Asia/Shanghai" } }) }), d); assert.equal(r.status, 200); const body = await r.json() as Record<string, unknown>; assert.deepEqual(body, { id: source.id, projectName: "Project", enabled: false, schedule: { enabled: true, weekday: 1, time: "09:30", timezone: "Asia/Shanghai" } }); assert.equal(source.externalProjectId, "p1"); assert.equal(source.requirementTypeId, "type1"); assert.deepEqual(source.fieldMap, { title: "name" }); });

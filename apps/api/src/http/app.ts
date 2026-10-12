@@ -32,6 +32,7 @@ export interface ApiDependencies {
   repositories: ApiRepositories | undefined;
   teambitionSourceProjects?: TeambitionSourceProjectResolver;
   feishuUsers?: FeishuUserDirectory;
+  enableTestFixtures?: boolean;
   now: (() => Date) | undefined;
 }
 function json(body: unknown, status = 200): Response { return Response.json(body, { status }); }
@@ -94,6 +95,10 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
   if (method === "GET" && url.pathname === "/api/health") return json({ status: "ok", service: "rq-sys-api" });
   if (method === "GET" && url.pathname === "/api/health/ready") {
     return await isDatabaseReady(dependencies.database) ? json({ status: "ready", database: "connected" }) : json({ status: "not_ready", reason: "database_unavailable_or_not_configured" }, 503);
+  }
+  if (method === "GET" && url.pathname === "/api/dev/fixtures/status") {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    return json({ enabled: dependencies.enableTestFixtures === true });
   }
   if (method === "GET" && url.pathname === "/api/sources") {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
