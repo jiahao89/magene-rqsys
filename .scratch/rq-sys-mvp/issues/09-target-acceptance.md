@@ -1,6 +1,6 @@
-# [partially executed: cd64e8d 已发布且无错误；目标 app-mediated E2E 仍未验收] 09 — 目标环境端到端验收
+# [partially executed: 3309d0b 已发布且无错误；Dev preview 未对齐，目标 app-mediated E2E 仍未验收] 09 — 目标环境端到端验收
 
-## 处置完成（2026-10-12，用户授权「修复所有问题」后执行）
+## 历史处置记录（2026-10-12，已完成）
 
 用户授权后完成以下处置。所有目标侧写入均已执行并回读验证；密钥值全程未打印。
 
@@ -12,7 +12,7 @@
 - **online 夹具开关收紧。** online `RQSYS_ENABLE_TEST_FIXTURES` 由 `true` 改为 `false`。该路由此前已因双键守卫（必须同时匹配安全 POC Base）在 online 不可用，本次为纵深防御。
 - **两仓已推送。** root `main` → `b023600`，app `sprint/default` → `cd64e8d`；两仓工作区干净。
 
-## 发布阻塞已解除（2026-10-12）
+## 前一版发布记录（2026-10-12；已被后续 release 取代）
 
 `+release-create` 连续 9 次返回 `code 500000049` 后，**第 10 次成功**：
 
@@ -26,12 +26,12 @@
 
 另记录一个本地可复现但**与本故障无关**的观察：平台部署构建命令 `npm run build`（`scripts/build.sh`）在未设置 `CI=1` 时会于步骤 0 `npx fullstack-cli action-plugin init` 进入交互式提问并以 `ERR_USE_AFTER_CLOSE` 退出；设置 `CI=1` 后正常（"No plugins found"）。该脚本为 CLI 自动生成，本次未改动。
 
-### 仍未验收（发布已解除后）
+### 当时尚未验收（当前状态见文末）
 
 - 发布版 runtime 的 app-mediated 完整 E2E：发布本身已完成且冷启动无错误日志，但**尚未在已登录浏览器里跑通** sync → AI → Base → 仅通知本人。可执行步骤见 `deployment/TARGET-ACCEPTANCE-CHECKLIST.md`。
 - 恢复触发器的**错窗恢复**语义（触发器投递与关闭态安全已通过，见下）。
-- Teambition `311` vs UI `311/314` 的 3 条差异：API 侧已查尽（网关拒绝一切额外参数、行内无归档字段），需 UI 侧确认计数口径。
-- 模块词典与优先级规则仍为空（需产品内容）；P3 与线上 `AI优先级建议`（仅 P0–P2）冲突未决。
+- Teambition 项目 2026-10-12 再次通过项目 skill 原始只读接口查询，仍为 311 条、311 个非空唯一 ID、无重复/缺失 ID；UI 的 `311/314` 口径仍需在页面确认，不能推断多出的 3 条是什么。
+- 空模块词典和未发布优先级规则是已接受的 MVP 默认值，不阻塞上线：模块保持“待分类”、优先级留空；Base 目前仅允许 P0–P2，因此未校准规则不得输出 P3。
 - 周计划与干系人通知保持关闭。
 
 ### 恢复触发器演练：**已实跑并通过**（2026-10-12）
@@ -197,9 +197,17 @@
 - 2026-10-10 — 本轮本地实现回归：root API 测试 203/203（含隔离的本机 PostgreSQL 集成用例）、Web 21/21、typecheck/build 通过；妙搭 app `test:rqsys-route` 13/13、lint、server/client typecheck、production build 通过。新增覆盖 Feishu 用户目录权限与租户过滤、需求池筛选、来源周计划/负责人名单/字段映射持久化、项目名及需求类型歧义拒绝。改动仍在两个独立仓库的本地工作树，未提交或发布。本轮没有恢复目标 E2E；历史 POC Base 冒烟证据未重跑。
 
 ## Current next action
-- 妙搭平台 env / DB / release 写继续遵循 `AGENTS.md` 安全门禁；本轮没有启用周计划或写线上数据。
-- Dev AI secret has already been written after the user's confirmation; the fixed synthetic analysis and POC Base readback succeeded. Do not write it again or repeat the analysis without a concrete failure.
-- The accidental Dev batch `020073d7-17ec-4c1f-8521-56a300882b8d` is awaiting the user's decision to set the batch to schema-supported `failed` and the sync job to `cancelled`, retaining imported requirement/snapshot rows. Do not restart a worker or mutate the batch until that decision arrives.
-- After containment: verify the disabled recovery trigger safely, reconcile Teambition's 311 result versus UI `311/314`, and run the remaining app-mediated E2E with the synthetic fixture only. Keep the weekly schedule and stakeholder notifications disabled; test notices may go only to the user.
+- Latest published release: `7695657025665305793`, status `finished`, commit `3309d0b4a158e661e0177a24b1f7ccc2dceb02b0`, no release errors. The acceptance button now reads a server-authenticated fixture-status endpoint and stays hidden when the server flag is off.
+- Dev snapshot (2026-10-12, aggregate-only SQL): 1 source config (enabled), schedule disabled; 37 requirements, 7 synthetic fixture IDs, 5 analyzed and pushed, 0 running batches/jobs. This is a state check only; it does not prove this release processed those rows.
+- The Dev browser preview loaded but did not show the new fixture button, and its visible API log did not contain `GET /api/dev/fixtures/status`. Therefore this release's Dev app-mediated fixture → analysis → POC Base flow remains unverified. Do not trigger real Teambition sync. Reconcile the preview/runtime code alignment first.
+- Remaining acceptance gaps: Dev preview/runtime alignment; complete app-mediated synthetic fixture → analysis → POC Base upsert/readback and user-only notification; missed-window recovery and worker restart; interpret UI `311/314` before enabling a real schedule. Empty module dictionary/priority rule are accepted defaults, not blockers; keep priority blank and do not emit P3. Keep weekly schedule and stakeholder notifications disabled.
 - E2E 续跑/恢复时仅使用获批的测试 Base/fixture，通知只发用户本人。
 - 历史 `.env` 编辑器状态已被后续干净提交覆盖；本次发布提交未包含 `.env` 或密钥文件。后续仍不得提交/发布真实凭据。
+
+## Evidence log (2026-10-12 follow-up)
+- Root checks: API unit tests 226/226; isolated local PostgreSQL integration 13/13; Web 36/36; root typecheck/build/alignment passed. Miaoda app route tests 62/62; server/client typecheck, lint and production build passed; both repos passed `git diff --check`.
+- Committed and pushed acceptance visibility fix: root `b3aaa2b`; Miaoda app `3309d0b`. Code review found no actionable standards or spec issues.
+- Release `7695657025665305793` reached `finished`, bound to Miaoda commit `3309d0b4a158e661e0177a24b1f7ccc2dceb02b0`, with empty `error_logs`.
+- Browser preview evidence: Dev workbench loaded and displayed its prior dashboard; no synthetic acceptance button appeared and visible request logs lacked `/api/dev/fixtures/status`. No sync button, fixture action, schedule, notification or external record write was triggered in this follow-up.
+- `+db-execute` aggregate-only SELECT against Dev returned 37 requirements, 7 fixture-prefixed requirement IDs, 5 analyzed, 5 pushed, 0 running batches, 0 running jobs, and 0 enabled schedules. No titles, people, contacts, or secrets were selected.
+- Read-only Teambition skill call with `--include-archived` returned 311 raw tasks, 311 unique nonempty IDs, 0 empty IDs and 0 duplicate IDs. No task fields or values were printed. This repeats the API count but does not explain the UI's 314 denominator.
