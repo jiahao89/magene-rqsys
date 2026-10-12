@@ -102,3 +102,14 @@ test("marks new and substantive changes for AI, while metadata-only updates rema
   await orchestrator.run({ batchId: "content", sourceConfigId: config.id, config });
   assert.deepEqual(writes, [true, false, true]);
 });
+
+test("classifies a source snapshot write failure without exposing its database error", async () => {
+  const h = harness([task("one", "One")]);
+  const itemWrites: Array<{ status: string; errorCode: string | null; errorDetail: string | null }> = [];
+  h.persistence.appendSourceSnapshot = async () => { throw new Error("private database detail"); };
+  h.persistence.writeSyncItem = async (item) => { itemWrites.push({ status: item.status, errorCode: item.errorCode, errorDetail: item.errorDetail }); };
+  const result = await h.orchestrator.run({ batchId: "batch-1", sourceConfigId: config.id, config });
+  assert.equal(result.status, "failed");
+  assert.deepEqual(itemWrites, [{ status: "failed", errorCode: "source_snapshot_failed", errorDetail: "Requirement updated, but its source snapshot could not be saved" }]);
+  assert.equal(JSON.stringify(itemWrites).includes("private database detail"), false);
+});

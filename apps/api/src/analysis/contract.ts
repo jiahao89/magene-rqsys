@@ -85,10 +85,15 @@ export function validateAnalysisOutput(
   value: unknown,
   options: { dictionary: AnalysisDictionary; priorityRule: AnalysisPriorityRule | null; sourceText: string },
 ): ValidatedAnalysis {
-  const result = AnalysisSchema.parse(value);
+  // Priority is deterministic workflow output, never a model decision. Ignore any
+  // provider-supplied value; runAnalysis computes it from U/M/S/C only when a
+  // calibrated rule is published, otherwise it stays null.
+  const modelOutput = typeof value === "object" && value !== null && !Array.isArray(value)
+    ? { ...(value as Record<string, unknown>), priority: null }
+    : value;
+  const result = AnalysisSchema.parse(modelOutput);
   const allowedModules = new Set([...options.dictionary.modules, "其他", "待分类"]);
   if (!allowedModules.has(result.module)) throw new Error("Analysis output uses an uncontrolled module");
-  if ((result.priority !== null) !== (options.priorityRule !== null)) throw new Error("Priority must match published rule availability");
   const sourceText = options.sourceText;
   const evidence = [
     ...result.evidence,
@@ -96,5 +101,5 @@ export function validateAnalysisOutput(
     ...result.facts.map((item) => item.evidence),
   ];
   if (evidence.some((quote) => !sourceText.includes(quote))) throw new Error("Analysis evidence does not occur in source text");
-  return result;
+  return { ...result, priority: null };
 }

@@ -305,15 +305,35 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
   const analysisRetryMatch = url.pathname.match(/^\/api\/analysis\/([^/]+)\/retry$/);
   if (method === "POST" && analysisRetryMatch) {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.requirements || !repositories.jobs) return jsonError("DEPENDENCY_UNAVAILABLE");
+    if (!repositories?.requirements || !repositories.jobs || !repositories.audit) return jsonError("DEPENDENCY_UNAVAILABLE");
     const req = await repositories.requirements.get(decodeURIComponent(analysisRetryMatch[1]!)); if (!req) return jsonError("NOT_FOUND");
-    if (req.pipeline.pull !== "synced" || req.pipeline.analysis !== "failed_retryable") return jsonError("CONFLICT");
+    if (req.pipeline.pull !== "synced" || !["pending", "failed_retryable"].includes(req.pipeline.analysis)) return jsonError("CONFLICT");
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
     const latestAnalysis = await repositories.analyses?.latest(req.id) ?? null;
     const priorAnalysisVersion = latestAnalysis?.analysisVersion ?? 0;
-    try { await repositories.jobs.enqueue({ jobType: "analysis", dedupeKey: `analysis:${req.id}:sv${req.sourceVersion}:after${priorAnalysisVersion}`, payload: { requirementId: req.id, sourceVersion: req.sourceVersion, actorId: auth.actor.id }, availableAt: now }); }
-    catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
-    const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "analysis.retry_requested", entityType: "requirement", entityId: req.id, result: "succeeded", safeDetails: { sourceVersion: req.sourceVersion, priorAnalysisVersion }, occurredAt: now });
+    const dedupeKey = `analysis:${req.id}:sv${req.sourceVersion}:after${priorAnalysisVersion}`;
+    const currentJob = await repositories.jobs.findByDedupeKey?.(dedupeKey);
+    const auditRetry = (result: "succeeded" | "failed" | "denied", analysisStatus: string) => appendAudit(repositories, {
+      id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "analysis.retry_requested", entityType: "requirement", entityId: req.id,
+      result, safeDetails: { sourceVersion: req.sourceVersion, priorAnalysisVersion, analysisStatus }, occurredAt: now,
+    });
+    if (currentJob?.status === "queued" || currentJob?.status === "running") {
+      const auditFailure = await auditRetry("succeeded", "reused_existing_job");
+      if (auditFailure) return auditFailure;
+      return json({ requirementId: req.id, status: "queued" }, 202);
+    }
+    if (currentJob?.status === "succeeded") {
+      const auditFailure = await auditRetry("denied", "conflict_succeeded_job_pending_state");
+      if (auditFailure) return auditFailure;
+      return jsonError("CONFLICT");
+    }
+    try { await repositories.jobs.enqueue({ jobType: "analysis", dedupeKey, payload: { requirementId: req.id, sourceVersion: req.sourceVersion, actorId: auth.actor.id }, availableAt: now }); }
+    catch {
+      const auditFailure = await auditRetry("failed", "enqueue_failed");
+      if (auditFailure) return auditFailure;
+      return jsonError("DEPENDENCY_UNAVAILABLE");
+    }
+    const auditFailure = await auditRetry("succeeded", "queued_new_job");
     if (auditFailure) return auditFailure;
     return json({ requirementId: req.id, status: "queued" }, 202);
   }

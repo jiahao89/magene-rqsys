@@ -41,33 +41,27 @@ test("tenant token 请求并缓存至过期前", async () => {
   assert.equal(tokenRequests.length, 1);
 });
 
-test("findByRequirementKey 走 base/v3 复合键过滤 + bitable 命名字段读取", async () => {
+test("findByRequirementKey 使用 Bitable v1 精确复合键过滤并只读取键字段", async () => {
   const calls: string[] = [];
   const client = new FeishuBitableClient({
     ...CONFIG,
     fetch: fakeFetch((path) => {
       if (path.includes("/tenant_access_token")) return { body: { code: 0, tenant_access_token: "t-1", expire: 3600 } };
-      if (path.includes("/base/v3/bases/")) {
+      if (path.includes("/bitable/v1/apps/app-token/tables/tbl-1/records?")) {
         const url = new URL(`https://x${path}`);
-        const filter = JSON.parse(url.searchParams.get("filter") ?? "{}") as { conditions?: unknown[]; logic?: string };
-        assert.deepEqual(filter.conditions, [
-          ["TB项目ID", "==", "p1"],
-          ["TB需求ID", "==", "r1"],
-        ]);
-        assert.equal(filter.logic, "and");
-        return { body: { code: 0, data: { record_id_list: ["rec-1"] } } };
-      }
-      if (path.includes("/bitable/v1/apps/app-token/tables/tbl-1/records/rec-1")) {
-        return { body: { code: 0, data: { record: { record_id: "rec-1", fields: { 标题: "A" } } } } };
+        assert.equal(url.searchParams.get("filter"), 'and(CurrentValue.[TB项目ID] = "p1", CurrentValue.[TB需求ID] = "r1")');
+        assert.deepEqual(JSON.parse(url.searchParams.get("field_names") ?? "[]"), ["TB项目ID", "TB需求ID"]);
+        assert.equal(url.searchParams.get("page_size"), "2");
+        return { body: { code: 0, data: { items: [{ record_id: "rec-1", fields: { TB项目ID: "p1", TB需求ID: "r1" } }] } } };
       }
       return { body: { code: 0 } };
     }, calls),
   });
   const found = await client.findByRequirementKey({ projectId: "p1", requirementId: "r1" });
   assert.equal(found?.recordId, "rec-1");
-  assert.equal(found?.fields["标题"], "A");
-  assert.ok(calls.some((c) => c.startsWith("GET /open-apis/base/v3/bases/app-token/tables/tbl-1/records")));
-  assert.ok(calls.some((c) => c.startsWith("GET /open-apis/bitable/v1/apps/app-token/tables/tbl-1/records/rec-1")));
+  assert.deepEqual(found?.fields, { TB项目ID: "p1", TB需求ID: "r1" });
+  assert.ok(calls.some((c) => c.startsWith("GET /open-apis/bitable/v1/apps/app-token/tables/tbl-1/records?")));
+  assert.equal(calls.some((c) => c.startsWith("GET /open-apis/base/v3/")), false);
 });
 
 test("复合键无命中返回 null", async () => {
@@ -75,11 +69,28 @@ test("复合键无命中返回 null", async () => {
     ...CONFIG,
     fetch: fakeFetch((path) => {
       if (path.includes("/tenant_access_token")) return { body: { code: 0, tenant_access_token: "t-1", expire: 3600 } };
-      if (path.includes("/base/v3/bases/")) return { body: { code: 0, data: { record_id_list: [] } } };
+      if (path.includes("/bitable/v1/apps/app-token/tables/tbl-1/records?")) return { body: { code: 0, data: { items: [] } } };
       return { body: { code: 0 } };
     }, []),
   });
   assert.equal(await client.findByRequirementKey({ projectId: "p", requirementId: "none" }), null);
+});
+
+test("重复复合键拒绝任意选择记录", async () => {
+  const client = new FeishuBitableClient({
+    ...CONFIG,
+    fetch: fakeFetch((path) => {
+      if (path.includes("/tenant_access_token")) return { body: { code: 0, tenant_access_token: "t-1", expire: 3600 } };
+      if (path.includes("/bitable/v1/apps/app-token/tables/tbl-1/records?")) {
+        return { body: { code: 0, data: { items: [{ record_id: "rec-1" }, { record_id: "rec-2" }] } } };
+      }
+      return { body: { code: 0 } };
+    }, []),
+  });
+  await assert.rejects(
+    () => client.findByRequirementKey({ projectId: "p", requirementId: "r" }),
+    /multiple records for the configured requirement key/,
+  );
 });
 
 test("create/update/readPmFields 走 bitable records API", async () => {

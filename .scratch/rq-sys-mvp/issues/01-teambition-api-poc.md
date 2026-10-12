@@ -1,4 +1,4 @@
-# [partially-verified: 2026-10-10; selected project differs from prior POC] 01 — 验证 Teambition API 与字段映射
+# [partially-verified: selected project and field mapping still require reconciliation] 01 — 验证 Teambition API 与字段映射
 
 ## 目标
 在指定产品组项目中验证初始全量同步和后续增量/重复同步所需的真实 API 契约。
@@ -17,6 +17,7 @@
 ## Follow-up observations
 - 需求 ID 跨周稳定性、删除记录发现、附件引用内部结构与来源 URL 语义、网关在更大规模下的限流仍是持续观察项；当前未阻塞 MVP 当前数据集的基础字段映射。证据和 caveats 见 `specs/rq-sys-mvp/TEAMBITION-LIVE-POC.md`。
 - The previous field-map evidence was collected from `需求收集与管理`, not the selected `室外产品-码表软固件需求池` (`6960a3187384fa11aa07d7e6`). On 2026-10-10 the online gateway was verified read-only (`getProjects` HTTP 200); the requirement type is `6960a3b76586dfa001dc14df`, and `getProjectTasks` returned 311 rows with unique IDs and four resolvable status names. A one-time direct Base import was verified separately. Field types/bindings, pagination, owner mapping, and the approved source-to-Base field map remain open, so this ticket stays partially verified. Details: `specs/rq-sys-mvp/TEAMBITION-LIVE-POC.md`.
+- 2026-10-11 read-only count recheck used the app repo's local `.env.local` without printing credentials or task content: the project has four task-type configs; counts are `需求` 311, `任务` 23, `执行用例` 0, `日程` 0. Omitting `scenariofield_config_id` returns only the default `任务` type (23), not all project rows. All returned IDs were unique per type. The Teambition UI still shows `所有需求 311/314`; category counts sum to 311, so the extra 3 remain unexplained. This recheck did not import rows into RQ-Sys, send content to AI, or write Base. See runbook B-2.
 
 ## 不在范围
 写入 Teambition、标题推断 ID、或引入 PRD 外字段。

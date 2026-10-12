@@ -70,11 +70,11 @@ test("buildAnalysisRequest masks listed identity PII and pattern-matched contact
   assert.equal(request.priorityRule, null);
 });
 
-test("validateAnalysisOutput accepts a fully evidenced contract and rejects bad module/evidence/priority/inference", () => {
+test("validateAnalysisOutput accepts a fully evidenced contract, ignores model priority, and rejects bad module/evidence/inference", () => {
   assert.deepEqual(validateAnalysisOutput(validResult, { dictionary, priorityRule: null, sourceText: "支持查询和筛选" }), validResult);
   assert.throws(() => validateAnalysisOutput({ ...validResult, module: "未批准模块" }, { dictionary, priorityRule: null, sourceText: "支持查询和筛选" }));
   assert.throws(() => validateAnalysisOutput({ ...validResult, evidence: ["不在原文的说法"] }, { dictionary, priorityRule: null, sourceText: "支持查询和筛选" }));
-  assert.throws(() => validateAnalysisOutput({ ...validResult, priority: "P1" }, { dictionary, priorityRule: null, sourceText: "支持查询和筛选" }));
+  assert.equal(validateAnalysisOutput({ ...validResult, priority: "P1" }, { dictionary, priorityRule: null, sourceText: "支持查询和筛选" }).priority, null);
   assert.throws(() => validateAnalysisOutput({ ...validResult, inferences: [{ text: "推断" }] }, { dictionary, priorityRule: null, sourceText: "支持查询和筛选" }));
 });
 
@@ -98,6 +98,44 @@ test("DeepSeek provider sends JSON-mode request and parses structured response v
   assert.deepEqual(result, validResult);
   assert.equal(authorization, "Bearer test-secret");
   assert.equal(requestBody?.response_format && JSON.stringify(requestBody.response_format), JSON.stringify({ type: "json_object" }));
+});
+
+test("provider resolves model evidence references to exact source excerpts", async () => {
+  let requestBody: Record<string, unknown> | undefined;
+  const referencedResult = {
+    ...validResult,
+    evidence: ["T1"],
+    recommendations: {
+      user: { ...validResult.recommendations.user, evidence: ["T1"] },
+      market: validResult.recommendations.market,
+      business: validResult.recommendations.business,
+      technology: validResult.recommendations.technology,
+    },
+    facts: [{ text: "同步 AI 与 Base 推送", evidence: "T1" }],
+  };
+  const fetchStub: FetchLike = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return jsonResponse({ choices: [{ message: { content: JSON.stringify(referencedResult) } }] });
+  };
+  const provider = createDeepSeekProvider({ apiKey: "test-secret", fetch: fetchStub });
+  const title = "同步 AI 与 Base 推送";
+  const result = await provider.analyze({ title, description: "", context: "", piiMarkers: [], dictionary, priorityRule: null });
+  assert.deepEqual(result.evidence, [title]);
+  assert.deepEqual(result.recommendations.user.evidence, [title]);
+  assert.equal(result.facts[0]?.evidence, title);
+  const messages = requestBody?.messages as Array<{ content: string }> | undefined;
+  assert.match(messages?.[1]?.content ?? "", /T1/);
+  assert.match(messages?.[1]?.content ?? "", /cite their IDs exactly/u);
+});
+
+test("provider ignores an AI-generated priority when no calibrated rule is published", async () => {
+  const uncalibratedResult = { ...validResult, priority: "P1" as const };
+  const provider = createDeepSeekProvider({
+    apiKey: "test-secret",
+    fetch: async () => jsonResponse({ choices: [{ message: { content: JSON.stringify(uncalibratedResult) } }] }),
+  });
+  const result = await provider.analyze({ title: "支持查询", description: "支持查询和筛选", context: "", piiMarkers: [], dictionary, priorityRule: null });
+  assert.equal(result.priority, null);
 });
 
 test("analysis orchestration appends versions, safely records provider failures, and does not touch PM fields", async () => {

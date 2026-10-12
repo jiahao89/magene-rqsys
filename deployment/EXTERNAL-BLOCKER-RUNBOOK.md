@@ -8,7 +8,7 @@
 
 ---
 
-## B-1　Miaoda dev 工作区未对齐已发布 commit（阻塞 E2E 的第一颗钉子）
+## B-1　Miaoda Dev 编辑器合并未完成、预览代码过旧（阻塞 E2E 的第一颗钉子）
 
 ### 现状证据（2026-10-11 回溯）
 
@@ -19,7 +19,7 @@
 - **服务端任何提交都没有 RQ-Sys 角色逻辑**：`87a2444` 的 `server/rqsys/http/app.ts` 中
   `forbid|role` 计数为 `0`；root 仓从未包含该字符串。
 
-**结论**：这不是平台 ACL 决策，而是 dev preview 运行了旧客户端构建。
+**结论**：这不是平台 ACL 决策，而是 dev preview 运行了旧客户端构建。当前目标是先安全完成分歧编辑器的合并，对齐并发布已验证远端 `c226862`；只对齐到 `87a2444` 不会包含当前项目名来源表单和后续修复。
 
 ### 无需凭据即可执行的检查（已实跑，2026-10-11）
 
@@ -49,7 +49,7 @@ curl -sS -o /dev/stdout -w "\n%{http_code}\n" -X POST -H "content-type: applicat
 
 ```sh
 # 1) 确认发布 commit 与其服务端确实没有角色逻辑
-git -C rq-sys-miaoda log --oneline -1                 # 期望：sprint/default 在 87a2444
+git -C rq-sys-miaoda log --oneline -1                 # 期望：sprint/default 在 c226862
 git -C rq-sys-miaoda grep -c "forbid\|role" 87a2444 -- server/rqsys/http/app.ts
 # 期望输出：无匹配 / 0
 
@@ -62,15 +62,16 @@ git -C rq-sys-miaoda grep -n "飞书平台或集成服务拒绝" -- client/src/r
 
 ### 需要谁做什么
 
-1. 在 Miaoda 编辑器中把 dev 工作区对齐到 `87a2444`：
-   - **保留**该工作区既有的未提交 `.env` 与 `server/database/schema.ts` 改动（不要 checkout 覆盖）；
+1. 安全完成 Miaoda 编辑器的 merge 到 `origin/sprint/default` `c226862`：
+   - **保留** `.env` 与 `server/database/schema.ts`；绝不读取或提交 `.env` 内容；
+   - 仅以 `git status --short` 和 `git diff --cached --name-only` 核对暂存清单；若 `.env` 已暂存，只执行 `git restore --staged .env`，保留工作区文件；
    - 不要执行会丢弃未提交改动的 `reset --hard` / `checkout .`。
-2. 重新加载 dev preview，确认来源表单是「只填项目名称」的新版本（不是旧的 ID/字段映射表单）。
-3. 重试创建来源：项目名称默认 `室外产品-码表软固件需求池`，**周计划保持关闭**。
+2. 跑 app 仓 route tests、lint、typecheck、production build 与 `git diff --check`，检查无凭据后提交/推送；通过受支持且遵循 `--yes` 门禁的路径发布 `c226862`。当前 `release-create` CLI 不支持该标志时，不得绕过门禁。
+3. 重新加载 dev preview，确认来源表单只需项目名称且默认 `室外产品-码表软固件需求池`；创建 schedule-disabled 来源，确认项目和任务类型解析成功。
 
 ### 完成判据
 
-- dev preview 显示新版表单；
+- Dev preview 运行与 `c226862` 对齐的发布代码并显示新版表单；
 - `POST /api/sources` 成功创建来源（不再返回 403）；
 - 来源解析到批准的 Teambition 项目，且**未抓取任何真实需求行**。
 
@@ -81,13 +82,12 @@ git -C rq-sys-miaoda grep -n "飞书平台或集成服务拒绝" -- client/src/r
 
 ---
 
-## B-1b　本地也无法创建来源：缺同一份网关凭据
+## B-1b　目标 source setup 尚未验收；本地项目解析能力已在独立流程通过
 
-创建来源需要服务端按项目名解析 Teambition 项目。本机 `.env` 未配置 `TEAMBITION_GATEWAY_URL`，
-因此 `POST /api/sources` 返回 `503 DEPENDENCY_UNAVAILABLE: Teambition 项目自动识别尚未配置。`
+早前一次本地 harness 以项目名创建来源成功，并解析到批准的 Teambition 项目和需求类型；本轮没有从当前 workbench 验证 source setup。
+刷新本地 workbench 后 API 返回空数据，因此不能据早前 harness 证明当前 local UI 与 API 使用同一持久库。
 
-**与 B-2 是同一个外部依赖**：网关 URL + 凭据。在拿到它之前，本地与目标环境都无法完成来源创建，
-只能验证到"端点存在、身份门禁正常、依赖缺失时如实报错"为止。
+目标 Miaoda runtime 的来源创建仍需在发布代码对齐后，以项目名称和停用计划创建来源；不得触发真实需求同步。
 
 **完成判据**：注入网关配置后，`POST /api/sources` 返回 `201`，且解析出的项目为
 `室外产品-码表软固件需求池`、未抓取任何真实需求行。
@@ -96,33 +96,33 @@ git -C rq-sys-miaoda grep -n "飞书平台或集成服务拒绝" -- client/src/r
 
 ## B-2　Teambition 返回 311 行 vs UI 显示 `311/314`
 
-### 2026-10-11 实测结论（部分关闭）
+### 2026-10-11 实测结论（部分关闭，count-only 重核）
 
-用 dev 环境的网关凭据直接探测（只读）：
+使用 app 仓库 `.env.local` 中的网关配置发起只读 GET；凭据未输出，任务内容没有写入本地数据库、发送给模型或写入 Base：
 
 | 查询 | 结果 |
 |---|---|
-| `getProjectTasks?project_id=<PID>`（不带任务类型） | 23 行 |
-| `getProjectTasks?project_id=<PID>&scenariofield_config_id=<需求类型>` | **311 行** |
-| 其中 `id` 唯一且非空 | **311/311**，无缺失 |
-| 状态分布（`taskflow_status_id`） | 307 / 2 / 1 / 1（四个状态，**不含完成/归档过滤**） |
+| `getProjectScenarioFieldConfigs?project_id=<PID>` | 4 种任务类型：需求、任务、执行用例、日程 |
+| 按任务类型调用 `getProjectTasks` | 需求 **311**；任务 **23**；执行用例 **0**；日程 **0**；合计 **334** |
+| 不带 `scenariofield_config_id` 调用 `getProjectTasks` | **23** 行（默认返回“任务”类型，不是项目总数） |
+| 需求类型记录 `id` 唯一且非空 | **311/311**，无缺失 |
+| 需求类型状态分布（`taskflow_status_id`） | 307 / 2 / 1 / 1（四个状态，**不含完成/归档过滤**） |
 | `page` / `limit` / `page_size` 参数 | HTTP **500**（网关不支持分页参数） |
 
 **可以确定的部分**：代码侧没有施加完成/归档过滤（311 行覆盖全部四个状态），
 `id` 全部唯一非空，且分页参数不被网关接受——因此**没有证据表明 311 是被截断的结果**。
 
-**仍未解释的部分**：UI 的 `311/314`。仅差 3 条，且网关单次返回完整数组、无法翻页，
-在没有 UI 端可见范围说明的情况下无法进一步归因。
+**仍未解释的部分**：UI 的 `311/314`。API 四种类型计数合计 334，不能把 UI 的 314 解释为项目总记录数；需求类型仍是 311 条，而 UI 分母多 3。没有 UI 端筛选/计数定义，也没有可用的分页或未过滤总数接口，因此差异仍无法归因。
 
 ### 现状证据
 
-- 只读查询返回 311 条记录，`id` 唯一且非空；UI 显示 `311/314`。
+- 只读查询返回 311 条“需求”记录，`id` 唯一且非空；另有 23 条“任务”记录；UI 显示 `311/314`。
 - skill 的 `getProjectTasks` 包装器返回单个数组，**不暴露分页控制**，无法判断网关是否截断。
+- 当前 shell 没有导出网关变量；已通过 app 仓库 `.env.local` 做只读 count-only 查询，没有重新同步数据，也没有向用户索取凭据。
 
 ### 前置条件
 
-需要网关所有者提供 `TEAMBITION_GATEWAY_URL` 与凭据（`GATEWAY_API_KEY`）。
-Agent 不写平台环境变量；只准备清单并读取结果。
+后续要继续调查，需要 Teambition UI 中 `311/314` 的具体计数标签/筛选状态，或由网关所有者提供未过滤总数/分页契约。现有本地只读查询凭据已可用，不需重新提供密钥。Agent 不写平台环境变量。
 
 ### 无需凭据即可执行的检查
 
@@ -154,27 +154,19 @@ grep -nE "hasMore|nextCursor|page|limit" apps/api/src/adapters/teambition/client
 
 ---
 
-## B-3　`AI_API_KEY` —— **已用 dev 环境密钥验证可用（2026-10-11）**
+## B-3　`AI_API_KEY` —— workbench/runtime secret wiring mismatch（2026-10-11）
 
-### 2026-10-11 实测结论（已关闭）
+### 2026-10-11 实测结论（未关闭）
 
-用 dev 环境的 `AI_API_KEY` 跑生产 provider 路径：
+当前 synthetic fixture 的 workbench 分析状态为 `failed_retryable`，安全错误摘要为 `AI provider authentication failed`。随后直接从 `rq-sys-miaoda/.env.local` 读取配置并调用 DeepSeek 默认 URL/model，固定合成样例返回结构化结果且 schema 校验通过；摘要为 `confidence=中`、`priority=null`。这证明该本地 key/provider 配对有效，但不证明 workbench API 进程或 Miaoda Dev runtime 加载了同一 secret。
+本轮没有打印或修改任何密钥；发送给模型的只有固定虚构需求文本。
 
-```
-SMOKE-OK {"module":"报表分析","confidence":"高","priority":null,"evidenceCount":3,
-          "inferenceLabeled":true,"factsCount":3,"blindSpotsCount":6}
-```
-
-随后完整流程中另有 **3 次真实分析成功**（`analysis_runs.status='analyzed'`）。
-`priority` 为 `null` 符合预期——未发布校准规则时不产生 P0–P3。
-
-注意：本地 `.env` 里那份旧密钥仍是失效的（`auth_error`）；可用的是**妙搭 dev 环境**中的那份。
-Agent 未写入任何平台环境变量，仅读取。
+workbench 的认证失败和直接 provider smoke 成功来自不同运行进程/环境；不能据此推断目标 Dev secret 已正确加载，也不能断言 key 本身失效。
 
 ### 历史现状证据（保留）
 
-- 本地 provider 冒烟返回 `SMOKE-FAIL auth_error`（本地 key 已失效）。
-- 目标 runtime 是否加载密钥、能否出网，从未验证过；没有任何一次成功的模型调用。
+- 更早一次本地 smoke 返回 `SMOKE-FAIL auth_error`；本轮使用 app `.env.local` 的新直连 smoke 已成功。
+- 目标 runtime 是否加载密钥、能否出网，仍未验证；当前只有本地 provider 路径成功。
 
 ### 无需凭据即可执行的检查
 
@@ -189,9 +181,8 @@ grep -n "AI_BASE_URL\|AI_MODEL\|deepseek" apps/api/src/analysis/provider.ts | he
 
 ### 需要谁做什么
 
-1. 轮换或确认一个有效的服务端 `AI_API_KEY`（本地 `.env` 与妙搭 dev/online 分别处理）。
-2. 由管理员在受信服务端 Secret UI 注入；Agent 不写平台环境变量。
-3. 用**合成非 PII 数据**跑一次冒烟，确认真实推理可用。
+1. 确认 workbench/Dev runtime 使用与已验证 key/provider 配对一致的 secret，检查部署环境和运行进程加载路径；只核对变量是否存在及调用结果，不输出值。
+2. 仅用固定 synthetic fixture 在该 runtime 重试分析，确认 DeepSeek 返回结构化、schema 校验通过的结果。
 
 ### 完成判据
 
@@ -244,47 +235,47 @@ node --import=tsx --test apps/api/src/base/push-service.test.ts  # 含审计记�
 
 ---
 
-## B-6　飞书应用凭据缺少 Base（多维表格）权限 —— 阻塞 app 端 Base 写入
+## B-6　POC app-token Base 访问和负责人通知已验证；发布 runtime 待验收
 
-### 现状证据（2026-10-11 实测）
+### 最新验证（2026-10-11）
 
-用 dev 环境的 `FEISHU_APP_ID`/`FEISHU_APP_SECRET` 换取 tenant token 后直接调用：
+- 官方 Bitable v1 `records` API 在 app 凭据下返回 HTTP 200 / `code: 0`；精确复合过滤唯一命中固定 synthetic fixture，项目键与 fixture ID 均匹配。旧 `base/v3` 查询是 app-token 场景的错误路径，已从两仓共享 adapter 移除；本地回归覆盖精确过滤、无命中、重复键失败关闭和安全错误摘要。
+- 负责人字段在 POC Base 中为空；仅对固定 synthetic row 将其设为当前登录用户。编辑器的“同时发送通知”选项保持关闭。POC automation run log 显示“监控执行人字段变更”和“发送分配通知”步骤均成功，收件人为当前用户。
+- 这验证了 POC Base app-token API 与 Base automation 本身；不证明发布版 Miaoda runtime 调用同一版本代码。刷新本地 workbench 后 API 又显示空 workspace，故从 fixture 同步到 Base 的持久端到端链路尚未闭合。
+
+### 早期失败证据（2026-10-11，本轮之前；已被后续 API 回读修正）
+
+开发者后台已核对 Dev 实际使用的应用「固件需求池」：`bitable:app`（查看、评论、编辑和管理多维表格）与 `bitable:app:readonly` 均显示“已开通”，页面显示“当前修改均已发布”。因此此前把问题直接归因于缺少 `bitable:app` 是错误的，不应再次申请这两项权限。
+
+用户确认后，已在隔离测试 Base「TB同步测试(可删除)」的「… → 更多 → 添加应用」中将「固件需求池」设为“可编辑”并提交。界面显示“App added”，且“已添加应用”列表列出该应用和“Can edit”。未授权生产 Base「TB需求池」。
+
+此前（POC Base 应用访问授权补齐之前）用 Dev 应用凭据换取 tenant token 后的直接 API 结果：
 
 | 调用 | 结果 |
 |---|---|
 | `GET /open-apis/bitable/v1/apps/{app}/tables/{tbl}/fields` | HTTP **403**, code **91403** Forbidden |
 | `GET /open-apis/bitable/v1/apps/{app}/tables/{tbl}/records` | HTTP **403**, code **91403** Forbidden |
-| `GET /open-apis/base/v3/bases/{app}/tables/{tbl}/records` | HTTP **400**, code **99991672** “Access denied. One of the following scopes is required: [base…]” |
+| `GET /open-apis/base/v3/bases/{app}/tables/{tbl}/records` | HTTP **400**, code **99991672**，提示缺少 Base API scope；历史记录未保留完整 scope 清单 |
 
-tenant token 本身获取成功（`code: 0`），因此问题不是凭据错误，而是**该飞书应用未被授予多维表格权限**。
+`bitable` v1 的早期 `91403` 与应用尚未加入目标 Base 的文档应用列表一致；授权后，本轮重新测试已成功。`base/v3` 查重也已从代码移除，不再需要为此端点寻找 scope。Miaoda Dev 预览曾可访问；本轮刷新本地工作台时显示无来源、0 需求，与 POC Base 中已有 synthetic row 不一致，尚未通过同一 app runtime 建立端到端关联。
 
-**影响**：完整流程跑到 Base 推送必然失败——本地实测 `base_push_runs` 连续 5 次 `failed`
-（`BASE_PUSH_FAILED` → 重试到 `max_attempts_reached`），`requirements.base_record_id` 始终为空。
-此前 Ticket 09 记录的“Base transport/adapter 真实冒烟通过”走的是 **lark-cli 用户身份代理**，
-不是 app 凭据；两者不能互相证明。
+**影响**：`base/v3` app-token lookup 失败问题已修复；目标 published runtime 的 push 仍需在代码对齐后重跑。此前 lark-cli user-identity smoke 与本轮 app-token API probe 属于不同证据，不能互相替代。
 
-### 无需凭据即可执行的检查
+### 当前状态与下一步
 
-```sh
-# 代码侧：确认当前实现确实用 app 凭据换取 tenant token
-grep -n "tenant_access_token" apps/api/src/base/transport.ts
-```
+1. 在目标发布 runtime 对齐最新验证代码后，使用安全 fixture 重跑 app-mediated upsert、幂等更新及 PM 字段保护。
+2. 验证目标 app 处理器触发 POC Base 的已验证负责人自动化；收件人仍仅限当前用户。
+3. 发布版本 readback 当前受 `open.feishu.cn` DNS 故障阻断；不得用未授权 alternate write path 绕过 Spark 写入门禁。
 
-### 需要谁做什么
-
-飞书应用管理员在开发者后台为该应用开通多维表格权限（`bitable:app` 及记录读写），
-发布应用版本，并确认 tenant token 生效。
+**已确认不需要重复做的事**：再次开通 `bitable:app` / `bitable:app:readonly`；再次发布当前权限版本；向正式生产 Base 授予权限。
 
 ### 完成判据
 
-```sh
-# 换 token 后直接调用，期望 HTTP 200 且 code 0
-curl -sS -H "Authorization: Bearer <tenant_token>" \
-  "https://open.feishu.cn/open-apis/bitable/v1/apps/<app_token>/tables/<table_id>/fields"
-```
+- 官方 `bitable/v1` records lookup 在 app 凭据下返回 HTTP 200 / `code: 0`，精确复合键唯一命中；已由本轮 POC readback 验证。
+- 固定 synthetic row 的 owner-assignment automation trigger 和通知发送步骤均成功，且收件人只有当前用户；已由 POC automation run log 验证。
+- 之后在最新发布 Miaoda runtime 中重复 upsert/幂等更新/PM 字段保护，建立目标 runtime 的证据；尚未完成。
 
-返回 200 后，重跑本地完整流程即可观察到 `base_push_runs.status = 'pushed'` 与
-`requirements.base_record_id` 非空。
+Base 文档授权和 POC API/自动化已验证；这些结果仍不等于发布 Miaoda runtime 端到端验收完成。
 
 ---
 

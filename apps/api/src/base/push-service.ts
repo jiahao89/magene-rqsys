@@ -12,6 +12,7 @@
 import { randomUUID } from "node:crypto";
 import type { RequirementQueryRepository, PersonMappingRepository, BasePushRunRepository, AuditEventRepository, AnalysisRunRepository, SourceSnapshotRepository } from "../application/repositories.js";
 import type { FeishuBasePushAdapter, OmittedField } from "./client.js";
+import { FeishuApiError } from "./transport.js";
 import { normalizeOwnerName } from "../owner/mapping.js";
 
 export interface BasePushServiceDeps {
@@ -33,6 +34,27 @@ export type PushOutcome =
   | { kind: "not_found" }
   | { kind: "conflict" } // pull 未同步，或 TB 负责人未匹配等待人工映射
   | { kind: "error" }; // 推送失败（safe error 已记录，可重试）
+
+function safeBaseFailure(error: unknown): { code: string; summary: string } {
+  if (error instanceof FeishuApiError) {
+    const action = error.action.replace(/\s+/g, "_").toUpperCase();
+    const detail = error.apiCode !== undefined
+      ? `CODE_${error.apiCode}`
+      : error.httpStatus !== undefined
+        ? `HTTP_${error.httpStatus}`
+        : error.kind.toUpperCase();
+    const reason = [error.httpStatus !== undefined ? `HTTP ${error.httpStatus}` : null, error.apiCode !== undefined ? `code ${error.apiCode}` : null]
+      .filter(Boolean).join(", ") || error.kind.replaceAll("_", " ");
+    return { code: `FEISHU_${action}_${detail}`, summary: `Feishu ${error.action} failed (${reason}); retry is available.` };
+  }
+  if (error instanceof SyntaxError) {
+    return { code: "FEISHU_INVALID_RESPONSE", summary: "Feishu returned an invalid record response; retry is available." };
+  }
+  if (error instanceof TypeError) {
+    return { code: "FEISHU_NETWORK_ERROR", summary: "Feishu API connection failed; retry is available." };
+  }
+  return { code: "BASE_PUSH_FAILED", summary: "Base update failed; retry is available." };
+}
 
 export function createBasePushService(deps: BasePushServiceDeps) {
   const now = deps.now ?? (() => new Date());
@@ -142,8 +164,9 @@ export function createBasePushService(deps: BasePushServiceDeps) {
           const targetOwnerState = mapping.matchMethod === "manual" ? "manually_mapped" : "auto_mapped";
           if (req.pipeline.owner !== targetOwnerState) await deps.requirements.setOwner(req.id, mapping.feishuUserId, targetOwnerState);
         }
-      } catch {
-        await deps.basePushes.updateResult(run.id, { status: "failed", safeErrorCode: "BASE_PUSH_FAILED", safeErrorSummary: "Base update failed; retry is available.", completedAt: now().toISOString() });
+      } catch (error) {
+        const failure = safeBaseFailure(error);
+        await deps.basePushes.updateResult(run.id, { status: "failed", safeErrorCode: failure.code, safeErrorSummary: failure.summary, completedAt: now().toISOString() });
         await deps.requirements.setPushState(req.id, "failed");
         await deps.audit.append({ id: randomUUID(), actorId: deps.actorId, eventType: "base.push", entityType: "requirement", entityId: req.id, result: "failed", safeDetails: { sourceVersion: req.sourceVersion, errorClass: "base_push_failed" }, occurredAt: now().toISOString() });
         return { kind: "error" };

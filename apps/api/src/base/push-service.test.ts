@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { AnalysisRunRecord, BasePushRunRecord, RequirementRecord, SourceSnapshotRecord } from "../domain/persistence.js";
 import type { FeishuBasePushAdapter } from "./client.js";
+import { FeishuApiError } from "./transport.js";
 import { createBasePushService } from "./push-service.js";
 
 const requirement = (overrides: Partial<RequirementRecord> = {}): RequirementRecord => ({
@@ -22,13 +23,14 @@ const pushRun = (overrides: Partial<BasePushRunRecord> = {}): BasePushRunRecord 
   safeErrorSummary: null, startedAt: "2026-10-08T00:00:00.000Z", completedAt: "2026-10-08T00:00:01.000Z", ...overrides,
 });
 
-function makeHarness(options: { req?: RequirementRecord; previous?: BasePushRunRecord | null; lastSuccessful?: BasePushRunRecord | null; sourceSnapshot?: SourceSnapshotRecord | null; omittedFields?: { field: string; value: string; reason: "not_in_base_select_options" | "category_omitted_by_policy" }[] } = {}) {
+function makeHarness(options: { req?: RequirementRecord; previous?: BasePushRunRecord | null; lastSuccessful?: BasePushRunRecord | null; sourceSnapshot?: SourceSnapshotRecord | null; omittedFields?: { field: string; value: string; reason: "not_in_base_select_options" | "category_omitted_by_policy" }[]; pushError?: Error } = {}) {
   const auditEvents: { eventType: string; result: string; safeDetails: Record<string, unknown> }[] = [];
   const req = options.req ?? requirement();
   const calls: string[] = [];
   let existing = options.previous ?? null;
   let baseInput: { projectId: string; substantiveChanged: boolean } | null = null;
   let savedBaseRecord: string | null = null;
+  let savedFailure: { code: string | null; summary: string | null } | null = null;
   const currentRun = pushRun({ id: "push-current", status: "running", sourceVersion: req.sourceVersion, idempotencyKey: "push:req-1:v2", baseRecordId: null });
   const service = createBasePushService({
     requirements: {
@@ -44,17 +46,17 @@ function makeHarness(options: { req?: RequirementRecord; previous?: BasePushRunR
       append: async () => { calls.push("append"); existing = currentRun; return currentRun; },
       latest: async () => existing,
       latestSuccessful: async () => options.lastSuccessful ?? null,
-      updateResult: async (id: string, result: { status: "pushed" | "failed"; baseRecordId?: string; completedAt: string }) => { calls.push(`run:${result.status}`); existing = { ...(existing ?? currentRun), id, status: result.status, baseRecordId: result.baseRecordId ?? null, completedAt: result.completedAt }; return existing; },
+      updateResult: async (id: string, result: { status: "pushed" | "failed"; baseRecordId?: string; safeErrorCode?: string; safeErrorSummary?: string; completedAt: string }) => { calls.push(`run:${result.status}`); if (result.status === "failed") savedFailure = { code: result.safeErrorCode ?? null, summary: result.safeErrorSummary ?? null }; existing = { ...(existing ?? currentRun), id, status: result.status, baseRecordId: result.baseRecordId ?? null, completedAt: result.completedAt }; return existing; },
       restart: async (id: string, startedAt: string) => { calls.push("restart"); const restarted = { ...(existing ?? currentRun), id, status: "running" as const, startedAt, completedAt: null, safeErrorCode: null, safeErrorSummary: null }; existing = restarted; return restarted; },
     } as never,
     sourceSnapshots: { getAtVersion: async () => options.sourceSnapshot ?? null } as never,
     audit: { append: async (event: { eventType: string; result: string; safeDetails: Record<string, unknown> }) => { calls.push("audit"); auditEvents.push(event); } } as never,
-    base: { push: async (input: { projectId: string; substantiveChanged: boolean }) => { calls.push("base"); baseInput = input; return { recordId: "record-2", created: false, omittedFields: options.omittedFields ?? [] }; } } as unknown as FeishuBasePushAdapter,
+    base: { push: async (input: { projectId: string; substantiveChanged: boolean }) => { calls.push("base"); baseInput = input; if (options.pushError) throw options.pushError; return { recordId: "record-2", created: false, omittedFields: options.omittedFields ?? [] }; } } as unknown as FeishuBasePushAdapter,
     sourceProjectId: "verified-source-project",
     baseFields: { projectId: "project", requirementId: "requirement", owner: "owner", source: {}, ai: {}, pm: ["PM状态"] },
     actorId: "operator-1", now: () => new Date("2026-10-10T00:00:00.000Z"),
   });
-  return { service, calls, auditEvents, get baseInput() { return baseInput; }, get savedBaseRecord() { return savedBaseRecord; } };
+  return { service, calls, auditEvents, get baseInput() { return baseInput; }, get savedBaseRecord() { return savedBaseRecord; }, get savedFailure() { return savedFailure; } };
 }
 
 test("retrying the same failed Base push executes the upsert instead of reporting the failure as success", async () => {
@@ -108,4 +110,12 @@ test("keeps the success audit free of an omission reason when nothing was skippe
   const success = h.auditEvents.find((event) => event.eventType === "base.push" && event.result === "succeeded");
   assert.ok(success);
   assert.equal(success.safeDetails.reason, undefined);
+});
+
+test("classifies Feishu failures from structured fields rather than Error.message wording", async () => {
+  const h = makeHarness({ pushError: new FeishuApiError("api", "record update", undefined, 1254043) });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "error");
+  assert.equal(h.savedFailure?.code, "FEISHU_RECORD_UPDATE_CODE_1254043");
+  assert.equal(h.savedFailure?.summary, "Feishu record update failed (code 1254043); retry is available.");
 });

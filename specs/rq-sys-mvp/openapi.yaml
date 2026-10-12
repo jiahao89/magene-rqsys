@@ -264,6 +264,7 @@ paths:
         '202': { description: Analysis retry accepted; push is not blocked }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Requirement is already analyzed/running, or its pending state conflicts with a completed job }
   /api/audit:
     get:
       summary: Search workflow audit events

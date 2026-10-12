@@ -51,7 +51,7 @@ The MVP does not require virtual-user/KANO output, VOC/NPS scoring, final adopti
 2. Validate output shape, controlled-module membership, and evidence references before storing it.
 3. A valid result sets AI state to 已分析. An invalid response, model error, or timeout sets AI state to 分析失败待重试 with a safe error summary.
 4. After the first attempt reaches success, failure, or timeout, continue the owner/push pipeline. Do not await a later retry.
-5. A later retry creates a new analysis attempt/version and updates only AI-owned fields. It does not overwrite PM-confirmed fields.
+5. A later retry creates a new analysis attempt/version and updates only AI-owned fields. It does not overwrite PM-confirmed fields. A `pending` requirement may be retried to recover a missing queue job; retries are deduplicated by requirement, source version, and prior analysis version. An already queued/running job is reused, and a succeeded job paired with a pending requirement is surfaced as a conflict for investigation.
 6. AI failure is per requirement and does not mark a successfully pulled batch as a pull failure.
 7. Low confidence, missing priority, or missing optional context never blocks push.
 
@@ -61,6 +61,7 @@ The technical design mentions one timeout retry. Interpret this as a queued/non-
 
 - Analysis is an internal service boundary invoked by the pipeline after snapshot persistence.
 - POST /api/analysis/{id}/retry — enqueue a new analysis attempt for an eligible requirement.
+- Eligible states are `failed_retryable` and `pending`; reject `running` and `analyzed` states.
 - GET /api/requirements/{id} — return source facts, the latest AI version, prior versions as permitted, and separate pipeline state.
 - Every retry request records actor, request time, target source version, and analysis version.
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { AuditEventRecord, SourceConfigRecord, SyncBatchRecord, SyncItemRecord } from "../domain/persistence.js";
+import type { AuditEventRecord, RequirementRecord, SourceConfigRecord, SyncBatchRecord, SyncItemRecord } from "../domain/persistence.js";
 import type { ApiDependencies, ApiRepositories } from "./app.js";
 import { handleApiRequest } from "./app.js";
 import { encodeBatchCursor } from "../application/batch-cursor.js";
@@ -45,6 +45,38 @@ test("queues a Base push retry without an undocumented project ID dependency", a
   assert.equal((queued as Record<string, unknown> | null)?.jobType, "base_push");
   assert.deepEqual((queued as Record<string, unknown> | null)?.payload, { requirementId: requirement.id, sourceVersion: 1, analysisVersion: 2, idempotencyKey: `base-push:${requirement.id}:sv1:av2:retry:retry-key-123`, actorId: "actor-1" });
   assert.equal(auditType, "base.push.retry_requested");
+});
+test("queues a retry for a pending analysis when its current queue job is missing", async () => {
+  const d = makeDependencies();
+  const queued: Record<string, unknown>[] = [];
+  d.repositories!.requirements!.get = async (id: string) => id === requirement.id ? { ...requirement, pipeline: { ...requirement.pipeline, analysis: "pending" as const } } as RequirementRecord : null;
+  d.repositories!.jobs.enqueue = async (input) => {
+    queued.push(input as unknown as Record<string, unknown>);
+    return { ...input, id: "analysis-job", status: "queued", attemptCount: 0, maxAttempts: 3, lockedUntil: null, lastErrorCode: null, lastErrorSummary: null, createdAt: input.availableAt, updatedAt: input.availableAt };
+  };
+  const response = await handleApiRequest(new Request(`http://localhost/api/analysis/${requirement.id}/retry`, { method: "POST" }), d);
+  assert.equal(response.status, 202);
+  assert.deepEqual(await response.json(), { requirementId: requirement.id, status: "queued" });
+  assert.equal(queued.length, 1);
+  assert.equal(queued[0]?.dedupeKey, `analysis:${requirement.id}:sv1:after2`);
+});
+test("audits an analysis retry request when an existing queued job is reused", async () => {
+  const d = makeDependencies();
+  const auditEvents: Record<string, unknown>[] = [];
+  d.repositories!.requirements!.get = async (id: string) => id === requirement.id
+    ? { ...requirement, pipeline: { ...requirement.pipeline, analysis: "pending" as const } } as RequirementRecord
+    : null;
+  d.repositories!.jobs.findByDedupeKey = async (key) => key === `analysis:${requirement.id}:sv1:after2`
+    ? { id: "analysis-job", jobType: "analysis", dedupeKey: key, payload: {}, status: "queued", attemptCount: 0, maxAttempts: 3, availableAt: "2026-10-08T00:00:00.000Z", lockedUntil: null, lastErrorCode: null, lastErrorSummary: null, createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z" }
+    : null;
+  d.repositories!.audit.append = async (event) => { auditEvents.push(event as unknown as Record<string, unknown>); };
+  const response = await handleApiRequest(new Request(`http://localhost/api/analysis/${requirement.id}/retry`, { method: "POST" }), d);
+  assert.equal(response.status, 202);
+  assert.deepEqual(await response.json(), { requirementId: requirement.id, status: "queued" });
+  assert.equal(auditEvents.length, 1);
+  assert.equal(auditEvents[0]?.eventType, "analysis.retry_requested");
+  assert.equal(auditEvents[0]?.actorId, "actor-1");
+  assert.deepEqual(auditEvents[0]?.safeDetails, { sourceVersion: 1, priorAnalysisVersion: 2, analysisStatus: "reused_existing_job" });
 });
 test("lists and retrieves batches with items", async () => { const d = makeDependencies(); assert.equal((await handleApiRequest(new Request("http://localhost/api/batches?limit=10"), d)).status, 200); const r = await handleApiRequest(new Request(`http://localhost/api/batches/${batch.id}`), d); assert.equal(r.status, 200); assert.deepEqual((await r.json() as { items: SyncItemRecord[] }).items, [item]); });
 test("failed item retry is idempotent across repeated requests", async () => {

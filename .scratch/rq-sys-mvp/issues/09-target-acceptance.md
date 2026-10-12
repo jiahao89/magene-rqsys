@@ -1,6 +1,34 @@
-# [blocked: dev workspace must be aligned to published commit 87a2444; the "role check" 403 was client-side copy in an older build, not platform ACL] 09 — 目标环境端到端验收
+# [blocked: contain unintended Dev batch and finish target E2E] 09 — 目标环境端到端验收
 
-## FORBIDDEN 归因更新（2026-10-11，本轮回溯结论）
+## 最新验收更新（2026-10-12）
+
+- 本轮审查修复两项问题：Base 失败分类改用结构化 Feishu 错误字段；分析重试复用队列任务时也记录 actor、时间、源版本和分析版本。修复已同步到两仓，共用逻辑对齐 19/19。
+- 本地回归：root API 238/238（含隔离 PostgreSQL）、Web 36/36、typecheck/build；妙搭路由测试 61/61、server/client typecheck、lint、production build 均通过。
+- 最新代码仅在本地提交：妙搭 app commit `cd64e8d` 尚未 push/release；已发布版本仍是 `7695421212881750997` / `2d901361`。
+- 对误触批次的 Dev 查询先完成 dry-run，执行时因 DNS 无法解析 `open.feishu.cn` 而未到达飞书；没有进行任何目标写入。批次与队列任务当前状态未能刷新，之前读到的 30 条导入、running 批次、过期租约仍是最后已确认状态。
+- Ticket 09 仍 blocked：误触批次处置（批次设为 schema 支持的 `failed`、同步 job 设为 `cancelled`，保留导入行）需用户明确确认；目标 recovery 和发布版 app-mediated E2E 未验证；Teambition `311` vs UI `311/314` 未解释。周计划及干系人通知保持关闭。
+
+## 此前验收更新（2026-10-11，发布后）
+
+- Miaoda release `7695421212881750997` 已完成，绑定提交 `2d901361ed19cb4fd26b77b446c8d3142b575c00`，`error_logs` 为空。提交已推送到 `sprint/default`，未包含 `.env` 或密钥文件。
+- 线上只读冷启动复核显示：请求未完成前保持“正在检查 API / 正在加载配置…”，完成后才显示“API 已连接”和已保存项目。线上来源处于停用状态，需求/批次为空；每周一 09:00 计划仍关闭。
+- 修复了工作台提前显示空数据的问题：改用 `/api/health/ready`，并在首屏来源、批次、需求快照全部返回后再显示 ready。回归测试先红后绿；已发布冷启动复核通过。
+- 用户确认的 Dev `AI_API_KEY` 写入成功，未回显密钥。写入后，固定合成需求分析成功并写入隔离 POC Base；之前失败的合成需求重试成功，Base 分析版本更新至 2。该结果来自本地 workbench + Dev 凭据，不等同发布版 runtime 的完整目标验收。
+- **误触后的 Dev 批次待隔离：** 浏览器验收时我使用了过期的按钮序号，误点“立即同步”并创建批次 `020073d7-17ec-4c1f-8521-56a300882b8d`。最后一次成功的只读 Dev 查询显示已导入 30 条真实 TB 记录/30 条 sync items；当时批次为 `running`，关联 sync job 的租约已过期，未发现 AI 或 Base 队列作业。本地 API 进程已停止，恢复触发器保持 disabled，未发通知。之后的状态查询在 DNS 阶段失败，当前状态未能刷新。拟处置为将批次设为 schema 支持的 `failed`、同步 job 设为 `cancelled`，保留已导入数据；此前已请求用户明确确认，确认前不重启 worker 或写入状态。
+- 当时本地验证：root API 236/236、Web 36/36、typecheck/build、alignment 19/19；妙搭路由/adapter 61/61、server/client typecheck、lint、production build、diff check 均通过。
+- Ticket 09 仍 blocked：待隔离误触批次、验证恢复触发器、解释 Teambition 311 vs UI 311/314 差异；不得再次拉取真实项目或启用周计划/干系人通知。
+
+## 此前验收更新（2026-10-11；已由上方发布后状态补充）
+
+- 修复并同步了 Base app-token 查询路径：使用官方 Bitable v1 `records` 列表接口及精确的项目 ID + 需求 ID 过滤，限制返回字段，并在复合键重复时失败关闭。根仓和 Miaoda 仓现已对齐。
+- 合成夹具已通过当前 workbench/API 路径推送到隔离 POC Base；官方 v1 只读回查到唯一匹配记录。该证据不代表当前已发布 Miaoda runtime 的代码发布或完整 E2E 验收。
+- 该夹具的 workbench 分析失败，安全摘要为 `AI provider authentication failed`。随后用 app 仓 `.env.local` 的配置直连 DeepSeek provider 冒烟成功，结构化结果校验通过（置信度“中”、priority 留空）。因此本地 key/provider 配对有效，问题仍在 workbench/目标 runtime 是否加载了同一 secret；没有读取或回显密钥。
+- 将该合成记录的负责人设为当前登录用户，且关闭记录编辑器的直接通知选项；POC 自动化运行日志显示“监控执行人字段变更”与“发送分配通知”均成功，收件人配置仅为当前用户。此为 Base 自动化验收，不代表发布版 Miaoda runtime 发起完整链路。
+- 刷新本地工作台后 API 返回空数据（无数据源、无需求），与 Base 中的合成记录不一致；需在同一持久运行环境重跑，才能验收完整端到端一致性。
+- 本地回归通过：root API 232/232、Web 36/36；Miaoda adapter 54/54、typecheck、lint、production build；两仓对齐检查和 `git diff --check` 均通过。
+- 已触发且成功执行仅通知当前用户的负责人自动化；本次验收仅做 Teambition 类型/数量只读查询，没有将真实记录导入 RQ-Sys、发送给 AI 或写入 Base（此前有独立本地 harness 导入 311 条记录的证据，不属于妙搭目标验收）。周一 09:00 计划及 30 分钟恢复触发器保持 disabled。最新 release 查询因 DNS 无法解析 `open.feishu.cn` 失败，未进行发布操作。
+
+## 历史 FORBIDDEN 归因更新（2026-10-11；后续发布及 Dev 验证已更新状态）
 
 `403` 是**服务端真实返回**的，但“角色校验由服务端强制执行”这句话**不是服务端写的**——它来自客户端硬编码文案。历史回溯（`git grep` 全历史，`rq-sys-miaoda`）：
 
@@ -11,18 +39,26 @@
 **结论修正**：dev preview 显示“角色校验”文案，是因为它运行的是**未发布的旧客户端构建**；这不构成“妙搭平台存在角色/ACL 拦截”的证据。因此：
 
 1. 不要再把该 403 归因为平台角色策略或 ACL，也不必等待平台侧“解除拦截”；
-2. 首要动作是把 dev 工作区对齐到已发布 commit `87a2444`（保留其既有 `.env` 与 `server/database/schema.ts` 未提交改动），然后重试创建来源；
+2. 首要动作是安全完成编辑器合并并对齐到远端 `c226862`（保留 `.env` 与 `server/database/schema.ts`；提交前按文件名确认 `.env` 不在 index），再通过遵守 `spark:app:write` 门禁的受支持路径发布和对齐 Dev；
 3. 若对齐后仍返回 403，应按新文案核查**飞书平台/集成资源授权**与运行 commit，而不是应用角色矩阵。
 
-## 最新状态（2026-10-11，覆盖下方旧日期汇总）
+## 历史目标状态快照（2026-10-11；后续状态见顶部“最新验收更新”）
 - 用户已确认按实际 dry-run 预览执行。Miaoda release `7695216916613073890` 已完成，commit 为 `87a2444a4ee2c802d40cf6d63a53c3a915b22196`；线上工作台加载成功，显示“API 已连接”，数据源列表为空，配置表单只维护项目名称并默认 `室外产品-码表软固件需求池`。
 - 已在 **dev** 环境写入 `BASE_APP_TOKEN`、`BASE_TABLE_ID` 和 `RQSYS_ENABLE_TEST_FIXTURES=true`，指向批准的 POC Base；env-list 仅核对变量名，未回显任何值。Online 环境变量未改。
 - 已创建 `rqsysWeeklySyncRecovery`，`*/30 * * * *`、`Asia/Shanghai`、状态 `disabled`。来源配置和周一 09:00 计划均未创建/启用，因此不会触发真实同步。
 - 目标安全验收仍未执行：没有调用模型、创建 POC Base 测试记录、写 Base 或发送通知。目标 Base workflow `POC-执行人变更通知` 先前只读确认已启用；app 侧 owner assignment 事件未验证。
 - 发布版工作正常，但 Miaoda 编辑器 dev preview 属于分歧工作区，仍显示旧版 ID/字段映射表单。误启动的合并会话已取消，`git merge --abort` 成功；预览可加载并显示 API 已连接；未提交/推送，原有 `.env`、`server/database/schema.ts` 未提交改动保留。仅尝试在预览中创建未启用周计划的 dev 来源，服务端返回 `FORBIDDEN`（提示角色校验由服务端执行）；来源未创建。随后已清空未提交表单，周计划保持关闭。
 - 发布代码的 RQ-Sys controller 只要求妙搭登录，未实现应用角色判断；因此当前 403 尚不能归因到该代码中的角色策略，可能是妙搭平台/目标 runtime 的权限拦截或运行代码与发布 commit 不一致。不得绕过这条服务端拒绝；需先核实 target ACL/runtime commit，并按“租户内所有已登录用户可用”的已批准产品范围调整。
-- 下一步：先由具备相应权限的维护者核实/解除目标 dev runtime 的角色拦截，并对齐 dev preview 到 `87a2444`，且保留上述两项既有未提交改动；再创建 schedule-disabled 来源，运行固定合成夹具，验证同步→AI→POC Base→仅通知当前用户，最后验证恢复触发器。
+- 下一步：安全完成 Dev 编辑器合并并发布/对齐已验证远端 `c226862`，保留 `.env` 与 `server/database/schema.ts`；提交前只核对文件名，确保 `.env` 不在提交清单。当前发布命令无法满足 `--yes` 门禁时停止，不绕过。然后创建 schedule-disabled 来源，运行固定合成夹具，验证同步→AI→POC Base→仅通知当前用户，最后验证恢复触发器。
 - Teambition skill 查询返回 311 条，而 UI 显示 `311/314`；需在启用真实周同步前查清差异。合成夹具不访问真实需求，不能替代这一完整性核验。
+
+## 较早复核快照（2026-10-11；已被上方“最新验收更新”覆盖）
+
+- 本机两仓回归通过：root API 231/231（含隔离本机 PostgreSQL）、Web 36/36、typecheck/build；Miaoda adapter 41/41、server/client typecheck、lint、production build；alignment 与两仓 `git diff --check` 通过。此为本地证据，不替代 Miaoda 目标运行时验收。
+- 已发布 release 仍是 `7695216916613073890` / `87a2444`；Miaoda `sprint/default` 远端为 `c226862`，尚未发布。release-create dry-run 指向正确分支，但当前 CLI 对该命令不接受 `--yes`（返回 `unknown flag`）；按项目安全门禁未执行真实发布，也未改用其他写入路径绕过。
+- 当前 Miaoda Dev 编辑器仍显示旧版来源表单（要求项目 ID、需求类型 ID、字段映射），预览实时更新已断开。工作区处于 merge 未完成状态：源代码管理显示 51 项挂起更改、49 项暂存，并有“继续合并”操作；`.env` 标签显示已修改，但未能安全核实其是否在暂存清单。编辑器内代码 Agent 曾检查 `.env` 并仅在对话中报告其中有 AI API Key；密钥值未出现在可见对话中。不要继续提交/推送，直到以仅文件名方式确认 `.env` 不在提交清单，并保留 `server/database/schema.ts` 的既有改动。
+- 该 Dev 预览当前显示来源为空、需求为 0；本轮没有创建来源、启动同步/fixture、调用模型、写入 Base、触发通知或启用恢复计划。这里的旧表单/空列表与“本机 API 使用 Dev 凭据完成的外部服务流程”是不同环境证据，后者不能当作 Miaoda app-mediated 验收。
+- 目前的具体阻塞是安全完成分歧编辑器的合并/版本对齐并发布 `c226862`，然后重新验证来源表单和已登录用户的来源创建。若平台/CLI 无法安全完成该写入，需由用户在妙搭编辑器完成冲突处理或提供支持 `--yes` 的批准发布路径；不得丢弃 `.env` 或 schema 修改，也不得绕过 `spark:app:write` 门禁。
 
 ## 目标
 在妙搭 dev / 指定安全测试环境用最小化真实需求验证 MVP 主链路及降级路径。生产应用与真实协作者不作为验证对象。
@@ -115,7 +151,9 @@
 - 2026-10-10 — 本轮本地实现回归：root API 测试 203/203（含隔离的本机 PostgreSQL 集成用例）、Web 21/21、typecheck/build 通过；妙搭 app `test:rqsys-route` 13/13、lint、server/client typecheck、production build 通过。新增覆盖 Feishu 用户目录权限与租户过滤、需求池筛选、来源周计划/负责人名单/字段映射持久化、项目名及需求类型歧义拒绝。改动仍在两个独立仓库的本地工作树，未提交或发布。本轮没有恢复目标 E2E；历史 POC Base 冒烟证据未重跑。
 
 ## Current next action
-- 妙搭平台 env / DB / release 写继续按 `AGENTS.md` 只准备、不执行；D-10 初始时间值已由用户暂定，但 scheduler 仍不能在缺少 runtime/worker 验证时启用。
-- Ticket 09 状态：历史目标 E2E 已**部分执行**（本地全量套件 + 目标 POC 测试 Base 读写冒烟通过）；用户此前要求暂停目标 E2E，本轮继续完成本地开发和回归，没有恢复线上写入。剩余待办：① 按用户/妙搭工作流提交并发布当前 Miaoda app 改动，并在发布后对齐代码来源；② 验证 app runtime 加载四项 Base 凭据并进行只读权限/表映射确认；③ 完成选定 Teambition 项目的字段类型/绑定、获批 MVP 字段映射和安全测试 fixture；④ 在批准的测试范围内验证 runtime AI 推理；⑤ identity 适配器保持未实现，直到目标身份合同核验；⑥ 恢复线上 trace/观测后补齐运行请求与 release commit 关联；⑦ 验收持久调度、重启恢复及通知自动化。
+- 妙搭平台 env / DB / release 写继续遵循 `AGENTS.md` 安全门禁；本轮没有启用周计划或写线上数据。
+- Dev AI secret has already been written after the user's confirmation; the fixed synthetic analysis and POC Base readback succeeded. Do not write it again or repeat the analysis without a concrete failure.
+- The accidental Dev batch `020073d7-17ec-4c1f-8521-56a300882b8d` is awaiting the user's decision to set the batch to schema-supported `failed` and the sync job to `cancelled`, retaining imported requirement/snapshot rows. Do not restart a worker or mutate the batch until that decision arrives.
+- After containment: verify the disabled recovery trigger safely, reconcile Teambition's 311 result versus UI `311/314`, and run the remaining app-mediated E2E with the synthetic fixture only. Keep the weekly schedule and stakeholder notifications disabled; test notices may go only to the user.
 - E2E 续跑/恢复时仅使用获批的测试 Base/fixture，通知只发用户本人。
-- `.env` 在 app-scoped repo 中被跟踪且在线编辑器标为修改；不要提交/发布其中的真实凭据。若密钥确实进入 Git 历史，先轮换，再用受信 server-side secret 管理。
+- 历史 `.env` 编辑器状态已被后续干净提交覆盖；本次发布提交未包含 `.env` 或密钥文件。后续仍不得提交/发布真实凭据。
