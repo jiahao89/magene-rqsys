@@ -8,7 +8,7 @@
 
 ---
 
-## B-1　Miaoda Dev 编辑器合并未完成、预览代码过旧（阻塞 E2E 的第一颗钉子）
+## B-1　Miaoda 发布链路（编辑器合并已解除；当前 `cd64e8d` 发布失败，是阻塞 E2E 的第一颗钉子）
 
 ### 现状证据（2026-10-11 回溯）
 
@@ -60,22 +60,27 @@ git -C rq-sys-miaoda log --oneline -S "角色校验由服务端" -- client/src/r
 git -C rq-sys-miaoda grep -n "飞书平台或集成服务拒绝" -- client/src/rqsys/panels.tsx
 ```
 
-### 需要谁做什么
+### 需要谁做什么（**2026-10-12 更新：合并问题已解除，改为发布阻塞**）
 
-1. 安全完成 Miaoda 编辑器的 merge 到 `origin/sprint/default` `c226862`：
-   - **保留** `.env` 与 `server/database/schema.ts`；绝不读取或提交 `.env` 内容；
-   - 仅以 `git status --short` 和 `git diff --cached --name-only` 核对暂存清单；若 `.env` 已暂存，只执行 `git restore --staged .env`，保留工作区文件；
-   - 不要执行会丢弃未提交改动的 `reset --hard` / `checkout .`。
-2. 跑 app 仓 route tests、lint、typecheck、production build 与 `git diff --check`，检查无凭据后提交/推送；通过受支持且遵循 `--yes` 门禁的路径发布 `c226862`。当前 `release-create` CLI 不支持该标志时，不得绕过门禁。
-3. 重新加载 dev preview，确认来源表单只需项目名称且默认 `室外产品-码表软固件需求池`；创建 schedule-disabled 来源，确认项目和任务类型解析成功。
+编辑器合并与版本对齐已在 `7695421212881750997` / `2d901361` 成功发布并验证，`c226862` 时代的阻塞不再存在。当前同一位置的新阻塞是**无法发布 `cd64e8d`**：
+
+1. ~~安全完成编辑器 merge~~ **已完成**：两仓均已推送（root `b023600`、app `cd64e8d`），工作区干净，提交未包含 `.env` 或密钥文件。
+2. **发布 `cd64e8d` 平台侧失败**：`+release-create`（带 `--branch sprint/default` 与不带该参数）连续 5 次返回 `code 500000049`，**未返回 `release_id`**。已排除的本地因素：`git` 与 `origin/sprint/default` 完全一致（ahead/behind = 0/0）；`+db-env-diff` 无待发布结构变更；`npm run build:prod` 通过。
+   - 建议由用户在妙搭编辑器侧执行发布（走平台自身构建），或携 `log_id`（最近一次 `2026101211035665FC73895B15ACF98711`）向平台支持核对。
+   - **不要猜测原因**，也不要改用其它写入路径绕过。
+3. 发布成功后重新加载 dev preview，确认来源表单只需项目名称且默认 `室外产品-码表软固件需求池`；创建 schedule-disabled 来源，确认项目和任务类型解析成功。
+
+### 一个本地可复现的观察（是否相关尚未证实）
+
+平台部署构建命令 `npm run build`（即 `scripts/build.sh`）在步骤 0 `npx fullstack-cli action-plugin init` 处进入交互式提问（"What do you want to create?"），在非 TTY 下以 `ERR_USE_AFTER_CLOSE` 退出；本仓 `package.json` 未声明任何 action plugin，`npx` 默认拉取最新 CLI（实测 1.1.67）。该脚本由 CLI 自动生成，本次**未改动**。若平台构建同样命中该交互提示，可作为发布失败的一个候选解释，但当前无证据支持，故不作结论。
 
 ### 完成判据
 
-- Dev preview 运行与 `c226862` 对齐的发布代码并显示新版表单；
-- `POST /api/sources` 成功创建来源（不再返回 403）；
+- Dev preview 运行与最新发布 commit 对齐的代码并显示新版表单；
+- `POST /api/sources` 成功创建来源；
 - 来源解析到批准的 Teambition 项目，且**未抓取任何真实需求行**。
 
-### 若对齐后仍返回 403
+### 若新建来源仍返回 403
 
 此时才需要考虑外部授权：按新文案核查**飞书平台/集成资源授权**与**运行代码与发布 commit 是否一致**，
 而不是应用角色矩阵。不要把 403 当作需要新增应用角色的信号。
@@ -154,14 +159,22 @@ grep -nE "hasMore|nextCursor|page|limit" apps/api/src/adapters/teambition/client
 
 ---
 
-## B-3　`AI_API_KEY` —— workbench/runtime secret wiring mismatch（2026-10-11）
+## B-3　`AI_API_KEY` —— Dev 平台值与有效值不一致（**2026-10-12 已修复**）
 
-### 2026-10-11 实测结论（未关闭）
+### 2026-10-12 修复结论（已关闭）
 
-当前 synthetic fixture 的 workbench 分析状态为 `failed_retryable`，安全错误摘要为 `AI provider authentication failed`。随后直接从 `rq-sys-miaoda/.env.local` 读取配置并调用 DeepSeek 默认 URL/model，固定合成样例返回结构化结果且 schema 校验通过；摘要为 `confidence=中`、`priority=null`。这证明该本地 key/provider 配对有效，但不证明 workbench API 进程或 Miaoda Dev runtime 加载了同一 secret。
-本轮没有打印或修改任何密钥；发送给模型的只有固定虚构需求文本。
+把平台 `dev` 与 `online` 的值分别取出、只比对哈希后直连 provider：
 
-workbench 的认证失败和直接 provider smoke 成功来自不同运行进程/环境；不能据此推断目标 Dev secret 已正确加载，也不能断言 key 本身失效。
+| 来源 | 结果 |
+|---|---|
+| dev 平台变量（修复前，hash `9b87011f42`） | **HTTP 401**：`Authentication Fails, Your api key: ****0d15 is invalid` |
+| online 平台变量（hash `b6aaf6cb68`） | **HTTP 200**（与 app 仓 `.env.local` 同值） |
+
+根因是 **dev 平台变量持有一把被判无效的密钥**，而不是 workbench 未加载 secret。已用 online 同一有效值经 `+env-set --key AI_API_KEY` 写入 dev（值全程未打印），回读哈希一致且实测 `HTTP 200`。修复后 dev 的 app-mediated 分析不再因鉴权失败。
+
+### 2026-10-11 观察（保留：同一故障的早期证据）
+
+synthetic fixture 的 workbench 分析状态为 `failed_retryable`，安全错误摘要为 `AI provider authentication failed`；而直接从 `rq-sys-miaoda/.env.local` 读取配置并调用 DeepSeek 默认 URL/model 成功（固定合成样例 schema 校验通过，`confidence=中`、`priority=null`）。当时判断为「workbench 与直连来自不同进程」，未继续追到平台变量本身；现已确认是 dev 平台值失效。本轮没有打印或修改任何密钥。
 
 ### 历史现状证据（保留）
 

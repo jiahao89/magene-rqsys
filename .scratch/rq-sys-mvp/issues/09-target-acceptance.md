@@ -1,6 +1,33 @@
-# [blocked: contain unintended Dev batch and finish target E2E] 09 — 目标环境端到端验收
+# [blocked: publishing cd64e8d fails platform-side; target E2E still unverified] 09 — 目标环境端到端验收
 
-## 最新验收更新（2026-10-12）
+## 处置完成（2026-10-12，用户授权「修复所有问题」后执行）
+
+用户授权后完成以下处置。所有目标侧写入均已执行并回读验证；密钥值全程未打印。
+
+- **Dev `AI_API_KEY` 已修复。** 修复前平台值直连 provider 返回 `HTTP 401`（`api key: ****0d15 is invalid`），这正是 dev 侧 app-mediated 分析报 `AI provider authentication failed` 的原因。已用 online/`.env.local` 同一有效值经 `+env-set` 写入 dev；回读 hash 与有效值一致，实测 provider 返回 `HTTP 200`。
+- **误触批次已隔离。** 批次 `020073d7-17ec-4c1f-8521-56a300882b8d` 置为 `failed`、`completed_at` 补齐、计数按实际 `sync_items` 校正为 total 30 / succeeded 30 / failed 0，并在 `error_summary` 注明为验收期误触且已保留导入行。**30 行数据保留。**
+- **卡住作业已取消。** sync job `16a3be4c-c55b-4c4c-8e16-3b457d21091b`（租约过期）与 analysis job `ebb5a9a5-1141-4484-afea-d7d92c339eba`（attempt 5、租约过期）置为 `cancelled`；对应的 `analysis_runs` `61f9d27c-bbf3-42c5-af7d-a703a299f8a6` 由 `running` 结算为 `failed_retryable`。回读确认：running 批次 0、running 作业 0、running 分析 0，唯一来源不再被 `ActiveBatchConflict` 阻塞。
+- **未泄漏确认。** 30 条真实 TB 需求全部停在 `owner_state=pending_mapping`（有 TB 负责人但未映射飞书用户），符合既定不变量；`base_record_id` 为空，POC Base 未出现任何真实需求行。
+- **POC Base 残留清理。** 删除本人早前验证失败留下的两条探针记录 `recvxI4GS86HHO`（adapter-smoke-临时）与 `recvxI4PLj1Jjf`（select-probe-临时），9 → 7 条。保留 5 条合成夹具记录与 2 条 POC 基线记录作为验收证据。
+- **online 夹具开关收紧。** online `RQSYS_ENABLE_TEST_FIXTURES` 由 `true` 改为 `false`。该路由此前已因双键守卫（必须同时匹配安全 POC Base）在 online 不可用，本次为纵深防御。
+- **两仓已推送。** root `main` → `b023600`，app `sprint/default` → `cd64e8d`；两仓工作区干净。
+
+### 当前唯一阻塞：发布 `cd64e8d` 平台侧失败
+
+- `+release-create`（带 `--branch sprint/default` 与不带该参数）共尝试 5 次，均返回 `code 500000049`（"Something went wrong. Please try again later."），**未返回 `release_id`**，因此没有可轮询的发布记录。
+- 已排除的本地因素：`git` 与 `origin/sprint/default` 完全一致（`cd64e8d`，ahead/behind = 0/0）；`+db-env-diff` 无待发布结构变更；`npm run build:prod` 通过；推送提交不含 `.env` 或密钥。
+- **未确定的原因不作猜测。** 另记录一个本地可复现的观察：平台部署构建命令 `npm run build`（`scripts/build.sh`）在步骤 0 `npx fullstack-cli action-plugin init` 处进入交互式提问（"What do you want to create?"）并以 `ERR_USE_AFTER_CLOSE` 退出；该脚本为 CLI 自动生成，本次未改动。此现象是否与线上发布失败相关尚未证实。
+- 建议由用户在妙搭编辑器侧发布，或携 `log_id`（如 `2026101211035665FC73895B15ACF98711`）向平台支持核对。
+
+### 仍未验收（本次无法由本人完成）
+
+- 发布版 runtime 的 app-mediated 完整 E2E（source → sync → AI → Base → 仅通知本人）。
+- 恢复触发器演练：`rqsysWeeklySyncRecovery` 仍为 `disabled`，未启用、未演练。
+- Teambition `311` vs UI `311/314` 的 3 条差异未解释。
+- 模块词典与优先级规则仍为空（需产品内容）；P3 与线上 `AI优先级建议`（仅 P0–P2）冲突未决。
+- 周计划与干系人通知保持关闭。
+
+## 此前验收更新（2026-10-12 早间）
 
 - 本轮审查修复两项问题：Base 失败分类改用结构化 Feishu 错误字段；分析重试复用队列任务时也记录 actor、时间、源版本和分析版本。修复已同步到两仓，共用逻辑对齐 19/19。
 - 本地回归：root API 238/238（含隔离 PostgreSQL）、Web 36/36、typecheck/build；妙搭路由测试 61/61、server/client typecheck、lint、production build 均通过。
