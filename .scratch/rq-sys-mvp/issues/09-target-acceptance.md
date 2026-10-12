@@ -1,4 +1,4 @@
-# [blocked: publishing cd64e8d fails platform-side; target E2E still unverified] 09 — 目标环境端到端验收
+# [partially executed: cd64e8d 已发布且无错误；目标 app-mediated E2E 仍未验收] 09 — 目标环境端到端验收
 
 ## 处置完成（2026-10-12，用户授权「修复所有问题」后执行）
 
@@ -12,12 +12,27 @@
 - **online 夹具开关收紧。** online `RQSYS_ENABLE_TEST_FIXTURES` 由 `true` 改为 `false`。该路由此前已因双键守卫（必须同时匹配安全 POC Base）在 online 不可用，本次为纵深防御。
 - **两仓已推送。** root `main` → `b023600`，app `sprint/default` → `cd64e8d`；两仓工作区干净。
 
-### 当前唯一阻塞：发布 `cd64e8d` 平台侧失败
+## 发布阻塞已解除（2026-10-12）
 
-- `+release-create`（带 `--branch sprint/default` 与不带该参数）至 2026-10-12 中午已尝试 **8 次**（时间跨度约 1 小时，含一次冷却后重试），每次均返回 `code 500000049`（"Something went wrong. Please try again later."），**未返回 `release_id`**，因此没有可轮询的发布记录。最近一次 `log_id`：`202610121151461CAA2511243A7506DA31`。
-- 已排除的本地因素：`git` 与 `origin/sprint/default` 完全一致（`cd64e8d`，ahead/behind = 0/0）；`+db-env-diff` 无待发布结构变更；`npm run build:prod` 通过；推送提交不含 `.env` 或密钥。
-- **未确定的原因不作猜测。** 另记录一个本地可复现的观察：平台部署构建命令 `npm run build`（`scripts/build.sh`）在步骤 0 `npx fullstack-cli action-plugin init` 处进入交互式提问（"What do you want to create?"）并以 `ERR_USE_AFTER_CLOSE` 退出；该脚本为 CLI 自动生成，本次未改动。此现象是否与线上发布失败相关尚未证实。
-- 建议由用户在妙搭编辑器侧发布，或携 `log_id`（如 `2026101211035665FC73895B15ACF98711`）向平台支持核对。
+`+release-create` 连续 9 次返回 `code 500000049` 后，**第 10 次成功**：
+
+- release `7695624698437651669`，`+release-get` 轮询至 **`finished`**，绑定 commit **`cd64e8dc6152e0eca6b55f266ffe7ff97cecadba`**（即 app `sprint/default` HEAD），`error_logs` 为空。
+- 线上地址：`https://ecn8egz1lhkq.feishuapp.com/app/app_17fqkjwyx1u`。
+- 发布后检查线上日志：**2026-10-12 当天 ERROR 记录为 0**（最新 ERROR 仍为 2026-10-11 的历史记录）。
+
+**根因（高置信，但未做对照实验证实）**：唯一变化的变量是 `--apply-reason` 的取值。此前 9 次都用**含 ASCII 冒号**的英文理由（`"fix: correct Base failure classification and retry audit attribution"`），全部失败；改用**不含冒号**的简短理由（`"RQ-Sys MVP 修复发布"`）后**第一次即成功**。因此判断平台发布接口对含冒号的理由处理异常，并返回了泛化错误。**下次发布请避免在 `--apply-reason` 中使用冒号**；若再遇 `500000049`，先换一个不含冒号的纯文本理由重试，而不是反复重发同一参数。
+
+已排除的其它因素（保留以便复核）：`git` 与 `origin/sprint/default` 一致；`+db-env-diff` 无待发布结构变更；`npm run build:prod` 通过；推送提交不含 `.env` 或密钥；执行过 `+git-credential-init` 刷新凭证后再 push（`Everything up-to-date`）并重试仍失败——这些排除了"分支未同步 / 凭证过期 / schema 未发布"这类解释。
+
+另记录一个本地可复现但**与本故障无关**的观察：平台部署构建命令 `npm run build`（`scripts/build.sh`）在未设置 `CI=1` 时会于步骤 0 `npx fullstack-cli action-plugin init` 进入交互式提问并以 `ERR_USE_AFTER_CLOSE` 退出；设置 `CI=1` 后正常（"No plugins found"）。该脚本为 CLI 自动生成，本次未改动。
+
+### 仍未验收（发布已解除后）
+
+- 发布版 runtime 的 app-mediated 完整 E2E：发布本身已完成且冷启动无错误日志，但**尚未在已登录浏览器里跑通** sync → AI → Base → 仅通知本人。可执行步骤见 `deployment/TARGET-ACCEPTANCE-CHECKLIST.md`。
+- 恢复触发器的**错窗恢复**语义（触发器投递与关闭态安全已通过，见下）。
+- Teambition `311` vs UI `311/314` 的 3 条差异：API 侧已查尽（网关拒绝一切额外参数、行内无归档字段），需 UI 侧确认计数口径。
+- 模块词典与优先级规则仍为空（需产品内容）；P3 与线上 `AI优先级建议`（仅 P0–P2）冲突未决。
+- 周计划与干系人通知保持关闭。
 
 ### 恢复触发器演练：**已实跑并通过**（2026-10-12）
 
@@ -30,14 +45,6 @@
 - **已复原**：触发器回读为 `disabled`，周计划仍关闭。
 
 结论：**触发器的定时投递、handler 接线与"周计划关闭时不启动真实同步"这一安全性质均已验证。** 仍未验证的是"错过的周窗口能被真正恢复"——那需要先有一个启用中的周计划，属于真实同步范围，须在安全测试来源获批后再做。
-
-### 仍未验收（本次无法由本人完成）
-
-- 发布版 runtime 的 app-mediated 完整 E2E（source → sync → AI → Base → 仅通知本人）。
-- 恢复触发器的**错窗恢复**语义（触发器投递本身已通过，见上）。
-- Teambition `311` vs UI `311/314` 的 3 条差异未解释。
-- 模块词典与优先级规则仍为空（需产品内容）；P3 与线上 `AI优先级建议`（仅 P0–P2）冲突未决。
-- 周计划与干系人通知保持关闭。
 
 ## 此前验收更新（2026-10-12 早间）
 

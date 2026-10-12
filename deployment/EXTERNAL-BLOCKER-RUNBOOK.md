@@ -8,7 +8,7 @@
 
 ---
 
-## B-1　Miaoda 发布链路（编辑器合并已解除；当前 `cd64e8d` 发布失败，是阻塞 E2E 的第一颗钉子）
+## B-1　Miaoda 发布链路（**已解除**：`cd64e8d` 已发布；保留 `--apply-reason` 冒号陷阱记录）
 
 ### 现状证据（2026-10-11 回溯）
 
@@ -60,19 +60,19 @@ git -C rq-sys-miaoda log --oneline -S "角色校验由服务端" -- client/src/r
 git -C rq-sys-miaoda grep -n "飞书平台或集成服务拒绝" -- client/src/rqsys/panels.tsx
 ```
 
-### 需要谁做什么（**2026-10-12 更新：合并问题已解除，改为发布阻塞**）
+### 需要谁做什么（**2026-10-12 更新：发布阻塞已解除**）
 
-编辑器合并与版本对齐已在 `7695421212881750997` / `2d901361` 成功发布并验证，`c226862` 时代的阻塞不再存在。当前同一位置的新阻塞是**无法发布 `cd64e8d`**：
+编辑器合并与版本对齐已在 `7695421212881750997` / `2d901361` 成功发布并验证。随后 `cd64e8d` 的发布一度连续 9 次失败，**现已成功**：
 
-1. ~~安全完成编辑器 merge~~ **已完成**：两仓均已推送（root `b023600`、app `cd64e8d`），工作区干净，提交未包含 `.env` 或密钥文件。
-2. **发布 `cd64e8d` 平台侧失败**：`+release-create`（带 `--branch sprint/default` 与不带该参数）截至 2026-10-12 中午已连续 **8 次**返回 `code 500000049`，**从未返回 `release_id`**。已排除的本地因素：`git` 与 `origin/sprint/default` 完全一致（ahead/behind = 0/0）；`+db-env-diff` 无待发布结构变更；`npm run build:prod` 通过。
-   - 建议由用户在妙搭编辑器侧执行发布（走平台自身构建），或携 `log_id`（最近一次 `2026101211035665FC73895B15ACF98711`）向平台支持核对。
-   - **不要猜测原因**，也不要改用其它写入路径绕过。
-3. 发布成功后重新加载 dev preview，确认来源表单只需项目名称且默认 `室外产品-码表软固件需求池`；创建 schedule-disabled 来源，确认项目和任务类型解析成功。
+1. ~~安全完成编辑器 merge~~ **已完成**：两仓均已推送（root、app `cd64e8d`），工作区干净，提交未包含 `.env` 或密钥文件。
+2. ~~发布 `cd64e8d`~~ **已完成**：release `7695624698437651669` 轮询至 `finished`，绑定 `cd64e8dc6152e0eca6b55f266ffe7ff97cecadba`，`error_logs` 为空；线上 `https://ecn8egz1lhkq.feishuapp.com/app/app_17fqkjwyx1u`；发布当日 runtime ERROR 记录为 0。
+3. **发布失败的真实原因（重要，避免重复踩坑）**：前 9 次失败时 `--apply-reason` 用的是**含 ASCII 冒号**的英文理由，全部返回 `code 500000049`；把理由换成**不含冒号**的纯文本后，**第一次调用就成功**。所以遇到 `500000049` 时，先换一个不含冒号的简短理由重试，而不是反复重发同一参数。此结论为高置信相关性，但未做对照实验（不再为此额外发布一次）。
+4. 已排除的其它解释（保留以便复核）：`git` 与 `origin/sprint/default` 完全一致；`+db-env-diff` 无待发布结构变更；`npm run build:prod` 通过；执行 `+git-credential-init` 刷新凭证后再 push 并重试仍失败。
+5. 发布后重新加载 dev preview，确认来源表单只需项目名称且默认 `室外产品-码表软固件需求池`；创建 schedule-disabled 来源，确认项目和任务类型解析成功。完整清单见 [`TARGET-ACCEPTANCE-CHECKLIST.md`](TARGET-ACCEPTANCE-CHECKLIST.md)。
 
-### 一个本地可复现的观察（是否相关尚未证实）
+### 一个本地可复现的观察（与本故障无关）
 
-平台部署构建命令 `npm run build`（即 `scripts/build.sh`）在步骤 0 `npx fullstack-cli action-plugin init` 处进入交互式提问（"What do you want to create?"），在非 TTY 下以 `ERR_USE_AFTER_CLOSE` 退出；本仓 `package.json` 未声明任何 action plugin，`npx` 默认拉取最新 CLI（实测 1.1.67）。该脚本由 CLI 自动生成，本次**未改动**。若平台构建同样命中该交互提示，可作为发布失败的一个候选解释，但当前无证据支持，故不作结论。
+平台部署构建命令 `npm run build`（即 `scripts/build.sh`）在**未设置 `CI=1`** 时会于步骤 0 `npx fullstack-cli action-plugin init` 进入交互式提问（"What do you want to create?"），非 TTY 下以 `ERR_USE_AFTER_CLOSE` 退出；设置 `CI=1` 后正常输出 "No plugins found in package.json" 并以 0 退出。本仓 `package.json` 未声明任何 action plugin，故该步骤实为空操作。**本地复现构建时请带 `CI=1`**；该脚本由 CLI 自动生成，本次未改动，且已确认它不是发布失败的原因（发布已在同一脚本下成功）。
 
 ### 完成判据
 
