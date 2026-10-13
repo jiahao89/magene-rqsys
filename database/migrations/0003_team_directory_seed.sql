@@ -3,7 +3,7 @@ BEGIN;
 -- Seed the screenshot roster only for a source whose owner list has not been
 -- configured yet. Existing custom lists are preserved.
 UPDATE source_configs
-SET owner_names = '["毕梓浩","盛永帮","刘媛媛","李晨璐","史东升","贾浩","兰谦伟"]'::jsonb,
+SET owner_names = '["毕梓浩","盛永帮","刘媛媛","李晨璐","史东升","贾浩","兰谊伟"]'::jsonb,
     updated_at = now()
 WHERE owner_names = '[]'::jsonb;
 
@@ -68,16 +68,16 @@ BEGIN
         {"name":"新手引导","personName":"贾浩"},
         {"name":"帮助中心","personName":"贾浩"},
         {"name":"极游系多语言","personName":"贾浩"},
-        {"name":"码表设置-码表端","personName":"兰谦伟"},
-        {"name":"App端通用设置","personName":"兰谦伟"},
-        {"name":"日志/异常文件管理","personName":"兰谦伟"},
-        {"name":"电源管理（后续转交）","personName":"兰谦伟"},
-        {"name":"GNSS管理","personName":"兰谦伟"},
-        {"name":"显示设置","personName":"兰谦伟"},
-        {"name":"系统管理","personName":"兰谦伟"},
-        {"name":"偏好设置","personName":"兰谦伟"},
-        {"name":"锁屏/解锁","personName":"兰谦伟"},
-        {"name":"场景+表盘+场景设置（后续转交）","personName":"兰谦伟"}
+        {"name":"码表设置-码表端","personName":"兰谊伟"},
+        {"name":"App端通用设置","personName":"兰谊伟"},
+        {"name":"日志/异常文件管理","personName":"兰谊伟"},
+        {"name":"电源管理（后续转交）","personName":"兰谊伟"},
+        {"name":"GNSS管理","personName":"兰谊伟"},
+        {"name":"显示设置","personName":"兰谊伟"},
+        {"name":"系统管理","personName":"兰谊伟"},
+        {"name":"偏好设置","personName":"兰谊伟"},
+        {"name":"锁屏/解锁","personName":"兰谊伟"},
+        {"name":"场景+表盘+场景设置（后续转交）","personName":"兰谊伟"}
       ]'::jsonb,
       'system', now(), now()
     );

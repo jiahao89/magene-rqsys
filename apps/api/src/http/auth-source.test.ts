@@ -179,7 +179,7 @@ test("changing the project name resolves new IDs and clears project-specific ser
   assert.equal(response.status, 200);
   assert.equal(sources[0]!.externalProjectId, "new-project-id");
   assert.equal(sources[0]!.requirementTypeId, "new-type-id");
-  assert.deepEqual(sources[0]!.ownerNames, ["毕梓浩", "盛永帮", "刘媛媛", "李晨璐", "史东升", "贾浩", "兰谦伟"]);
+  assert.deepEqual(sources[0]!.ownerNames, ["毕梓浩", "盛永帮", "刘媛媛", "李晨璐", "史东升", "贾浩", "兰谊伟"]);
   assert.deepEqual(sources[0]!.fieldMap, {});
   assert.equal((await response.json() as { projectName: string }).projectName, "新项目需求池");
 });
