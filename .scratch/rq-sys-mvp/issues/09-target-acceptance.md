@@ -1,4 +1,13 @@
-# [partially executed: 3309d0b 已发布且无错误；Dev preview 未对齐，目标 app-mediated E2E 仍未验收] 09 — 目标环境端到端验收
+# [partially executed: b5ab0de 已发布且无错误；Dev E2E 与字典种子仍待目标验收] 09 — 目标环境端到端验收
+
+## 最新验收更新（2026-10-13）
+
+- 根仓 `main` 已推送至 `2661c02`；妙搭仓 `sprint/default` 已推送至 `b5ab0de`。Release `7695961039167278282` 已 `finished`，绑定完整 commit `b5ab0de2dcc687399be7d9d9ece939481d26bbbe`，`error_logs` 为空。
+- 本地验证通过：root API 231/231 单测（未运行连接到非 loopback `.env` 数据库的 PostgreSQL integration suite）、Web 38/38、typecheck/build；妙搭路由 62/62、server/client typecheck、lint、production build、alignment 29 个模块/20 项共享逻辑、两仓 `git diff --check`。
+- 修复了首次保存模块字典时默认人员名单可能变空的问题；默认 7 人/54 模块数据来源和截图核对已在本地。Dev 只读聚合当前为 1 个 source、37 条 requirements、0 个运行批次、0 个 active jobs、0 个启用周计划、0 个已发布字典版本；owner_names 也为空。
+- Dev migration `0003_team_directory_seed.sql` 的 dry-run 已通过。执行会在空数据时初始化 7 人和 54 个模块；等待用户对这项明确写入的确认，确认前不执行。
+- **仍未完成目标 E2E**：最新 release 虽然完成，尚未通过已登录应用执行合成夹具 → AI → 隔离 POC Base → 仅通知本人。CUA 请求被 browser header policy 阻断，`agent-browser --auto-connect` 未找到可连接的 Chrome，因此没有目标界面操作证据。
+- 尚余：在用户确认后写入并回读字典种子；目标 app-mediated E2E；恢复错窗与 durable worker 重启；解释 TB UI `311/314` 口径。周计划、干系人通知保持关闭；本轮不删除现存 Dev requirements。
 
 ## 历史处置记录（2026-10-12，已完成）
 
