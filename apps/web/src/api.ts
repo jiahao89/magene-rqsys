@@ -14,6 +14,7 @@ export interface SyncRunResponse {
   batchId: string;
   status: "running" | "succeeded" | "partial_failure" | "failed";
 }
+export type SyncExecutionMode = "full_pipeline" | "source_only";
 
 export interface FeishuUserCandidate {
   openId: string;
@@ -93,13 +94,14 @@ export function getHealth(fetcher: typeof fetch = fetch): Promise<HealthResponse
 
 export async function runSync(
   source: SourceConfig,
+  mode: SyncExecutionMode = "full_pipeline",
   fetcher: typeof fetch = fetch,
   createIdempotencyKey: () => string = () => crypto.randomUUID(),
 ): Promise<SyncRunResponse> {
   if (!source.enabled) {
     throw new ApiError("Configure and enable a source before starting synchronization.", 400, "SOURCE_NOT_ENABLED");
   }
-  return postJson<SyncRunResponse>("/api/sync/run", { sourceId: source.id }, fetcher, { "Idempotency-Key": createIdempotencyKey() });
+  return postJson<SyncRunResponse>("/api/sync/run", { sourceId: source.id, ...(mode === "source_only" ? { mode } : {}) }, fetcher, { "Idempotency-Key": createIdempotencyKey() });
 }
 
 export async function listSources(fetcher: typeof fetch = fetch): Promise<SourceConfig[]> {

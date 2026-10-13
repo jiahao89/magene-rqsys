@@ -1,13 +1,13 @@
-# [partially executed: b5ab0de 已发布且无错误；Dev E2E 与字典种子仍待目标验收] 09 — 目标环境端到端验收
+# [partially executed: release 与字典种子已验证；全量源对齐、app E2E、恢复验收仍待完成] 09 — 目标环境端到端验收
 
 ## 最新验收更新（2026-10-13）
 
-- 根仓 `main` 已推送至 `2661c02`；妙搭仓 `sprint/default` 已推送至 `b5ab0de`。Release `7695961039167278282` 已 `finished`，绑定完整 commit `b5ab0de2dcc687399be7d9d9ece939481d26bbbe`，`error_logs` 为空。
-- 本地验证通过：root API 231/231 单测（未运行连接到非 loopback `.env` 数据库的 PostgreSQL integration suite）、Web 38/38、typecheck/build；妙搭路由 62/62、server/client typecheck、lint、production build、alignment 29 个模块/20 项共享逻辑、两仓 `git diff --check`。
-- 修复了首次保存模块字典时默认人员名单可能变空的问题；默认 7 人/54 模块数据来源和截图核对已在本地。Dev 只读聚合当前为 1 个 source、37 条 requirements、0 个运行批次、0 个 active jobs、0 个启用周计划、0 个已发布字典版本；owner_names 也为空。
-- Dev migration `0003_team_directory_seed.sql` 的 dry-run 已通过。执行会在空数据时初始化 7 人和 54 个模块；等待用户对这项明确写入的确认，确认前不执行。
-- **仍未完成目标 E2E**：最新 release 虽然完成，尚未通过已登录应用执行合成夹具 → AI → 隔离 POC Base → 仅通知本人。CUA 请求被 browser header policy 阻断，`agent-browser --auto-connect` 未找到可连接的 Chrome，因此没有目标界面操作证据。
-- 尚余：在用户确认后写入并回读字典种子；目标 app-mediated E2E；恢复错窗与 durable worker 重启；解释 TB UI `311/314` 口径。周计划、干系人通知保持关闭；本轮不删除现存 Dev requirements。
+- root `main` 当前已推送至 `15ae9f3`；妙搭 `sprint/default` 已推送至 `b5ab0de`。Release `7695961039167278282` 为 `finished`，绑定完整 commit `b5ab0de2dcc687399be7d9d9ece939481d26bbbe`，`error_logs` 为空。
+- 本地验证：root API 235/235（未运行指向非 loopback 数据库的 PostgreSQL integration）、Web 39/39、妙搭路由 66/66；根仓 typecheck/build、妙搭 server/client typecheck、lint、production build、共享逻辑对齐和两仓 `git diff --check` 均通过。最后一轮审查发现并修复了 job 记录缺失时 source-only 单项重试可能落入完整流水线的问题。新代码尚未推送/发布。
+- 本轮经妙搭 `+db-execute` 只读聚合回读确认：1 个启用来源、37 条需求（7 条夹具）、7 人、已发布字典 54 个模块、0 running batch/job、周计划关闭。查询只返回汇总数，没有写入。
+- Teambition 原始需求 API 最后复核为 311 条、311 个非空唯一 ID；UI `311/314` 的额外 3 条仍未识别。按用户指示，导入范围采用 API 的 311 条，不将 3 条臆断为测试工具。
+- 本轮实现了手动 `source_only` 同步：保存 TB 源数据与快照，不排 AI、不做负责人匹配、不推送 Base、不通知；单项重试也从持久化批次键恢复该模式。完整同步仍为默认；后续完整同步会重新排队处于 `pending` 的分析。此改动通过本地验证，尚未发布或用于 Dev 数据对齐。
+- Dev 尚未对齐到 311 条（最近读回为 30 条非夹具 + 7 条夹具）。发布版 app-mediated E2E、启用测试周计划后的错窗恢复、durable worker 重启仍未验证。周计划和干系人通知保持关闭。最近一次目标 CLI 验证因当前 shell 无法解析 `open.feishu.cn` 而在网络连接前失败；本轮未写目标环境。
 
 ## 历史处置记录（2026-10-12，已完成）
 

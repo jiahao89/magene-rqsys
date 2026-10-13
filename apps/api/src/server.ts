@@ -5,7 +5,7 @@ import { createPostgresSyncPersistence } from "./adapters/postgres/sync-persiste
 import { type ApiDependencies, handleApiRequest } from "./http/app.js";
 import { errorBody } from "./http/errors.js";
 import { PipelineJobWorker } from "./jobs/worker.js";
-import { SyncOrchestrator, type SyncJobRunner } from "./sync/service.js";
+import { SyncOrchestrator, shouldProcessSyncDownstream, type SyncJobRunner } from "./sync/service.js";
 import { TeambitionClient } from "./adapters/teambition/client.js";
 import { createDeepSeekProvider } from "./analysis/provider.js";
 import { runAnalysis } from "./analysis/service.js";
@@ -58,9 +58,9 @@ const syncJobRunner: SyncJobRunner | undefined = repositories ? async (job) => {
     { async listRequirements(cfg) { return { items: await client.listRequirementTasks(cfg), hasMore: false, nextCursor: null }; } },
     persistence,
   );
-  const result = await orchestrator.run({ batchId: job.batchId, sourceConfigId: job.sourceConfigId, config, ...(job.onlyIds === undefined ? {} : { onlyIds: job.onlyIds }) });
+  const result = await orchestrator.run({ batchId: job.batchId, sourceConfigId: job.sourceConfigId, config, ...(job.mode === undefined ? {} : { mode: job.mode }), ...(job.onlyIds === undefined ? {} : { onlyIds: job.onlyIds }) });
   // 打通同步 → AI 分析链路：为新建/实质变更的需求创建分析任务（按源版本幂等去重）
-  if (result.status !== "failed") {
+  if (result.status !== "failed" && shouldProcessSyncDownstream(job.mode)) {
     const now = new Date().toISOString();
     // 本地开发专用上限：只限制「入队分析」的数量，不同步范围。导入与快照始终覆盖全部需求，
     // 因此验收时不会看到"只同步了一部分"的假象。默认 0 = 不限制；目标环境不要设置。

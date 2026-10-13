@@ -93,6 +93,11 @@ paths:
               type: object
               properties:
                 sourceId: { type: string, format: uuid }
+                mode:
+                  type: string
+                  enum: [full_pipeline, source_only]
+                  default: full_pipeline
+                  description: source_only persists Teambition source data and snapshots without queuing AI analysis, owner matching, Base pushes, or notifications. A later full_pipeline run revisits pending analysis and eligible owner/push work, including unchanged source rows. Idempotency keys are hashed and namespaced by mode.
               required: [sourceId]
       responses:
         '202':

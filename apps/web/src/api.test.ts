@@ -22,7 +22,7 @@ describe("workbench API client", () => {
 
   it("posts manual runs to the contract route with an idempotency key and stable batch result", async () => {
     const fetcher = vi.fn().mockResolvedValue(Response.json({ batchId: "batch-42", status: "running" }, { status: 202 }));
-    await expect(runSync(source, fetcher, () => "key-123456")).resolves.toEqual({ batchId: "batch-42", status: "running" });
+    await expect(runSync(source, "full_pipeline", fetcher, () => "key-123456")).resolves.toEqual({ batchId: "batch-42", status: "running" });
     expect(fetcher).toHaveBeenCalledWith("/api/sync/run", expect.objectContaining({
       method: "POST",
       headers: { accept: "application/json", "content-type": "application/json", "Idempotency-Key": "key-123456" },
@@ -32,8 +32,14 @@ describe("workbench API client", () => {
 
   it("does not request a run when no enabled source exists", async () => {
     const fetcher = vi.fn();
-    await expect(runSync({ ...source, enabled: false }, fetcher, () => "key-123456")).rejects.toMatchObject({ code: "SOURCE_NOT_ENABLED" });
+    await expect(runSync({ ...source, enabled: false }, "full_pipeline", fetcher, () => "key-123456")).rejects.toMatchObject({ code: "SOURCE_NOT_ENABLED" });
     expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("requests a source-only import without enabling AI or Base work", async () => {
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ batchId: "batch-43", status: "running" }, { status: 202 }));
+    await runSync(source, "source_only", fetcher, () => "source-only-123");
+    expect(fetcher).toHaveBeenCalledWith("/api/sync/run", expect.objectContaining({ body: JSON.stringify({ sourceId: source.id, mode: "source_only" }) }));
   });
 
   it("sends the retry idempotency key for a failed sync item", async () => {

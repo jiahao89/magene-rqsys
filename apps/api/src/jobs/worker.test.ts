@@ -31,8 +31,15 @@ test("worker claims one due job and dispatches sync using the existing orchestra
   const result = await worker.runOnce();
   assert.equal(result.kind, "succeeded");
   assert.deepEqual(h.calls.map((call) => (call as unknown[])[0]), ["claim", "sync", "complete"]);
-  assert.deepEqual(h.calls[1], ["sync", { batchId: "batch-1", sourceConfigId: "source-1", trigger: "manual", actorId: null }]);
+  assert.deepEqual(h.calls[1], ["sync", { batchId: "batch-1", sourceConfigId: "source-1", trigger: "manual", actorId: null, mode: "full_pipeline" }]);
   assert.deepEqual((h.calls[2] as unknown[])[2], { expectedAttempt: 1, status: "succeeded", now: NOW });
+});
+
+test("worker preserves the explicit source-only mode for a manual import", async () => {
+  const h = harness(job({ payload: { batchId: "batch-1", sourceId: "source-1", triggerType: "manual", actorId: null, mode: "source_only" } }));
+  const worker = new PipelineJobWorker({ jobs: h.jobs, sync: h.sync, workerId: "local-worker", leaseMs: 30_000, now: () => new Date(NOW) });
+  assert.equal((await worker.runOnce()).kind, "succeeded");
+  assert.deepEqual(h.calls[1], ["sync", { batchId: "batch-1", sourceConfigId: "source-1", trigger: "manual", actorId: null, mode: "source_only" }]);
 });
 
 test("迟到的 worker 结果被 fencing 拒绝：不覆盖新认领者的状态（不变量，工单 15）", async () => {

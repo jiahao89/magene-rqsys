@@ -8,6 +8,7 @@ import { IdempotencyKeySchema } from "./source.js";
 // POST /api/sync/run 请求体
 export const SyncRunRequestSchema = z.object({
   sourceId: z.uuid(),
+  mode: z.enum(["full_pipeline", "source_only"]).default("full_pipeline"),
 });
 
 // PUT /api/requirements/{id}/owner 请求体

@@ -3,7 +3,7 @@ import { SourceProjectResolutionError, type FeishuUserDirectory, type IdentityPr
 import type { AuditEventRepository, AnalysisRunRepository, PipelineJobRepository, SourceConfigRepository, SyncBatchRepository, SyncItemRepository, PersonMappingRepository, RequirementQueryRepository, BasePushRunRepository, ModuleDictionaryRepository, PriorityRuleRepository, SourceSnapshotRepository, TeamDirectoryRepository } from "../application/repositories.js";
 import type { PersonMappingRecord, AnalysisRunRecord, ModuleDictionaryVersionRecord, PriorityRuleVersionRecord, RequirementRecord, SourceConfigRecord, SyncBatchRecord } from "../domain/persistence.js";
 import { AuditListQuerySchema, BatchListQuerySchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { SourceConfigUpdateSchema, type ResolvedSourceConfigUpdate } from "../contracts/source.js";
 import { DictionaryCreateSchema, PriorityRuleCreateSchema, TeamModulesSaveSchema, TeamPersonCreateSchema, TeamPersonRenameSchema } from "../contracts/rules.js";
 import { DEFAULT_TEAM_MEMBERS } from "../domain/team-directory.js";
@@ -143,33 +143,34 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     if (!repositories) return jsonError("DEPENDENCY_UNAVAILABLE");
     const body = SyncRunRequestSchema.safeParse(await readJson(request)), key = SyncIdempotencyHeaderSchema.safeParse(request.headers.get("Idempotency-Key"));
     if (!body.success || !key.success) return jsonError("VALIDATION_FAILED");
+    const idempotencyKey = `${body.data.mode}:${createHash("sha256").update(key.data).digest("hex")}`;
     const source = await repositories.sources.get(body.data.sourceId); if (!source) return jsonError("NOT_FOUND");
     const startedAt = (dependencies.now ?? (() => new Date()))().toISOString();
-    const previous = await repositories.batches.findByIdempotencyKey(source.id, key.data);
+    const previous = await repositories.batches.findByIdempotencyKey(source.id, idempotencyKey);
     if (previous) {
       // 已有活跃批次：幂等重放。已有终态批次（如入队失败被标 failed）：同一幂等键重新入队恢复，不制造孤儿/重复批次
       if (previous.status === "running") return json({ batchId: previous.id, status: previous.status }, 202);
-      try { await repositories.jobs.enqueue({ jobType: "sync", dedupeKey: `sync:${source.id}:${key.data}`, payload: { batchId: previous.id, sourceId: source.id, triggerType: "manual", actorId: auth.actor.id }, availableAt: startedAt }); }
+      try { await repositories.jobs.enqueue({ jobType: "sync", dedupeKey: `sync:${source.id}:${idempotencyKey}`, payload: { batchId: previous.id, sourceId: source.id, triggerType: "manual", actorId: auth.actor.id, mode: body.data.mode }, availableAt: startedAt }); }
       catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
-      const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "sync.retry_requested", entityType: "sync_batch", entityId: previous.id, result: "succeeded", safeDetails: { trigger: "manual" }, occurredAt: startedAt });
+      const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "sync.retry_requested", entityType: "sync_batch", entityId: previous.id, result: "succeeded", safeDetails: { trigger: "manual", mode: body.data.mode }, occurredAt: startedAt });
       if (auditFailure) return auditFailure;
       return json({ batchId: previous.id, status: previous.status }, 202);
     }
     const active = await repositories.batches.list({ status: "running", limit: 100 });
     if (active.items.some((batch) => batch.sourceConfigId === source.id)) return jsonError("CONFLICT");
     let created: SyncBatchRecord;
-    try { created = await repositories.batches.create({ sourceConfigId: source.id, triggerType: "manual", actorId: auth.actor.id, idempotencyKey: key.data, startedAt }); }
+    try { created = await repositories.batches.create({ sourceConfigId: source.id, triggerType: "manual", actorId: auth.actor.id, idempotencyKey, startedAt }); }
     catch {
-      const raced = await repositories.batches.findByIdempotencyKey(source.id, key.data);
+      const raced = await repositories.batches.findByIdempotencyKey(source.id, idempotencyKey);
       return raced ? json({ batchId: raced.id, status: raced.status }, 202) : jsonError("CONFLICT");
     }
-    try { await repositories.jobs.enqueue({ jobType: "sync", dedupeKey: `sync:${source.id}:${key.data}`, payload: { batchId: created.id, sourceId: source.id, triggerType: "manual", actorId: auth.actor.id }, availableAt: startedAt }); }
+    try { await repositories.jobs.enqueue({ jobType: "sync", dedupeKey: `sync:${source.id}:${idempotencyKey}`, payload: { batchId: created.id, sourceId: source.id, triggerType: "manual", actorId: auth.actor.id, mode: body.data.mode }, availableAt: startedAt }); }
     catch {
       // 入队失败恢复（工单 15）：批次标记 failed，不留「running 且无 job」的孤儿；同幂等键重试可恢复
       await repositories.batches.complete(created.id, { status: "failed", totalCount: 0, succeededCount: 0, failedCount: 0, errorSummary: "Job enqueue failed; repeat the same idempotent request to recover.", completedAt: startedAt });
       return jsonError("DEPENDENCY_UNAVAILABLE");
     }
-    const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "sync.requested", entityType: "sync_batch", entityId: created.id, result: "succeeded", safeDetails: { trigger: "manual" }, occurredAt: startedAt });
+    const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "sync.requested", entityType: "sync_batch", entityId: created.id, result: "succeeded", safeDetails: { trigger: "manual", mode: body.data.mode }, occurredAt: startedAt });
     if (auditFailure) return auditFailure;
     return json({ batchId: created.id, status: "running" }, 202);
   }
@@ -338,12 +339,22 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     if (item.status !== "failed") return jsonError("CONFLICT");
     const batch = await repositories.batches.get(item.batchId); if (!batch) return jsonError("NOT_FOUND");
     const key = SyncIdempotencyHeaderSchema.safeParse(request.headers.get("Idempotency-Key")); if (!key.success) return jsonError("VALIDATION_FAILED");
+    // A retry may arrive from a retry batch (`sync:<batchId>`) or the original
+    // batch (`sync:<sourceId>:<idempotencyKey>`). Carry its mode forward.
+    const originalJob = (await repositories.jobs.findByDedupeKey?.(`sync:${batch.id}`))
+      ?? (await repositories.jobs.findByDedupeKey?.(`sync:${batch.sourceConfigId}:${batch.idempotencyKey}`));
+    // The original job can be missing after retention/cleanup. The source batch
+    // key is mode-namespaced, so use it as a durable fallback for safe retries.
+    const mode = originalJob?.payload.mode === "source_only" || batch.idempotencyKey.startsWith("source_only:")
+      ? "source_only"
+      : "full_pipeline";
     const startedAt = (dependencies.now ?? (() => new Date()))().toISOString();
-    let retryBatch = await repositories.batches.findByIdempotencyKey(batch.sourceConfigId, key.data);
+    const retryIdempotencyKey = `${mode}:${createHash("sha256").update(key.data).digest("hex")}`;
+    let retryBatch = await repositories.batches.findByIdempotencyKey(batch.sourceConfigId, retryIdempotencyKey);
     if (!retryBatch) {
-      try { retryBatch = await repositories.batches.create({ sourceConfigId: batch.sourceConfigId, triggerType: "manual", actorId: auth.actor.id, idempotencyKey: key.data, startedAt }); }
+      try { retryBatch = await repositories.batches.create({ sourceConfigId: batch.sourceConfigId, triggerType: "manual", actorId: auth.actor.id, idempotencyKey: retryIdempotencyKey, startedAt }); }
       catch {
-        retryBatch = await repositories.batches.findByIdempotencyKey(batch.sourceConfigId, key.data);
+        retryBatch = await repositories.batches.findByIdempotencyKey(batch.sourceConfigId, retryIdempotencyKey);
         if (!retryBatch) return jsonError("CONFLICT");
       }
     }
@@ -351,12 +362,12 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const priorJob = await repositories.jobs.findByDedupeKey?.(retryDedupeKey);
     if (priorJob && ["queued", "running"].includes(priorJob.status)) return json({ batchId: retryBatch.id, status: "queued" }, 202);
     if (priorJob?.status === "succeeded") return json({ batchId: retryBatch.id, status: retryBatch.status }, 202);
-    try { await repositories.jobs.enqueue({ jobType: "sync", dedupeKey: `sync:${retryBatch.id}`, payload: { batchId: retryBatch.id, sourceId: batch.sourceConfigId, triggerType: "manual", actorId: auth.actor.id, onlyIds: [item.teambitionRequirementId] }, availableAt: startedAt }); }
+    try { await repositories.jobs.enqueue({ jobType: "sync", dedupeKey: `sync:${retryBatch.id}`, payload: { batchId: retryBatch.id, sourceId: batch.sourceConfigId, triggerType: "manual", actorId: auth.actor.id, onlyIds: [item.teambitionRequirementId], mode }, availableAt: startedAt }); }
     catch {
       await repositories.batches.complete(retryBatch.id, { status: "failed", totalCount: 1, succeededCount: 0, failedCount: 1, errorSummary: "Job enqueue failed; repeat the retry to recover.", completedAt: startedAt });
       return jsonError("DEPENDENCY_UNAVAILABLE");
     }
-    const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "sync.item.retry_requested", entityType: "sync_item", entityId: item.id, result: "succeeded", safeDetails: { sourceRequirementId: item.teambitionRequirementId, trigger: "manual" }, occurredAt: startedAt });
+    const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "sync.item.retry_requested", entityType: "sync_item", entityId: item.id, result: "succeeded", safeDetails: { sourceRequirementId: item.teambitionRequirementId, trigger: "manual", mode }, occurredAt: startedAt });
     if (auditFailure) return auditFailure;
     return json({ batchId: retryBatch.id, status: "queued" }, 202);
   }

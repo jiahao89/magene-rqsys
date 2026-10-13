@@ -1,10 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { SyncOrchestrator, type SyncPersistence, type SyncSourceReader } from "./service.js";
-import type { SourceProjectConfig } from "../domain/workflow.js";
+import { shouldProcessSyncDownstream, SyncOrchestrator, type SyncPersistence, type SyncSourceReader } from "./service.js";
+import type { AnalysisState, SourceProjectConfig } from "../domain/workflow.js";
 
 
 const config: SourceProjectConfig = { id: "cfg", projectId: "project", projectName: "Project", requirementTypeId: "type", enabled: true, schedule: { enabled: false, weekday: null, time: null, timezone: null }, ownerNames: [], fieldMap: { description: "allowed" } };
+test("source-only mode suppresses every downstream stage while omitted mode keeps the full pipeline", () => {
+  assert.equal(shouldProcessSyncDownstream("source_only"), false);
+  assert.equal(shouldProcessSyncDownstream("full_pipeline"), true);
+  assert.equal(shouldProcessSyncDownstream(undefined), true);
+});
 const task = (id: string, content: string, extra: Record<string, unknown> = {}) => ({ id, content, created: "2026-01-01", custom_fields: [{ _customfieldid: "allowed", value: "yes" }, { _customfieldid: "private", value: "secret" }], private_provider_field: "secret", ...extra });
 const capturedPayloads: Record<string, unknown>[] = [];
 
@@ -78,16 +83,16 @@ test("does not expose unmapped provider custom fields in normalized payload", as
   assert.equal(payload?.private_provider_field, undefined);
 });
 
-test("marks new and substantive changes for AI, while metadata-only updates remain push-only", async () => {
+test("source-only metadata updates remain recoverable by a later full sync", async () => {
   const writes: boolean[] = [];
   let current = task("one", "Stable requirement", { executor_id: "owner-a", taskflow_status_id: "open" });
-  let previous: { id: string; sourceVersion: number; sourceHash: string; substantiveHash: string } | null = null;
+  let previous: { id: string; sourceVersion: number; sourceHash: string; substantiveHash: string; analysisState: AnalysisState } | null = null;
   const source: SyncSourceReader = { async listRequirements() { return { items: [current], hasMore: false, nextCursor: null }; } };
   const persistence: SyncPersistence = {
     async findRequirement() { return previous; },
     async upsertRequirement(input) {
       writes.push(input.analysisRequired);
-      previous = { id: "db-one", sourceVersion: input.sourceVersion, sourceHash: input.sourceHash, substantiveHash: input.substantiveHash };
+      previous = { id: "db-one", sourceVersion: input.sourceVersion, sourceHash: input.sourceHash, substantiveHash: input.substantiveHash, analysisState: input.analysisRequired ? "pending" : "analyzed" };
       return { id: "db-one", created: input.sourceVersion === 1 };
     },
     async appendSourceSnapshot() {},
@@ -96,11 +101,15 @@ test("marks new and substantive changes for AI, while metadata-only updates rema
   };
   const orchestrator = new SyncOrchestrator(source, persistence);
   await orchestrator.run({ batchId: "first", sourceConfigId: config.id, config });
+  previous!.analysisState = "analyzed";
   current = task("one", "Stable requirement", { executor_id: "owner-b", taskflow_status_id: "done" });
-  await orchestrator.run({ batchId: "metadata", sourceConfigId: config.id, config });
+  await orchestrator.run({ batchId: "metadata", sourceConfigId: config.id, config, mode: "source_only" });
+  await orchestrator.run({ batchId: "metadata-recovery", sourceConfigId: config.id, config });
   current = task("one", "Changed requirement", { executor_id: "owner-b", taskflow_status_id: "done" });
   await orchestrator.run({ batchId: "content", sourceConfigId: config.id, config });
-  assert.deepEqual(writes, [true, false, true]);
+  // 若先前的 AI 任務未完成，之后的完整同步会再次把该需求放入下游队列。
+  await orchestrator.run({ batchId: "pending-retry", sourceConfigId: config.id, config });
+  assert.deepEqual(writes, [true, false, false, true, true]);
 });
 
 test("classifies a source snapshot write failure without exposing its database error", async () => {

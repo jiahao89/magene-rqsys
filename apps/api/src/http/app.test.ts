@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash as createHashForTest } from "node:crypto";
 import test from "node:test";
 import type { AuditEventRecord, RequirementRecord, SourceConfigRecord, SyncBatchRecord, SyncItemRecord } from "../domain/persistence.js";
 import type { ApiDependencies, ApiRepositories } from "./app.js";
@@ -48,6 +49,47 @@ test("rejects protected routes without an identity provider", async () => { cons
 test("updates source settings by project name while keeping server-owned IDs and metadata", async () => { const d = makeDependencies(); const r = await handleApiRequest(new Request(`http://localhost/api/sources/${source.id}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectName: "Project", enabled: false, schedule: { enabled: true, weekday: 1, time: "09:30", timezone: "Asia/Shanghai" } }) }), d); assert.equal(r.status, 200); const body = await r.json() as Record<string, unknown>; assert.deepEqual(body, { id: source.id, projectName: "Project", enabled: false, schedule: { enabled: true, weekday: 1, time: "09:30", timezone: "Asia/Shanghai" } }); assert.equal(source.externalProjectId, "p1"); assert.equal(source.requirementTypeId, "type1"); assert.deepEqual(source.fieldMap, { title: "name" }); });
 test("any authenticated Feishu actor can update source settings without an application role", async () => { const d = makeDependencies({ id: "logged-in-user" }); const r = await handleApiRequest(new Request(`http://localhost/api/sources/${source.id}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectName: "Project", enabled: false, schedule: { enabled: true, weekday: 1, time: "09:00", timezone: "Asia/Shanghai" } }) }), d); assert.equal(r.status, 200); });
 test("queues a sync once and returns the batch for an idempotent repeat", async () => { const d = makeDependencies(); const req = () => new Request("http://localhost/api/sync/run", { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": "request-key-0001" }, body: JSON.stringify({ sourceId: source.id }) }); const first = await handleApiRequest(req(), d); assert.equal(first.status, 202); assert.deepEqual(await first.json(), { batchId: "batch-1", status: "running" }); const dup = await handleApiRequest(req(), d); assert.equal(dup.status, 202); assert.deepEqual(await dup.json(), { batchId: "batch-1", status: "running" }); });
+test("queues a source-only sync mode separately and records the mode in the audit", async () => {
+ const d = makeDependencies();
+ let queued: Record<string, unknown> | null = null;
+ let createdKey: string | null = null;
+ let auditDetails: Record<string, unknown> | null = null;
+ d.repositories!.batches.create = async (input) => {
+  createdKey = input.idempotencyKey;
+  return { ...batch, ...input, id: "batch-source-only", status: "running" };
+ };
+ d.repositories!.jobs.enqueue = async (input) => {
+  queued = input as unknown as Record<string, unknown>;
+  return { ...input, id: "sync-job", status: "queued", attemptCount: 0, maxAttempts: 3, lockedUntil: null, lastErrorCode: null, lastErrorSummary: null, createdAt: input.availableAt, updatedAt: input.availableAt };
+ };
+ d.repositories!.audit.append = async (event) => { auditDetails = event.safeDetails as Record<string, unknown>; };
+ const response = await handleApiRequest(new Request("http://localhost/api/sync/run", {
+  method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": "source-only-0001" },
+  body: JSON.stringify({ sourceId: source.id, mode: "source_only" }),
+ }), d);
+ assert.equal(response.status, 202);
+ assert.match(createdKey ?? "", /^source_only:[a-f0-9]{64}$/);
+ assert.ok((createdKey ?? "").length <= 128);
+ assert.deepEqual((queued as Record<string, unknown> | null)?.payload, { batchId: "batch-source-only", sourceId: source.id, triggerType: "manual", actorId: "actor-1", mode: "source_only" });
+ assert.deepEqual(auditDetails, { trigger: "manual", mode: "source_only" });
+});
+test("scopes the same idempotency token to its sync mode", async () => {
+ const keys: string[] = [];
+ for (const mode of ["full_pipeline", "source_only"] as const) {
+  const d = makeDependencies();
+  d.repositories!.batches.create = async (input) => { keys.push(input.idempotencyKey); return { ...batch, ...input, id: `batch-${mode}`, status: "succeeded" }; };
+  d.repositories!.jobs.enqueue = async (input) => ({ ...input, id: `job-${mode}`, status: "queued", attemptCount: 0, maxAttempts: 3, lockedUntil: null, lastErrorCode: null, lastErrorSummary: null, createdAt: input.availableAt, updatedAt: input.availableAt });
+  d.repositories!.audit.append = async () => {};
+  const response = await handleApiRequest(new Request("http://localhost/api/sync/run", {
+   method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": "same-token-123" },
+   body: JSON.stringify({ sourceId: source.id, mode }),
+  }), d);
+  assert.equal(response.status, 202);
+ }
+ assert.equal(keys.length, 2);
+ assert.notEqual(keys[0], keys[1]);
+ assert.ok(keys.every((key) => /^(full_pipeline|source_only):[a-f0-9]{64}$/.test(key)));
+});
 test("queues a Base push retry without an undocumented project ID dependency", async () => {
   const d = makeDependencies();
   let queued: Record<string, unknown> | null = null;
@@ -97,12 +139,20 @@ test("lists and retrieves batches with items", async () => { const d = makeDepen
 test("failed item retry is idempotent across repeated requests", async () => {
   const d = makeDependencies();
   let created = 0, enqueued = 0, audits = 0;
+  let enqueuedPayload: Record<string, unknown> | null = null;
+  let createdRetryKey: string | null = null;
   let retryBatch: SyncBatchRecord | null = null;
   d.repositories!.items.get = async () => ({ ...item, status: "failed" });
-  d.repositories!.batches.create = async (params) => { created += 1; retryBatch = { ...batch, ...params, id: "retry-batch", status: "running" }; return retryBatch; };
-  d.repositories!.batches.findByIdempotencyKey = async (_sourceId, key) => key === "retry-key-123" ? retryBatch : null;
-  d.repositories!.jobs.enqueue = async (params) => { enqueued += 1; return { ...params, id: "retry-job", status: "queued", attemptCount: 0, maxAttempts: 3, lockedUntil: null, lastErrorCode: null, lastErrorSummary: null, createdAt: params.availableAt, updatedAt: params.availableAt }; };
-  d.repositories!.jobs.findByDedupeKey = async () => enqueued ? { id: "retry-job", jobType: "sync", dedupeKey: "sync:retry-batch", payload: {}, status: "queued", attemptCount: 0, maxAttempts: 3, availableAt: "2026-10-08T00:00:00.000Z", lockedUntil: null, lastErrorCode: null, lastErrorSummary: null, createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z" } : null;
+  d.repositories!.batches.create = async (params) => { created += 1; createdRetryKey = params.idempotencyKey; retryBatch = { ...batch, ...params, id: "retry-batch", status: "running" }; return retryBatch; };
+  const retryKey = `source_only:${createHashForTest("sha256").update("retry-key-123").digest("hex")}`;
+  d.repositories!.batches.findByIdempotencyKey = async (_sourceId, key) => key === retryKey ? retryBatch : null;
+  d.repositories!.batches.get = async () => ({ ...batch, idempotencyKey: "source_only:" + "a".repeat(64) });
+  d.repositories!.jobs.enqueue = async (params) => { enqueued += 1; enqueuedPayload = params.payload; return { ...params, id: "retry-job", status: "queued", attemptCount: 0, maxAttempts: 3, lockedUntil: null, lastErrorCode: null, lastErrorSummary: null, createdAt: params.availableAt, updatedAt: params.availableAt }; };
+  d.repositories!.jobs.findByDedupeKey = async (key) => {
+    const queuedJob = { id: "retry-job", jobType: "sync" as const, dedupeKey: key, payload: { mode: "source_only" }, status: "queued" as const, attemptCount: 0, maxAttempts: 3, availableAt: "2026-10-08T00:00:00.000Z", lockedUntil: null, lastErrorCode: null, lastErrorSummary: null, createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z" };
+    if (key === `sync:${batch.sourceConfigId}:${batch.idempotencyKey}`) return queuedJob;
+    return enqueued ? { ...queuedJob, dedupeKey: "sync:retry-batch", payload: enqueuedPayload ?? {} } : null;
+  };
   d.repositories!.audit.append = async () => { audits += 1; };
   const request = () => new Request(`http://localhost/api/items/${item.id}/retry`, { method: "POST", headers: { "Idempotency-Key": "retry-key-123" } });
   const first = await handleApiRequest(request(), d);
@@ -112,6 +162,8 @@ test("failed item retry is idempotent across repeated requests", async () => {
   assert.equal(created, 1);
   assert.equal(enqueued, 1);
   assert.equal(audits, 1);
+  assert.equal((enqueuedPayload as unknown as Record<string, unknown> | null)?.mode, "source_only");
+  assert.equal(createdRetryKey, retryKey);
 });
 test("batch and requirement list routes pass time, batch and stable cursor filters to repositories", async () => {
  const d = makeDependencies(); let batchQuery: unknown; let requirementQuery: unknown;

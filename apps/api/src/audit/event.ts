@@ -76,6 +76,7 @@ const ALLOWED_DETAIL_KEYS: readonly string[] = [
   "replay",
   "push",
   "trigger",
+  "mode",
   "runId",
   "stage",
   "attempt",

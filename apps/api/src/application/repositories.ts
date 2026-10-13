@@ -282,6 +282,7 @@ export interface RequirementQueryRepository {
     sourceVersion: number;
     sourceHash: string;
     substantiveHash: string;
+    analysisState: AnalysisState;
   } | null>;
   // 状态迁移（内部走 domain/transitions 校验，非法迁移抛 InvalidTransitionError）
   updateAnalysisState(requirementId: string, to: AnalysisState): Promise<void>;

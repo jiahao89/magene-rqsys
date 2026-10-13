@@ -50,7 +50,7 @@ Use the service boundaries in the technical design:
 
 - GET /api/sources — source configuration and connection self-check.
 - PUT /api/sources/{id} — save project and weekly schedule.
-- POST /api/sync/run — manual trigger with request idempotency key.
+- POST /api/sync/run — manual trigger with request idempotency key. Optional `mode=source_only` imports source rows/snapshots only; it does not queue AI analysis, owner matching, Base pushes, or notifications. Omitted mode uses `full_pipeline`. Idempotency keys are hashed and namespaced by mode. A later full sync revisits unchanged source rows: pending analysis is queued, and eligible pending owner/push work is advanced, so source-only imports remain recoverable.
 - GET /api/batches — list/filter by time and state.
 - GET /api/batches/{id} — batch totals and item-level results.
 - POST /api/items/{id}/retry — retry an eligible failed item.

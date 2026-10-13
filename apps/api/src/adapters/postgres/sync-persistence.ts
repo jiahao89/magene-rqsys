@@ -2,7 +2,7 @@ import type { SyncPersistence } from "../../sync/service.js";
 import type { PostgresRepositories, RequirementRowWrite } from "./repositories.js";
 
 export interface PostgresSyncPersistence extends SyncPersistence {
-  // 本次批次中有源版本变化的需求；analysisRequired=false 表示只需更新 Base 元数据。
+  // 本批次中新建、源数据变化或待分析的需求；analysisRequired=false 表示只需更新 Base 元数据。
   touchedRequirements(): Array<{ id: string; sourceVersion: number; substantiveHash: string; analysisRequired: boolean }>;
 }
 
@@ -43,7 +43,7 @@ export function createPostgresSyncPersistence(
         snapshot: input.snapshot,
       };
       const upserted = await repositories.requirements.upsertRequirement(sourceConfigId, input.sourceRequirementId, write);
-      // 编排器只对新建/哈希变化的需求调用 upsert；元数据变化也要更新 Base，但不重跑 AI。
+      // 新建、哈希变化和待分析需求进入 touched；元数据变化也要更新 Base，但已分析需求不重跑 AI。
       touched.push({ id: upserted.id, sourceVersion: upserted.sourceVersion, substantiveHash: input.substantiveHash, analysisRequired: input.analysisRequired });
       return upserted;
     },
