@@ -313,8 +313,6 @@ describe("团队字典维护", () => {
       if (path === "/api/people") return jsonOk({ items: people });
       throw new Error(`unexpected fetch ${path} ${init?.method ?? "GET"}`);
     });
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
-
     render(<PeoplePanel />);
     expect(await screen.findByText("毕梓浩")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("新增人员姓名"), { target: { value: "新成员" } });
@@ -331,9 +329,14 @@ describe("团队字典维护", () => {
     const renamedRow = screen.getByText("新成员改名").closest("tr");
     if (!renamedRow) throw new Error("Renamed member row was not rendered");
     fireEvent.click(within(renamedRow).getByRole("button", { name: "删除" }));
+    const personDialog = await screen.findByRole("alertdialog");
+    fireEvent.click(within(personDialog).getByRole("button", { name: "取消" }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(screen.getByText("新成员改名")).toBeInTheDocument();
+
+    fireEvent.click(within(renamedRow).getByRole("button", { name: "删除" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "确认删除" }));
     expect(await screen.findByText("人员已删除，相关模块已解除分配。")).toBeInTheDocument();
-    expect(confirm).toHaveBeenCalledOnce();
-    confirm.mockRestore();
   });
 
   it("supports creating, editing and deleting a module with a listed owner", async () => {
@@ -351,8 +354,6 @@ describe("团队字典维护", () => {
       if (path === "/api/modules") return jsonOk({ version, items: modules });
       throw new Error(`unexpected fetch ${path} ${init?.method ?? "GET"}`);
     });
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
-
     render(<ModulesPanel />);
     expect(await screen.findByText("地图")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("功能模块名称"), { target: { value: "语音提醒" } });
@@ -371,9 +372,14 @@ describe("团队字典维护", () => {
     const voiceRow = screen.getByText("语音提醒").closest("tr");
     if (!voiceRow) throw new Error("Created module row was not rendered");
     fireEvent.click(within(voiceRow).getByRole("button", { name: "删除" }));
+    const moduleDialog = await screen.findByRole("alertdialog");
+    fireEvent.click(within(moduleDialog).getByRole("button", { name: "取消" }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(screen.getByText("语音提醒")).toBeInTheDocument();
+
+    fireEvent.click(within(voiceRow).getByRole("button", { name: "删除" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "确认删除" }));
     expect(await screen.findByText("已发布模块字典 v5，后续 AI 分析将使用新版本。")).toBeInTheDocument();
     expect(screen.queryByText("语音提醒")).not.toBeInTheDocument();
-    expect(confirm).toHaveBeenCalledOnce();
-    confirm.mockRestore();
   });
 });

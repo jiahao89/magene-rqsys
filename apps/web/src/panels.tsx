@@ -2,7 +2,7 @@
 // 权限拒绝、空数据、加载中、局部失败和 API 不可用都显示可恢复状态。
 // 需求池/批次/审计面板自治加载，支持服务端筛选与游标分页。
 import { useCallback, useEffect, useId, useRef, useState, Component, type KeyboardEvent, type ReactNode } from "react";
-import { Button as HeroButton, Input as HeroInput, TextArea as HeroTextArea } from "@heroui/react";
+import { AlertDialog as HeroAlertDialog, Button as HeroButton, Input as HeroInput, TextArea as HeroTextArea } from "@heroui/react";
 import { RefreshCw, X } from "lucide-react";
 import { stateLabel } from "./state-labels";
 import { checkScheduleHealth } from "./schedule";
@@ -29,6 +29,24 @@ function StateBanner({ loadError, notice, onCloseNotice }: { loadError: string |
     {loadError && <div className="alert-banner" role="alert"><div><strong>请求失败</strong><span>{loadError}</span></div></div>}
     {notice && <div className="notice-banner" role="status"><span>{notice}</span><HeroButton className="icon-button" aria-label="关闭提示" onPress={onCloseNotice}><X size={15} /></HeroButton></div>}
   </>;
+}
+
+function DeleteConfirmation({ description, disabled, onConfirm }: { description: string; disabled: boolean; onConfirm: () => void }) {
+  return <HeroAlertDialog.Root>
+    <HeroAlertDialog.Trigger className="button button-secondary button-small" aria-disabled={disabled} tabIndex={disabled ? -1 : 0} style={disabled ? { pointerEvents: "none", opacity: 0.6 } : undefined}>删除</HeroAlertDialog.Trigger>
+    <HeroAlertDialog.Backdrop>
+      <HeroAlertDialog.Container>
+        <HeroAlertDialog.Dialog>
+          <HeroAlertDialog.Header><HeroAlertDialog.Heading>确认删除</HeroAlertDialog.Heading></HeroAlertDialog.Header>
+          <HeroAlertDialog.Body><p>{description}</p></HeroAlertDialog.Body>
+          <HeroAlertDialog.Footer>
+            <HeroButton slot="close" variant="secondary">取消</HeroButton>
+            <HeroButton slot="close" variant="danger" onPress={onConfirm}>确认删除</HeroButton>
+          </HeroAlertDialog.Footer>
+        </HeroAlertDialog.Dialog>
+      </HeroAlertDialog.Container>
+    </HeroAlertDialog.Backdrop>
+  </HeroAlertDialog.Root>;
 }
 
 function timeLabel(value: string | null | undefined): string {
@@ -203,7 +221,7 @@ export function PeoplePanel() {
     <div className="panel-heading"><div><h2>组内人员</h2><p>用于按 TB 负责人筛选需求，并维护功能模块的责任人。</p></div><HeroButton className="button button-secondary button-small" onPress={() => void load()} isDisabled={busy}><RefreshCw size={14} />刷新</HeroButton></div>
     <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
     <div className="rules-form" style={{ alignItems: "flex-end" }}><label className="rules-threshold" style={{ flex: 1 }}><span>人员姓名</span><HeroInput aria-label="新增人员姓名" value={draft} onChange={(event) => setDraft(event.target.value)} /></label><HeroButton className="button button-primary button-small" onPress={() => void submit(() => addTeamPerson(draft), "人员已添加。")} isDisabled={busy || !draft.trim()}>新增人员</HeroButton></div>
-    {people.length ? <div className="table-scroll"><table><thead><tr><th>人员</th><th>操作</th></tr></thead><tbody>{people.map(({ name }) => <tr key={name}><td>{editing === name ? <HeroInput aria-label="编辑人员姓名" value={editDraft} onChange={(event) => setEditDraft(event.target.value)} /> : name}</td><td>{editing === name ? <><HeroButton className="button button-primary button-small" onPress={() => void submit(() => renameTeamPerson(name, editDraft), "人员及模块责任关系已更新。")} isDisabled={busy || !editDraft.trim()}>保存</HeroButton> <HeroButton className="button button-secondary button-small" onPress={() => setEditing(null)} isDisabled={busy}>取消</HeroButton></> : <><HeroButton className="button button-secondary button-small" onPress={() => { setEditing(name); setEditDraft(name); }} isDisabled={busy}>编辑</HeroButton> <HeroButton className="button button-secondary button-small" onPress={() => { if (window.confirm(`删除人员“${name}”？相关功能模块将变为未分配。`)) void submit(() => deleteTeamPerson(name), "人员已删除，相关模块已解除分配。"); }} isDisabled={busy}>删除</HeroButton></>}</td></tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadError ? "人员读取失败" : "暂无人员"}</strong><span>{loadError ? "检查 API 连接后刷新。" : "填写姓名并新增；数据源配置完成后可维护组内名单。"}</span></div>}
+    {people.length ? <div className="table-scroll"><table><thead><tr><th>人员</th><th>操作</th></tr></thead><tbody>{people.map(({ name }) => <tr key={name}><td>{editing === name ? <HeroInput aria-label="编辑人员姓名" value={editDraft} onChange={(event) => setEditDraft(event.target.value)} /> : name}</td><td>{editing === name ? <><HeroButton className="button button-primary button-small" onPress={() => void submit(() => renameTeamPerson(name, editDraft), "人员及模块责任关系已更新。")} isDisabled={busy || !editDraft.trim()}>保存</HeroButton> <HeroButton className="button button-secondary button-small" onPress={() => setEditing(null)} isDisabled={busy}>取消</HeroButton></> : <><HeroButton className="button button-secondary button-small" onPress={() => { setEditing(name); setEditDraft(name); }} isDisabled={busy}>编辑</HeroButton> <DeleteConfirmation disabled={busy} description={`删除人员“${name}”？相关功能模块将变为未分配。`} onConfirm={() => void submit(() => deleteTeamPerson(name), "人员已删除，相关模块已解除分配。")} /></>}</td></tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadError ? "人员读取失败" : "暂无人员"}</strong><span>{loadError ? "检查 API 连接后刷新。" : "填写姓名并新增；数据源配置完成后可维护组内名单。"}</span></div>}
   </section>;
 }
 
@@ -250,7 +268,7 @@ export function ModulesPanel() {
     <div className="panel-heading"><div><h2>功能模块</h2><p>AI 仅从已发布的模块名称中选择；无法匹配时输出“无法识别”。每次保存生成一个新字典版本。</p></div><HeroButton className="button button-secondary button-small" onPress={() => void load()} isDisabled={busy}><RefreshCw size={14} />刷新</HeroButton></div>
     <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
     <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}><label className="rules-threshold" style={{ flex: 1 }}><span>功能模块</span><HeroInput aria-label="功能模块名称" value={name} onChange={(event) => setName(event.target.value)} /></label><label className="rules-threshold"><span>人员</span><select aria-label="模块责任人员" value={personName} onChange={(event) => setPersonName(event.target.value)}><option value="">未分配</option>{people.map((person) => <option key={person.name} value={person.name}>{person.name}</option>)}</select></label><HeroButton className="button button-primary button-small" onPress={submit} isDisabled={busy}>{editing ? "保存修改" : "新增模块"}</HeroButton>{editing && <HeroButton className="button button-secondary button-small" onPress={() => { setEditing(null); setName(""); setPersonName(""); }} isDisabled={busy}>取消</HeroButton>}</div>
-    {items.length ? <div className="table-scroll"><table><thead><tr><th>功能模块</th><th>人员</th><th>操作</th></tr></thead><tbody>{items.map((item) => <tr key={item.name}><td>{item.name}</td><td>{item.personName ?? "未分配"}</td><td><HeroButton className="button button-secondary button-small" onPress={() => { setEditing(item.name); setName(item.name); setPersonName(item.personName ?? ""); }} isDisabled={busy}>编辑</HeroButton> <HeroButton className="button button-secondary button-small" onPress={() => { if (window.confirm(`删除功能模块“${item.name}”？`)) void save(items.filter((candidate) => candidate.name !== item.name)); }} isDisabled={busy}>删除</HeroButton></td></tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadError ? "模块字典读取失败" : "暂无功能模块"}</strong><span>{loadError ? "检查 API 连接后刷新。" : "新增模块后，AI 分析会使用最新的已发布字典。"}</span></div>}
+    {items.length ? <div className="table-scroll"><table><thead><tr><th>功能模块</th><th>人员</th><th>操作</th></tr></thead><tbody>{items.map((item) => <tr key={item.name}><td>{item.name}</td><td>{item.personName ?? "未分配"}</td><td><HeroButton className="button button-secondary button-small" onPress={() => { setEditing(item.name); setName(item.name); setPersonName(item.personName ?? ""); }} isDisabled={busy}>编辑</HeroButton> <DeleteConfirmation disabled={busy} description={`删除功能模块“${item.name}”？`} onConfirm={() => void save(items.filter((candidate) => candidate.name !== item.name))} /></td></tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadError ? "模块字典读取失败" : "暂无功能模块"}</strong><span>{loadError ? "检查 API 连接后刷新。" : "新增模块后，AI 分析会使用最新的已发布字典。"}</span></div>}
   </section>;
 }
 
