@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { PostgresRepositories } from "./repositories.js";
+import { DEFAULT_TEAM_MEMBERS } from "../../domain/team-directory.js";
 
 function recordingPool() {
   const calls: Array<{sql:string;values:unknown[]|undefined}> = [];
@@ -67,6 +68,26 @@ test("job claim uses SKIP LOCKED and expires old leases", async()=>{
   const {pool,calls}=recordingPool();const store=new PostgresRepositories(pool);
   await store.jobs.claimNext("worker-1",30000,"2026-01-01T00:00:00Z");
   assert.match(calls[0]!.sql,/^BEGIN$/);assert.match(calls[1]!.sql,/FOR UPDATE SKIP LOCKED/);assert.match(calls[1]!.sql,/locked_until <= \$1/);
+});
+
+test("first module dictionary save persists the built-in roster", async()=>{
+  const calls: Array<{sql:string;values:unknown[]|undefined}> = [];
+  const query = async (sql:string,values?:unknown[]) => {
+    calls.push({sql,values});
+    if (sql.includes("SELECT id,owner_names FROM source_configs")) return {rows:[{id:"source-1",owner_names:[]}],rowCount:1};
+    if (sql.includes("SELECT version FROM module_dictionary_versions")) return {rows:[],rowCount:0};
+    if (sql.includes("SELECT EXISTS(SELECT 1 FROM module_dictionary_versions")) return {rows:[{has_dictionary:false}],rowCount:1};
+    if (sql.includes("INSERT INTO module_dictionary_versions")) return {rows:[{version:1}],rowCount:1};
+    return {rows:[],rowCount:0};
+  };
+  const pool = {query,connect:async()=>({query,release(){}})} as never;
+  const store = new PostgresRepositories(pool);
+  await store.directory.saveModules(0,[],"user-1","2026-10-13T00:00:00.000Z",{
+    id:"00000000-0000-4000-8000-000000000123",actorId:"user-1",eventType:"module_dictionary.published",entityType:"module_dictionary",result:"succeeded",safeDetails:{entryCount:0},occurredAt:"2026-10-13T00:00:00.000Z",
+  });
+  const rosterWrite = calls.find((call)=>call.sql.includes("UPDATE source_configs SET owner_names"));
+  assert.ok(rosterWrite);
+  assert.deepEqual(JSON.parse(String(rosterWrite.values?.[1])),DEFAULT_TEAM_MEMBERS);
 });
 
 test("enqueue reopens a terminally failed job for an explicit same-key retry", async()=>{

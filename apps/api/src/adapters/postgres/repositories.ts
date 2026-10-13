@@ -259,6 +259,12 @@ export class PostgresTeamDirectoryRepository implements TeamDirectoryRepository 
       if (currentVersion !== expectedVersion) throw new TeamDirectoryConflict();
       const people = await this.effectivePeople(client, source.rows[0].owner_names);
       if (items.some((item) => item.personName !== null && !people.includes(item.personName))) throw new TeamDirectoryConflict("模块负责人必须来自人员字典。");
+      // Before the first published dictionary, an empty owner_names value means
+      // the built-in roster is active. Persist that roster with the first save
+      // so publishing the dictionary does not make the people list disappear.
+      if (currentVersion === 0 && directoryNames(source.rows[0].owner_names).length === 0) {
+        await client.query("UPDATE source_configs SET owner_names=$2::jsonb,updated_at=now() WHERE id=$1", [source.rows[0].id, JSON.stringify(people)]);
+      }
       const updated = await this.publishModules(client, items, createdBy, now, event);
       await client.query("COMMIT");
       return { version: updated.version, items };
