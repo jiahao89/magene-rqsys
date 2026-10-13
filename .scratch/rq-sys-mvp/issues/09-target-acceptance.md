@@ -2,12 +2,12 @@
 
 ## 最新验收更新（2026-10-13）
 
-- root `main` 当前已推送至 `15ae9f3`；妙搭 `sprint/default` 已推送至 `b5ab0de`。Release `7695961039167278282` 为 `finished`，绑定完整 commit `b5ab0de2dcc687399be7d9d9ece939481d26bbbe`，`error_logs` 为空。
-- 本地验证：root API 235/235（未运行指向非 loopback 数据库的 PostgreSQL integration）、Web 39/39、妙搭路由 66/66；根仓 typecheck/build、妙搭 server/client typecheck、lint、production build、共享逻辑对齐和两仓 `git diff --check` 均通过。最后一轮审查发现并修复了 job 记录缺失时 source-only 单项重试可能落入完整流水线的问题。新代码尚未推送/发布。
+- root source-only 实现 commit `c3a91b2` 已推送至 `main`；妙搭 `sprint/default` 已推送至 `4de6d8c`。Release `7695978028435049655` 为 `finished`，绑定完整 commit `4de6d8cb038c31769365d345b6a5e87686d40873`，`error_logs` 为空。
+- 本地验证：root API 235/235（未运行指向非 loopback 数据库的 PostgreSQL integration）、Web 39/39、妙搭路由 66/66；根仓 typecheck/build、妙搭 server/client typecheck、lint、production build、共享逻辑对齐和两仓 `git diff --check` 均通过。最后一轮审查发现并修复了 job 记录缺失时 source-only 单项重试可能落入完整流水线的问题。代码已推送并发布。
 - 本轮经妙搭 `+db-execute` 只读聚合回读确认：1 个启用来源、37 条需求（7 条夹具）、7 人、已发布字典 54 个模块、0 running batch/job、周计划关闭。查询只返回汇总数，没有写入。
 - Teambition 原始需求 API 最后复核为 311 条、311 个非空唯一 ID；UI `311/314` 的额外 3 条仍未识别。按用户指示，导入范围采用 API 的 311 条，不将 3 条臆断为测试工具。
-- 本轮实现了手动 `source_only` 同步：保存 TB 源数据与快照，不排 AI、不做负责人匹配、不推送 Base、不通知；单项重试也从持久化批次键恢复该模式。完整同步仍为默认；后续完整同步会重新排队处于 `pending` 的分析。此改动通过本地验证，尚未发布或用于 Dev 数据对齐。
-- Dev 尚未对齐到 311 条（最近读回为 30 条非夹具 + 7 条夹具）。发布版 app-mediated E2E、启用测试周计划后的错窗恢复、durable worker 重启仍未验证。周计划和干系人通知保持关闭。最近一次目标 CLI 验证因当前 shell 无法解析 `open.feishu.cn` 而在网络连接前失败；本轮未写目标环境。
+- 手动 `source_only` 同步已发布：保存 TB 源数据与快照，不排 AI、不做负责人匹配、不推送 Base、不通知；单项重试也从持久化批次键恢复该模式。完整同步仍为默认；后续完整同步会重新排队处于 `pending` 的分析。目标 Dev 数据对齐尚未执行。
+- Dev 尚未对齐到 311 条（最新聚合为 37 条，包含此前确认的 7 条夹具），且周计划关闭、无运行批次/作业。发布后开发态入口在 Chrome 可打开，但预览一直处于“系统启动中… / IDE 加载中…”，因此 source-only 同步尚未触发、Dev 数据未改变。发布版 app-mediated E2E、启用测试周计划后的错窗恢复、durable worker 重启仍未验证。周计划和干系人通知保持关闭。
 
 ## 历史处置记录（2026-10-12，已完成）
 
