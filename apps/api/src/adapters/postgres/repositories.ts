@@ -248,6 +248,10 @@ export class PostgresTeamDirectoryRepository implements TeamDirectoryRepository 
     return rows[0] ? { version: Number(rows[0].version), items: moduleDirectoryEntries(rows[0].entries) } : { version: 0, items: [...DEFAULT_FUNCTION_MODULES] };
   }
   async saveModules(expectedVersion: number, items: FunctionModuleEntry[], createdBy: string, now: string, event: AuditEventInput) {
+    // Defence in depth for the HTTP boundary (see TeamModulesSaveSchema): publishing
+    // an empty dictionary would retire the active taxonomy in favour of nothing,
+    // which is strictly worse than having no published version at all.
+    if (items.length === 0) throw new TeamDirectoryConflict("模块列表不能为空。");
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");

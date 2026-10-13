@@ -19,7 +19,11 @@ export const TeamModuleEntrySchema = z.object({
 });
 export const TeamModulesSaveSchema = z.object({
   version: z.number().int().nonnegative(),
-  items: z.array(TeamModuleEntrySchema),
+  // A published dictionary must always carry at least one module. Readers fall back
+  // to the built-in list only while nothing is published, so an empty published
+  // version would retire the real taxonomy and degrade every classification to
+  // 无法识别 — and no endpoint can retire a version, so that loss would be one-way.
+  items: z.array(TeamModuleEntrySchema).min(1, "模块列表不能为空"),
 }).superRefine(({ items }, ctx) => {
   const names = items.map((item) => item.name.toLocaleLowerCase());
   if (new Set(names).size !== names.length) ctx.addIssue({ code: "custom", message: "模块名称不能重复", path: ["items"] });

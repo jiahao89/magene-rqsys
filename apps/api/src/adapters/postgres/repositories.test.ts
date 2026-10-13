@@ -82,12 +82,29 @@ test("first module dictionary save persists the built-in roster", async()=>{
   };
   const pool = {query,connect:async()=>({query,release(){}})} as never;
   const store = new PostgresRepositories(pool);
-  await store.directory.saveModules(0,[],"user-1","2026-10-13T00:00:00.000Z",{
-    id:"00000000-0000-4000-8000-000000000123",actorId:"user-1",eventType:"module_dictionary.published",entityType:"module_dictionary",result:"succeeded",safeDetails:{entryCount:0},occurredAt:"2026-10-13T00:00:00.000Z",
+  await store.directory.saveModules(0,[{name:"爬坡",personName:null}],"user-1","2026-10-13T00:00:00.000Z",{
+    id:"00000000-0000-4000-8000-000000000123",actorId:"user-1",eventType:"module_dictionary.published",entityType:"module_dictionary",result:"succeeded",safeDetails:{entryCount:1},occurredAt:"2026-10-13T00:00:00.000Z",
   });
   const rosterWrite = calls.find((call)=>call.sql.includes("UPDATE source_configs SET owner_names"));
   assert.ok(rosterWrite);
   assert.deepEqual(JSON.parse(String(rosterWrite.values?.[1])),DEFAULT_TEAM_MEMBERS);
+});
+
+test("module dictionary save refuses an empty list without retiring the published version", async()=>{
+  const calls: Array<{sql:string;values:unknown[]|undefined}> = [];
+  const query = async (sql:string,values?:unknown[]) => {
+    calls.push({sql,values});
+    if (sql.includes("SELECT id,owner_names FROM source_configs")) return {rows:[{id:"source-1",owner_names:["毕梓浩"]}],rowCount:1};
+    if (sql.includes("SELECT version FROM module_dictionary_versions")) return {rows:[{version:3}],rowCount:1};
+    return {rows:[],rowCount:0};
+  };
+  const pool = {query,connect:async()=>({query,release(){}})} as never;
+  const store = new PostgresRepositories(pool);
+  await assert.rejects(()=>store.directory.saveModules(3,[],"user-1","2026-10-13T00:00:00.000Z",{
+    id:"00000000-0000-4000-8000-000000000124",actorId:"user-1",eventType:"module_dictionary.published",entityType:"module_dictionary",result:"succeeded",safeDetails:{entryCount:0},occurredAt:"2026-10-13T00:00:00.000Z",
+  }),{name:"TeamDirectoryConflict"});
+  assert.ok(!calls.some((call)=>call.sql.includes("SET status='retired'")),"the published version must survive");
+  assert.ok(!calls.some((call)=>call.sql.includes("INSERT INTO module_dictionary_versions")),"no empty version may be inserted");
 });
 
 test("enqueue reopens a terminally failed job for an explicit same-key retry", async()=>{

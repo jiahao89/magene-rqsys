@@ -100,10 +100,25 @@ test("module directory reads and saves the exact module/person dictionary as a n
   assert.equal(f.events.at(-1)?.eventType, "module_dictionary.updated");
 
   const stale = await handleApiRequest(new Request("http://localhost/api/modules", {
-    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ version: 1, items: [] }),
+    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ version: 1, items: [{ name: "语音提示", personName: null }] }),
   }), f.dependencies);
   assert.equal(stale.status, 409);
   assert.equal(f.getVersion(), 2);
+});
+
+test("refuses an empty module list so the active taxonomy cannot be cleared", async () => {
+  const f = fixture();
+  const response = await handleApiRequest(new Request("http://localhost/api/modules", {
+    method: "PUT", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ version: 1, items: [] }),
+  }), f.dependencies);
+  // An empty published dictionary is strictly worse than no published version:
+  // readers fall back to the built-in modules only when no version is published,
+  // so publishing nothing to publish would silently degrade every classification
+  // to 无法识别 and stop the module field from ever reaching Base.
+  assert.equal(response.status, 400);
+  assert.equal(f.getVersion(), 1);
+  assert.deepEqual(f.getModules(), [{ name: "地图", personName: "盛永帮" }]);
 });
 
 test("requirements API forwards exact TB-owner filtering to the server repository", async () => {

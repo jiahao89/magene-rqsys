@@ -382,4 +382,21 @@ describe("团队字典维护", () => {
     expect(await screen.findByText("已发布模块字典 v5，后续 AI 分析将使用新版本。")).toBeInTheDocument();
     expect(screen.queryByText("语音提醒")).not.toBeInTheDocument();
   });
+
+  it("refuses to delete the last remaining module so the dictionary cannot be emptied", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/people") return jsonOk({ items: [{ name: "贾浩" }] });
+      if (path === "/api/modules") return jsonOk({ version: 3, items: [{ name: "地图", personName: "贾浩" }] });
+      throw new Error(`unexpected fetch ${path}`);
+    });
+
+    render(<ModulesPanel />);
+    const row = (await screen.findByText("地图")).closest("tr");
+    if (!row) throw new Error("Module row was not rendered");
+
+    // Publishing an empty dictionary would retire the taxonomy in favour of nothing,
+    // so the last module must not be removable from the workbench either.
+    expect(within(row).getByRole("button", { name: "删除" })).toHaveAttribute("aria-disabled", "true");
+  });
 });

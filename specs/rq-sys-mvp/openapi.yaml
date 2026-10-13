@@ -466,6 +466,12 @@ paths:
                 version: { type: integer, minimum: 0 }
                 items:
                   type: array
+                  # A published dictionary must carry at least one module. Readers fall back
+                  # to the built-in list only while nothing is published, so an empty
+                  # published version would retire the real taxonomy and degrade every
+                  # classification to 无法识别. No endpoint can retire a version, so the
+                  # loss would be one-way.
+                  minItems: 1
                   items: { $ref: '#/components/schemas/FunctionModuleEntry' }
               required: [version, items]
       responses:
@@ -475,7 +481,8 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/FunctionModuleDirectory' }
         '400': { $ref: '#/components/responses/BadRequest' }
-        '409': { description: Stale version or invalid module owner }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { description: Stale version, empty module list, or invalid module owner }
   /api/rules/dictionary/{version}/publish:
     post:
       summary: Publish a draft dictionary version; retires the previously published version
