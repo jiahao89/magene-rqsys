@@ -21,6 +21,24 @@ test("source config repository maps persisted snake_case fields", async()=>{
   assert.equal(rows[0]?.externalProjectId,"p");assert.equal(rows[0]?.scheduleTimezone,null);
 });
 
+test("overview aggregation excludes synthetic fixtures and maps database counts", async()=>{
+  const calls: Array<{ sql: string; values: unknown[] | undefined }> = [];
+  const pool = {
+    query: async (sql: string, values?: unknown[]) => {
+      calls.push({ sql, values });
+      return { rows: [{ total: "311", pull_synced: "311", analysis_analyzed: "0", owner_resolved: "0", push_pushed: "0", failed: "0" }], rowCount: 1 };
+    },
+    connect: async () => { throw new Error("not used"); },
+  } as never;
+  const store = new PostgresRepositories(pool);
+  assert.deepEqual(await store.requirements.getPipelineCounts(), {
+    total: 311, pullSynced: 311, analysisAnalyzed: 0, ownerResolved: 0, pushPushed: 0, failed: 0,
+  });
+  assert.match(calls[0]!.sql, /GROUP BY|FILTER/);
+  assert.match(calls[0]!.sql, /teambition_requirement_id NOT LIKE \$1/);
+  assert.deepEqual(calls[0]!.values, ["rqsys-fixture-%"]);
+});
+
 test("source config JSON fields are passed as JSON, not PostgreSQL array literals", async()=>{
   const {pool,calls}=recordingPool();const store=new PostgresRepositories(pool);
   await store.sources.create({projectId:"p",projectName:"P",requirementTypeId:"t",enabled:true,schedule:{enabled:false,weekday:null,time:null,timezone:null},ownerNames:["PM Owner"],fieldMap:{description:"cf-1"}});

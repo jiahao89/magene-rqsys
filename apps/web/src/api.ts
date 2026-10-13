@@ -3,6 +3,15 @@ export interface HealthResponse {
   service: string;
 }
 
+export interface OverviewMetrics {
+  total: number;
+  pullSynced: number;
+  analysisAnalyzed: number;
+  ownerResolved: number;
+  pushPushed: number;
+  failed: number;
+}
+
 export interface SourceConfig {
   id: string;
   projectName: string;
@@ -90,6 +99,15 @@ async function deleteJson<T>(path: string, fetcher: typeof fetch): Promise<T> {
 
 export function getHealth(fetcher: typeof fetch = fetch): Promise<HealthResponse> {
   return requestJson<HealthResponse>("/api/health", fetcher);
+}
+
+export async function getOverviewMetrics(fetcher: typeof fetch = fetch): Promise<OverviewMetrics> {
+  const result = await requestJson<{ counts: OverviewMetrics }>("/api/overview/metrics", fetcher);
+  const keys: (keyof OverviewMetrics)[] = ["total", "pullSynced", "analysisAnalyzed", "ownerResolved", "pushPushed", "failed"];
+  if (!result.counts || keys.some((key) => !Number.isInteger(result.counts[key]) || result.counts[key] < 0)) {
+    throw new ApiError("Overview metrics response is invalid", 502, "INVALID_METRICS_RESPONSE");
+  }
+  return result.counts;
 }
 
 export async function runSync(

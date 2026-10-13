@@ -98,6 +98,11 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
   if (method === "GET" && url.pathname === "/api/health/ready") {
     return await isDatabaseReady(dependencies.database) ? json({ status: "ready", database: "connected" }) : json({ status: "not_ready", reason: "database_unavailable_or_not_configured" }, 503);
   }
+  if (method === "GET" && url.pathname === "/api/overview/metrics") {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
+    return json({ counts: await repositories.requirements.getPipelineCounts() });
+  }
   if (method === "GET" && url.pathname === "/api/dev/fixtures/status") {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     return json({ enabled: dependencies.enableTestFixtures === true });

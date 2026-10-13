@@ -11,6 +11,23 @@ beforeEach(() => {
 });
 
 describe("RQ-Sys local workbench", () => {
+  it("uses full-dataset metrics instead of the current requirement page size", async () => {
+    fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/sources") return Response.json({ items: [] });
+      if (path.startsWith("/api/batches")) return Response.json({ items: [] });
+      if (path.startsWith("/api/requirements")) return Response.json({ items: [{ id: "req-1", sourceRequirementId: "tb-1", title: "One visible row", sourceVersion: 1, pipeline: { pull: "synced", analysis: "pending", owner: "pending_mapping", push: "pending" } }] });
+      if (path === "/api/overview/metrics") return Response.json({ counts: { total: 311, pullSynced: 311, analysisAnalyzed: 0, ownerResolved: 0, pushPushed: 0, failed: 0 } });
+      return Response.json({ items: [] });
+    });
+
+    render(<App />);
+
+    expect(await screen.findAllByText("/ 311")).toHaveLength(4);
+    expect(screen.getAllByText("全量需求数据")).toHaveLength(4);
+  });
+
   it("shows a recoverable service error instead of claiming the API is configured", async () => {
     fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
 

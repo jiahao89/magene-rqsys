@@ -44,6 +44,7 @@ The removed local UI prototype had Dashboard, Pool, Sources, Preview, Batches, B
 ## API contract
 
 - GET /api/sources
+- GET /api/overview/metrics
 - PUT /api/sources/{id}
 - POST /api/sync/run
 - GET /api/batches
@@ -67,6 +68,7 @@ All write responses return the resulting workflow state and a stable object iden
 5. Given a retry succeeds, then the UI refreshes the same requirement/batch association and does not create a duplicate.
 6. Given no schedule or credentials are configured, then the page gives a safe, actionable configuration error without exposing secrets.
 7. Given the API is unavailable, then the UI shows a recoverable error and does not claim a workflow transition occurred.
+8. Given the requirement pool is paginated, then dashboard stage counts use persisted full-dataset aggregates and exclude synthetic acceptance fixtures.
 
 ## Design and accessibility
 

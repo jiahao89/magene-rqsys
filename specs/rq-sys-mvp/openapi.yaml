@@ -30,6 +30,21 @@ paths:
       responses:
         '200': { description: Database is reachable }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /api/overview/metrics:
+    get:
+      summary: Get full-dataset workflow counts, excluding synthetic acceptance fixtures
+      responses:
+        '200':
+          description: Persisted counts independent of requirement-list pagination
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  counts: { $ref: '#/components/schemas/OverviewMetrics' }
+                required: [counts]
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /api/sources:
     get:
       summary: List configured sources
@@ -609,6 +624,16 @@ components:
             message: { type: string }
           required: [code, message]
       required: [error]
+    OverviewMetrics:
+      type: object
+      properties:
+        total: { type: integer, minimum: 0 }
+        pullSynced: { type: integer, minimum: 0 }
+        analysisAnalyzed: { type: integer, minimum: 0 }
+        ownerResolved: { type: integer, minimum: 0 }
+        pushPushed: { type: integer, minimum: 0 }
+        failed: { type: integer, minimum: 0 }
+      required: [total, pullSynced, analysisAnalyzed, ownerResolved, pushPushed, failed]
     BatchStatus:
       type: string
       enum: [running, succeeded, partial_failure, failed]

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Activity, ArrowDownToLine, ArrowRight, Blocks, Check, ChevronDown, CircleAlert, CircleHelp, Clock3, Command, Database, FileClock, FolderSync, Gauge, GitBranch, Layers3, ListChecks, LoaderCircle, Moon, Play, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Sun, Users, X } from "lucide-react";
-import { ApiError, createPriorityRuleDraft, getHealth, listDictionaryVersions, listPriorityRules, listSources, publishPriorityRule, runSync, type DictionaryVersion, type PriorityRuleVersion, type PublishStatus, type SourceConfig, type SyncExecutionMode } from "./api";
+import { ApiError, createPriorityRuleDraft, getHealth, getOverviewMetrics, listDictionaryVersions, listPriorityRules, listSources, publishPriorityRule, runSync, type DictionaryVersion, type OverviewMetrics, type PriorityRuleVersion, type PublishStatus, type SourceConfig, type SyncExecutionMode } from "./api";
 import { AuditPanel, BatchesPanel, MappingsPanel, ModulesPanel, PanelErrorBoundary, PeoplePanel, RequirementsPanel, SourcesPanel } from "./panels";
 import { stateLabel } from "./state-labels";
 import { checkScheduleHealth, describeCountdown, formatInZone, nextRunAt, type WeeklySchedule } from "./schedule";
@@ -73,6 +73,7 @@ function App() {
   const [sources, setSources] = useState<SourceConfig[]>([]);
   const [batches, setBatches] = useState<Batch[]>([]);
   const [requirements, setRequirements] = useState<Requirement[]>([]);
+  const [metrics, setMetrics] = useState<OverviewMetrics | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -88,13 +89,15 @@ function App() {
       setLoadedAt(new Date());
       const sourceRows = await listSources();
       // 各端点独立容错：个别端点未实现（501）时不拖垮整页
-      const [batchPage, requirementPage] = await Promise.allSettled([
+      const [batchPage, requirementPage, metricsResult] = await Promise.allSettled([
         apiJson<{ items: Batch[] }>("/api/batches?limit=10"),
         apiJson<{ items: Requirement[] }>("/api/requirements?limit=25"),
+        getOverviewMetrics(),
       ]);
       setSources(sourceRows);
       setBatches(batchPage.status === "fulfilled" ? batchPage.value.items : []);
       setRequirements(requirementPage.status === "fulfilled" ? requirementPage.value.items : []);
+      setMetrics(metricsResult.status === "fulfilled" ? metricsResult.value : null);
       if (batchPage.status === "rejected" && requirementPage.status === "rejected") {
         throw batchPage.reason instanceof ApiError ? batchPage.reason : new Error("API request failed");
       }
@@ -125,8 +128,8 @@ function App() {
 
   const shownRequirements = requirements.filter((item) => item.title.toLowerCase().includes(query.toLowerCase()) || item.sourceRequirementId.includes(query));
   const latestBatch = batches[0];
-  const counts = { pull: requirements.filter((r) => r.pipeline.pull === "synced").length, analysis: requirements.filter((r) => r.pipeline.analysis === "analyzed").length, owner: requirements.filter((r) => ["auto_mapped", "manually_mapped", "not_required"].includes(r.pipeline.owner)).length, push: requirements.filter((r) => r.pipeline.push === "pushed").length, failed: requirements.filter((r) => [r.pipeline.pull, r.pipeline.analysis, r.pipeline.owner, r.pipeline.push].some((s) => s === "failed" || s === "failed_retryable")).length };
-  const total = requirements.length;
+  const counts = { pull: metrics?.pullSynced ?? 0, analysis: metrics?.analysisAnalyzed ?? 0, owner: metrics?.ownerResolved ?? 0, push: metrics?.pushPushed ?? 0, failed: metrics?.failed ?? 0 };
+  const total = metrics?.total ?? 0;
   const completeStages = [counts.pull, counts.analysis, counts.owner, counts.push];
 
   return (
@@ -158,7 +161,7 @@ function App() {
                 { label: "AI 分析完成", value: counts.analysis, total, icon: Sparkles, color: "violet", delta: "建议结果可独立重试" },
                 { label: "负责人已匹配", value: counts.owner, total, icon: Users, color: "amber", delta: "未分配需求仍可推送" },
                 { label: "成功推送", value: counts.push, total, icon: Check, color: "green", delta: "Feishu Base" },
-              ].map(({ label, value, total: denominator, icon: Icon, color, delta }) => <article className="metric-card" key={label}><div className="metric-top"><span className={`metric-icon ${color}`}><Icon size={17} /></span><span className="metric-context">本地 API 数据</span></div><div className="metric-value-row"><strong>{value}</strong><span className="metric-total">/ {denominator}</span></div><div className="metric-label">{label}</div><div className="metric-foot"><span>{delta}</span><span className="metric-trend"><ArrowRight size={13} /></span></div></article>)}</div>
+              ].map(({ label, value, total: denominator, icon: Icon, color, delta }) => <article className="metric-card" key={label}><div className="metric-top"><span className={`metric-icon ${color}`}><Icon size={17} /></span><span className="metric-context">{metrics ? "全量需求数据" : "全量统计暂不可用"}</span></div><div className="metric-value-row"><strong>{metrics ? value : "—"}</strong><span className="metric-total">/ {metrics ? denominator : "—"}</span></div><div className="metric-label">{label}</div><div className="metric-foot"><span>{delta}</span><span className="metric-trend"><ArrowRight size={13} /></span></div></article>)}</div>
             </section>
 
             <div className="overview-grid"><section className="panel pipeline-panel"><div className="panel-heading"><div><h2>处理阶段</h2><p>需求处理状态一览</p></div><button className="icon-button" aria-label="阶段说明"><CircleHelp size={16} /></button></div><div className="pipeline-overview">{[
@@ -166,7 +169,7 @@ function App() {
               { name: "AI 分析", detail: "生成模块与维度建议", value: counts.analysis, color: "violet", icon: Sparkles },
               { name: "负责人匹配", detail: "关联 Feishu 用户", value: counts.owner, color: "amber", icon: Users },
               { name: "推送 Base", detail: "创建或更新多维表格记录", value: counts.push, color: "green", icon: Check },
-            ].map(({ name, detail, value, color, icon: Icon }, index) => <div className="pipeline-row" key={name}><div className={`pipeline-icon ${color}`}><Icon size={16} /></div><div className="pipeline-copy"><strong>{name}</strong><span>{detail}</span></div><div className="pipeline-progress"><div className="progress-track"><span style={{ width: `${total ? Math.round(value / total * 100) : 0}%` }} /></div><small>{value} / {total}</small></div>{index < 3 && <span className="pipeline-connector" />}</div>)}</div><div className="pipeline-foot"><span className="pipeline-health"><span />{health === "ready" ? "状态来自当前 API" : "等待 API 连接"}</span><span className="pipeline-note">AI 失败不会阻止推送</span></div></section>
+            ].map(({ name, detail, value, color, icon: Icon }, index) => <div className="pipeline-row" key={name}><div className={`pipeline-icon ${color}`}><Icon size={16} /></div><div className="pipeline-copy"><strong>{name}</strong><span>{detail}</span></div><div className="pipeline-progress"><div className="progress-track"><span style={{ width: `${metrics && total ? Math.round(value / total * 100) : 0}%` }} /></div><small>{metrics ? `${value} / ${total}` : "全量统计暂不可用"}</small></div>{index < 3 && <span className="pipeline-connector" />}</div>)}</div><div className="pipeline-foot"><span className="pipeline-health"><span />{metrics ? "状态来自全量需求聚合 API" : "等待全量统计 API"}</span><span className="pipeline-note">AI 失败不会阻止推送</span></div></section>
 
               <section className="panel latest-panel"><div className="panel-heading"><div><h2>最近同步</h2><p>最新批次执行情况</p></div><button className="link-button" onClick={() => setPage("Batches")}>全部批次 <ArrowRight size={14} /></button></div>{latestBatch ? <div className="latest-content"><div className="batch-status-line"><span className={`batch-status-icon ${latestBatch.status === "failed" ? "danger" : latestBatch.status === "running" ? "live" : "success"}`}>{latestBatch.status === "running" ? <LoaderCircle size={16} className="spin" /> : latestBatch.status === "failed" ? <CircleAlert size={16} /> : <Check size={16} />}</span><div><strong>{latestBatch.status === "running" ? "同步进行中" : latestBatch.status === "partial_failure" ? "部分完成" : latestBatch.status === "failed" ? "同步失败" : "同步完成"}</strong><span>批次 {latestBatch.id}</span></div><span className="batch-status-tag">{stateLabel(latestBatch.status)}</span></div><div className="latest-counts"><div><strong>{latestBatch.totalCount}</strong><span>总需求</span></div><div><strong>{latestBatch.succeededCount}</strong><span>已完成</span></div><div><strong className={latestBatch.failedCount ? "text-danger" : ""}>{latestBatch.failedCount}</strong><span>失败</span></div></div><div className="latest-timestamp"><Clock3 size={14} />{latestBatch.startedAt ? new Date(latestBatch.startedAt).toLocaleString("zh-CN") : "等待批次时间"}<button className="link-button" onClick={() => setPage("Batches")}>查看详情</button></div></div> : <div className="empty-state compact"><span className="empty-icon"><Clock3 size={20} /></span><strong>{health === "loading" ? "正在加载批次" : "还没有同步批次"}</strong><span>{health === "ready" ? "手动启动同步后，批次进度会显示在这里。" : "连接 API 后可查看实际批次记录。"}</span></div>}</section></div>
 

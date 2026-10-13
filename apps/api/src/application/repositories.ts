@@ -261,6 +261,14 @@ export interface RequirementSearchCursor {
 }
 
 export interface RequirementQueryRepository {
+  getPipelineCounts(): Promise<{
+    total: number;
+    pullSynced: number;
+    analysisAnalyzed: number;
+    ownerResolved: number;
+    pushPushed: number;
+    failed: number;
+  }>;
   // 按 openapi /api/requirements 查询参数检索（q 匹配标题，游标按 created_at,id 倒序）
   search(query: {
     q?: string;

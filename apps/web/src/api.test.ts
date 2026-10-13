@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, getHealth, listBatches, listRequirements, listSources, retrySyncItem, runSync, searchFeishuUsers, type SourceConfig } from "./api";
+import { ApiError, getHealth, getOverviewMetrics, listBatches, listRequirements, listSources, retrySyncItem, runSync, searchFeishuUsers, type SourceConfig } from "./api";
 
 const source: SourceConfig = {
   id: "source-1", projectName: "Product",
@@ -13,6 +13,18 @@ describe("workbench API client", () => {
     const fetcher = vi.fn().mockResolvedValue(Response.json({ status: "ok", service: "rq-sys-api" }));
     await expect(getHealth(fetcher)).resolves.toEqual({ status: "ok", service: "rq-sys-api" });
     expect(fetcher).toHaveBeenCalledWith("/api/health", expect.objectContaining({ headers: { accept: "application/json" } }));
+  });
+
+  it("loads all-record overview counts from the aggregate endpoint", async () => {
+    const counts = { total: 311, pullSynced: 311, analysisAnalyzed: 0, ownerResolved: 0, pushPushed: 0, failed: 0 };
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ counts }));
+    await expect(getOverviewMetrics(fetcher)).resolves.toEqual(counts);
+    expect(fetcher).toHaveBeenCalledWith("/api/overview/metrics", expect.objectContaining({ headers: { accept: "application/json" } }));
+  });
+
+  it("rejects malformed overview counts instead of showing partial page counts", async () => {
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ counts: { total: 25 } }));
+    await expect(getOverviewMetrics(fetcher)).rejects.toMatchObject({ code: "INVALID_METRICS_RESPONSE", status: 502 });
   });
 
   it("reports API failures without inventing fallback data", async () => {
