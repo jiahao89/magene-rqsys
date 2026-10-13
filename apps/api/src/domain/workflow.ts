@@ -35,6 +35,13 @@ export interface SourceProjectConfig {
   fieldMap: Record<string, string>;
 }
 
+/** Normalize PostgreSQL TIME values to the API's minute-precision HH:mm clock. */
+export function normalizeScheduleTime(value: string | null): string | null {
+  if (value === null) return null;
+  const match = /^([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?$/.exec(value);
+  return match ? match[0].slice(0, 5) : value;
+}
+
 export interface NormalizedTeambitionRequirement {
   sourceProjectId: string;
   sourceRequirementId: string;
@@ -49,4 +56,3 @@ export interface NormalizedTeambitionRequirement {
   mappedFields: Record<string, unknown>;
   sourcePayload: Record<string, unknown>;
 }
-

@@ -85,6 +85,27 @@ test("authenticated user creates the single source and reads it back consistentl
   const duplicate = await handleApiRequest(new Request("http://localhost/api/sources", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(sourceBody) }), dependencies);
   assert.equal(duplicate.status, 409);
 });
+
+test("source config time read from PostgreSQL round-trips through the update API", async () => {
+  const { dependencies, sources } = makeFixture();
+  dependencies.teambitionSourceProjects = { resolveProject: async () => ({ projectId: "resolved-project-id", requirementTypeId: "resolved-requirement-type-id" }) };
+  const created = await handleApiRequest(new Request("http://localhost/api/sources", {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(sourceBody),
+  }), dependencies);
+  assert.equal(created.status, 201);
+
+  // PostgreSQL TIME is returned as HH:mm:ss even though the API contract is minute precision.
+  sources[0]!.scheduleLocalTime = "09:30:00";
+  const listed = await handleApiRequest(new Request("http://localhost/api/sources"), dependencies);
+  const config = (await listed.json() as { items: { id: string; projectName: string; enabled: boolean; schedule: typeof sourceBody.schedule }[] }).items[0]!;
+  assert.equal(config.schedule.time, "09:30");
+
+  const updateBody = { projectName: config.projectName, enabled: config.enabled, schedule: config.schedule };
+  const updated = await handleApiRequest(new Request(`http://localhost/api/sources/${config.id}`, {
+    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(updateBody),
+  }), dependencies);
+  assert.equal(updated.status, 200);
+});
 test("source creation rejects credentials and server-owned configuration fields", async () => {
   const { dependencies } = makeFixture();
   const withCredential = await handleApiRequest(new Request("http://localhost/api/sources", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...sourceBody, apiKey: "sk-should-not-appear" }) }), dependencies);
