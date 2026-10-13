@@ -3,6 +3,8 @@
 > 实测日期：2026-10-08（离线 + 无效 key 在线）；2026-10-09 有效 key 补跑 T1–T3 全部通过。全部操作通过零依赖 Node ESM 脚本在本机完成；模型端点为 DeepSeek 开放平台。
 > 对应工单：`.scratch/rq-sys-mvp/issues/03-ai-provider-poc.md`；决策登记：`specs/rq-sys-mvp/OPEN-DECISIONS.md` D-06。
 
+> **历史 POC 说明：**本页记录的是当时使用的测试词典和`待分类`回退值。2026-10-12 后续实现以用户截图中的 7 人/54 模块目录为初始值，分析结果只允许为当前词典模块或`无法识别`；历史测试记录保留作原始证据，不代表当前词典基线。
+
 ## 前置决策（D-06，2026-10-08 已确认）
 
 - **Provider**：DeepSeek，MVP 首选；通过 [OI] 兼容端点调用，JSON Output + 服务端 schema/枚举校验，adapter 保持可替换。

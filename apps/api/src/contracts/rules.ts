@@ -11,6 +11,20 @@ export const DictionaryCreateSchema = z.object({
   entries: z.array(z.string().min(1)).min(1),
 });
 
+export const TeamPersonCreateSchema = z.object({ name: z.string().trim().min(1).max(100) });
+export const TeamPersonRenameSchema = TeamPersonCreateSchema;
+export const TeamModuleEntrySchema = z.object({
+  name: z.string().trim().min(1).max(160),
+  personName: z.string().trim().min(1).max(100).nullable(),
+});
+export const TeamModulesSaveSchema = z.object({
+  version: z.number().int().nonnegative(),
+  items: z.array(TeamModuleEntrySchema),
+}).superRefine(({ items }, ctx) => {
+  const names = items.map((item) => item.name.toLocaleLowerCase());
+  if (new Set(names).size !== names.length) ctx.addIssue({ code: "custom", message: "模块名称不能重复", path: ["items"] });
+});
+
 // 评分映射：建议取值（非空字符串）→ 有限分数。至少一个取值；空映射无意义。
 const ScoringMapSchema = z.record(z.string().min(1), z.number().finite()).refine(
   (map) => Object.keys(map).length > 0,

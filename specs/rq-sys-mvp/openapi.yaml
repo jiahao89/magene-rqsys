@@ -164,6 +164,10 @@ paths:
         - name: q
           in: query
           schema: { type: string, maxLength: 200 }
+        - name: executorName
+          in: query
+          description: Exact TB executor display name selected from the maintained personnel list.
+          schema: { type: string, minLength: 1, maxLength: 100 }
         - name: pullState
           in: query
           schema: { $ref: '#/components/schemas/PullState' }
@@ -369,6 +373,104 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+  /api/people:
+    get:
+      summary: List product-group personnel
+      responses:
+        '200':
+          description: Current personnel names
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TeamPersonList' }
+    post:
+      summary: Add a person
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, minLength: 1, maxLength: 100 }
+              required: [name]
+      responses:
+        '201':
+          description: Person added
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TeamPersonList' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { description: Duplicate person or source is not configured }
+  /api/people/{name}:
+    put:
+      summary: Rename a person and update module ownership references
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, minLength: 1, maxLength: 100 }
+              required: [name]
+      responses:
+        '200':
+          description: Person renamed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TeamPersonList' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { description: Name conflict or stale person }
+    delete:
+      summary: Remove a person and clear module ownership references
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Person removed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TeamPersonList' }
+        '409': { description: Person no longer exists }
+  /api/modules:
+    get:
+      summary: Get the active function-module dictionary
+      responses:
+        '200':
+          description: Active dictionary version and entries
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FunctionModuleDirectory' }
+    put:
+      summary: Replace the active function-module dictionary
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                version: { type: integer, minimum: 0 }
+                items:
+                  type: array
+                  items: { $ref: '#/components/schemas/FunctionModuleEntry' }
+              required: [version, items]
+      responses:
+        '200':
+          description: New dictionary version published
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FunctionModuleDirectory' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { description: Stale version or invalid module owner }
   /api/rules/dictionary/{version}/publish:
     post:
       summary: Publish a draft dictionary version; retires the previously published version
@@ -593,11 +695,42 @@ components:
       properties:
         version: { type: integer, minimum: 1 }
         status: { $ref: '#/components/schemas/PublishStatus' }
-        entries: { type: array, items: { type: string } }
+        entries:
+          type: array
+          items:
+            oneOf:
+              - type: string
+              - $ref: '#/components/schemas/FunctionModuleEntry'
         createdBy: { type: [string, 'null'] }
         createdAt: { type: string, format: date-time }
         publishedAt: { type: [string, 'null'], format: date-time }
       required: [version, status, entries, createdBy, createdAt, publishedAt]
+    FunctionModuleEntry:
+      type: object
+      properties:
+        name: { type: string, minLength: 1, maxLength: 160 }
+        personName: { type: [string, 'null'], maxLength: 100 }
+      required: [name, personName]
+      additionalProperties: false
+    TeamPerson:
+      type: object
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+      required: [name]
+      additionalProperties: false
+    TeamPersonList:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/TeamPerson' } }
+      required: [items]
+      additionalProperties: false
+    FunctionModuleDirectory:
+      type: object
+      properties:
+        version: { type: integer, minimum: 0 }
+        items: { type: array, items: { $ref: '#/components/schemas/FunctionModuleEntry' } }
+      required: [version, items]
+      additionalProperties: false
     DictionaryCreate:
       type: object
       properties:

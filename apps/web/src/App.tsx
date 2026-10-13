@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
-import { Activity, ArrowDownToLine, ArrowRight, Check, ChevronDown, CircleAlert, CircleHelp, Clock3, Command, Database, FileClock, FolderSync, Gauge, GitBranch, Layers3, ListChecks, LoaderCircle, Moon, Play, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Sun, Users, X } from "lucide-react";
-import { ApiError, createDictionaryDraft, createPriorityRuleDraft, getHealth, listDictionaryVersions, listPriorityRules, listSources, publishDictionaryVersion, publishPriorityRule, runSync, type DictionaryVersion, type PriorityRuleVersion, type PublishStatus, type SourceConfig } from "./api";
-import { AuditPanel, BatchesPanel, MappingsPanel, PanelErrorBoundary, RequirementsPanel, SourcesPanel } from "./panels";
+import { Activity, ArrowDownToLine, ArrowRight, Blocks, Check, ChevronDown, CircleAlert, CircleHelp, Clock3, Command, Database, FileClock, FolderSync, Gauge, GitBranch, Layers3, ListChecks, LoaderCircle, Moon, Play, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Sun, Users, X } from "lucide-react";
+import { ApiError, createPriorityRuleDraft, getHealth, listDictionaryVersions, listPriorityRules, listSources, publishPriorityRule, runSync, type DictionaryVersion, type PriorityRuleVersion, type PublishStatus, type SourceConfig } from "./api";
+import { AuditPanel, BatchesPanel, MappingsPanel, ModulesPanel, PanelErrorBoundary, PeoplePanel, RequirementsPanel, SourcesPanel } from "./panels";
 import { stateLabel } from "./state-labels";
 import { checkScheduleHealth, describeCountdown, formatInZone, nextRunAt, type WeeklySchedule } from "./schedule";
 
 type Batch = { id: string; status: string; totalCount: number; succeededCount: number; failedCount: number; startedAt?: string; completedAt?: string; errorSummary?: string };
 type Requirement = { id: string; sourceRequirementId: string; title: string; sourceVersion: number; pipeline: { pull: string; analysis: string; owner: string; push: string }; analysis?: { module?: string; confidence?: string } | null };
-type Page = "Overview" | "Requirements" | "Batches" | "Sources" | "Mappings" | "Rules" | "Audit";
+type Page = "Overview" | "Requirements" | "Batches" | "Sources" | "Mappings" | "Modules" | "People" | "Rules" | "Audit";
 type LoadState = "loading" | "ready" | "error";
 type Theme = "light" | "dark";
 
@@ -18,9 +18,9 @@ function readStoredTheme(): Theme {
 
 const navigation: { label: Page; icon: typeof Gauge }[] = [
   { label: "Overview", icon: Gauge }, { label: "Requirements", icon: ListChecks }, { label: "Batches", icon: FolderSync },
-  { label: "Sources", icon: Database }, { label: "Mappings", icon: Users }, { label: "Rules", icon: Settings2 }, { label: "Audit", icon: FileClock },
+  { label: "Sources", icon: Database }, { label: "Mappings", icon: Users }, { label: "Modules", icon: Blocks }, { label: "People", icon: Users }, { label: "Rules", icon: Settings2 }, { label: "Audit", icon: FileClock },
 ];
-const pageTitles: Record<Page, string> = { Overview: "总览", Requirements: "需求池", Batches: "同步批次", Sources: "数据源配置", Mappings: "负责人映射", Rules: "分类规则", Audit: "审计日志" };
+const pageTitles: Record<Page, string> = { Overview: "总览", Requirements: "需求池", Batches: "同步批次", Sources: "数据源配置", Mappings: "负责人映射", Modules: "功能模块", People: "人员", Rules: "优先级规则", Audit: "审计日志" };
 
 async function apiJson<T>(path: string): Promise<T> {
   const response = await fetch(path, { headers: { accept: "application/json" } });
@@ -135,7 +135,7 @@ function App() {
         <a className="brand" href="#overview" onClick={() => setPage("Overview")}><span className="brand-mark"><Layers3 size={19} strokeWidth={2.2} /></span><span className="brand-name">rq<span>·</span>sys</span><span className="brand-edition">WORKSPACE</span></a>
         <div className="workspace-switch"><span className="workspace-avatar">R</span><span className="workspace-copy"><strong>需求运营组</strong><small>本地工作区</small></span><ChevronDown size={14} className="muted-icon" /></div>
         <div className="nav-label">WORKSPACE</div>
-        <nav className="main-nav" aria-label="主导航">{navigation.map(({ label, icon: Icon }) => <button key={label} className={`nav-item ${page === label ? "active" : ""}`} onClick={() => setPage(label)}><Icon size={17} strokeWidth={1.8} /><span>{({ Overview: "总览", Requirements: "需求池", Batches: "同步批次", Sources: "数据源配置", Mappings: "负责人映射", Rules: "分类规则", Audit: "审计日志" } as Record<Page, string>)[label]}</span>{label === "Batches" && batches.length > 0 && <span className="nav-count">{batches.length}</span>}</button>)}</nav>
+        <nav className="main-nav" aria-label="主导航">{navigation.map(({ label, icon: Icon }) => <button key={label} className={`nav-item ${page === label ? "active" : ""}`} onClick={() => setPage(label)}><Icon size={17} strokeWidth={1.8} /><span>{pageTitles[label]}</span>{label === "Batches" && batches.length > 0 && <span className="nav-count">{batches.length}</span>}</button>)}</nav>
         <div className="sidebar-spacer" />
         <div className="side-help"><div className="help-icon"><CircleHelp size={17} /></div><div><strong>需要帮助？</strong><span>查看本地运行指南</span></div><ArrowRight size={15} /></div>
         <div className="user-profile"><div className="user-avatar">R</div><div className="user-copy"><strong>已登录用户</strong><span>租户内可用 · 无应用角色</span></div><button className="icon-button profile-menu" aria-label="账户菜单"><Settings2 size={17} /></button></div>
@@ -193,6 +193,8 @@ function SecondaryContent({ page, sources, batches, requirements, loadState, onN
   if (page === "Requirements") return <RequirementsPanel onRefresh={onRefresh} />;
   if (page === "Batches") return <BatchesPanel onRefresh={onRefresh} />;
   if (page === "Sources") return <SourcesPanel sources={sources} loadState={loadState} onRefresh={onRefresh} />;
+  if (page === "Modules") return <ModulesPanel />;
+  if (page === "People") return <PeoplePanel />;
   if (page === "Rules") return <RulesPanel />;
   if (page === "Mappings") return <MappingsPanel onRefresh={onRefresh} />;
   if (page === "Audit") return <AuditPanel />;
@@ -222,7 +224,6 @@ function RulesPanel() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [entriesInput, setEntriesInput] = useState("");
   const [thresholds, setThresholds] = useState({ p0: 4, p1: 3, p2: 2 });
   const [scoringInput, setScoringInput] = useState("user:强=3\nuser:中=2\nuser:弱=1\nmarket:强=3\nmarket:中=2\nmarket:弱=1\nbusiness:强=3\nbusiness:中=2\nbusiness:弱=1\ntechnology:强=3\ntechnology:中=2\ntechnology:弱=1");
   const [evidenceInput, setEvidenceInput] = useState("");
@@ -244,13 +245,6 @@ function RulesPanel() {
     catch (cause) { setNotice(cause instanceof ApiError ? `${cause.message}（${cause.code}）` : "操作失败：无法连接本地 API。"); }
     finally { setBusy(false); }
   };
-  const handleCreateDictionary = () => withFeedback(async () => {
-    const entries = entriesInput.split("\n").map((line) => line.trim()).filter(Boolean);
-    if (!entries.length) throw new ApiError("请输入至少一个模块名称（每行一个）。", 400, "EMPTY_INPUT");
-    const created = await createDictionaryDraft(entries);
-    setEntriesInput("");
-    return `词典 v${created.version} 草稿已创建`;
-  });
   const handleCreateRule = () => withFeedback(async () => {
     if (!(thresholds.p0 >= thresholds.p1 && thresholds.p1 >= thresholds.p2)) throw new ApiError("阈值需满足 P0 ≥ P1 ≥ P2。", 400, "INVALID_THRESHOLDS");
     const scoring = parseScoringInput(scoringInput);
@@ -264,14 +258,10 @@ function RulesPanel() {
 
   return <>
     <section className="panel requirements-panel">
-      <div className="panel-heading"><div><h2>模块词典</h2><p>AI 分析只使用已发布的词典版本；发布新版本会自动退役旧版本。</p></div><button className="button button-secondary button-small" onClick={() => void load()} disabled={busy}><RefreshCw size={14} />刷新</button></div>
+      <div className="panel-heading"><div><h2>模块词典版本</h2><p>模块的新增、编辑和删除请在“功能模块”菜单操作；每次保存会发布新版本供后续 AI 分析使用。</p></div><button className="button button-secondary button-small" onClick={() => void load()} disabled={busy}><RefreshCw size={14} />刷新</button></div>
       {loadError && <div className="alert-banner" role="alert"><CircleAlert size={18} /><div><strong>配置加载失败</strong><span>{loadError}</span></div></div>}
       {notice && <div className="notice-banner" role="status"><Check size={16} /><span>{notice}</span><button className="icon-button" aria-label="关闭提示" onClick={() => setNotice(null)}><X size={15} /></button></div>}
-      <div className="rules-form">
-        <textarea aria-label="模块名称" className="rules-textarea" rows={3} placeholder="每行一个模块名称，例如：&#10;报表分析&#10;数据导入" value={entriesInput} onChange={(event) => setEntriesInput(event.target.value)} />
-        <button className="button button-primary button-small" onClick={() => void handleCreateDictionary()} disabled={busy}>创建草稿</button>
-      </div>
-      {dictionaries.length ? <div className="table-scroll"><table><thead><tr><th>版本</th><th>状态</th><th>模块</th><th>创建时间</th><th>发布时间</th><th>操作</th></tr></thead><tbody>{dictionaries.map((d) => <tr key={d.version}><td className="mono-cell">v{d.version}</td><td><PublishStatusChip status={d.status} /></td><td>{d.entries.join("、")}</td><td>{new Date(d.createdAt).toLocaleString("zh-CN")}</td><td>{d.publishedAt ? new Date(d.publishedAt).toLocaleString("zh-CN") : "—"}</td><td>{d.status === "draft" && <button className="button button-secondary button-small" onClick={() => void withFeedback(async () => { await publishDictionaryVersion(d.version); return `词典 v${d.version} 已发布`; })} disabled={busy}>发布</button>}</td></tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadError ? "配置不可用" : "还没有词典版本"}</strong><span>{loadError ? "请检查 API 连接后重试。" : "创建草稿并发布后，AI 分析将使用该词典。"}</span></div>}
+      {dictionaries.length ? <div className="table-scroll"><table><thead><tr><th>版本</th><th>状态</th><th>模块</th><th>创建时间</th><th>发布时间</th></tr></thead><tbody>{dictionaries.map((d) => <tr key={d.version}><td className="mono-cell">v{d.version}</td><td><PublishStatusChip status={d.status} /></td><td>{d.entries.map((entry) => typeof entry === "string" ? entry : `${entry.name}（${entry.personName ?? "未分配"}）`).join("、")}</td><td>{new Date(d.createdAt).toLocaleString("zh-CN")}</td><td>{d.publishedAt ? new Date(d.publishedAt).toLocaleString("zh-CN") : "—"}</td></tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadError ? "配置不可用" : "还没有词典版本"}</strong><span>{loadError ? "请检查 API 连接后重试。" : "在“功能模块”中维护后会生成首个已发布版本。"}</span></div>}
     </section>
     <section className="panel requirements-panel">
       <div className="panel-heading"><div><h2>优先级规则</h2><p>规则版本经历史案例校准；发布前需求优先级保持为空。</p></div></div>
@@ -297,7 +287,7 @@ function EmptyPanel({ loading, title, description }: { loading: boolean; title: 
 }
 
 function pageDescription(page: Page): string {
-  const descriptions: Record<Page, string> = { Overview: "同步流程的当前健康状态与执行概况。", Requirements: "查找需求并分别检查各流水线处理状态。", Batches: "检查同步运行历史、阶段结果与失败项。", Sources: "查看项目来源与同步连接状态。", Mappings: "处理 Teambition 与 Feishu 负责人之间的映射。", Rules: "管理版本化的模块字典与优先级规则。", Audit: "按操作人、时间和对象检查可追踪的工作流操作。" };
+  const descriptions: Record<Page, string> = { Overview: "同步流程的当前健康状态与执行概况。", Requirements: "按需求标题、TB负责人和处理状态检索需求。", Batches: "检查同步运行历史、阶段结果与失败项。", Sources: "查看项目来源与同步连接状态。", Mappings: "处理 Teambition 与 Feishu 负责人之间的映射。", Modules: "维护 AI 分类使用的功能模块及责任人员。", People: "维护可用于需求筛选和模块分工的组内人员。", Rules: "管理已校准的优先级规则。", Audit: "按操作人、时间和对象检查可追踪的工作流操作。" };
   return descriptions[page];
 }
 

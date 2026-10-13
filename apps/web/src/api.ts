@@ -26,11 +26,15 @@ export type PublishStatus = "draft" | "published" | "retired";
 export interface DictionaryVersion {
   version: number;
   status: PublishStatus;
-  entries: string[];
+  entries: (string | FunctionModuleEntry)[];
   createdBy: string | null;
   createdAt: string;
   publishedAt: string | null;
 }
+
+export interface TeamPerson { name: string }
+export interface FunctionModuleEntry { name: string; personName: string | null }
+export interface FunctionModuleDirectory { version: number; items: FunctionModuleEntry[] }
 
 export interface PriorityRuleVersion {
   id: string;
@@ -74,6 +78,15 @@ async function postJson<T>(path: string, body: unknown, fetcher: typeof fetch, h
   return parseJsonResponse<T>(response);
 }
 
+async function putJson<T>(path: string, body: unknown, fetcher: typeof fetch): Promise<T> {
+  const response = await fetcher(path, { method: "PUT", headers: { accept: "application/json", "content-type": "application/json" }, body: JSON.stringify(body) });
+  return parseJsonResponse<T>(response);
+}
+
+async function deleteJson<T>(path: string, fetcher: typeof fetch): Promise<T> {
+  return parseJsonResponse<T>(await fetcher(path, { method: "DELETE", headers: { accept: "application/json" } }));
+}
+
 export function getHealth(fetcher: typeof fetch = fetch): Promise<HealthResponse> {
   return requestJson<HealthResponse>("/api/health", fetcher);
 }
@@ -93,6 +106,15 @@ export async function listSources(fetcher: typeof fetch = fetch): Promise<Source
   const result = await requestJson<{ items: SourceConfig[] }>("/api/sources", fetcher);
   return result.items;
 }
+
+export async function listTeamPeople(fetcher: typeof fetch = fetch): Promise<TeamPerson[]> {
+  return (await requestJson<{ items: TeamPerson[] }>("/api/people", fetcher)).items;
+}
+export function addTeamPerson(name: string, fetcher: typeof fetch = fetch) { return postJson<{ items: TeamPerson[] }>("/api/people", { name }, fetcher); }
+export function renameTeamPerson(oldName: string, name: string, fetcher: typeof fetch = fetch) { return putJson<{ items: TeamPerson[] }>(`/api/people/${encodeURIComponent(oldName)}`, { name }, fetcher); }
+export function deleteTeamPerson(name: string, fetcher: typeof fetch = fetch) { return deleteJson<{ items: TeamPerson[] }>(`/api/people/${encodeURIComponent(name)}`, fetcher); }
+export function getFunctionModules(fetcher: typeof fetch = fetch) { return requestJson<FunctionModuleDirectory>("/api/modules", fetcher); }
+export function saveFunctionModules(version: number, items: FunctionModuleEntry[], fetcher: typeof fetch = fetch) { return putJson<FunctionModuleDirectory>("/api/modules", { version, items }, fetcher); }
 
 export async function listDictionaryVersions(fetcher: typeof fetch = fetch): Promise<DictionaryVersion[]> {
   const result = await requestJson<{ items: DictionaryVersion[] }>("/api/rules/dictionary", fetcher);
@@ -132,15 +154,6 @@ export interface SourceConfigUpdate {
 
 export function createSource(update: SourceConfigUpdate, fetcher: typeof fetch = fetch): Promise<SourceConfig> {
   return postJson<SourceConfig>("/api/sources", update, fetcher);
-}
-
-async function putJson<T>(path: string, body: unknown, fetcher: typeof fetch): Promise<T> {
-  const response = await fetcher(path, {
-    method: "PUT",
-    headers: { accept: "application/json", "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  return parseJsonResponse<T>(response);
 }
 
 export function updateSource(id: string, update: SourceConfigUpdate, fetcher: typeof fetch = fetch): Promise<SourceConfig> {
@@ -266,9 +279,9 @@ function buildSearch(query: Record<string, string | number | undefined>): string
   return suffix ? `?${suffix}` : "";
 }
 
-export async function listRequirements(params: { q?: string; pullState?: string; ownerState?: string; analysisState?: string; pushState?: string; batchId?: string; since?: string; until?: string; limit?: number; cursor?: string; fetcher?: typeof fetch } = {}): Promise<{ items: RequirementSummary[]; nextCursor: string | null }> {
-  const { fetcher = fetch, q, pullState, ownerState, analysisState, pushState, batchId, since, until, limit, cursor } = params;
-  return requestJson<{ items: RequirementSummary[]; nextCursor: string | null }>(`/api/requirements${buildSearch({ q, pullState, ownerState, analysisState, pushState, batchId, since, until, limit, cursor })}`, fetcher);
+export async function listRequirements(params: { q?: string; executorName?: string; pullState?: string; ownerState?: string; analysisState?: string; pushState?: string; batchId?: string; since?: string; until?: string; limit?: number; cursor?: string; fetcher?: typeof fetch } = {}): Promise<{ items: RequirementSummary[]; nextCursor: string | null }> {
+  const { fetcher = fetch, q, executorName, pullState, ownerState, analysisState, pushState, batchId, since, until, limit, cursor } = params;
+  return requestJson<{ items: RequirementSummary[]; nextCursor: string | null }>(`/api/requirements${buildSearch({ q, executorName, pullState, ownerState, analysisState, pushState, batchId, since, until, limit, cursor })}`, fetcher);
 }
 
 export async function listBatches(params: { status?: string; since?: string; until?: string; limit?: number; cursor?: string; fetcher?: typeof fetch } = {}): Promise<{ items: BatchSummary[]; nextCursor: string | null }> {

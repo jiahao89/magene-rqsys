@@ -7,10 +7,11 @@ import { RefreshCw, X } from "lucide-react";
 import { stateLabel } from "./state-labels";
 import { checkScheduleHealth } from "./schedule";
 import {
-  ApiError, createSource, getBatch, getRequirement, listAudit, listBatches, listMappings, listRequirements, pushRequirement,
+  ApiError, addTeamPerson, createSource, deleteTeamPerson, getBatch, getFunctionModules, getRequirement, listAudit, listBatches, listMappings, listRequirements, listTeamPeople, pushRequirement,
+  renameTeamPerson, saveFunctionModules,
   retryAnalysis, retrySyncItem, searchFeishuUsers, setOwner, updateSource,
   type AnalysisVersionSummary, type AuditEvent, type BatchDetail, type BatchSummary, type PersonMapping,
-  type FeishuUserCandidate, type RequirementDetail, type RequirementSummary, type SourceConfig, type SourceConfigUpdate,
+  type FeishuUserCandidate, type FunctionModuleEntry, type RequirementDetail, type RequirementSummary, type SourceConfig, type SourceConfigUpdate, type TeamPerson,
 } from "./api";
 
 export type LoadState = "loading" | "ready" | "error";
@@ -174,6 +175,85 @@ export function SourcesPanel({ sources, loadState, onRefresh }: { sources: Sourc
   </section>;
 }
 
+// ---------- 人员与功能模块字典 ----------
+
+export function PeoplePanel() {
+  const [people, setPeople] = useState<TeamPerson[]>([]);
+  const [draft, setDraft] = useState("");
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try { setPeople(await listTeamPeople()); setLoadError(null); }
+    catch (cause) { setLoadError(errorText(cause)); }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+
+  const submit = async (action: () => Promise<{ items: TeamPerson[] }>, success: string) => {
+    setBusy(true); setLoadError(null); setNotice(null);
+    try { const result = await action(); setPeople(result.items); setNotice(success); setDraft(""); setEditing(null); }
+    catch (cause) { setLoadError(errorText(cause)); }
+    finally { setBusy(false); }
+  };
+
+  return <section className="panel requirements-panel">
+    <div className="panel-heading"><div><h2>组内人员</h2><p>用于按 TB 负责人筛选需求，并维护功能模块的责任人。</p></div><HeroButton className="button button-secondary button-small" onPress={() => void load()} isDisabled={busy}><RefreshCw size={14} />刷新</HeroButton></div>
+    <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
+    <div className="rules-form" style={{ alignItems: "flex-end" }}><label className="rules-threshold" style={{ flex: 1 }}><span>人员姓名</span><HeroInput aria-label="新增人员姓名" value={draft} onChange={(event) => setDraft(event.target.value)} /></label><HeroButton className="button button-primary button-small" onPress={() => void submit(() => addTeamPerson(draft), "人员已添加。")} isDisabled={busy || !draft.trim()}>新增人员</HeroButton></div>
+    {people.length ? <div className="table-scroll"><table><thead><tr><th>人员</th><th>操作</th></tr></thead><tbody>{people.map(({ name }) => <tr key={name}><td>{editing === name ? <HeroInput aria-label="编辑人员姓名" value={editDraft} onChange={(event) => setEditDraft(event.target.value)} /> : name}</td><td>{editing === name ? <><HeroButton className="button button-primary button-small" onPress={() => void submit(() => renameTeamPerson(name, editDraft), "人员及模块责任关系已更新。")} isDisabled={busy || !editDraft.trim()}>保存</HeroButton> <HeroButton className="button button-secondary button-small" onPress={() => setEditing(null)} isDisabled={busy}>取消</HeroButton></> : <><HeroButton className="button button-secondary button-small" onPress={() => { setEditing(name); setEditDraft(name); }} isDisabled={busy}>编辑</HeroButton> <HeroButton className="button button-secondary button-small" onPress={() => { if (window.confirm(`删除人员“${name}”？相关功能模块将变为未分配。`)) void submit(() => deleteTeamPerson(name), "人员已删除，相关模块已解除分配。"); }} isDisabled={busy}>删除</HeroButton></>}</td></tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadError ? "人员读取失败" : "暂无人员"}</strong><span>{loadError ? "检查 API 连接后刷新。" : "填写姓名并新增；数据源配置完成后可维护组内名单。"}</span></div>}
+  </section>;
+}
+
+export function ModulesPanel() {
+  const [version, setVersion] = useState(0);
+  const [items, setItems] = useState<FunctionModuleEntry[]>([]);
+  const [name, setName] = useState("");
+  const [personName, setPersonName] = useState("");
+  const [editing, setEditing] = useState<string | null>(null);
+  const [people, setPeople] = useState<TeamPerson[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const [directory, roster] = await Promise.all([getFunctionModules(), listTeamPeople()]);
+      setVersion(directory.version); setItems(directory.items); setPeople(roster); setLoadError(null);
+    } catch (cause) { setLoadError(errorText(cause)); }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+
+  const save = async (next: FunctionModuleEntry[]) => {
+    setBusy(true); setLoadError(null); setNotice(null);
+    try {
+      const result = await saveFunctionModules(version, next);
+      setVersion(result.version); setItems(result.items); setEditing(null); setName(""); setPersonName("");
+      setNotice(`已发布模块字典 v${result.version}，后续 AI 分析将使用新版本。`);
+    } catch (cause) {
+      setLoadError(errorText(cause));
+      if (cause instanceof ApiError && cause.status === 409) void load();
+    } finally { setBusy(false); }
+  };
+  const submit = () => {
+    const clean = name.trim();
+    if (!clean) { setLoadError("请填写功能模块名称。"); return; }
+    const duplicate = items.some((item) => item.name.toLocaleLowerCase() === clean.toLocaleLowerCase() && item.name !== editing);
+    if (duplicate) { setLoadError("功能模块名称不能重复。"); return; }
+    const next = editing ? items.map((item) => item.name === editing ? { name: clean, personName: personName || null } : item) : [...items, { name: clean, personName: personName || null }];
+    void save(next);
+  };
+
+  return <section className="panel requirements-panel">
+    <div className="panel-heading"><div><h2>功能模块</h2><p>AI 仅从已发布的模块名称中选择；无法匹配时输出“无法识别”。每次保存生成一个新字典版本。</p></div><HeroButton className="button button-secondary button-small" onPress={() => void load()} isDisabled={busy}><RefreshCw size={14} />刷新</HeroButton></div>
+    <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
+    <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}><label className="rules-threshold" style={{ flex: 1 }}><span>功能模块</span><HeroInput aria-label="功能模块名称" value={name} onChange={(event) => setName(event.target.value)} /></label><label className="rules-threshold"><span>人员</span><select aria-label="模块责任人员" value={personName} onChange={(event) => setPersonName(event.target.value)}><option value="">未分配</option>{people.map((person) => <option key={person.name} value={person.name}>{person.name}</option>)}</select></label><HeroButton className="button button-primary button-small" onPress={submit} isDisabled={busy}>{editing ? "保存修改" : "新增模块"}</HeroButton>{editing && <HeroButton className="button button-secondary button-small" onPress={() => { setEditing(null); setName(""); setPersonName(""); }} isDisabled={busy}>取消</HeroButton>}</div>
+    {items.length ? <div className="table-scroll"><table><thead><tr><th>功能模块</th><th>人员</th><th>操作</th></tr></thead><tbody>{items.map((item) => <tr key={item.name}><td>{item.name}</td><td>{item.personName ?? "未分配"}</td><td><HeroButton className="button button-secondary button-small" onPress={() => { setEditing(item.name); setName(item.name); setPersonName(item.personName ?? ""); }} isDisabled={busy}>编辑</HeroButton> <HeroButton className="button button-secondary button-small" onPress={() => { if (window.confirm(`删除功能模块“${item.name}”？`)) void save(items.filter((candidate) => candidate.name !== item.name)); }} isDisabled={busy}>删除</HeroButton></td></tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadError ? "模块字典读取失败" : "暂无功能模块"}</strong><span>{loadError ? "检查 API 连接后刷新。" : "新增模块后，AI 分析会使用最新的已发布字典。"}</span></div>}
+  </section>;
+}
+
 // ---------- 工单 16/17：同步批次（status 筛选 + 游标分页 + 详情 + 失败项重试） ----------
 
 export function BatchesPanel({ onRefresh }: { onRefresh: () => void }) {
@@ -276,6 +356,9 @@ export function RequirementsPanel({ onRefresh }: { onRefresh: () => void }) {
   const [rows, setRows] = useState<RequirementSummary[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [executorName, setExecutorName] = useState("");
+  const [people, setPeople] = useState<TeamPerson[]>([]);
+  const [peopleError, setPeopleError] = useState<string | null>(null);
   const [ownerState, setOwnerState] = useState("");
   const [analysisState, setAnalysisState] = useState("");
   const [pullState, setPullState] = useState("");
@@ -290,17 +373,20 @@ export function RequirementsPanel({ onRefresh }: { onRefresh: () => void }) {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(async (filter: { q: string; ownerState: string; analysisState: string; pullState: string; pushState: string; batchId: string; since: string; until: string }, nextCursor: string | null) => {
+  const load = useCallback(async (filter: { q: string; executorName: string; ownerState: string; analysisState: string; pullState: string; pushState: string; batchId: string; since: string; until: string }, nextCursor: string | null) => {
     setLoadState("loading"); setLoadError(null);
     try {
-      const page = await listRequirements({ q: filter.q || undefined, ownerState: filter.ownerState || undefined, analysisState: filter.analysisState || undefined, pullState: filter.pullState || undefined, pushState: filter.pushState || undefined, batchId: filter.batchId || undefined, since: filter.since ? new Date(filter.since).toISOString() : undefined, until: filter.until ? new Date(filter.until).toISOString() : undefined, limit: 25, ...(nextCursor ? { cursor: nextCursor } : {}) });
+      const page = await listRequirements({ q: filter.q || undefined, executorName: filter.executorName || undefined, ownerState: filter.ownerState || undefined, analysisState: filter.analysisState || undefined, pullState: filter.pullState || undefined, pushState: filter.pushState || undefined, batchId: filter.batchId || undefined, since: filter.since ? new Date(filter.since).toISOString() : undefined, until: filter.until ? new Date(filter.until).toISOString() : undefined, limit: 25, ...(nextCursor ? { cursor: nextCursor } : {}) });
       setRows((prev) => nextCursor ? [...prev, ...page.items] : page.items);
       setCursor(page.nextCursor);
       setLoadState("ready");
     } catch (cause) { setLoadError(errorText(cause)); setLoadState("error"); }
   }, []);
-  const filters = { q: query.trim(), ownerState, analysisState, pullState, pushState, batchId: batchId.trim(), since, until };
-  useEffect(() => { void load({ q: "", ownerState: "", analysisState: "", pullState: "", pushState: "", batchId: "", since: "", until: "" }, null); }, [load]);
+  const filters = { q: query.trim(), executorName, ownerState, analysisState, pullState, pushState, batchId: batchId.trim(), since, until };
+  useEffect(() => {
+    void load({ q: "", executorName: "", ownerState: "", analysisState: "", pullState: "", pushState: "", batchId: "", since: "", until: "" }, null);
+    void listTeamPeople().then(setPeople).catch((cause: unknown) => setPeopleError(errorText(cause)));
+  }, [load]);
 
   const open = async (id: string) => {
     setSelected(null); setDetailError(null); setNotice(null);
@@ -318,6 +404,7 @@ export function RequirementsPanel({ onRefresh }: { onRefresh: () => void }) {
   return <section className="panel requirements-panel">
     <div className="panel-heading"><div><h2>需求处理记录</h2><p>四阶段状态、批次和最近同步时间均由服务端筛选。</p></div><div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
       <HeroInput aria-label="搜索需求标题" placeholder="搜索需求标题…" value={query} onChange={(e) => setQuery(e.target.value)} />
+      <select aria-label="TB负责人筛选" value={executorName} onChange={(e) => setExecutorName(e.target.value)}><option value="">全部 TB 负责人</option>{people.map((person) => <option key={person.name} value={person.name}>{person.name}</option>)}</select>
       <select aria-label="同步状态筛选" value={pullState} onChange={(e) => setPullState(e.target.value)}>{pullStateOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
       <select aria-label="负责人筛选" value={ownerState} onChange={(e) => setOwnerState(e.target.value)}>{ownerStateOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
       <select aria-label="分析状态筛选" value={analysisState} onChange={(e) => setAnalysisState(e.target.value)}>{analysisStateOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
@@ -328,7 +415,7 @@ export function RequirementsPanel({ onRefresh }: { onRefresh: () => void }) {
       <HeroButton className="button button-secondary button-small" onPress={() => void load(filters, null)}>筛选</HeroButton>
       <HeroButton className="button button-secondary button-small" onPress={() => { onRefresh(); void load(filters, null); }}><RefreshCw size={14} />刷新</HeroButton>
     </div></div>
-    <StateBanner loadError={loadError ?? detailError} notice={notice} onCloseNotice={() => setNotice(null)} />
+    <StateBanner loadError={loadError ?? detailError ?? peopleError} notice={notice} onCloseNotice={() => setNotice(null)} />
     {selected && <RequirementDetailCard selected={selected} structured={structured} busy={busy} onClose={() => setSelected(null)} onAct={runAction} />}
     <RequirementsTable rows={rows} loading={loadState === "loading"} onOpen={(row) => void open(row.id)} />
     {cursor && <div className="rules-form"><HeroButton className="button button-secondary button-small" onPress={() => void load(filters, cursor)} isDisabled={loadState === "loading"}>加载更多</HeroButton></div>}

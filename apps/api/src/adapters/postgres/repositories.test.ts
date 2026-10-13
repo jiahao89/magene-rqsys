@@ -52,8 +52,8 @@ test("batch search applies inclusive time bounds and a stable composite cursor",
 test("requirement search filters by latest batch and last-seen time on the server", async()=>{
   const {pool,calls}=recordingPool();const store=new PostgresRepositories(pool);
   await store.requirements.search({batchId:"33333333-3333-4333-8333-333333333333",since:"2026-01-01T00:00:00Z",until:"2026-01-02T00:00:00Z",limit:25});
-  assert.match(calls[0]!.sql,/latest_batch_id=\$6/);assert.match(calls[0]!.sql,/last_seen_at >= \$7/);assert.match(calls[0]!.sql,/last_seen_at <= \$8/);
-  assert.deepEqual(calls[0]!.values,[null,null,null,null,null,"33333333-3333-4333-8333-333333333333","2026-01-01T00:00:00Z","2026-01-02T00:00:00Z",null,null,26]);
+  assert.match(calls[0]!.sql,/latest_batch_id=\$7/);assert.match(calls[0]!.sql,/last_seen_at >= \$8/);assert.match(calls[0]!.sql,/last_seen_at <= \$9/);
+  assert.deepEqual(calls[0]!.values,[null,null,null,null,null,null,"33333333-3333-4333-8333-333333333333","2026-01-01T00:00:00Z","2026-01-02T00:00:00Z",null,null,26]);
 });
 
 test("base push repository looks up a run by idempotency key", async()=>{

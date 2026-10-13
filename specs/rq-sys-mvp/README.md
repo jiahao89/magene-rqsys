@@ -46,7 +46,7 @@ The selected Teambition project `室外产品-码表软固件需求池` was rech
 - Align/refresh the Dev preview to the pushed Miaoda code, then complete app-mediated synthetic fixture → analysis → POC Base upsert/readback and user-only notification verification.
 - Verify missed-week recovery and worker restart in a safe target setup. Do not enable the Monday 09:00 source schedule before this passes.
 - Reconcile Teambition API count 311 vs UI `311/314` before any real scheduled import.
-- The empty module dictionary and unpublished priority rule are the agreed startup default, not a deployment blocker; verify `待分类` stays out of the Base single-select and that P3 cannot be emitted while the target select has only P0–P2.
+- The screenshot roster and function modules are the initial dictionary seed; future edits create a new published dictionary snapshot. Priority rules remain unpublished, so priority stays blank and P3 cannot be emitted while the target select has only P0–P2.
 - User-visible app login succeeded for the current user; tenant-wide signed-in access and identity behavior still need acceptance.
 
 - `rq-sys-miaoda/` is a separate app-scoped Miaoda Git repo; release evidence from it must not be confused with the root documentation checkout.

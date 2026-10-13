@@ -144,7 +144,7 @@ function prompt(request: SafeAnalysisRequest, segments: EvidenceSegment[]): stri
       priority: null,
     }, null, 2),
       "Constraints: evidence fields must contain only IDs from the source segments below, never quote text; overall evidence must include at least one ID when source segments exist; missing_evidence is a boolean and true requires an empty evidence array; every inference must have ai_inference: true; facts only record statements present in the source text; priority must always be null because the server applies any published calibrated rule deterministically.",
-    `Controlled modules: ${JSON.stringify(request.dictionary.modules)}; fallback modules: 其他, 待分类.`,
+    `Controlled modules: ${JSON.stringify(request.dictionary.modules)}. Choose one exact listed module only when the requirement clearly matches it; otherwise set module to exactly 无法识别.`,
     `Published priority rule: ${JSON.stringify(request.priorityRule)}.`,
     `Source evidence segments (cite their IDs exactly; the server resolves each ID to the exact original excerpt): ${JSON.stringify(segments)}`,
   ].join("\n");

@@ -90,8 +90,8 @@ export class FeishuBasePushAdapter {
       if (!field || value === null || value === undefined) continue;
       const text = String(value);
       const allowed = this.fields.selectOptions?.[name];
-      // 「待分类」表示证据不足，按策略不写入 Base 单选；这是有意的分类省略，不是取值不合法。
-      if (name === "module" && value === "待分类") {
+      // 「无法识别」在 Web 中保留为分析结果；目标 Base 单选不一定包含该选项，因此不写入非法值。
+      if (name === "module" && value === "无法识别") {
         omittedFields.push({ field, value: text, reason: "category_omitted_by_policy" });
         continue;
       }

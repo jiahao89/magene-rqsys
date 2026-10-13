@@ -20,6 +20,7 @@ import { basePushIdempotencyKey } from "./application/idempotency-keys.js";
 import { createAnalysisAdvancer, createSourceMetadataAdvancer } from "./pipeline/advance.js";
 import { createLocalIdentityProvider, describeLocalIdentity } from "./http/local-identity.js";
 import type { SourceProjectConfig } from "./domain/workflow.js";
+import { DEFAULT_FUNCTION_MODULES } from "./domain/team-directory.js";
 
 const port = Number(process.env.PORT ?? 8787);
 const database = createPool(process.env.DATABASE_URL);
@@ -92,7 +93,7 @@ const analysisJobHandler: ((job: { payload: Record<string, unknown> }) => Promis
   const source = await repositories.sources.get(requirement.sourceConfigId);
   if (!source) throw new Error("Analysis source configuration was not found");
   const published = (await repositories.dictionaries.list()).find((version) => version.status === "published");
-  const dictionary = { version: published?.version ?? 0, modules: (published?.entries ?? []).map((entry) => typeof entry === "string" ? entry : String((entry as { name?: unknown }).name ?? entry)) };
+  const dictionary = { version: published?.version ?? 0, modules: (published?.entries ?? DEFAULT_FUNCTION_MODULES).map((entry) => typeof entry === "string" ? entry : String((entry as { name?: unknown }).name ?? entry)) };
   // 已发布规则接入确定性计算；规则 JSON 不符合契约时 buildPriorityRule 返回 null（priority 保持为空）
   const ruleRecord = await repositories.priorityRules.getPublished();
   const priorityRule = ruleRecord ? buildPriorityRule(ruleRecord) : null;

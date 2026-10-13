@@ -92,7 +92,7 @@ export function validateAnalysisOutput(
     ? { ...(value as Record<string, unknown>), priority: null }
     : value;
   const result = AnalysisSchema.parse(modelOutput);
-  const allowedModules = new Set([...options.dictionary.modules, "其他", "待分类"]);
+  const allowedModules = new Set([...options.dictionary.modules, "无法识别"]);
   if (!allowedModules.has(result.module)) throw new Error("Analysis output uses an uncontrolled module");
   const sourceText = options.sourceText;
   const evidence = [

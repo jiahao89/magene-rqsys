@@ -34,6 +34,7 @@ export const BatchListQuerySchema = z.object({
 // GET /api/requirements 查询参数
 export const RequirementListQuerySchema = z.object({
   q: z.string().max(200).optional(),
+  executorName: z.string().trim().min(1).max(100).optional(),
   pullState: z.enum(["pending", "running", "synced", "failed"]).optional(),
   analysisState: z.enum(["pending", "running", "analyzed", "failed_retryable"]).optional(),
   ownerState: z.enum(["pending_mapping", "auto_mapped", "manually_mapped", "not_required"]).optional(),

@@ -35,7 +35,7 @@ Persist a versioned, schema-validated result containing:
 
 | Output | Rule |
 |---|---|
-| Module suggestion | Must be an item in the active controlled dictionary, or 其他 / 待分类 with the PRD-defined distinction |
+| Module suggestion | Must be an exact item in the active controlled dictionary; if no item can be matched from evidence, return exactly 无法识别 |
 | Overall confidence | Exactly one of 高 / 中 / 低; include an overall reason and source-text evidence; not a probability |
 | U/M/S/C recommendations | Each recommendation includes rationale, cited evidence or an explicit missing-evidence marker |
 | Facts and inference | Store separately; inferred claims must be labeled as AI inference |
@@ -70,7 +70,7 @@ Do not bind the product contract to a single model vendor. A provider adapter ow
 ## Acceptance criteria
 
 1. Given a requirement with enough evidence, when analysis succeeds, then it stores a controlled module, one overall confidence, evidence, U/M/S/C recommendations, missing information, and version metadata.
-2. Given weak evidence, when analysis completes, then it can return low confidence or 待分类 and clearly state why; it must not invent a fact.
+2. Given weak evidence, when analysis completes, then it returns 无法识别 with low confidence and a clear reason; it must not invent a module or fact.
 3. Given malformed model output or provider failure, when the attempt terminates, then the error is persisted and the requirement can continue to owner matching and push.
 4. Given low confidence or a blank priority, when push is eligible, then push is not blocked.
 5. Given no published priority rule, when analysis runs, then P0–P3 is empty while U/M/S/C suggestions remain visible.

@@ -22,6 +22,12 @@ export type PublishStatus = "draft" | "published" | "retired";
 export type PipelineJobType = "sync" | "analysis" | "base_push";
 export type PipelineJobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 
+// AI 只能使用模块名称；责任人只用于工作台展示和维护，不参与模型输入。
+export interface FunctionModuleEntry {
+  name: string;
+  personName: string | null;
+}
+
 // source_configs：单项目来源、需求类型、周计划、负责人名单和字段映射。
 // 凭据不落库，由服务端从环境读取。
 export interface SourceConfigRecord {

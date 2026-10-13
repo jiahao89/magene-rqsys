@@ -1,11 +1,12 @@
 import type { Pool } from "pg";
 import { SourceProjectResolutionError, type FeishuUserDirectory, type IdentityProvider, type TeambitionSourceProjectResolver } from "../application/ports.js";
-import type { AuditEventRepository, AnalysisRunRepository, PipelineJobRepository, SourceConfigRepository, SyncBatchRepository, SyncItemRepository, PersonMappingRepository, RequirementQueryRepository, BasePushRunRepository, ModuleDictionaryRepository, PriorityRuleRepository, SourceSnapshotRepository } from "../application/repositories.js";
+import type { AuditEventRepository, AnalysisRunRepository, PipelineJobRepository, SourceConfigRepository, SyncBatchRepository, SyncItemRepository, PersonMappingRepository, RequirementQueryRepository, BasePushRunRepository, ModuleDictionaryRepository, PriorityRuleRepository, SourceSnapshotRepository, TeamDirectoryRepository } from "../application/repositories.js";
 import type { PersonMappingRecord, AnalysisRunRecord, ModuleDictionaryVersionRecord, PriorityRuleVersionRecord, RequirementRecord, SourceConfigRecord, SyncBatchRecord } from "../domain/persistence.js";
 import { AuditListQuerySchema, BatchListQuerySchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
 import { randomUUID } from "node:crypto";
 import { SourceConfigUpdateSchema, type ResolvedSourceConfigUpdate } from "../contracts/source.js";
-import { DictionaryCreateSchema, PriorityRuleCreateSchema } from "../contracts/rules.js";
+import { DictionaryCreateSchema, PriorityRuleCreateSchema, TeamModulesSaveSchema, TeamPersonCreateSchema, TeamPersonRenameSchema } from "../contracts/rules.js";
+import { DEFAULT_TEAM_MEMBERS } from "../domain/team-directory.js";
 import { isDatabaseReady } from "../adapters/postgres/health.js";
 import { jsonError } from "./errors.js";
 import { decodeRequirementCursor } from "../application/requirement-cursor.js";
@@ -25,6 +26,7 @@ export interface ApiRepositories {
   sourceSnapshots?: SourceSnapshotRepository;
   dictionaries?: ModuleDictionaryRepository;
   priorityRules?: PriorityRuleRepository;
+  directory?: TeamDirectoryRepository;
 }
 export interface ApiDependencies {
   database: Pool | null;
@@ -81,7 +83,7 @@ async function resolveSourceConfig(
   if (dependencies.teambitionSourceProjects) {
     try {
       const resolved = await dependencies.teambitionSourceProjects.resolveProject(update.projectName);
-      return { ...update, projectId: resolved.projectId, requirementTypeId: resolved.requirementTypeId, ownerNames: [], fieldMap: {} };
+      return { ...update, projectId: resolved.projectId, requirementTypeId: resolved.requirementTypeId, ownerNames: [...DEFAULT_TEAM_MEMBERS], fieldMap: {} };
     } catch (cause) {
       if (cause instanceof SourceProjectResolutionError) return jsonError("VALIDATION_FAILED", cause.message);
       return jsonError("DEPENDENCY_UNAVAILABLE", "无法连接 Teambition 项目配置，请稍后重试。");
@@ -206,6 +208,57 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const created = await repositories.dictionaries.create({ entries: body.data.entries, createdBy: auth.actor.id, now, auditEvent: { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "dictionary.created", entityType: "module_dictionary", result: "succeeded", safeDetails: { entryCount: body.data.entries.length }, occurredAt: now } });
     return json(dictionaryDto(created), 201);
   }
+  if (method === "GET" && url.pathname === "/api/people") {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.directory) return jsonError("DEPENDENCY_UNAVAILABLE");
+    return json({ items: (await repositories.directory.listPeople()).map((name) => ({ name })) });
+  }
+  if (method === "POST" && url.pathname === "/api/people") {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.directory) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const body = TeamPersonCreateSchema.safeParse(await readJson(request)); if (!body.success) return jsonError("VALIDATION_FAILED");
+    const now = (dependencies.now ?? (() => new Date()))().toISOString();
+    try {
+      const items = await repositories.directory.addPerson(body.data.name, { id: randomUUID(), actorId: auth.actor.id, eventType: "team_person.created", entityType: "team_person", result: "succeeded", safeDetails: {}, occurredAt: now });
+      return json({ items: items.map((name) => ({ name })) }, 201);
+    } catch (cause) { return (cause as Error)?.name === "TeamDirectoryConflict" ? jsonError("CONFLICT", (cause as Error).message) : jsonError("DEPENDENCY_UNAVAILABLE"); }
+  }
+  const personMatch = url.pathname.match(/^\/api\/people\/([^/]+)$/);
+  if (method === "PUT" && personMatch) {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.directory) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const body = TeamPersonRenameSchema.safeParse(await readJson(request)); if (!body.success) return jsonError("VALIDATION_FAILED");
+    const oldName = decodeURIComponent(personMatch[1]!);
+    const now = (dependencies.now ?? (() => new Date()))().toISOString();
+    try {
+      const items = await repositories.directory.renamePerson(oldName, body.data.name, { id: randomUUID(), actorId: auth.actor.id, eventType: "team_person.renamed", entityType: "team_person", result: "succeeded", safeDetails: {}, occurredAt: now });
+      return json({ items: items.map((name) => ({ name })) });
+    } catch (cause) { return (cause as Error)?.name === "TeamDirectoryConflict" ? jsonError("CONFLICT", (cause as Error).message) : jsonError("DEPENDENCY_UNAVAILABLE"); }
+  }
+  if (method === "DELETE" && personMatch) {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.directory) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const name = decodeURIComponent(personMatch[1]!);
+    const now = (dependencies.now ?? (() => new Date()))().toISOString();
+    try {
+      const items = await repositories.directory.deletePerson(name, { id: randomUUID(), actorId: auth.actor.id, eventType: "team_person.deleted", entityType: "team_person", result: "succeeded", safeDetails: {}, occurredAt: now });
+      return json({ items: items.map((person) => ({ name: person })) });
+    } catch (cause) { return (cause as Error)?.name === "TeamDirectoryConflict" ? jsonError("CONFLICT", (cause as Error).message) : jsonError("DEPENDENCY_UNAVAILABLE"); }
+  }
+  if (method === "GET" && url.pathname === "/api/modules") {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.directory) return jsonError("DEPENDENCY_UNAVAILABLE");
+    return json(await repositories.directory.listModules());
+  }
+  if (method === "PUT" && url.pathname === "/api/modules") {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.directory) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const body = TeamModulesSaveSchema.safeParse(await readJson(request)); if (!body.success) return jsonError("VALIDATION_FAILED");
+    const now = (dependencies.now ?? (() => new Date()))().toISOString();
+    try {
+      return json(await repositories.directory.saveModules(body.data.version, body.data.items.map((item) => ({ name: item.name, personName: item.personName ?? null })), auth.actor.id, now, { id: randomUUID(), actorId: auth.actor.id, eventType: "module_dictionary.updated", entityType: "module_dictionary", result: "succeeded", safeDetails: { entryCount: body.data.items.length }, occurredAt: now }));
+    } catch (cause) { return (cause as Error)?.name === "TeamDirectoryConflict" ? jsonError("CONFLICT", (cause as Error).message) : jsonError("DEPENDENCY_UNAVAILABLE"); }
+  }
   const dictionaryPublishMatch = url.pathname.match(/^\/api\/rules\/dictionary\/(\d+)\/publish$/);
   if (method === "POST" && dictionaryPublishMatch) {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
@@ -265,7 +318,7 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const query = Object.fromEntries(url.searchParams.entries());
     const parsed = RequirementListQuerySchema.safeParse(query); if (!parsed.success) return jsonError("VALIDATION_FAILED");
     const cursor = decodeRequirementCursor(parsed.data.cursor);
-    const page = await repositories.requirements.search({ ...(parsed.data.q === undefined ? {} : { q: parsed.data.q }), ...(parsed.data.pullState === undefined ? {} : { pullState: parsed.data.pullState }), ...(parsed.data.analysisState === undefined ? {} : { analysisState: parsed.data.analysisState }), ...(parsed.data.ownerState === undefined ? {} : { ownerState: parsed.data.ownerState }), ...(parsed.data.pushState === undefined ? {} : { pushState: parsed.data.pushState }), ...(parsed.data.batchId === undefined ? {} : { batchId: parsed.data.batchId }), ...(parsed.data.since === undefined ? {} : { since: parsed.data.since }), ...(parsed.data.until === undefined ? {} : { until: parsed.data.until }), limit: parsed.data.limit, ...(cursor === undefined ? {} : { cursor }) });
+    const page = await repositories.requirements.search({ ...(parsed.data.q === undefined ? {} : { q: parsed.data.q }), ...(parsed.data.executorName === undefined ? {} : { executorName: parsed.data.executorName }), ...(parsed.data.pullState === undefined ? {} : { pullState: parsed.data.pullState }), ...(parsed.data.analysisState === undefined ? {} : { analysisState: parsed.data.analysisState }), ...(parsed.data.ownerState === undefined ? {} : { ownerState: parsed.data.ownerState }), ...(parsed.data.pushState === undefined ? {} : { pushState: parsed.data.pushState }), ...(parsed.data.batchId === undefined ? {} : { batchId: parsed.data.batchId }), ...(parsed.data.since === undefined ? {} : { since: parsed.data.since }), ...(parsed.data.until === undefined ? {} : { until: parsed.data.until }), limit: parsed.data.limit, ...(cursor === undefined ? {} : { cursor }) });
     return json({ items: page.items.map(requirementSearchDto), nextCursor: page.nextCursor });
   }
   const requirementMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)$/);

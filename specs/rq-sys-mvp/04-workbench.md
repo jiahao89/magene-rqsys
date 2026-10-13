@@ -10,7 +10,7 @@ Operators need one place to configure and run synchronization, see each pipeline
 
 1. As a signed-in Feishu user, I want to view and maintain the selected project and weekly plan, so that the pipeline has a known scope.
 2. As a signed-in Feishu user, I want to start a manual run and see its batch progress, so that I can act without waiting for the schedule.
-3. As a signed-in Feishu user, I want to find a requirement by title, batch, or state, so that I can quickly locate a failure or unmapped owner.
+3. As a signed-in Feishu user, I want to find a requirement by title, TB executor, batch, or state, so that I can quickly locate a person's requests, a failure, or an unmapped owner.
 4. As an operator, I want to inspect source facts, the latest AI result, owner state, push state, and errors together, so that I can decide the next operation.
 5. As an operator, I want to map an unresolved owner and retry an eligible failure, so that work can continue without duplicate records.
 6. As a signed-in Feishu user, I want an audit view, so that configuration changes and manual actions are attributable.
@@ -20,12 +20,14 @@ Operators need one place to configure and run synchronization, see each pipeline
 | Page | MVP behavior |
 |---|---|
 | Dashboard | Show configured source, last/next sync, scheduler health, latest batch and counts for pull, AI, owner matching, push, and failures |
-| Source settings | Configure one dedicated project, weekly schedule, owner-name list, and connection self-check; show credentials as valid/invalid only |
-| Requirement pool | Filter by title, batch, time, pull/AI/owner/push state; show independent stage states |
+| Source settings | Configure one dedicated project, weekly schedule, and connection self-check; show credentials as valid/invalid only |
+| Requirement pool | Filter by title, maintained TB executor/person, batch, time, pull/AI/owner/push state; show independent stage states |
 | Batch list/detail | Show actor, trigger, times, counts, item actions, errors, and eligible retry controls |
 | Requirement detail | Show immutable source snapshot/version, latest AI suggestion/evidence, owner mapping, Base record link, and all pipeline states |
 | Owner mapping | Select Feishu user for unresolved/duplicate name; save reusable mapping and trigger push |
-| Dictionary/rule settings | Manage only versioned module dictionary and priority rules explicitly in the PRD; priority remains blank until a rule is published |
+| Function modules | CRUD module names and their responsible person; changes publish a new dictionary snapshot for future AI runs, without rewriting old analysis |
+| Personnel | CRUD the product-group people list; renaming or deleting a person updates/clears module ownership references |
+| Priority rules | Manage calibrated priority rules; priority remains blank until a rule is published |
 | Audit | Search sync, analysis, mapping, push, retry, and configuration actions by actor/time/object |
 
 PM processing fields and notification delivery are not displayed as if Web had read them. If a Base link is available, open the Base record for PM work.
@@ -48,6 +50,8 @@ The removed local UI prototype had Dashboard, Pool, Sources, Preview, Batches, B
 - GET /api/batches/{id}
 - POST /api/items/{id}/retry
 - GET /api/requirements/{id}
+- GET/POST /api/people; PUT/DELETE /api/people/{name}
+- GET/PUT /api/modules
 - PUT /api/requirements/{id}/owner
 - POST /api/analysis/{id}/retry
 - GET /api/audit

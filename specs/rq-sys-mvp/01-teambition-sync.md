@@ -34,7 +34,7 @@ Operators need a reliable weekly and manual import from one product-group Teambi
 
 The upstream requirements-definition table additionally names user type, impact level, product, constraints, supplemental description, feedback person, and feedback department. The current MVP PRD does not establish their Teambition API/custom-field mapping. Do not infer these values or silently add them to Base. Record each field as mapped, unavailable, or deferred during the target API POC.
 
-The owner-name list is used for the documented product-group owner matching flow. The selected dedicated project defines the import scope; do not silently turn owner matching into an additional filter that would drop unassigned requirements.
+The maintained product-group roster supports executor filtering in the Web requirement pool and module ownership. It does not limit Teambition import: the selected project defines the import scope, and all requirements—including unassigned and out-of-roster owners—are imported.
 
 ## States and batch behavior
 

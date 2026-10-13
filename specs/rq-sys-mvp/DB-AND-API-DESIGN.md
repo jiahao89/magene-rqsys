@@ -29,7 +29,7 @@ specs/rq-sys-mvp/openapi.yaml  OpenAPI 3.1 契约
 
 | 表 | 用途 | 关键约束 |
 |---|---|---|
-| `source_configs` | 单项目 TB 来源、需求类型、周计划、负责人名单和字段映射 | project + requirement type 唯一；凭据不落库 |
+| `source_configs` | 单项目 TB 来源、需求类型、周计划、产品组人员名单（用于 Web 筛选和模块分工，不作为同步过滤条件）和字段映射 | project + requirement type 唯一；凭据不落库 |
 | `sync_batches` | 手动/定时批次、发起人、幂等键、汇总结果 | source + idempotency key 唯一 |
 | `requirements` | 当前规范化需求和 pull/AI/owner/push 独立状态 | source + TB requirement ID 唯一 |
 | `sync_items` | 批次内逐条结果及错误 | batch + TB requirement ID 唯一 |

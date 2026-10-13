@@ -5,7 +5,7 @@ import { createDeepSeekProvider, getAiProviderConfig, type AiProvider, type Fetc
 import type { ValidatedAnalysis } from "./contract.js";
 import { runAnalysis, type AnalysisRepository, type AnalysisRun, type AnalysisServiceInput } from "./service.js";
 
-const dictionary = { version: 3, modules: ["基础数据", "其他", "待分类"] };
+const dictionary = { version: 3, modules: ["基础数据"] };
 const validResult = {
   module: "基础数据",
   confidence: "中",

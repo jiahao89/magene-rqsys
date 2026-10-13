@@ -1,7 +1,7 @@
 // 工单 16/17 面板测试：数据全部来自 mock API；覆盖正向、权限拒绝与详情/重试交互。
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { BatchesPanel, MappingsPanel, RequirementsPanel, SourcesPanel } from "./panels";
+import { BatchesPanel, MappingsPanel, ModulesPanel, PeoplePanel, RequirementsPanel, SourcesPanel } from "./panels";
 import type { SourceConfig } from "./api";
 
 const fetchMock = vi.fn<typeof fetch>();
@@ -274,16 +274,106 @@ describe("RequirementsPanel (ticket 17)", () => {
     fetchMock.mockImplementation(async (input) => {
       const path = typeof input === "string" ? input : new Request(input).url;
       if (path.startsWith("/api/requirements")) return jsonOk({ items: [row], nextCursor: "cursor-1" });
+      if (path === "/api/people") return jsonOk({ items: [{ name: "毕梓浩" }] });
       return jsonOk({});
     });
 
     render(<RequirementsPanel onRefresh={() => undefined} />);
     await screen.findByText("需要报表");
     fireEvent.change(screen.getByLabelText("搜索需求标题"), { target: { value: "报表" } });
-    fireEvent.change(screen.getByLabelText("负责人筛选"), { target: { value: "auto_mapped" } });
+    fireEvent.change(screen.getByLabelText("TB负责人筛选"), { target: { value: "毕梓浩" } });
     fireEvent.click(screen.getByRole("button", { name: "筛选" }));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/requirements?q=%E6%8A%A5%E8%A1%A8&ownerState=auto_mapped&limit=25", expect.anything()));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/requirements?q=%E6%8A%A5%E8%A1%A8&executorName=%E6%AF%95%E6%A2%93%E6%B5%A9&limit=25", expect.anything()));
     expect(await screen.findByRole("button", { name: "加载更多" })).toBeInTheDocument();
+  });
+});
+
+describe("团队字典维护", () => {
+  it("supports adding, renaming and deleting people through the API", async () => {
+    let people = [{ name: "毕梓浩" }];
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/people" && init?.method === "POST") {
+        const body = JSON.parse(String(init.body)) as { name: string };
+        people = [...people, body];
+        return jsonOk({ items: people }, 201);
+      }
+      if (path.startsWith("/api/people/") && init?.method === "PUT") {
+        const oldName = decodeURIComponent(path.split("/").at(-1) ?? "");
+        const body = JSON.parse(String(init.body)) as { name: string };
+        people = people.map((person) => person.name === oldName ? body : person);
+        return jsonOk({ items: people });
+      }
+      if (path.startsWith("/api/people/") && init?.method === "DELETE") {
+        const deletedName = decodeURIComponent(path.split("/").at(-1) ?? "");
+        people = people.filter((person) => person.name !== deletedName);
+        return jsonOk({ items: people });
+      }
+      if (path === "/api/people") return jsonOk({ items: people });
+      throw new Error(`unexpected fetch ${path} ${init?.method ?? "GET"}`);
+    });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(<PeoplePanel />);
+    expect(await screen.findByText("毕梓浩")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("新增人员姓名"), { target: { value: "新成员" } });
+    fireEvent.click(screen.getByRole("button", { name: "新增人员" }));
+    expect(await screen.findByText("人员已添加。")).toBeInTheDocument();
+
+    const newMemberRow = screen.getByText("新成员").closest("tr");
+    if (!newMemberRow) throw new Error("New member row was not rendered");
+    fireEvent.click(within(newMemberRow).getByRole("button", { name: "编辑" }));
+    fireEvent.change(screen.getByLabelText("编辑人员姓名"), { target: { value: "新成员改名" } });
+    fireEvent.click(within(newMemberRow).getByRole("button", { name: "保存" }));
+    expect(await screen.findByText("人员及模块责任关系已更新。")).toBeInTheDocument();
+
+    const renamedRow = screen.getByText("新成员改名").closest("tr");
+    if (!renamedRow) throw new Error("Renamed member row was not rendered");
+    fireEvent.click(within(renamedRow).getByRole("button", { name: "删除" }));
+    expect(await screen.findByText("人员已删除，相关模块已解除分配。")).toBeInTheDocument();
+    expect(confirm).toHaveBeenCalledOnce();
+    confirm.mockRestore();
+  });
+
+  it("supports creating, editing and deleting a module with a listed owner", async () => {
+    let version = 2;
+    let modules = [{ name: "地图", personName: "盛永帮" }];
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/people") return jsonOk({ items: [{ name: "盛永帮" }, { name: "贾浩" }] });
+      if (path === "/api/modules" && init?.method === "PUT") {
+        const body = JSON.parse(String(init.body)) as { items: typeof modules };
+        modules = body.items;
+        version += 1;
+        return jsonOk({ version, items: modules });
+      }
+      if (path === "/api/modules") return jsonOk({ version, items: modules });
+      throw new Error(`unexpected fetch ${path} ${init?.method ?? "GET"}`);
+    });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(<ModulesPanel />);
+    expect(await screen.findByText("地图")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("功能模块名称"), { target: { value: "语音提醒" } });
+    fireEvent.change(screen.getByLabelText("模块责任人员"), { target: { value: "贾浩" } });
+    fireEvent.click(screen.getByRole("button", { name: "新增模块" }));
+    expect(await screen.findByText("已发布模块字典 v3，后续 AI 分析将使用新版本。")).toBeInTheDocument();
+
+    const mapRow = screen.getByText("地图").closest("tr");
+    if (!mapRow) throw new Error("Module row was not rendered");
+    fireEvent.click(within(mapRow).getByRole("button", { name: "编辑" }));
+    fireEvent.change(screen.getByLabelText("功能模块名称"), { target: { value: "导航" } });
+    fireEvent.change(screen.getByLabelText("模块责任人员"), { target: { value: "贾浩" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+    expect(await screen.findByText("导航")).toBeInTheDocument();
+
+    const voiceRow = screen.getByText("语音提醒").closest("tr");
+    if (!voiceRow) throw new Error("Created module row was not rendered");
+    fireEvent.click(within(voiceRow).getByRole("button", { name: "删除" }));
+    expect(await screen.findByText("已发布模块字典 v5，后续 AI 分析将使用新版本。")).toBeInTheDocument();
+    expect(screen.queryByText("语音提醒")).not.toBeInTheDocument();
+    expect(confirm).toHaveBeenCalledOnce();
+    confirm.mockRestore();
   });
 });

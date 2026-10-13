@@ -49,7 +49,7 @@ test("serializes Base selects and text metadata, while an unavailable module opt
   await adapter.push({
     projectId: "p", requirementId: "r", title: "Title", owner: null, sourceVersion: 3,
     pushedAt: "2026-10-11T01:00:00.000Z", substantiveChanged: false, idempotencyKey: "p:r:v3",
-    aiValues: { module: "待分类", priority: "P2", analysisVersion: 4 },
+    aiValues: { module: "无法识别", priority: "P2", analysisVersion: 4 },
   });
   const fields = fake.row()!.fields;
   assert.equal(fields["AI优先级建议"], "P2");
@@ -92,7 +92,7 @@ test("reports an out-of-options select value instead of silently dropping it", a
   ]);
 });
 
-test("distinguishes the deliberate 待分类 omission from a rejected value", async () => {
+test("distinguishes the deliberate 无法识别 omission from a rejected value", async () => {
   const fake = fakeBase();
   const adapter = new FeishuBasePushAdapter(fake.client, {
     projectId: "TB项目ID", requirementId: "TB需求ID", owner: "执行人",
@@ -101,10 +101,10 @@ test("distinguishes the deliberate 待分类 omission from a rejected value", as
   });
   const result = await adapter.push({
     projectId: "p", requirementId: "r", title: "Title", owner: null, sourceVersion: 1,
-    substantiveChanged: false, idempotencyKey: "p:r:v1", aiValues: { module: "待分类" },
+    substantiveChanged: false, idempotencyKey: "p:r:v1", aiValues: { module: "无法识别" },
   });
   assert.deepEqual(result.omittedFields, [
-    { field: "AI模块建议", value: "待分类", reason: "category_omitted_by_policy" },
+    { field: "AI模块建议", value: "无法识别", reason: "category_omitted_by_policy" },
   ]);
 });
 

@@ -1,7 +1,7 @@
 import type { Pool, PoolClient } from "pg";
 import { randomUUID } from "node:crypto";
 import type {
-  AnalysisRunRecord, AuditEventRecord, BasePushRunRecord, BatchState,
+  AnalysisRunRecord, AuditEventRecord, BasePushRunRecord, BatchState, FunctionModuleEntry,
   ModuleDictionaryVersionRecord, PersonMappingRecord, PmSnapshotRecord,
   PipelineJobRecord, PipelineJobType, PriorityLevel, PriorityRuleVersionRecord,
   RequirementRecord, SourceConfigRecord, SourceSnapshotRecord, SyncBatchRecord, SyncItemAction,
@@ -10,11 +10,12 @@ import type {
 import type { AnalysisState, OwnerState, PullState, PushState } from "../../domain/workflow.js";
 import { assertTransition } from "../../domain/transitions.js";
 import type { ResolvedSourceConfigUpdate } from "../../contracts/source.js";
+import { DEFAULT_FUNCTION_MODULES, DEFAULT_TEAM_MEMBERS } from "../../domain/team-directory.js";
 import type {
   AnalysisRunRepository, AuditEventInput, AuditEventRepository, BasePushRunRepository,
   ModuleDictionaryRepository, PersonMappingRepository, PmSnapshotRepository,
   PipelineJobRepository, PriorityRuleRepository, RequirementQueryRepository,
-  RequirementSearchCursor, SourceConfigRepository, SourceSnapshotRepository, SyncBatchRepository, SyncItemRepository,
+  RequirementSearchCursor, SourceConfigRepository, SourceSnapshotRepository, SyncBatchRepository, SyncItemRepository, TeamDirectoryRepository,
 } from "../../application/repositories.js";
 import { encodeRequirementCursor } from "../../application/requirement-cursor.js";
 import { encodeBatchCursor } from "../../application/batch-cursor.js";
@@ -113,7 +114,7 @@ export class PostgresRequirementRepository implements RequirementQueryRepository
 }
 async get(id:string){const{rows}=await this.pool.query("SELECT * FROM requirements WHERE id=$1",[id]);return rows[0]?requirement(rows[0]):null;}
 async findForSync(sourceConfigId:string,teambitionRequirementId:string){const{rows}=await this.pool.query("SELECT id,source_version,source_hash,substantive_hash FROM requirements WHERE source_config_id=$1 AND teambition_requirement_id=$2",[sourceConfigId,teambitionRequirementId]);return rows[0]?{id:String(rows[0].id),sourceVersion:Number(rows[0].source_version),sourceHash:String(rows[0].source_hash),substantiveHash:String(rows[0].substantive_hash)}:null;}
-async search(q:{q?:string;pullState?:PullState;analysisState?:AnalysisState;ownerState?:OwnerState;pushState?:PushState;batchId?:string;since?:string;until?:string;limit:number;cursor?:RequirementSearchCursor}){const values:unknown[]=[q.q??null,q.pullState??null,q.analysisState??null,q.ownerState??null,q.pushState??null,q.batchId??null,q.since??null,q.until??null,q.cursor?.createdAt??null,q.cursor?.id??null,q.limit+1];const{rows}=await this.pool.query("SELECT * FROM requirements WHERE ($1::text IS NULL OR title ILIKE '%'||$1||'%') AND ($2::text IS NULL OR pull_state=$2) AND ($3::text IS NULL OR analysis_state=$3) AND ($4::text IS NULL OR owner_state=$4) AND ($5::text IS NULL OR push_state=$5) AND ($6::uuid IS NULL OR latest_batch_id=$6) AND ($7::timestamptz IS NULL OR last_seen_at >= $7) AND ($8::timestamptz IS NULL OR last_seen_at <= $8) AND ($9::timestamptz IS NULL OR (created_at,id)<($9::timestamptz,$10::uuid)) ORDER BY created_at DESC,id DESC LIMIT $11",values);const more=rows.length>q.limit,page=rows.slice(0,q.limit);return{items:page.map(requirement),nextCursor:more?encodeRequirementCursor({createdAt:asDate(page.at(-1)!.created_at)!,id:String(page.at(-1)!.id)}):null};}
+async search(q:{q?:string;executorName?:string;pullState?:PullState;analysisState?:AnalysisState;ownerState?:OwnerState;pushState?:PushState;batchId?:string;since?:string;until?:string;limit:number;cursor?:RequirementSearchCursor}){const values:unknown[]=[q.q??null,q.executorName??null,q.pullState??null,q.analysisState??null,q.ownerState??null,q.pushState??null,q.batchId??null,q.since??null,q.until??null,q.cursor?.createdAt??null,q.cursor?.id??null,q.limit+1];const{rows}=await this.pool.query("SELECT * FROM requirements WHERE ($1::text IS NULL OR title ILIKE '%'||$1||'%') AND ($2::text IS NULL OR lower(btrim(executor_name))=lower(btrim($2))) AND ($3::text IS NULL OR pull_state=$3) AND ($4::text IS NULL OR analysis_state=$4) AND ($5::text IS NULL OR owner_state=$5) AND ($6::text IS NULL OR push_state=$6) AND ($7::uuid IS NULL OR latest_batch_id=$7) AND ($8::timestamptz IS NULL OR last_seen_at >= $8) AND ($9::timestamptz IS NULL OR last_seen_at <= $9) AND ($10::timestamptz IS NULL OR (created_at,id)<($10::timestamptz,$11::uuid)) ORDER BY created_at DESC,id DESC LIMIT $12",values);const more=rows.length>q.limit,page=rows.slice(0,q.limit);return{items:page.map(requirement),nextCursor:more?encodeRequirementCursor({createdAt:asDate(page.at(-1)!.created_at)!,id:String(page.at(-1)!.id)}):null};}
 async updateAnalysisState(requirementId:string,to:AnalysisState){const{rows}=await this.pool.query("SELECT analysis_state FROM requirements WHERE id=$1",[requirementId]);if(!rows[0])throw new Error(`Requirement not found: ${requirementId}`);assertTransition("analysis",String(rows[0].analysis_state) as AnalysisState,to);await this.pool.query("UPDATE requirements SET analysis_state=$2,updated_at=now() WHERE id=$1",[requirementId,to]);}
 async setOwner(requirementId:string,feishuUserId:string|null,state:OwnerState){const{rows}=await this.pool.query("SELECT owner_state FROM requirements WHERE id=$1",[requirementId]);if(!rows[0])throw new Error(`Requirement not found: ${requirementId}`);assertTransition("owner",String(rows[0].owner_state) as OwnerState,state);await this.pool.query("UPDATE requirements SET owner_state=$2,updated_at=now() WHERE id=$1",[requirementId,state]);}
 async setBaseRecord(requirementId:string,baseRecordId:string,pushedAt:string){await this.pool.query("UPDATE requirements SET base_record_id=$2,last_pushed_at=$3,updated_at=now() WHERE id=$1",[requirementId,baseRecordId,pushedAt]);}
@@ -157,6 +158,126 @@ export class PostgresModuleDictionaryRepository implements ModuleDictionaryRepos
     }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}
   }
 }
+function moduleDirectoryEntries(value: unknown): FunctionModuleEntry[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry): FunctionModuleEntry[] => {
+    if (typeof entry === "string" && entry.trim()) return [{ name: entry.trim(), personName: null }];
+    if (typeof entry !== "object" || entry === null || typeof (entry as { name?: unknown }).name !== "string") return [];
+    const row = entry as { name: string; personName?: unknown };
+    return row.name.trim() ? [{ name: row.name.trim(), personName: typeof row.personName === "string" && row.personName.trim() ? row.personName.trim() : null }] : [];
+  });
+}
+function directoryNames(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean) : [];
+}
+function duplicateName(names: string[], candidate: string): boolean {
+  return names.some((name) => name.toLocaleLowerCase() === candidate.toLocaleLowerCase());
+}
+export class TeamDirectoryConflict extends Error {
+  constructor(message = "The team directory changed; refresh and retry.") { super(message); this.name = "TeamDirectoryConflict"; }
+}
+export class PostgresTeamDirectoryRepository implements TeamDirectoryRepository {
+  constructor(private readonly pool: Pool) {}
+  async listPeople() {
+    const { rows } = await this.pool.query("SELECT owner_names,EXISTS(SELECT 1 FROM module_dictionary_versions WHERE status='published') AS has_dictionary FROM source_configs ORDER BY created_at,id LIMIT 1");
+    if (!rows[0]) return [];
+    const names = directoryNames(rows[0].owner_names);
+    return names.length || rows[0].has_dictionary ? names : [...DEFAULT_TEAM_MEMBERS];
+  }
+  async addPerson(name: string, event: AuditEventInput) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const { rows } = await client.query("SELECT id,owner_names FROM source_configs ORDER BY created_at,id LIMIT 1 FOR UPDATE");
+      if (!rows[0]) throw new TeamDirectoryConflict("请先配置 Teambition 数据源。");
+      const people = await this.effectivePeople(client, rows[0].owner_names);
+      if (duplicateName(people, name)) throw new TeamDirectoryConflict("该人员已存在。");
+      const updated = [...people, name];
+      await client.query("UPDATE source_configs SET owner_names=$2::jsonb,updated_at=now() WHERE id=$1", [rows[0].id, JSON.stringify(updated)]);
+      await appendAuditInTransaction(client, event, name);
+      await client.query("COMMIT");
+      return updated;
+    } catch (error) { await client.query("ROLLBACK"); throw error; }
+    finally { client.release(); }
+  }
+  async renamePerson(from: string, to: string, event: AuditEventInput) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended('module_dictionary_versions',0))");
+      const source = await client.query("SELECT id,owner_names FROM source_configs ORDER BY created_at,id LIMIT 1 FOR UPDATE");
+      if (!source.rows[0]) throw new TeamDirectoryConflict("请先配置 Teambition 数据源。");
+      const people = await this.effectivePeople(client, source.rows[0].owner_names);
+      if (!people.includes(from)) throw new TeamDirectoryConflict("人员不存在或已被修改。");
+      if (from !== to && duplicateName(people.filter((name) => name !== from), to)) throw new TeamDirectoryConflict("该人员已存在。");
+      const updatedPeople = people.map((name) => name === from ? to : name);
+      const dictionary = await client.query("SELECT version,entries FROM module_dictionary_versions WHERE status='published' ORDER BY version DESC LIMIT 1 FOR UPDATE");
+      const modules = moduleDirectoryEntries(dictionary.rows[0]?.entries ?? DEFAULT_FUNCTION_MODULES);
+      const updatedModules = modules.map((module) => module.personName === from ? { ...module, personName: to } : module);
+      await client.query("UPDATE source_configs SET owner_names=$2::jsonb,updated_at=now() WHERE id=$1", [source.rows[0].id, JSON.stringify(updatedPeople)]);
+      if (JSON.stringify(modules) !== JSON.stringify(updatedModules)) await this.publishModules(client, updatedModules, event.actorId ?? "system", event.occurredAt, { ...event, id: randomUUID(), eventType: "module_dictionary.updated", entityType: "module_dictionary", safeDetails: { entryCount: updatedModules.length } });
+      await appendAuditInTransaction(client, event, from);
+      await client.query("COMMIT");
+      return updatedPeople;
+    } catch (error) { await client.query("ROLLBACK"); throw error; }
+    finally { client.release(); }
+  }
+  async deletePerson(name: string, event: AuditEventInput) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended('module_dictionary_versions',0))");
+      const source = await client.query("SELECT id,owner_names FROM source_configs ORDER BY created_at,id LIMIT 1 FOR UPDATE");
+      if (!source.rows[0]) throw new TeamDirectoryConflict("请先配置 Teambition 数据源。");
+      const people = await this.effectivePeople(client, source.rows[0].owner_names);
+      if (!people.includes(name)) throw new TeamDirectoryConflict("人员不存在或已被删除。");
+      const updatedPeople = people.filter((person) => person !== name);
+      const dictionary = await client.query("SELECT version,entries FROM module_dictionary_versions WHERE status='published' ORDER BY version DESC LIMIT 1 FOR UPDATE");
+      const modules = moduleDirectoryEntries(dictionary.rows[0]?.entries ?? DEFAULT_FUNCTION_MODULES);
+      const updatedModules = modules.map((module) => module.personName === name ? { ...module, personName: null } : module);
+      await client.query("UPDATE source_configs SET owner_names=$2::jsonb,updated_at=now() WHERE id=$1", [source.rows[0].id, JSON.stringify(updatedPeople)]);
+      if (JSON.stringify(modules) !== JSON.stringify(updatedModules)) await this.publishModules(client, updatedModules, event.actorId ?? "system", event.occurredAt, { ...event, id: randomUUID(), eventType: "module_dictionary.updated", entityType: "module_dictionary", safeDetails: { entryCount: updatedModules.length } });
+      await appendAuditInTransaction(client, event, name);
+      await client.query("COMMIT");
+      return updatedPeople;
+    } catch (error) { await client.query("ROLLBACK"); throw error; }
+    finally { client.release(); }
+  }
+  async listModules() {
+    const { rows } = await this.pool.query("SELECT version,entries FROM module_dictionary_versions WHERE status='published' ORDER BY version DESC LIMIT 1");
+    return rows[0] ? { version: Number(rows[0].version), items: moduleDirectoryEntries(rows[0].entries) } : { version: 0, items: [...DEFAULT_FUNCTION_MODULES] };
+  }
+  async saveModules(expectedVersion: number, items: FunctionModuleEntry[], createdBy: string, now: string, event: AuditEventInput) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended('module_dictionary_versions',0))");
+      const source = await client.query("SELECT id,owner_names FROM source_configs ORDER BY created_at,id LIMIT 1 FOR UPDATE");
+      if (!source.rows[0]) throw new TeamDirectoryConflict("请先配置 Teambition 数据源。");
+      const dictionary = await client.query("SELECT version FROM module_dictionary_versions WHERE status='published' ORDER BY version DESC LIMIT 1 FOR UPDATE");
+      const currentVersion = dictionary.rows[0] ? Number(dictionary.rows[0].version) : 0;
+      if (currentVersion !== expectedVersion) throw new TeamDirectoryConflict();
+      const people = await this.effectivePeople(client, source.rows[0].owner_names);
+      if (items.some((item) => item.personName !== null && !people.includes(item.personName))) throw new TeamDirectoryConflict("模块负责人必须来自人员字典。");
+      const updated = await this.publishModules(client, items, createdBy, now, event);
+      await client.query("COMMIT");
+      return { version: updated.version, items };
+    } catch (error) { await client.query("ROLLBACK"); throw error; }
+    finally { client.release(); }
+  }
+  private async publishModules(client: PoolClient, items: FunctionModuleEntry[], createdBy: string, now: string, event: AuditEventInput) {
+    await client.query("UPDATE module_dictionary_versions SET status='retired' WHERE status='published'");
+    const { rows } = await client.query("INSERT INTO module_dictionary_versions(version,status,entries,created_by,created_at,published_at) SELECT COALESCE(MAX(version),0)+1,'published',$1,$2,$3,$3 FROM module_dictionary_versions RETURNING version", [JSON.stringify(items), createdBy, now]);
+    await appendAuditInTransaction(client, event, String(rows[0]!.version));
+    return { version: Number(rows[0]!.version) };
+  }
+  private async effectivePeople(client: PoolClient, ownerNames: unknown) {
+    const names = directoryNames(ownerNames);
+    if (names.length) return names;
+    const { rows } = await client.query("SELECT EXISTS(SELECT 1 FROM module_dictionary_versions WHERE status='published') AS has_dictionary");
+    return rows[0]?.has_dictionary ? [] : [...DEFAULT_TEAM_MEMBERS];
+  }
+}
 export class PostgresPriorityRuleRepository implements PriorityRuleRepository{
   constructor(private readonly pool:Pool){}
   async get(id:string){const{rows}=await this.pool.query("SELECT * FROM priority_rule_versions WHERE id=$1",[id]);return rows[0]?priorityRule(rows[0]):null;}
@@ -183,4 +304,4 @@ export class PostgresPriorityRuleRepository implements PriorityRuleRepository{
     }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}
   }
 }
-export class PostgresRepositories{readonly sources:PostgresSourceConfigRepository;readonly batches:PostgresSyncBatchRepository;readonly items:PostgresSyncItemRepository;readonly audit:PostgresAuditEventRepository;readonly jobs:PostgresPipelineJobRepository;readonly sourceSnapshots:PostgresSourceSnapshotRepository;readonly requirements:PostgresRequirementRepository;readonly analyses:PostgresAnalysisRunRepository;readonly people:PostgresPersonMappingRepository;readonly pmSnapshots:PostgresPmSnapshotRepository;readonly basePushes:PostgresBasePushRunRepository;readonly dictionaries:PostgresModuleDictionaryRepository;readonly priorityRules:PostgresPriorityRuleRepository;constructor(pool:Pool){this.sources=new PostgresSourceConfigRepository(pool);this.batches=new PostgresSyncBatchRepository(pool);this.items=new PostgresSyncItemRepository(pool);this.audit=new PostgresAuditEventRepository(pool);this.jobs=new PostgresPipelineJobRepository(pool);this.sourceSnapshots=new PostgresSourceSnapshotRepository(pool);this.requirements=new PostgresRequirementRepository(pool);this.analyses=new PostgresAnalysisRunRepository(pool);this.people=new PostgresPersonMappingRepository(pool);this.pmSnapshots=new PostgresPmSnapshotRepository(pool);this.basePushes=new PostgresBasePushRunRepository(pool);this.dictionaries=new PostgresModuleDictionaryRepository(pool);this.priorityRules=new PostgresPriorityRuleRepository(pool);}}
+export class PostgresRepositories{readonly sources:PostgresSourceConfigRepository;readonly batches:PostgresSyncBatchRepository;readonly items:PostgresSyncItemRepository;readonly audit:PostgresAuditEventRepository;readonly jobs:PostgresPipelineJobRepository;readonly sourceSnapshots:PostgresSourceSnapshotRepository;readonly requirements:PostgresRequirementRepository;readonly analyses:PostgresAnalysisRunRepository;readonly people:PostgresPersonMappingRepository;readonly pmSnapshots:PostgresPmSnapshotRepository;readonly basePushes:PostgresBasePushRunRepository;readonly dictionaries:PostgresModuleDictionaryRepository;readonly directory:PostgresTeamDirectoryRepository;readonly priorityRules:PostgresPriorityRuleRepository;constructor(pool:Pool){this.sources=new PostgresSourceConfigRepository(pool);this.batches=new PostgresSyncBatchRepository(pool);this.items=new PostgresSyncItemRepository(pool);this.audit=new PostgresAuditEventRepository(pool);this.jobs=new PostgresPipelineJobRepository(pool);this.sourceSnapshots=new PostgresSourceSnapshotRepository(pool);this.requirements=new PostgresRequirementRepository(pool);this.analyses=new PostgresAnalysisRunRepository(pool);this.people=new PostgresPersonMappingRepository(pool);this.pmSnapshots=new PostgresPmSnapshotRepository(pool);this.basePushes=new PostgresBasePushRunRepository(pool);this.dictionaries=new PostgresModuleDictionaryRepository(pool);this.directory=new PostgresTeamDirectoryRepository(pool);this.priorityRules=new PostgresPriorityRuleRepository(pool);}}

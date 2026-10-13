@@ -82,7 +82,8 @@ flowchart LR
 
 ## 5. 后端模块边界
 
-- `source-config`：来源项目、负责人名单、同步计划和凭证自检。
+- `source-config`：来源项目、同步计划和凭证自检。
+- `team-directory`：维护产品组人员与功能模块/责任人，支持需求池按 TB 负责人筛选；不限制项目导入范围。
 - `sync`：手动/定时触发、分页读取、源字段标准化、差异检测、批次和条目状态。
 - `analysis`：PII 最小化、模型请求/响应 schema 校验、分析版本、超时与重试。
 - `owner-mapping`：按 TB user ID 优先、唯一姓名次之；不确定时进入人工映射。

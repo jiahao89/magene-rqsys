@@ -3,7 +3,7 @@
 // （05 手动同步、06 AI 分析、07 负责人与 Base 推送、08 调度重试审计）实际需要的操作。
 // 唯一性约束由 DDL 保证（见 domain/persistence.ts 注释），端口语义与之对齐。
 
-import type { AuditEventRecord, BasePushRunRecord, BatchState, AnalysisRunRecord, ModuleDictionaryVersionRecord, PersonMappingRecord, PmSnapshotRecord, PipelineJobRecord, PipelineJobType, PriorityLevel, PriorityRuleVersionRecord, SourceConfigRecord, SourceSnapshotRecord, SyncBatchRecord, SyncItemAction, SyncItemRecord, SyncTrigger } from "../domain/persistence.js";
+import type { AuditEventRecord, BasePushRunRecord, BatchState, AnalysisRunRecord, FunctionModuleEntry, ModuleDictionaryVersionRecord, PersonMappingRecord, PmSnapshotRecord, PipelineJobRecord, PipelineJobType, PriorityLevel, PriorityRuleVersionRecord, SourceConfigRecord, SourceSnapshotRecord, SyncBatchRecord, SyncItemAction, SyncItemRecord, SyncTrigger } from "../domain/persistence.js";
 import type { AnalysisState, OwnerState, PullState, PushState } from "../domain/workflow.js";
 import type { ResolvedSourceConfigUpdate } from "../contracts/source.js";
 import type { RequirementRecord } from "../domain/persistence.js";
@@ -229,6 +229,17 @@ export interface ModuleDictionaryRepository {
   publish(version: number, publishedAt: string, auditEvent?: AuditEventInput): Promise<ModuleDictionaryVersionRecord>;
 }
 
+// 团队人员沿用单项目 source_configs.owner_names；模块责任人关系随词典版本快照保存。
+// 人员改名/删除与模块责任人更新由适配器在同一事务内完成。
+export interface TeamDirectoryRepository {
+  listPeople(): Promise<string[]>;
+  addPerson(name: string, auditEvent: AuditEventInput): Promise<string[]>;
+  renamePerson(from: string, to: string, auditEvent: AuditEventInput): Promise<string[]>;
+  deletePerson(name: string, auditEvent: AuditEventInput): Promise<string[]>;
+  listModules(): Promise<{ version: number; items: FunctionModuleEntry[] }>;
+  saveModules(expectedVersion: number, items: FunctionModuleEntry[], createdBy: string, now: string, auditEvent: AuditEventInput): Promise<{ version: number; items: FunctionModuleEntry[] }>;
+}
+
 export interface PriorityRuleRepository {
   get(id: string): Promise<PriorityRuleVersionRecord | null>;
   getPublished(): Promise<PriorityRuleVersionRecord | null>;
@@ -253,6 +264,7 @@ export interface RequirementQueryRepository {
   // 按 openapi /api/requirements 查询参数检索（q 匹配标题，游标按 created_at,id 倒序）
   search(query: {
     q?: string;
+    executorName?: string;
     pullState?: PullState;
     analysisState?: AnalysisState;
     ownerState?: OwnerState;

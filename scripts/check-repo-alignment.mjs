@@ -37,6 +37,7 @@ const SHARED = [
   "contracts/rules.ts",
   "domain/workflow.ts",
   "domain/persistence.ts",
+  "domain/team-directory.ts",
   "analysis/repository-adapter.ts",
 ];
 

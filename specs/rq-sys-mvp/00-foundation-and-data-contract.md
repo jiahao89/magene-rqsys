@@ -10,7 +10,7 @@ The MVP provides a traceable requirement record and a narrow Base collaboration 
 
 ## Actors
 
-- System administrator: configures the source project, schedule, credentials, and owner names.
+- System administrator: configures the source project and schedule, and maintains the team roster and module dictionary.
 - PM Leader: triggers sync, resolves owner mappings, reviews module/rule configuration, and can retry.
 - Designated operator: triggers sync, maps owners, and retries within permission.
 - PM / stakeholder: reviews and updates PM-owned fields in Base.
@@ -27,7 +27,8 @@ The MVP provides a traceable requirement record and a narrow Base collaboration 
 
 | Object | Authoritative storage | Minimum contents |
 |---|---|---|
-| Source configuration | Application database | Teambition project ID/name, enabled state, weekly schedule, owner-name list |
+| Source configuration | Application database | Teambition project ID/name, enabled state, weekly schedule |
+| Team roster | Application database | Product-group member names used by the requirement-pool executor filter and module ownership; not an import allowlist |
 | Sync batch | Application database | Trigger type, actor, start/end, status, counts, error summary |
 | Sync item | Application database | Batch, source requirement key, action, stage, error code/detail, Base record ID |
 | Requirement map | Application database | Project ID + requirement ID, Base record ID, source snapshot/hash/version, independent pipeline states |
