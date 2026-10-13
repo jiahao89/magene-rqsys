@@ -1,6 +1,15 @@
-# [partially executed: release 与字典种子已验证；全量源对齐、app E2E、恢复验收仍待完成] 09 — 目标环境端到端验收
+# [partially executed: 311 条源数据已对齐；发布版设置保存、app E2E 与恢复验收仍待完成] 09 — 目标环境端到端验收
 
-## 最新验收更新（2026-10-13）
+## 最新验收更新（2026-10-13，最新发布后）
+
+- root commit `ae8fc89` 已推送到 `main`；Miaoda `sprint/default` commit `59189609c8260f6201d15e990ba2d8ca00e4f355` 已推送。Release `7696073033094450405` 已 `finished`，绑定该完整 app commit，`error_logs` 为空。
+- 修复并发布了 PostgreSQL `TIME` 读回 `HH:mm:ss`、而 API 仅接受 `HH:mm` 导致的来源设置更新 `400 VALIDATION_FAILED`。本地 API GET→PUT→GET 与 PostgreSQL round-trip 回归已通过；发布后登录态设置保存/回读仍待核验，周计划继续关闭。
+- 最新本地验证：root API 253/253（含隔离 PostgreSQL integration）、Web 43/43、妙搭路由 72/72；typecheck/build、妙搭 server/client typecheck、lint/stylelint、直接生产构建、共享逻辑对齐及两仓 `git diff --check` 通过。妙搭 wrapper `npm run build` 因 npm mirror DNS (`ENOTFOUND registry.npmmirror.com`) 未完成；直接 server/client 生产构建通过。
+- Dev source-only 批次已按 TB 原始 API 的 311 个唯一需求 ID 完成数据对齐：311 条业务需求已拉取，另保留 7 条合成夹具；0 分析、0 推送、0 失败，0 running batch/job。此模式不调用 AI、不推 Base、不通知。周计划和恢复触发器保持关闭。
+- `311/314` 已不再作为当前数据对齐阻塞项：原始 TB API 和 Dev 持久化数据均为 311 个唯一需求 ID，旧 UI 分母口径不可靠；历史多出的 3 条未被逐项识别，不能推断为测试工具。后续验收使用 TB 原始接口范围作为基准。
+- 尚未完成：最新 release 的已登录来源设置保存/回读与视觉复核；发布版合成 fixture→AI→隔离 POC Base upsert/readback→仅通知当前用户；错窗恢复和 durable worker 重启；租户登录态的目标行为复核。不要启用正式周计划或发送干系人通知来替代这些测试。
+
+## 较早验收更新（2026-10-13，source-only 发布；由上方最新记录补充）
 
 - root source-only 实现 commit `c3a91b2` 已推送至 `main`；妙搭 `sprint/default` 已推送至 `4de6d8c`。Release `7695978028435049655` 为 `finished`，绑定完整 commit `4de6d8cb038c31769365d345b6a5e87686d40873`，`error_logs` 为空。
 - 本地验证：root API 235/235（未运行指向非 loopback 数据库的 PostgreSQL integration）、Web 39/39、妙搭路由 66/66；根仓 typecheck/build、妙搭 server/client typecheck、lint、production build、共享逻辑对齐和两仓 `git diff --check` 均通过。最后一轮审查发现并修复了 job 记录缺失时 source-only 单项重试可能落入完整流水线的问题。代码已推送并发布。
@@ -205,11 +214,11 @@
 
 - 2026-10-10 — 本轮本地实现回归：root API 测试 203/203（含隔离的本机 PostgreSQL 集成用例）、Web 21/21、typecheck/build 通过；妙搭 app `test:rqsys-route` 13/13、lint、server/client typecheck、production build 通过。新增覆盖 Feishu 用户目录权限与租户过滤、需求池筛选、来源周计划/负责人名单/字段映射持久化、项目名及需求类型歧义拒绝。改动仍在两个独立仓库的本地工作树，未提交或发布。本轮没有恢复目标 E2E；历史 POC Base 冒烟证据未重跑。
 
-## Current next action
+## 2026-10-12 时的下一步（历史记录，已由顶部最新状态覆盖）
 - Latest published release: `7695657025665305793`, status `finished`, commit `3309d0b4a158e661e0177a24b1f7ccc2dceb02b0`, no release errors. The acceptance button now reads a server-authenticated fixture-status endpoint and stays hidden when the server flag is off.
 - Dev snapshot (2026-10-12, aggregate-only SQL): 1 source config (enabled), schedule disabled; 37 requirements, 7 synthetic fixture IDs, 5 analyzed and pushed, 0 running batches/jobs. This is a state check only; it does not prove this release processed those rows.
 - The Dev browser preview loaded but did not show the new fixture button, and its visible API log did not contain `GET /api/dev/fixtures/status`. Therefore this release's Dev app-mediated fixture → analysis → POC Base flow remains unverified. Do not trigger real Teambition sync. Reconcile the preview/runtime code alignment first.
-- Remaining acceptance gaps: Dev preview/runtime alignment; complete app-mediated synthetic fixture → analysis → POC Base upsert/readback and user-only notification; missed-window recovery and worker restart; interpret UI `311/314` before enabling a real schedule. Empty module dictionary/priority rule are accepted defaults, not blockers; keep priority blank and do not emit P3. Keep weekly schedule and stakeholder notifications disabled.
+- Historical remaining gaps in this snapshot: Dev preview/runtime alignment; complete app-mediated synthetic fixture → analysis → POC Base upsert/readback and user-only notification; missed-window recovery and worker restart; interpret UI `311/314`. The count mismatch is superseded by the latest source-only alignment recorded above. Keep weekly schedule and stakeholder notifications disabled.
 - E2E 续跑/恢复时仅使用获批的测试 Base/fixture，通知只发用户本人。
 - 历史 `.env` 编辑器状态已被后续干净提交覆盖；本次发布提交未包含 `.env` 或密钥文件。后续仍不得提交/发布真实凭据。
 

@@ -32,6 +32,12 @@
 
 Miaoda真实身份、调度和目标应用发布由 Tickets 00/09 验收。
 
+## 最新目标状态（2026-10-13）
+
+- 线上日志显示旧 release `e334188` 的 `PUT /api/sources/{id}` 因数据库时间序列化为 `HH:mm:ss`、而 API 校验只接受 `HH:mm` 返回 `400 VALIDATION_FAILED`。已在 root 与 Miaoda 两仓统一规范化边界值，并增加 API 与 PostgreSQL round-trip 回归。
+- 修复已推送到 root `main` commit `ae8fc89` 和 Miaoda `sprint/default` commit `59189609c8260f6201d15e990ba2d8ca00e4f355`；release `7696073033094450405` 已 finished，绑定该 app commit，`error_logs` 为空。
+- 本地 source config GET→PUT→GET 回读通过。**发布后已登录页面的保存与回读仍待验收**；恢复该检查前保持周计划关闭。当前浏览器接入不可用，不能把发布成功等同于 UI 保存验证。
+
 ## Latest local implementation evidence (2026-10-11)
 
 - 来源表单默认项目名为 `室外产品-码表软固件需求池`；客户端只提交项目名称、启用状态和周计划，不要求录入内部 ID，也不暴露 owner/field map。默认周计划为周一 09:00 `Asia/Shanghai`，保持未启用，等待目标调度验收。
