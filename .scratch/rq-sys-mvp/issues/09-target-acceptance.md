@@ -1,6 +1,50 @@
-# [partially executed: 311 条源数据已对齐；发布版设置保存、app E2E 与恢复验收仍待完成] 09 — 目标环境端到端验收
+# [partially executed: 目录 CRUD 修复发布、8 个模块省略及第二用户登录反馈已补齐；内嵌预览和组合调度仍待验收] 09 — 目标环境端到端验收
 
-## 最新验收更新（2026-10-13，最新发布后）
+## 最新验收闭环（2026-10-15）
+
+- **发现并修复目标目录写入异常：** Dev 新增临时人员成功，但更名失败。使用同一临时人员在平台注入数据库上复现：`SELECT pg_advisory_xact_lock(...)` 返回 PostgreSQL `void`，妙搭 JSON 驱动报 `Unexpected end of JSON input`。人员更名、人员删除、模块保存共三处改为 `IS NULL AS lock_acquired`，保留原事务与锁。两仓先补失败回归，再修复；未改表结构、鉴权、业务 API 或 `.env`。
+- **目标 Dev 目录全路径通过：** 临时人员新增/更名；模块新增/更名并关联临时人员；关联人员再次更名后模块分配自动跟随；删除人员后模块显示“未分配”；删除临时模块。最终只读 SQL 回读为 7 人、54 模块、已发布字典 v6，entries 与 v1 完全相同，0 活动作业、0 启用周计划。只操作 `RQSYS验收人员-20261015*` 和 `RQSYS验收模块-20261015*`，临时项已清理。
+- **8 个 Base 不支持模块逐项通过：** 使用既有合成需求 `aa7ddb47-4b52-4dbe-b758-ceeb6f878854` 和 POC record `reczz28NHB2Vegk7`，构造受控分析版本 2–9，调用真实目标 repositories、Base push service 和 Feishu transport。8 项均推送成功，返回 `not_in_base_select_options`；Web/DB 保留模块，同幂等键重放不新增 Base 行，PM 字段和空模块未被覆盖，审计保留省略原因。独立 Base 回读只有 1 行，源版本 1、分析版本 9、`待处理`/`已推送`，模块和优先级留空。这里的分析输出是 `acceptance_mock` 序列化夹具，**不是模型语义分类质量的证据**；没有调用 TB、模型或通知其他人。8 项为日志/异常文件管理、电源管理（后续转交）、GNSS管理、显示设置、系统管理、偏好设置、锁屏/解锁、场景+表盘+场景设置（后续转交）。
+- **第二用户登录：** 用户针对第二位租户成员登录验收请求回复“已登录”。按用户反馈记录登录通过；未独立读取另一账号的 actor/API 或逐页操作，不扩大为第二用户全操作验收。
+- **提交和发布：** root `eb4a4dd` 已在用户明确授权后推送 `main`；app `d64d309ef49cf55bb5011fc348759e58df936c72` 已推送 `sprint/default`。Release `7696725123818540278` 为 `finished`，绑定该 app commit，`error_logs=[]`。发布后当前用户重新授权既有权限并进入 Online 工作台，`API 已连接`，人员 7、模块 54 可读。Online 未进行测试数据写入或业务同步。
+- **本地回归：** root API 254/254（含本机隔离 PostgreSQL integration）、Web 43/43、Miaoda 73/73；两仓 typecheck/build、Miaoda lint、alignment 20/20 及 `git diff --check` 通过。截图：`/tmp/rqsys-online-modules-20261015.jpg`。
+- **Dev 生命周期边界：** 本轮初始直连文档再次捕获 `400 ErrorSandboxNotRunning` / `biz_status:toStart`。进入 Code 工作区后 `/dev/health` 返回 HTTP 200、`ready:true`，独立 Dev 重载恢复 311/311 并完成上述 CRUD。编辑器内嵌区域仍出现“系统启动中/IDE 加载失败”，未修复平台生命周期问题。
+
+**剩余执行项：** 编辑器内嵌预览稳定性；平台 cron 与启用中的持久安全测试来源的组合验收。平台 cron 关闭态投递、目标错窗幂等与 worker 租约接管已分别通过；现有 fixture 入口仅支持手动，调度器生成真实 TB job，直接启用真实来源不能充当安全夹具测试。正式周计划及干系人通知保持关闭。本轮没有 TB API 请求。
+
+## 追加验收闭环（2026-10-14）
+
+- CLI Keychain 刷新问题已通过正常沙箱外执行解决；既有登录和权限可用，无新增授权或密钥变更。
+- 新 Dev 合成批次 `4cd73a7f-48bf-4011-8a3d-1af7c2324ce7`：1/1 成功、0 失败；AI 已分析、Base 已推送。POC record `reczz28NGUPExYnY` 回读版本 1、`待处理` / `已推送`，模块和优先级留空符合弱证据夹具/未校准规则。
+- 只将该合成行分配给当前用户贾浩。POC 自动化运行 `7696481037590072568` 在 19:17:24 成功；本人消息搜索实读到 `om_x100b63c2029724a8def194eec76e31b`（19:17 私聊，正文匹配安全测试需求）。[本人测试通知](https://applink.feishu.cn/client/chat/open?openChatId=oc_a333a80cc307650f7a1d343ef6b5a0ba&position=4)。不是仅凭发送步骤推断送达。
+- 目标错窗/恢复演练使用平台注入数据库、真实 scheduler/repositories、仅内存启用的周一 09:00 配置及命名空间隔离的 fixture job。相同过期窗口两次调度仅生成一批次/一 sync job；探针 worker 领取后退出，真实 Dev worker 在租约过期后接管。批次 `80d4d908-966e-4e2d-a38c-9249b9126e52` 1/1 成功；job `a3b22776-941b-4113-9c34-6685ef351f37` attempt=2 / succeeded，source snapshot=1，POC record `reczz28NHB2Vegk7` 只有一行且版本为 1。未启用持久化真实周计划，未调用 TB。
+- Dev 服务 PID 2003→4616 自动恢复，worker 已启动。工作台恢复后，健康、来源、需求、批次、总览 API 刷新全部成功。独立 Dev 地址连续两次完整加载成功、显示 `API 已连接` / `311/311`，需求池可读取。编辑器内嵌预览刷新仍间歇 `应用加载失败`，切换面板可恢复已加载工作台；尚未取得这次内嵌失败请求的 HTTP 状态/响应体，不能套用旧的 PreviewProxy 400，也不能宣布内嵌问题已根治。
+- 云端平台自动升级 commit `130701b` 与本地 `5918960` 的 62 个业务文件内容一致（combined SHA-256 `a278fc210a798e95702a470a9275d2f829b4cb4c6c84b16f1501b654c2d1533b`）；`.env` 原改动保留。Dev 为 311 TB + 10 合成夹具、0 活动 job/batch、7 人/54 模块、0 优先级规则、0 启用周计划。访问配置 `Tenant` / `require_login=true`。
+- 最后单独重启已核实的前端组：Vite PID 1895→7840，后端仍为 4616；`/dev/health` HTTP 200 / `ready:true`，独立入口再次冷加载成功且 311/311。内嵌编辑器重载仍失败，因此前端重启没有根治该问题。最终只读汇总确认 311 TB + 10 夹具、0 活动 job/batch、0 启用计划，新合成批次仍 1/1 succeeded。
+- 尚余：内嵌预览稳定性；第二位真实租户用户登录；8 个不支持模块的目标推送/省略行为；平台 cron 与启用中的持久安全测试计划的组合验证。此次已关闭错窗幂等及进程退出后租约接管的证据缺口，但并不等于所有调度/访问路径已验收。
+
+本轮无产品代码变更或发布；正式周计划和干系人通知保持关闭。独立可用入口：<https://ecn8egz1lhkq-app_17fqkjwyx1u-1877652261857433.aiforce.run/app/app_17fqkjwyx1u?locale=en_US>。
+
+## 较早复核（2026-10-14，由上方追加记录更新）
+
+- **正式版页面与只读业务 API：** 登录态工作台显示“API 已连接”。需求池、同步批次、负责人映射和审计页面均加载到 API 返回的状态；当前无业务需求、批次或待映射负责人。审计页可读到来源配置变更记录。没有触发真实同步、AI、Base 写入或通知。
+- **正式版来源设置写入/回读通过：** 项目为`室外产品-码表软固件需求池`；同步关闭，周一 09:00 `Asia/Shanghai`，周计划关闭。按用户先前授权，将时间暂改为 09:01 后，页面提示“来源配置已保存并从 API 重新读取一致”；再恢复 09:00 保存，页面再次确认读回一致。最终同步开关与周计划开关均为关闭，审计页出现对应配置变更记录。
+- **正式版人员与模块目录：** 页面 API 加载完成后，人员页返回截图中的 7 人；功能模块页返回 54 项及截图对应的负责人分配。首次页面快照发生在请求完成前，显示的临时空态不是目录缺失。优先级页没有已发布校准规则，符合“规则发布前优先级留空”的决策。
+- **正式版视觉复核：** 工作台导航、状态卡、批次空态和来源状态在页面可见；总览显示 0 条业务需求/0 批次及来源停用。发布版 UI 的基本布局和空态可读，尚不等于完整业务链路验收。
+- **Dev 预览网络证据与阻塞：** 之前从应用页面进入需求池时看到 `Request failed (404)（REQUEST_FAILED）`。本次直接在已登录 Chrome 的 Dev 预览 Network 面板复核，实际加载文档请求为 `GET https://ecn8egz1lhkq-app_17fqkjwyx1u-1877652261857433.aiforce.run/app/app_17fqkjwyx1u?locale=en_US`，状态 `400 Bad Request`，响应体为 `{"error_code":"ErrorSandboxNotRunning","kerr_code":"k_sbgw_ec_400002649","message":"httpCode:400, error_msg: k_sbgw_ec_400002649 ErrorSandboxNotRunning client_error|sandbox not running|cause: [@lark.apaas.sandbox_gateway@PreviewProxy: sandbox fileOperate status is not ready, biz_status:toStart, fail_reason: ], codeId:400002649, module:sandbox_gateway"}`。重载后仍为同一 400；Network 面板没有捕获到 404 请求。由此当前请求在应用代码加载前已被 PreviewProxy 拦截，尚不能把先前页面内 404 归因到 `/api/requirements`，也不能据此改代码。已发布提交包含 `/api/requirements` 路由，本地 Miaoda checkout 与 release commit 一致。下一步须先让 Miaoda Dev sandbox 进入 running/ready，再重新捕获页面内失败 API 的 URL/状态/响应体；本次证据未记录 Cookie、令牌或请求头。未触碰两个用户云端编辑会话，也未在 Dev 启动同步。
+- **本轮预览重启复试（2026-10-14）：** 在原编辑页点击“重新加载”，又从新 Chrome 标签打开同一编辑任务并再次重载；两次均先出现“系统启动中/应用加载中”，随后回到“应用加载失败”。iframe 为 `about:blank`；接口日志通道显示“未连接”，成功/失败请求均为 0，列表无记录。新标签复试未消除故障，当前没有应用级 API 请求可供定位；之前的 404 仍未复现。没有改代码或发布，也没有触发同步、Base 写入、通知或计划任务。
+- **追加重启复试（2026-10-14）：** 对妙搭编辑器页面本身执行整页重载后，编辑器会话恢复，但 Dev 预览仍显示“应用加载中”；iframe 仍为 `about:blank`，预览刷新控件处于禁用状态。没有产生新的应用级请求或 404，也没有改代码、发布或触发任何业务写入。当前阻塞仍在 Dev sandbox/PreviewProxy 启动阶段。
+- **沙箱恢复排查（2026-10-14）：** 从妙搭应用入口新开页面后仍自动回到同一个开发任务；在预览失败页执行应用级“重新加载”，等待 15 秒后再次显示“应用加载失败”，iframe 为 `about:blank`、页面日志为空。当前 `lark-cli apps` 没有沙箱状态/重启命令，项目附带的妙搭技能也未定义用户侧恢复流程。无 Cookie/令牌的直连 GET 只返回 302 到登录派生 Cookie 页面，不作为沙箱状态证据；此前已登录预览网络面板捕获的 400 `ErrorSandboxNotRunning` 仍是有效诊断。已排除单一浏览器标签或编辑器页面缓存，尚无可用用户侧修复入口；需要妙搭平台恢复该 app 的 Dev sandbox/PreviewProxy。
+- **本轮本地回归（2026-10-14）：** root API 253/253（含随机临时 schema 的 PostgreSQL integration）、Web 43/43、Miaoda 路由 72/72；两仓 typecheck/build、Miaoda lint/stylelint、共享逻辑对齐和 `git diff --check` 均通过。未发现可归因于当前预览加载故障的代码失败。
+- **夹具与 Base 约束：** 已批准的隔离 POC Base 模块单选保留 50 个选项（4 个原选项 + 46 个词典模块）；另外 8 个模块仅用于 Web/数据库。`BASE_FIELDS_JSON` 的值此前已按同一 50 项配置，优先级选项仍是 P0/P1/P2；正式 Base 未修改。发布版 app-mediated fixture→AI→POC Base upsert/readback 及只通知当前用户的完整路径仍未验证。
+- **调度安全：** 正式版来源的周计划保持关闭；Dev 汇总中 `enabled_schedule_count=0`。应用自动化清单有 `rqsysWeeklySyncRecovery`，类型为 cron、频率 `*/30 * * * *`、时区 `Asia/Shanghai`，当前为 disabled。本轮未启动真实 TB 同步。真正周计划启用后的错窗恢复、durable worker 重启和第二位已登录租户用户访问仍未验收。
+- **合成目标 E2E 与通知（2026-10-14）：** 已加载的 Dev 应用会话中，固定合成批次 `944d4ff4-ac0f-4d04-8dff-92772581020e` 完成 1/1、0 失败；页面显示拉取完成、AI 已分析、Base 已推送，负责人未匹配。详情返回模块“无法识别”、整体低置信度及理由/证据，U/M/S/C 建议带证据，优先级留空；这符合弱证据 fixture 和未发布优先级规则。隔离 POC Base 对应记录回读为 `待处理`、`已推送`，source/analysis version 均为 1；“无法识别”未写入单选模块字段符合约定。将该记录负责人设为当前用户时未勾选 Base 内置“同时发送通知”；POC 工作流配置的接收方是执行人，运行日志在 18:30:56 显示运行成功，耗时 1.3 秒，`发送分配通知` 步骤成功。POC 表当前 8 行；清理了误建的 1 条空白行。该证据只覆盖合成数据和当前用户。
+- **重启复核与本地可靠性测试（2026-10-14）：** 完成上述 E2E 后再次打开妙搭编辑器预览，等待并点击预览入口仍停在“系统启动中…”，未加载应用 iframe；本次没有应用级请求。之前捕获的 PreviewProxy `400 ErrorSandboxNotRunning` 仍是可用根因证据，不能据此声称已恢复，也不应改业务代码。针对 due-window、幂等调度和 worker lease/fencing 的本地测试 20/20 通过；这不替代目标 Miaoda 的错窗恢复和 durable worker 重启验收。`lark-cli apps +automation-list` 本轮因本机 keychain 无法写入刷新凭证而未返回结果，未绕过该限制。
+- **CLI 与发布回读：** 首次 `+db-execute` 调用因本机 DNS 失败而未执行 SQL；获准重试后只读汇总成功，未读取需求详情。最近发布仍为 `7696073033094450405` / `finished`，绑定 app commit `59189609c8260f6201d15e990ba2d8ca00e4f355`，`error_logs` 为空。
+
+尚未完成：让 Miaoda Dev sandbox 进入 running/ready，并在恢复后复查最新预览及页面/API 请求；若应用启动后仍复现需求池 404，再按真实 URL、状态码和响应体修复（当前 404 未复现，不能先改业务代码）；在安全测试来源验证错窗恢复与 durable worker 重启；用另一位普通已登录用户验证登录访问范围。311 条 TB 原始 API ID 与 Dev 业务数据已对齐，`311/314` 不再是当前同步差异；历史额外 3 条仍未逐条识别。正式周计划与干系人通知保持关闭。
+
+## 验收更新（2026-10-13，发布后）
 
 - root commit `ae8fc89` 已推送到 `main`；Miaoda `sprint/default` commit `59189609c8260f6201d15e990ba2d8ca00e4f355` 已推送。Release `7696073033094450405` 已 `finished`，绑定该完整 app commit，`error_logs` 为空。
 - 修复并发布了 PostgreSQL `TIME` 读回 `HH:mm:ss`、而 API 仅接受 `HH:mm` 导致的来源设置更新 `400 VALIDATION_FAILED`。本地 API GET→PUT→GET 与 PostgreSQL round-trip 回归已通过；发布后登录态设置保存/回读仍待核验，周计划继续关闭。
