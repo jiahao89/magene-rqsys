@@ -4,7 +4,7 @@ import type { PipelineJobRecord } from "../domain/persistence.js";
 import type { PipelineJobRepository } from "../application/repositories.js";
 import type { SyncJobRunner } from "../sync/service.js";
 import { PipelineJobWorker } from "./worker.js";
-import { FixturePolicyError } from "../sync/test-fixture.js";
+import { assertFixtureWorkAllowed, FixturePolicyError } from "../sync/test-fixture.js";
 
 const NOW = "2026-10-08T00:00:00.000Z";
 function job(overrides: Partial<PipelineJobRecord> = {}): PipelineJobRecord {
@@ -105,6 +105,23 @@ test("fixture policy denial is terminal and never schedules an unsafe retry", as
   assert.equal((await worker.runOnce()).kind, "failed");
   assert.deepEqual(h.calls.map((call) => (call as unknown[])[0]), ["claim", "sync", "complete"]);
   assert.equal(((h.calls.at(-1) as unknown[])[2] as Record<string, unknown>).errorCode, "fixture_policy_denied");
+});
+
+test("fixture rejection persists a bounded reason without disclosing environment values", async () => {
+  let policyError: Error | undefined;
+  try {
+    assertFixtureWorkAllowed({ sourceId: "source-1", fixture: true }, {
+      RQSYS_ENABLE_TEST_FIXTURES: "true", BASE_APP_TOKEN: "secret-formal-base", BASE_TABLE_ID: "private-table",
+    }, new Date(NOW));
+  } catch (error) { policyError = error as Error; }
+  assert.ok(policyError instanceof FixturePolicyError);
+  const h = harness(job(), { handlerError: policyError });
+  const worker = new PipelineJobWorker({ jobs: h.jobs, sync: h.sync, workerId: "worker", leaseMs: 30_000, now: () => new Date(NOW) });
+  await worker.runOnce();
+  const result = (h.calls.at(-1) as unknown[])[2] as Record<string, unknown>;
+  assert.match(String(result.errorSummary), /unsafe_poc_base/);
+  assert.equal(JSON.stringify(result).includes("secret-formal-base"), false);
+  assert.equal(JSON.stringify(result).includes("private-table"), false);
 });
 
 test("partial_failure sync is retryable; job types without a handler fail closed (terminal)", async () => {

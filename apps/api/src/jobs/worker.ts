@@ -51,7 +51,7 @@ export class PipelineJobWorker {
           expectedAttempt: job.attemptCount,
           status: "failed", errorCode: code,
           ...(error instanceof FixturePolicyError && job.jobType === "sync" ? { settleSyncBatch: true } : {}),
-          errorSummary: code === "fixture_policy_denied" ? "Synthetic acceptance policy denied this job; restore a safe configuration before retrying." : code === "unsupported_job_type"
+          errorSummary: code === "fixture_policy_denied" ? `Synthetic acceptance policy denied (${error instanceof FixturePolicyError ? error.reason : "unspecified"}); restore a safe configuration before retrying.` : code === "unsupported_job_type"
             ? "No handler is registered for this job type."
             : "Max attempts reached; manual retry is available.",
           now: this.now().toISOString(),
