@@ -31,6 +31,7 @@ const SHARED = [
   "scheduler/due.ts",
   "scheduler/due-jobs.ts",
   "sync/hashes.ts",
+  "sync/test-fixture.ts",
   "jobs/claim.ts",
   "application/ports.ts",
   "audit/storage.ts",

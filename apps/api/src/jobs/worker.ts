@@ -73,11 +73,12 @@ export class PipelineJobWorker {
     if (injected) return injected(job);
     if (job.jobType === "sync") {
       if (!this.options.sync) throw new Error("Sync worker dependency is unavailable");
-      const { batchId, sourceId, triggerType, actorId, onlyIds, mode } = job.payload as Record<string, unknown>;
+      const { batchId, sourceId, triggerType, actorId, onlyIds, testFixture, mode } = job.payload as Record<string, unknown>;
       if (typeof batchId !== "string" || typeof sourceId !== "string" || (triggerType !== "manual" && triggerType !== "scheduled") || (actorId !== null && typeof actorId !== "string")) throw new Error("Invalid sync job payload");
       if (onlyIds !== undefined && (!Array.isArray(onlyIds) || !onlyIds.every((id) => typeof id === "string"))) throw new Error("Invalid sync job payload: onlyIds");
+      if (testFixture !== undefined && typeof testFixture !== "boolean") throw new Error("Invalid sync job payload: testFixture");
       if (mode !== undefined && mode !== "full_pipeline" && mode !== "source_only") throw new Error("Invalid sync job payload: mode");
-      const result = await this.options.sync({ batchId, sourceConfigId: sourceId, trigger: triggerType, actorId, mode: mode === "source_only" ? "source_only" : "full_pipeline", ...(Array.isArray(onlyIds) ? { onlyIds: onlyIds as string[] } : {}) });
+      const result = await this.options.sync({ batchId, sourceConfigId: sourceId, trigger: triggerType, actorId, mode: mode === "source_only" ? "source_only" : "full_pipeline", ...(Array.isArray(onlyIds) ? { onlyIds: onlyIds as string[] } : {}), ...(testFixture === true ? { testFixture: true } : {}) });
       // 批次失败/部分失败 → 触发重试策略（保留已成功条目，重试由编排器幂等处理）
       if (result.status === "failed" || result.status === "partial_failure") throw new Error("sync completed with retryable failures");
       return;

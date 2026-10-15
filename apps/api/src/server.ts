@@ -21,10 +21,12 @@ import { createAnalysisAdvancer, createSourceMetadataAdvancer } from "./pipeline
 import { createLocalIdentityProvider, describeLocalIdentity } from "./http/local-identity.js";
 import type { SourceProjectConfig } from "./domain/workflow.js";
 import { DEFAULT_FUNCTION_MODULES } from "./domain/team-directory.js";
+import { assertFixtureWorkAllowed, createSyntheticFixtureTask, isSyntheticFixtureRequirement, readScheduledFixtureSource } from "./sync/test-fixture.js";
 
 const port = Number(process.env.PORT ?? 8787);
 const database = createPool(process.env.DATABASE_URL);
 const repositories = database ? new PostgresRepositories(database) : undefined;
+const fixtureEnvironment = { RQSYS_ENABLE_TEST_FIXTURES: process.env.RQSYS_ENABLE_TEST_FIXTURES, BASE_APP_TOKEN: process.env.BASE_APP_TOKEN, BASE_TABLE_ID: process.env.BASE_TABLE_ID, RQSYS_SCHEDULE_FIXTURE: process.env.RQSYS_SCHEDULE_FIXTURE };
 // 身份：默认 fail-closed。仅当显式设置 RQSYS_LOCAL_IDENTITY 且非生产环境时才启用本地开发身份，
 // 目标环境的可信身份由妙搭 controller 注入 req.userContext 后写入同名请求头。
 const localIdentityUserId = process.env.RQSYS_LOCAL_IDENTITY;
@@ -44,6 +46,7 @@ try { teambitionSourceProjects = new TeambitionClient(); } catch { /* source set
 
 // ---- Worker composition：认领 pipeline_jobs 并分发到对应执行器 ----
 const syncJobRunner: SyncJobRunner | undefined = repositories ? async (job) => {
+  assertFixtureWorkAllowed({ sourceId: job.sourceConfigId, fixture: job.testFixture === true }, fixtureEnvironment, new Date());
   const source = await repositories.sources.get(job.sourceConfigId);
   if (!source) throw new Error("Sync source configuration was not found");
   const config: SourceProjectConfig = {
@@ -52,12 +55,11 @@ const syncJobRunner: SyncJobRunner | undefined = repositories ? async (job) => {
     schedule: { enabled: source.scheduleEnabled, weekday: source.scheduleWeekday, time: source.scheduleLocalTime, timezone: source.scheduleTimezone },
     ownerNames: source.ownerNames, fieldMap: source.fieldMap,
   };
-  const client = new TeambitionClient();
   const persistence = createPostgresSyncPersistence(repositories, job.sourceConfigId);
-  const orchestrator = new SyncOrchestrator(
-    { async listRequirements(cfg) { return { items: await client.listRequirementTasks(cfg), hasMore: false, nextCursor: null }; } },
-    persistence,
-  );
+  const taskSource = job.testFixture
+    ? { async listRequirements(cfg: SourceProjectConfig) { return { items: [createSyntheticFixtureTask(job.batchId, cfg.requirementTypeId)], hasMore: false, nextCursor: null }; } }
+    : { async listRequirements(cfg: SourceProjectConfig) { return { items: await new TeambitionClient().listRequirementTasks(cfg), hasMore: false, nextCursor: null }; } };
+  const orchestrator = new SyncOrchestrator(taskSource, persistence);
   const result = await orchestrator.run({ batchId: job.batchId, sourceConfigId: job.sourceConfigId, config, ...(job.mode === undefined ? {} : { mode: job.mode }), ...(job.onlyIds === undefined ? {} : { onlyIds: job.onlyIds }) });
   // 打通同步 → AI 分析链路：为新建/实质变更的需求创建分析任务（按源版本幂等去重）
   if (result.status !== "failed" && shouldProcessSyncDownstream(job.mode)) {
@@ -88,6 +90,7 @@ const analysisJobHandler: ((job: { payload: Record<string, unknown> }) => Promis
   if (typeof requirementId !== "string") throw new Error("Invalid analysis job payload");
   const requirement = await repositories.requirements.get(requirementId);
   if (!requirement) throw new Error("Analysis requirement was not found");
+  assertFixtureWorkAllowed({ sourceId: requirement.sourceConfigId, fixture: isSyntheticFixtureRequirement(requirement.teambitionRequirementId) }, fixtureEnvironment, new Date());
   const targetSubstantiveHash = job.payload.substantiveHash;
   if (typeof targetSubstantiveHash === "string" && targetSubstantiveHash !== requirement.substantiveHash) return;
   const source = await repositories.sources.get(requirement.sourceConfigId);
@@ -177,6 +180,7 @@ const basePushJobHandler: ((job: { payload: Record<string, unknown> }) => Promis
   if (typeof requirementId !== "string") throw new Error("Invalid base_push job payload");
   const requirement = await repositories.requirements.get(requirementId);
   if (!requirement) throw new Error("Base push requirement was not found");
+  assertFixtureWorkAllowed({ sourceId: requirement.sourceConfigId, fixture: isSyntheticFixtureRequirement(requirement.teambitionRequirementId) }, fixtureEnvironment, new Date());
   const source = await repositories.sources.get(requirement.sourceConfigId);
   if (!source?.externalProjectId) throw new Error("Base push source project is not configured");
   const expectedSourceVersion = job.payload.sourceVersion;
@@ -240,7 +244,9 @@ let workerTimer: NodeJS.Timeout | undefined;
 if (worker && repositories && workerPollMs > 0) {
   workerTimer = setInterval(() => {
     void (async () => {
-      await createDueSyncJobs({ sources: repositories.sources, batches: repositories.batches, jobs: repositories.jobs, now: new Date() });
+      const now = new Date();
+      const fixtureSourceId = readScheduledFixtureSource(fixtureEnvironment, now);
+      await createDueSyncJobs({ sources: repositories.sources, batches: repositories.batches, jobs: repositories.jobs, now, ...(fixtureSourceId ? { fixtureSourceId } : {}) });
       await worker.runOnce();
     })().catch((error) => process.stderr.write(`worker tick failed: ${String(error)}\n`));
   }, workerPollMs);

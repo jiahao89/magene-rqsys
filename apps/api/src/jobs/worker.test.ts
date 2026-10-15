@@ -42,6 +42,13 @@ test("worker preserves the explicit source-only mode for a manual import", async
   assert.deepEqual(h.calls[1], ["sync", { batchId: "batch-1", sourceConfigId: "source-1", trigger: "manual", actorId: null, mode: "source_only" }]);
 });
 
+test("worker preserves the explicit scheduled fixture marker for the safe sync reader", async () => {
+  const h = harness(job({ payload: { batchId: "batch-1", sourceId: "source-1", triggerType: "scheduled", actorId: null, testFixture: true } }));
+  const worker = new PipelineJobWorker({ jobs: h.jobs, sync: h.sync, workerId: "local-worker", leaseMs: 30_000, now: () => new Date(NOW) });
+  assert.equal((await worker.runOnce()).kind, "succeeded");
+  assert.deepEqual(h.calls[1], ["sync", { batchId: "batch-1", sourceConfigId: "source-1", trigger: "scheduled", actorId: null, mode: "full_pipeline", testFixture: true }]);
+});
+
 test("迟到的 worker 结果被 fencing 拒绝：不覆盖新认领者的状态（不变量，工单 15）", async () => {
   const calls: unknown[] = [];
   const claimedJob = job();

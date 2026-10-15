@@ -17,9 +17,19 @@ export async function createDueSyncJobs(params: {
   batches: SyncBatchRepository;
   jobs: PipelineJobRepository;
   now: Date;
+  /** 已通过服务端 POC/时效守卫的合成验收来源；未设置时保持正式行为。 */
+  fixtureSourceId?: string;
 }): Promise<DueSyncJobOutcome[]> {
   const outcomes: DueSyncJobOutcome[] = [];
-  for (const source of await params.sources.list()) {
+  const sources = await params.sources.list();
+  if (params.fixtureSourceId && !sources.some((source) => source.id === params.fixtureSourceId)) {
+    throw new Error("Scheduled fixture source was not found");
+  }
+  for (const source of sources) {
+    if (params.fixtureSourceId && source.id !== params.fixtureSourceId) {
+      outcomes.push({ sourceConfigId: source.id, batchId: null, window: null, enabled: false });
+      continue;
+    }
     if (!source.enabled || !source.scheduleEnabled) {
       outcomes.push({ sourceConfigId: source.id, batchId: null, window: null, enabled: false });
       continue;
@@ -38,7 +48,7 @@ export async function createDueSyncJobs(params: {
       continue;
     }
     // 批次级幂等键：同一调度窗口的重复触发复用同一批次（sync_batches 唯一约束兜底）
-    const idempotencyKey = `sched:${source.id}:_batch_:${window.start}`;
+    const idempotencyKey = `${params.fixtureSourceId ? "fixture-sched" : "sched"}:${source.id}:_batch_:${window.start}`;
     const batch = await params.batches.create({
       sourceConfigId: source.id, triggerType: "scheduled", actorId: null,
       idempotencyKey, startedAt: params.now.toISOString(),
@@ -46,7 +56,7 @@ export async function createDueSyncJobs(params: {
     // 任务幂等键按批次去重：同批次的重复入队复用同一任务
     await params.jobs.enqueue({
       jobType: "sync", dedupeKey: `sync:${batch.id}`,
-      payload: { batchId: batch.id, sourceId: source.id, triggerType: "scheduled", actorId: null },
+      payload: { batchId: batch.id, sourceId: source.id, triggerType: "scheduled", actorId: null, ...(params.fixtureSourceId ? { testFixture: true } : {}) },
       availableAt: params.now.toISOString(),
     });
     outcomes.push({ sourceConfigId: source.id, batchId: batch.id, window: window.start, enabled: true });
