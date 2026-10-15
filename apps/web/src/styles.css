@@ -339,7 +339,6 @@ tbody tr:hover { background: var(--rq-surface-row-hover); }
   --rq-success-bg-on-dark: #183428;
   --rq-success-border-on-dark: #28563e;
   --rq-success-on-dark: #a1e1bb;
-  --rq-surface: #fff;
   --rq-text-faint: #9299a6;
   --rq-text-soft: #818b9a;
   --rq-text-strong: #495468;
