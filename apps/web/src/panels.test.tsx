@@ -224,6 +224,32 @@ describe("RequirementsPanel (ticket 17)", () => {
     expect(await screen.findByText(/拉取 synced · AI 分析 analyzed · 负责人 auto_mapped · 推送 pushed/)).toBeInTheDocument();
   });
 
+  it("keeps the latest selected requirement when an older refresh finishes late", async () => {
+    let refreshA: ((response: Response) => void) | undefined;
+    let firstA = true;
+    const rowB = { ...row, id: "req-2", sourceRequirementId: "tb-2", title: "另一个需求" };
+    const detail = (item: typeof row) => ({ ...item, analysis: null, analyses: [] });
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/requirements/req-1") {
+        if (firstA) { firstA = false; return jsonOk(detail(row)); }
+        return new Promise<Response>((resolve) => { refreshA = resolve; });
+      }
+      if (path === "/api/requirements/req-2") return jsonOk(detail(rowB));
+      return jsonOk({ items: [row, rowB], nextCursor: null });
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    fireEvent.click(within(await screen.findByRole("row", { name: /需要报表/ })).getByRole("button", { name: "查看" }));
+    expect(await screen.findByText(/需要报表（REQ-tb-1/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "刷新" }));
+    await waitFor(() => expect(refreshA).toBeTypeOf("function"));
+    fireEvent.click(within(await screen.findByRole("row", { name: /另一个需求/ })).getByRole("button", { name: "查看" }));
+    expect(await screen.findByText(/另一个需求（REQ-tb-2/)).toBeInTheDocument();
+    await act(async () => { refreshA?.(jsonOk(detail(row))); });
+    expect(screen.getByText(/另一个需求（REQ-tb-2/)).toBeInTheDocument();
+    expect(screen.queryByText(/需要报表（REQ-tb-1/)).not.toBeInTheDocument();
+  });
+
   it("shows AI evidence, facts vs inference separation, and the analysis version history in detail", async () => {
     fetchMock.mockImplementation(async (input) => {
       const path = typeof input === "string" ? input : new Request(input).url;

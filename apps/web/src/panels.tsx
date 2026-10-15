@@ -387,6 +387,7 @@ export function RequirementsPanel({ onRefresh }: { onRefresh: () => void }) {
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selected, setSelected] = useState<RequirementDetail | null>(null);
+  const detailRequestVersion = useRef(0);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -407,9 +408,14 @@ export function RequirementsPanel({ onRefresh }: { onRefresh: () => void }) {
   }, [load]);
 
   const open = async (id: string) => {
+    const version = ++detailRequestVersion.current;
     setSelected(null); setDetailError(null); setNotice(null);
-    try { setSelected(await getRequirement(id)); }
-    catch (cause) { setDetailError(errorText(cause)); }
+    try {
+      const detail = await getRequirement(id);
+      if (version === detailRequestVersion.current) setSelected(detail);
+    } catch (cause) {
+      if (version === detailRequestVersion.current) setDetailError(errorText(cause));
+    }
   };
   const runAction = async (action: () => Promise<string>, detailId: string) => {
     setBusy(true); setNotice(null);
@@ -434,7 +440,7 @@ export function RequirementsPanel({ onRefresh }: { onRefresh: () => void }) {
       <HeroButton className="button button-secondary button-small" onPress={() => { onRefresh(); void load(filters, null); if (selected) void open(selected.id); }}><RefreshCw size={14} />刷新</HeroButton>
     </div></div>
     <StateBanner loadError={loadError ?? detailError ?? peopleError} notice={notice} onCloseNotice={() => setNotice(null)} />
-    {selected && <RequirementDetailCard selected={selected} structured={structured} busy={busy} onClose={() => setSelected(null)} onAct={runAction} />}
+    {selected && <RequirementDetailCard selected={selected} structured={structured} busy={busy} onClose={() => { detailRequestVersion.current += 1; setSelected(null); }} onAct={runAction} />}
     <RequirementsTable rows={rows} loading={loadState === "loading"} onOpen={(row) => void open(row.id)} />
     {cursor && <div className="rules-form"><HeroButton className="button button-secondary button-small" onPress={() => void load(filters, cursor)} isDisabled={loadState === "loading"}>加载更多</HeroButton></div>}
   </section>;
