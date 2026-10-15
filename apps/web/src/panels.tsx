@@ -431,7 +431,7 @@ export function RequirementsPanel({ onRefresh }: { onRefresh: () => void }) {
       <label className="field"><span>最近同步始于</span><HeroInput type="datetime-local" aria-label="最近同步开始时间" value={since} onChange={(e) => setSince(e.target.value)} /></label>
       <label className="field"><span>最近同步止于</span><HeroInput type="datetime-local" aria-label="最近同步结束时间" value={until} onChange={(e) => setUntil(e.target.value)} /></label>
       <HeroButton className="button button-secondary button-small" onPress={() => void load(filters, null)}>筛选</HeroButton>
-      <HeroButton className="button button-secondary button-small" onPress={() => { onRefresh(); void load(filters, null); }}><RefreshCw size={14} />刷新</HeroButton>
+      <HeroButton className="button button-secondary button-small" onPress={() => { onRefresh(); void load(filters, null); if (selected) void open(selected.id); }}><RefreshCw size={14} />刷新</HeroButton>
     </div></div>
     <StateBanner loadError={loadError ?? detailError ?? peopleError} notice={notice} onCloseNotice={() => setNotice(null)} />
     {selected && <RequirementDetailCard selected={selected} structured={structured} busy={busy} onClose={() => setSelected(null)} onAct={runAction} />}

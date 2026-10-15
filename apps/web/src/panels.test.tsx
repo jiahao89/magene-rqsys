@@ -206,6 +206,24 @@ describe("MappingsPanel (ticket 17)", () => {
 describe("RequirementsPanel (ticket 17)", () => {
   const row = { id: "req-1", sourceRequirementId: "tb-1", title: "需要报表", sourceVersion: 2, pipeline: { pull: "synced", analysis: "analyzed", owner: "auto_mapped", push: "pushed" } };
 
+  it("refreshes an expanded requirement after background analysis and push finish", async () => {
+    let completed = false;
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/requirements/req-1") return jsonOk({ ...row,
+        pipeline: completed ? row.pipeline : { ...row.pipeline, analysis: "pending", push: "pending" },
+        analysis: null, analyses: [],
+      });
+      return jsonOk({ items: [row], nextCursor: null });
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    fireEvent.click(await screen.findByRole("button", { name: "查看" }));
+    expect(await screen.findByText(/拉取 synced · AI 分析 pending/)).toBeInTheDocument();
+    completed = true;
+    fireEvent.click(screen.getByRole("button", { name: "刷新" }));
+    expect(await screen.findByText(/拉取 synced · AI 分析 analyzed · 负责人 auto_mapped · 推送 pushed/)).toBeInTheDocument();
+  });
+
   it("shows AI evidence, facts vs inference separation, and the analysis version history in detail", async () => {
     fetchMock.mockImplementation(async (input) => {
       const path = typeof input === "string" ? input : new Request(input).url;
