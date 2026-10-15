@@ -3,6 +3,38 @@ import assert from "node:assert/strict";
 import { PostgresRepositories } from "./repositories.js";
 import { DEFAULT_TEAM_MEMBERS } from "../../domain/team-directory.js";
 
+test("team directory CRUD survives a transport that cannot serialize PostgreSQL void", async () => {
+  let people = ["Temporary PM"];
+  let modules: Array<{ name: string; personName: string | null }> = [{ name: "地图", personName: "Temporary PM" }];
+  let version = 1;
+  const query = async (sql: string, values: unknown[] = []) => {
+    // The target Miaoda driver fails to decode a bare void result. Model that
+    // external transport constraint while driving the public repository API.
+    if (sql.includes("pg_advisory_xact_lock")) {
+      if (!sql.includes("IS NULL")) throw new SyntaxError("Unexpected end of JSON input");
+      return { rows: [{ lock_acquired: false }], rowCount: 1 };
+    }
+    if (sql.startsWith("SELECT") && sql.includes("source_configs")) return { rows: [{ id: "source", owner_names: people, has_dictionary: true }], rowCount: 1 };
+    if (sql.startsWith("SELECT") && sql.includes("module_dictionary_versions")) return { rows: [{ version, entries: modules, has_dictionary: true }], rowCount: 1 };
+    if (sql.startsWith("UPDATE source_configs")) people = JSON.parse(String(values[1]));
+    if (sql.startsWith("INSERT INTO module_dictionary_versions")) {
+      modules = JSON.parse(String(values[0]));
+      version += 1;
+      return { rows: [{ version }], rowCount: 1 };
+    }
+    return { rows: [], rowCount: 0 };
+  };
+  const store = new PostgresRepositories({ query, connect: async () => ({ query, release() {} }) } as never).directory;
+  const event = { id: "event", actorId: "test-actor", eventType: "directory.test", entityType: "person", entityId: "Temporary PM", result: "succeeded" as const, safeDetails: {}, occurredAt: "2026-10-15T00:00:00.000Z" };
+  assert.deepEqual(await store.renamePerson("Temporary PM", "Renamed PM", event), ["Renamed PM"]);
+  assert.deepEqual((await store.listModules()).items, [{ name: "地图", personName: "Renamed PM" }]);
+  assert.deepEqual(await store.deletePerson("Renamed PM", event), []);
+  assert.deepEqual((await store.listModules()).items, [{ name: "地图", personName: null }]);
+  const saved = await store.saveModules(3, [{ name: "导航", personName: null }], "test-actor", event.occurredAt, event);
+  assert.equal(saved.version, 4);
+  assert.deepEqual(saved.items, [{ name: "导航", personName: null }]);
+});
+
 function recordingPool() {
   const calls: Array<{sql:string;values:unknown[]|undefined}> = [];
   const resultFor = (sql:string, values?:unknown[]) => sql.includes("source_configs")

@@ -205,7 +205,7 @@ export class PostgresTeamDirectoryRepository implements TeamDirectoryRepository 
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      await client.query("SELECT pg_advisory_xact_lock(hashtextextended('module_dictionary_versions',0))");
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended('module_dictionary_versions',0)) IS NULL AS lock_acquired");
       const source = await client.query("SELECT id,owner_names FROM source_configs ORDER BY created_at,id LIMIT 1 FOR UPDATE");
       if (!source.rows[0]) throw new TeamDirectoryConflict("请先配置 Teambition 数据源。");
       const people = await this.effectivePeople(client, source.rows[0].owner_names);
@@ -227,7 +227,7 @@ export class PostgresTeamDirectoryRepository implements TeamDirectoryRepository 
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      await client.query("SELECT pg_advisory_xact_lock(hashtextextended('module_dictionary_versions',0))");
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended('module_dictionary_versions',0)) IS NULL AS lock_acquired");
       const source = await client.query("SELECT id,owner_names FROM source_configs ORDER BY created_at,id LIMIT 1 FOR UPDATE");
       if (!source.rows[0]) throw new TeamDirectoryConflict("请先配置 Teambition 数据源。");
       const people = await this.effectivePeople(client, source.rows[0].owner_names);
@@ -256,7 +256,7 @@ export class PostgresTeamDirectoryRepository implements TeamDirectoryRepository 
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      await client.query("SELECT pg_advisory_xact_lock(hashtextextended('module_dictionary_versions',0))");
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended('module_dictionary_versions',0)) IS NULL AS lock_acquired");
       const source = await client.query("SELECT id,owner_names FROM source_configs ORDER BY created_at,id LIMIT 1 FOR UPDATE");
       if (!source.rows[0]) throw new TeamDirectoryConflict("请先配置 Teambition 数据源。");
       const dictionary = await client.query("SELECT version FROM module_dictionary_versions WHERE status='published' ORDER BY version DESC LIMIT 1 FOR UPDATE");
