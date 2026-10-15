@@ -1,6 +1,21 @@
-# [partially executed: 目录 CRUD 修复发布、8 个模块省略及第二用户登录反馈已补齐；内嵌预览和组合调度仍待验收] 09 — 目标环境端到端验收
+# [核心链路验收通过；Dev 编辑器平台预览问题保留] 09 — 目标环境端到端验收
 
-## 最新验收闭环（2026-10-15）
+## Online 隔离验收与恢复（2026-10-15 下午）
+
+- 用户明确批准定时合成模式及 Online 临时切换/恢复。默认关闭的 `RQSYS_SCHEDULE_FIXTURE` 只允许指定来源、最长两小时和精确 POC Base；sync/analysis/push 每次执行均守卫，恢复正式配置后延迟夹具不得调用外部系统。单项重试沿用原夹具身份；策略拒绝为终态，同步 batch/job 原子失败并带 attempt fencing。两轴代码复核发现的身份重试/孤儿批次/迟到覆盖均已修复。
+- **Online 手动完整链路通过：** batch `9fc4b67f-9b6a-4d28-8022-a87a5bfea879` 1/1；需求 `70d77cd3-d562-49d5-9a14-d8632d2a6c24`。首次 analysis 被安全策略拒绝，旧摘要未保存原因，不能认定具体根因；新增有限原因码后在新发布实例重试成功。真实 DeepSeek 分析为“无法识别 / 低置信度”，priority 为空、owner `not_required`，仍推送成功。独立 POC Base readback `reczz28NbRH5CwFh`：source/analysis v1、待处理/已推送。新诊断只保存常量原因，不输出环境值。
+- **平台 cron + 持久计划 + 队列 + AI + Base 组合路径通过：** 线上自动化日志 15:40:24、15:45:59 两次触发/执行均成功；对应服务日志 `RQ-Sys scheduled work poll completed`，trace `d9e75faeb77b98275fc5b400d41d0ef5` / `2c454790f7f54a32ec799239cfa821b9`。只有一个 scheduled batch `25638a3a-9695-4c6e-9483-7e70b223e1f1`，1/1、0失败；幂等窗口 `fixture-sched:99331edb-663b-4635-99f4-597e26304ab1:_batch_:2026-10-12T01:00:00.000Z`。需求 `48da6421-c7a4-43fa-ac39-8be541285a41` 已分析/已推送；独立 Base `reczz28Nbhq0Mvtw` 读回 source/analysis v1、待处理/已推送、模块/优先级空。第二次真实平台投递未创建重复 batch/job/需求。未访问 TB，不替代 TB 语义/分页验证；新行无负责人，未通知其他人。
+- 15:30 后立即查询无投递日志，稍后记录实际执行为15:40:24，不能把即时查询为空当成永久失败。CLI 拒绝5分钟 cron（最小30分钟），未生效；随后临时 `15,45 * * * *` 保持30分钟间隔。调试按钮曾报“预览服务未就绪”，不计成功调度证据。
+- **恢复完成：** 先停 cron、关闭来源/周计划，回读0 queued/running，再将4项 Base/fixture 变量恢复备份并删除新增 mode。全部原9项变量逐值比对相等，密钥未变；cron恢复 `*/30 * * * *`、Asia/Shanghai、disabled。来源恢复 disabled、周一09:00、Asia/Shanghai、schedule disabled。仅保留两条合成历史用于审计，Online业务记录仍为0；Dev业务311条未改。
+- **验收发现的详情刷新问题：** 两仓刷新列表时同步重取展开详情，防止后台已完成而详情仍显示pending；用请求版本守卫防止A的迟到刷新覆盖后选B。先红后绿回归及两轴复核通过。
+- **当前本地回归：** API266/266（含隔离本机PostgreSQL）、Web45/45、Miaoda76/76；两仓类型/构建、Miaoda lint、alignment21/21、diff检查通过。新代码和发布结果见下方追加记录。
+
+最终发布核验：root代码 `8e5ff4f` 已推 main；Miaoda代码 `be3be6d6bf5599155384f746c4a1fddcca6fbe47` 已推 sprint/default。最终 release `7696803946761276694` 为 finished，绑定该提交、error_logs=[]；它包含安全定时夹具与详情刷新/迟到响应修复，使用恢复后的原Online配置。新实例登录/API及fixture入口关闭状态已检查；需求页展开定时夹具后点击刷新，详情仍正确显示analyzed/not_required/pushed和POC record引用。截图 `/tmp/rqsys-online-accepted-20261015.jpg`。最终只读SQL再次确认来源/计划false、周一09:00 Asia/Shanghai、0活动job/batch、0业务行；定时需求恰好1源快照/1分析/1push run/1sync job。
+
+
+剩余平台问题：编辑器 Dev 沙箱/内嵌 IDE 仍间歇 `400 ErrorSandboxNotRunning`、`biz_status:toStart` 或“IDE加载失败”。进入代码工作区唤醒后 `/dev/health` 为200/ready，独立 Dev 可恢复；这是保留的平台开发工具问题，不能称已根治。Online 的隔离完整链路与组合调度已有当前证据，可据此进入受限内测。未独立复测另一用户完整写操作；8个模块仍按已批准的Web/DB-only边界，优先级规则未发布时继续留空。
+
+## 较早验收闭环（2026-10-15 上午）
 
 - **发现并修复目标目录写入异常：** Dev 新增临时人员成功，但更名失败。使用同一临时人员在平台注入数据库上复现：`SELECT pg_advisory_xact_lock(...)` 返回 PostgreSQL `void`，妙搭 JSON 驱动报 `Unexpected end of JSON input`。人员更名、人员删除、模块保存共三处改为 `IS NULL AS lock_acquired`，保留原事务与锁。两仓先补失败回归，再修复；未改表结构、鉴权、业务 API 或 `.env`。
 - **目标 Dev 目录全路径通过：** 临时人员新增/更名；模块新增/更名并关联临时人员；关联人员再次更名后模块分配自动跟随；删除人员后模块显示“未分配”；删除临时模块。最终只读 SQL 回读为 7 人、54 模块、已发布字典 v6，entries 与 v1 完全相同，0 活动作业、0 启用周计划。只操作 `RQSYS验收人员-20261015*` 和 `RQSYS验收模块-20261015*`，临时项已清理。
@@ -10,7 +25,7 @@
 - **本地回归：** root API 254/254（含本机隔离 PostgreSQL integration）、Web 43/43、Miaoda 73/73；两仓 typecheck/build、Miaoda lint、alignment 20/20 及 `git diff --check` 通过。截图：`/tmp/rqsys-online-modules-20261015.jpg`。
 - **Dev 生命周期边界：** 本轮初始直连文档再次捕获 `400 ErrorSandboxNotRunning` / `biz_status:toStart`。进入 Code 工作区后 `/dev/health` 返回 HTTP 200、`ready:true`，独立 Dev 重载恢复 311/311 并完成上述 CRUD。编辑器内嵌区域仍出现“系统启动中/IDE 加载失败”，未修复平台生命周期问题。
 
-**剩余执行项：** 编辑器内嵌预览稳定性；平台 cron 与启用中的持久安全测试来源的组合验收。平台 cron 关闭态投递、目标错窗幂等与 worker 租约接管已分别通过；现有 fixture 入口仅支持手动，调度器生成真实 TB job，直接启用真实来源不能充当安全夹具测试。正式周计划及干系人通知保持关闭。本轮没有 TB API 请求。
+**上午快照（由上方 Online 证据覆盖）：** 编辑器内嵌预览稳定性；平台 cron 与启用中的持久安全测试来源的组合验收。平台 cron 关闭态投递、目标错窗幂等与 worker 租约接管已分别通过；现有 fixture 入口仅支持手动，调度器生成真实 TB job，直接启用真实来源不能充当安全夹具测试。正式周计划及干系人通知保持关闭。本轮没有 TB API 请求。
 
 ## 追加验收闭环（2026-10-14）
 

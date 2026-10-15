@@ -21,3 +21,7 @@ This register prevents unresolved choices from becoming implementation assumptio
 2. Current Feishu technical design revision 17 controls technical detail where it does not conflict with the PRD.
 3. Upstream 需求处理流程 informs deferred field definitions and roadmap, not MVP scope by itself.
 4. The removed local UI prototype is not the implementation baseline; inspect the GitHub repository before deciding code-level migration or reuse.
+
+## 2026-10-15 Online acceptance follow-up
+
+The combined scheduled-safe-fixture path is now target verified: two successful platform deliveries reused one persisted weekly-window batch and completed actual AI/POC Base push. The default-off mode and both Base/fixture guards are documented in SCHEDULE-FIXTURE-ACCEPTANCE.md. All original Online variables and disabled trigger/source-plan states were restored; no real TB call occurred. Dev editor lifecycle remains a platform limitation, with fresh PreviewProxy 400/toStart evidence and a successful workspace-wake mitigation. It is not treated as a repaired application route. See Ticket09 for current commits/releases and exact scope.
