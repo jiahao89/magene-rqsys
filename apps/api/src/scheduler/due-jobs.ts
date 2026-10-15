@@ -3,6 +3,7 @@
 // （spark scope gated，工单 00/08）。重复调用同一窗口不会创建重复批次或重复任务。
 
 import type { PipelineJobRepository, SyncBatchRepository, SourceConfigRepository } from "../application/repositories.js";
+import type { SyncBatchRecord } from "../domain/persistence.js";
 import { computeLastDueWindow } from "./due.js";
 
 export interface DueSyncJobOutcome {
@@ -10,6 +11,8 @@ export interface DueSyncJobOutcome {
   batchId: string | null;
   window: string | null;
   enabled: boolean;
+  /** 该来源本轮处理失败的原因。其他来源仍会继续处理，不因单个来源失败而中断。 */
+  error?: string;
 }
 
 export async function createDueSyncJobs(params: {
@@ -49,17 +52,40 @@ export async function createDueSyncJobs(params: {
     }
     // 批次级幂等键：同一调度窗口的重复触发复用同一批次（sync_batches 唯一约束兜底）
     const idempotencyKey = `${params.fixtureSourceId ? "fixture-sched" : "sched"}:${source.id}:_batch_:${window.start}`;
-    const batch = await params.batches.create({
-      sourceConfigId: source.id, triggerType: "scheduled", actorId: null,
-      idempotencyKey, startedAt: params.now.toISOString(),
-    });
-    // 任务幂等键按批次去重：同批次的重复入队复用同一任务
-    await params.jobs.enqueue({
-      jobType: "sync", dedupeKey: `sync:${batch.id}`,
-      payload: { batchId: batch.id, sourceId: source.id, triggerType: "scheduled", actorId: null, ...(params.fixtureSourceId ? { testFixture: true } : {}) },
-      availableAt: params.now.toISOString(),
-    });
-    outcomes.push({ sourceConfigId: source.id, batchId: batch.id, window: window.start, enabled: true });
+    // 先探测是否已存在同窗口批次：只有本次新建的批次才允许在入队失败时就地标记失败，
+    // 复用的既有批次可能已有在跑的任务，不能覆盖它的状态。
+    // 无法确认批次是否本次新建时（仓储未实现该查询）返回 null 以外的未知值，
+    // 此时保守处理：不标记失败，交由 batch reaper 兜底。
+    const existingBatch: SyncBatchRecord | null | undefined = await params.batches.findByIdempotencyKey?.(source.id, idempotencyKey);
+    let batch: SyncBatchRecord | null = null;
+    try {
+      batch = await params.batches.create({
+        sourceConfigId: source.id, triggerType: "scheduled", actorId: null,
+        idempotencyKey, startedAt: params.now.toISOString(),
+      });
+      // 任务幂等键按批次去重：同批次的重复入队复用同一任务
+      await params.jobs.enqueue({
+        jobType: "sync", dedupeKey: `sync:${batch.id}`,
+        payload: { batchId: batch.id, sourceId: source.id, triggerType: "scheduled", actorId: null, ...(params.fixtureSourceId ? { testFixture: true } : {}) },
+        availableAt: params.now.toISOString(),
+      });
+      outcomes.push({ sourceConfigId: source.id, batchId: batch.id, window: window.start, enabled: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      // 批次已建但任务未入队时，批次会永远停在 running，后续同步将被并发守卫拒绝（409）。
+      // 若该批次是本次新建的，就地收尾为 failed，避免它变成孤儿批次。
+      if (batch && existingBatch === null) {
+        try {
+          await params.batches.complete(batch.id, {
+            status: "failed", totalCount: 0, succeededCount: 0, failedCount: 0,
+            errorSummary: `scheduler enqueue failed: ${message}`, completedAt: params.now.toISOString(),
+          });
+        } catch {
+          // 收尾本身失败时保留原始错误，交由 batch reaper 兜底回收
+        }
+      }
+      outcomes.push({ sourceConfigId: source.id, batchId: batch?.id ?? null, window: window.start, enabled: true, error: message });
+    }
   }
   return outcomes;
 }

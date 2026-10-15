@@ -2,6 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Pool } from "pg";
+import { stripTransactionWrapper } from "./migration-sql.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error("DATABASE_URL is required to run migrations");
@@ -44,10 +45,16 @@ try {
     if (alreadyApplied.rowCount) continue;
 
     const sql = await readFile(resolve(migrationsPath, filename), "utf8");
+    // 去掉文件自带的顶层 BEGIN;/COMMIT;：内层 COMMIT 会提前提交本函数开启的事务，
+    // 让 schema_migrations 的写入落在事务外，失败时无法回滚。
+    const normalized = stripTransactionWrapper(sql);
+    if (normalized.stripped) {
+      process.stdout.write(`Note: ${filename} carried its own BEGIN;/COMMIT;; using the runner transaction instead\n`);
+    }
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-      await client.query(sql);
+      await client.query(normalized.sql);
       await client.query("INSERT INTO schema_migrations (filename) VALUES ($1)", [filename]);
       await client.query("COMMIT");
       process.stdout.write(`Applied ${filename}\n`);

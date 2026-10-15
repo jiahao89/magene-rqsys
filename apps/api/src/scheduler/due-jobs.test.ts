@@ -34,12 +34,27 @@ function harness(sources: SourceConfigRecord[]) {
         batches.set(batch.id, batch);
         return batch;
       },
+      async findByIdempotencyKey(_sourceConfigId: string, key: string) {
+        return [...batches.values()].find((b) => b.idempotencyKey === key) ?? null;
+      },
+      async complete(id: string, result: { status: string; errorSummary: string | null }) {
+        calls.push(["batch.complete", id, result.status]);
+        const batch = batches.get(id);
+        if (!batch) return null;
+        const next = { ...batch, status: result.status as SyncBatchRecord["status"], errorSummary: result.errorSummary } satisfies SyncBatchRecord;
+        batches.set(id, next);
+        return next;
+      },
     },
     jobs: {
       async enqueue(p: { dedupeKey: string }) { calls.push(["job.enqueue", p.dedupeKey]); return p as never; },
     },
   };
-  return { calls, repos, batchKeys: () => [...batches.values()].map((b) => b.idempotencyKey) };
+  return {
+    calls, repos, batches,
+    batchKeys: () => [...batches.values()].map((b) => b.idempotencyKey),
+    batchStatus: (id: string) => batches.get(id)?.status,
+  };
 }
 
 test("不变量1：同一调度窗口的重复触发不创建重复批次/任务（幂等键按窗口）", async () => {
@@ -98,4 +113,59 @@ test("合成来源不存在时，在其他来源入队前失败", async () => {
   const params = { sources: h.repos.sources as never, batches: h.repos.batches as never, jobs: h.repos.jobs as never, now: NOW, fixtureSourceId: "missing-source" };
   await assert.rejects(createDueSyncJobs(params), /fixture source was not found/);
   assert.equal(h.calls.length, 0);
+});
+
+test("单个来源入队失败不中断其他来源，且不留孤儿批次", async () => {
+  // src-1 入队抛错，src-2 正常。此前一次抛错会让整个 tick 失败并把批次永远留在 running。
+  const h = harness([source({ id: "src-1" }), source({ id: "src-2" })]);
+  const deps = {
+    sources: h.repos.sources as never,
+    batches: h.repos.batches as never,
+    jobs: {
+      async enqueue(p: { dedupeKey: string; payload: Record<string, unknown> }) {
+        if (p.payload.sourceId === "src-1") throw new Error("enqueue exploded");
+        return p;
+      },
+    } as never,
+    now: NOW,
+  };
+
+  const outcomes = await createDueSyncJobs(deps);
+
+  // 两个来源都被处理：失败的那个有 error，另一个照常排队
+  assert.equal(outcomes.length, 2);
+  const failed = outcomes.find((o) => o.sourceConfigId === "src-1");
+  const ok = outcomes.find((o) => o.sourceConfigId === "src-2");
+  assert.equal(failed?.error, "enqueue exploded");
+  assert.ok(ok?.batchId && !ok.error);
+
+  // 失败来源的新建批次被就地收尾为 failed，不会阻塞后续同步（并发守卫 409）
+  assert.equal(h.batchStatus(failed!.batchId!), "failed");
+  assert.equal(h.batchStatus(ok!.batchId!), "running");
+});
+
+test("复用既有批次时入队失败不覆盖该批次状态", async () => {
+  // 同窗口第二次触发复用既有批次：它可能已有在跑的任务，不能因为我们入队失败就标记 failed。
+  const h = harness([source()]);
+  let failEnqueue = false;
+  const deps = {
+    sources: h.repos.sources as never,
+    batches: h.repos.batches as never,
+    jobs: {
+      async enqueue(p: { dedupeKey: string }) {
+        if (failEnqueue) throw new Error("second enqueue exploded");
+        return p;
+      },
+    } as never,
+    now: NOW,
+  };
+
+  const first = await createDueSyncJobs(deps);
+  const batchId = first[0]!.batchId!;
+  assert.equal(h.batchStatus(batchId), "running");
+
+  failEnqueue = true;
+  const replay = await createDueSyncJobs(deps);
+  assert.equal(replay[0]?.error, "second enqueue exploded");
+  assert.equal(h.batchStatus(batchId), "running"); // 既有批次状态未被改动
 });

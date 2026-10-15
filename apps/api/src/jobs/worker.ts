@@ -50,7 +50,12 @@ export class PipelineJobWorker {
         const recorded = await this.options.jobs.complete(job.id, {
           expectedAttempt: job.attemptCount,
           status: "failed", errorCode: code,
-          ...(error instanceof FixturePolicyError && job.jobType === "sync" ? { settleSyncBatch: true } : {}),
+          // sync 作业的任何终态失败都必须收敛批次。此前只在夹具策略拒绝时收敛，
+          // 其他错误（网关 4xx/5xx、网络、数据库异常）会让批次永远停在 running，
+          // 之后每次同步都被并发守卫拒绝（409），来源被静默锁死，只能手工改库恢复。
+          // settleSyncBatch 的 SQL 自带保护：仅当 job_type='sync' 且作业已 failed
+          // 且批次仍为 running 时才置 failed，不会覆盖已收敛的批次。
+          ...(job.jobType === "sync" ? { settleSyncBatch: true } : {}),
           errorSummary: code === "fixture_policy_denied" ? `Synthetic acceptance policy denied (${error instanceof FixturePolicyError ? error.reason : "unspecified"}); restore a safe configuration before retrying.` : code === "unsupported_job_type"
             ? "No handler is registered for this job type."
             : "Max attempts reached; manual retry is available.",

@@ -138,4 +138,36 @@ test("partial_failure sync is retryable; job types without a handler fail closed
   // 永久错误（无 handler）终态，不重排
   assert.deepEqual(unsupported.calls.map((call) => (call as unknown[])[0]), ["claim", "complete"]);
   assert.equal(((unsupported.calls.at(-1) as unknown[])[2] as Record<string, unknown>).errorCode, "unsupported_job_type");
+  // 非 sync 作业不碰批次
+  assert.equal(((unsupported.calls.at(-1) as unknown[])[2] as Record<string, unknown>).settleSyncBatch, undefined);
+});
+
+test("sync 作业的任意终态失败都收敛批次，不留下永久 running 的孤儿批次", async () => {
+  // 回归：此前只在 FixturePolicyError 时传 settleSyncBatch。网关 5xx / 网络 / 数据库
+  // 异常走到终态 failed 时批次不被收敛，永远停在 running，后续同步被并发守卫拒绝（409），
+  // 只能手工改库恢复。这里用一个普通错误（非夹具策略错误）覆盖该路径。
+  const h = harness(job({ attemptCount: 4, maxAttempts: 4 }), { handlerError: new Error("gateway 503") });
+  const worker = new PipelineJobWorker({ jobs: h.jobs, sync: h.sync, workerId: "local-worker", leaseMs: 30_000, now: () => new Date(NOW) });
+
+  assert.deepEqual(await worker.runOnce(), { kind: "failed", jobId: "job-1" });
+  const terminal = h.calls.at(-1) as unknown[];
+  assert.equal(terminal[0], "complete");
+  const payload = terminal[2] as Record<string, unknown>;
+  assert.equal(payload.status, "failed");
+  assert.equal(payload.errorCode, "max_attempts_reached");
+  assert.equal(payload.settleSyncBatch, true);
+});
+
+test("夹具策略拒绝仍然收敛批次（原有行为不回退）", async () => {
+  let policyError: Error | undefined;
+  try {
+    assertFixtureWorkAllowed({ sourceId: "source-1", fixture: true }, { RQSYS_ENABLE_TEST_FIXTURES: "true", BASE_APP_TOKEN: "formal" }, new Date(NOW));
+  } catch (error) { policyError = error as Error; }
+  assert.ok(policyError instanceof FixturePolicyError);
+  const h = harness(job(), { handlerError: policyError });
+  const worker = new PipelineJobWorker({ jobs: h.jobs, sync: h.sync, workerId: "worker", leaseMs: 30_000, now: () => new Date(NOW) });
+  await worker.runOnce();
+  const payload = (h.calls.at(-1) as unknown[])[2] as Record<string, unknown>;
+  assert.equal(payload.errorCode, "fixture_policy_denied");
+  assert.equal(payload.settleSyncBatch, true);
 });

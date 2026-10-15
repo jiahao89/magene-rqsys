@@ -70,6 +70,7 @@ const ROOT_ONLY = {
   "application/batch-cursor.ts": "root 游标编解码；app 仓内联等价实现",
   "application/idempotency-keys.ts": "root 幂等键工具；app 仓有自身实现",
   "db/migrate.ts": "root 自带迁移 runner；妙搭托管库用平台迁移",
+  "db/migration-sql.ts": "root 迁移 runner 的事务包装剥离；app 仓没有 SQL 迁移 runner",
   "http/local-identity.ts": "本地开发身份 seam；目标环境用妙搭 userContext，故 app 仓不应有",
 };
 

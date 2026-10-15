@@ -12,8 +12,10 @@ import { runAnalysis } from "./analysis/service.js";
 import { AnalysisRepositoryAdapter } from "./analysis/repository-adapter.js";
 import { buildPriorityRule } from "./analysis/priority-rule.js";
 import { createDueSyncJobs } from "./scheduler/due-jobs.js";
+import { reapOrphanedBatches } from "./scheduler/reap.js";
 import { FeishuBasePushAdapter } from "./base/client.js";
 import { FeishuBitableClient } from "./base/transport.js";
+import { RateLimitedBaseClient } from "./base/rate-limit.js";
 import { FeishuUserDirectoryClient } from "./adapters/feishu/directory-client.js";
 import { createBasePushService } from "./base/push-service.js";
 import { basePushIdempotencyKey } from "./application/idempotency-keys.js";
@@ -158,10 +160,14 @@ const feishuUserDirectory = process.env.FEISHU_APP_ID && process.env.FEISHU_APP_
   ? new FeishuUserDirectoryClient({ appId: process.env.FEISHU_APP_ID, appSecret: process.env.FEISHU_APP_SECRET })
   : undefined;
 const baseClient = process.env.FEISHU_APP_ID && process.env.FEISHU_APP_SECRET && process.env.BASE_APP_TOKEN && process.env.BASE_TABLE_ID
-  ? new FeishuBitableClient({
+  ? new RateLimitedBaseClient(new FeishuBitableClient({
       appId: process.env.FEISHU_APP_ID, appSecret: process.env.FEISHU_APP_SECRET,
       appToken: process.env.BASE_APP_TOKEN, tableId: process.env.BASE_TABLE_ID,
       keyFields: { projectId: baseFields.projectId, requirementId: baseFields.requirementId },
+    }), {
+      // 全量同步逐条写 Base（311 条 ≈ 数百次连续调用）。默认 100ms ≈ 10 次/秒，
+      // 用 BASE_MIN_INTERVAL_MS 覆盖；设为 0 可关闭（仅保留串行化）。
+      minIntervalMs: Number(process.env.BASE_MIN_INTERVAL_MS ?? 100),
     })
   : undefined;
 const baseAdapter = baseClient && repositories
@@ -247,6 +253,16 @@ if (worker && repositories && workerPollMs > 0) {
     void (async () => {
       const now = new Date();
       const fixtureSourceId = readScheduledFixtureSource(fixtureEnvironment, now);
+      // 先回收孤儿批次再建新批次：历史遗留的 running 批次会让并发守卫持续拒绝，
+      // 来源被静默锁死。回收失败不阻断本轮调度。
+      try {
+        const reaped = await reapOrphanedBatches({ batches: repositories.batches, jobs: repositories.jobs, now });
+        if (reaped.length > 0) {
+          process.stdout.write(`reaped ${reaped.length} orphaned batch(es): ${reaped.map((row) => `${row.batchId}(${row.reason})`).join(", ")}\n`);
+        }
+      } catch (error) {
+        process.stderr.write(`batch reaper failed: ${String(error)}\n`);
+      }
       await createDueSyncJobs({ sources: repositories.sources, batches: repositories.batches, jobs: repositories.jobs, now, ...(fixtureSourceId ? { fixtureSourceId } : {}) });
       await worker.runOnce();
     })().catch((error) => process.stderr.write(`worker tick failed: ${String(error)}\n`));
