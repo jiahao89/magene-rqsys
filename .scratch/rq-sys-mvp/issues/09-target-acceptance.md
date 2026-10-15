@@ -288,3 +288,12 @@
 - Browser preview evidence: Dev workbench loaded and displayed its prior dashboard; no synthetic acceptance button appeared and visible request logs lacked `/api/dev/fixtures/status`. No sync button, fixture action, schedule, notification or external record write was triggered in this follow-up.
 - `+db-execute` aggregate-only SELECT against Dev returned 37 requirements, 7 fixture-prefixed requirement IDs, 5 analyzed, 5 pushed, 0 running batches, 0 running jobs, and 0 enabled schedules. No titles, people, contacts, or secrets were selected.
 - Read-only Teambition skill call with `--include-archived` returned 311 raw tasks, 311 unique nonempty IDs, 0 empty IDs and 0 duplicate IDs. No task fields or values were printed. This repeats the API count but does not explain the UI's 314 denominator.
+
+## 2026-10-15 晚 — 定时合成验收执行结果（未取得夹具证据）
+
+- **执行**：按 SCHEDULE-FIXTURE-ACCEPTANCE.md 启用短时夹具模式与 cron 触发器；平台于 18:10:04 CST 真实投递到 `/app/app_17fqkjwyx1u/__innerapi__/automation/invoke`（`context=TriggerClient`，status=succeed）。
+- **发现（阻断性）**：`+env-set` 写入的 `RQSYS_SCHEDULE_FIXTURE` / `RQSYS_ENABLE_TEST_FIXTURES` **未在运行实例中生效**。18:43 产生的批次幂等键为 `sched:acce0000-…`（非 `fixture-sched:`），作业 `testFixture=null` → 走的是无保护分支。**结论：夹具开关必须伴随运行时重启/发布才生效，方案第 3 步需补此前置。**
+- **未造成损害**：探测来源的项目 ID 刻意不存在且正式来源计划始终关闭；该次同步 `total_count=0`、创建需求 0、`base_push_runs` 0 → 未写正式 Base、未发通知。
+- **环境已恢复**：两库夹具环境变量删除、临时来源删除、正式来源 `schedule_enabled=false`、触发器 disabled、无活动作业/批次。
+- **顺带确认**：cron 的**实际执行环境是 online**（此前不确定）；`log-list` 因此可用。
+- **仍未验证**：夹具模式生效后的完整路径（合成 fixture→AI→POC Base upsert/readback→仅通知本人）。**必须在修正方案第 3 步后重跑**，不得以本次结果计入验收。

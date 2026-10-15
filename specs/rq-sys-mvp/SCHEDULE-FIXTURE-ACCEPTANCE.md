@@ -32,3 +32,28 @@
 3. Root 和 Miaoda 组合根连接策略，防止测试模式误走 TB。
 4. 类型检查、两仓测试/构建/对齐，提交并发布。
 5. 真实平台验收与配置恢复，更新 Ticket 09。
+
+## 2026-10-15 执行记录与关键缺陷（必须修正后再重跑）
+
+本轮按本方案执行，**发现方案的核心假设不成立**，未取得夹具验收证据。所有临时配置已恢复（见文末核查）。
+
+### 缺陷：`+env-set` 写入的夹具开关不会在运行实例中生效
+
+- 17:56 通过 `+env-set` 在 dev/online 写入 `RQSYS_ENABLE_TEST_FIXTURES=true` 与 `RQSYS_SCHEDULE_FIXTURE`（含过期探测值），并启用 cron 触发器。
+- 18:43 平台真实投递后，在线实例**按普通来源**处理了被指定来源：批次幂等键为 **`sched:`**（而非夹具命名空间的 `fixture-sched:`），作业 `payload.testFixture` 为 **null**。
+- 即运行实例**没有读取到**新环境变量。控制台变量名可见不等于运行时生效——本方案第 5 步已警示这一点，但第 3 步"设置变量后等待真实触发"缺少强制重启步骤，因此**按原样执行必然走到无保护分支**。
+- 10-14 那次夹具作业（`fixture-recovery:…` / `testFixture=true`）之所以生效，很可能是变量写入后伴随了一次发布/实例重建。
+
+**修正**：设置夹具变量后必须先触发一次运行时重启/新实例（例如伴随一次发布），再用"过期配置应报错拒绝"的方式验证生效，**确认后才可启用任何来源的计划**。本方案第 3 步须补上该前置。
+
+### 本轮为何未造成损害
+
+探测用的临时来源 `external_project_id` 被刻意设为不存在的值，且**正式来源的 `schedule_enabled` 始终为 false**。因此落到无保护分支时只发生一次针对不存在项目的网关调用：批次 `total_count=0`、`requirements=0`、`base_push_runs=0`，**未写任何 Base、未发任何通知**。若当时按"直接指定正式来源并启用其周计划"执行，后果将是 311 条真实同步 + 正式 Base 写入 + 干系人通知。
+
+### 恢复核查（2026-10-15 18:50）
+
+- dev / online `RQSYS_ENABLE_TEST_FIXTURES`、`RQSYS_SCHEDULE_FIXTURE`：**已删除**，两环境各 8 个变量、无 `RQSYS_*`。
+- 临时夹具来源：两库**已删除**（online 需先清理其探测批次/作业以解外键）。
+- 正式来源：两库均为 `enabled=true, schedule_enabled=false`，与执行前一致。
+- 触发器 `rqsysWeeklySyncRecovery`：**disabled**，与执行前一致。
+- 两库 `pipeline_jobs` 无 queued/running，`sync_batches` 无 running。
