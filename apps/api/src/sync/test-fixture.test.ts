@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assertFixtureWorkAllowed, canEnableTestFixtures, createSyntheticFixtureTask, isSyntheticFixtureRequirement, readScheduledFixtureSource } from "./test-fixture.js";
+import * as fixtures from "./test-fixture.js";
+const { assertFixtureWorkAllowed, canEnableTestFixtures, createSyntheticFixtureTask, isSyntheticFixtureRequirement, readScheduledFixtureSource } = fixtures;
 
 const NOW = new Date("2026-10-15T02:00:00Z");
 const SOURCE = "11111111-2222-4333-8444-555555555555";
@@ -53,4 +54,12 @@ test("fixed source identity survives retry and has no owner or proposer", () => 
   assert.equal(task.created, "2026-01-01T00:00:00.000Z");
   assert.equal(isSyntheticFixtureRequirement(task.id), true);
   assert.equal(isSyntheticFixtureRequirement("6960a3187384fa11aa07d7e6"), false);
+});
+
+test("a single-item fixture retry retains its original identity even without a payload marker", () => {
+  const job = { batchId: "new-retry-batch", onlyIds: ["rqsys-fixture-original-batch"] };
+  const policy = fixtures;
+  assert.equal(policy.isSyntheticFixtureSyncJob(job), true);
+  assert.deepEqual(policy.createSyntheticFixtureTasks(job.batchId, "type-1", job.onlyIds).map((row) => row.id), ["rqsys-fixture-original-batch"]);
+  assert.throws(() => policy.isSyntheticFixtureSyncJob({ ...job, onlyIds: ["real-tb-id", ...job.onlyIds] }));
 });

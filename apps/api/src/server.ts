@@ -21,7 +21,7 @@ import { createAnalysisAdvancer, createSourceMetadataAdvancer } from "./pipeline
 import { createLocalIdentityProvider, describeLocalIdentity } from "./http/local-identity.js";
 import type { SourceProjectConfig } from "./domain/workflow.js";
 import { DEFAULT_FUNCTION_MODULES } from "./domain/team-directory.js";
-import { assertFixtureWorkAllowed, createSyntheticFixtureTask, isSyntheticFixtureRequirement, readScheduledFixtureSource } from "./sync/test-fixture.js";
+import { assertFixtureWorkAllowed, createSyntheticFixtureTasks, isSyntheticFixtureRequirement, isSyntheticFixtureSyncJob, readScheduledFixtureSource } from "./sync/test-fixture.js";
 
 const port = Number(process.env.PORT ?? 8787);
 const database = createPool(process.env.DATABASE_URL);
@@ -46,7 +46,8 @@ try { teambitionSourceProjects = new TeambitionClient(); } catch { /* source set
 
 // ---- Worker composition：认领 pipeline_jobs 并分发到对应执行器 ----
 const syncJobRunner: SyncJobRunner | undefined = repositories ? async (job) => {
-  assertFixtureWorkAllowed({ sourceId: job.sourceConfigId, fixture: job.testFixture === true }, fixtureEnvironment, new Date());
+  const fixture = isSyntheticFixtureSyncJob(job);
+  assertFixtureWorkAllowed({ sourceId: job.sourceConfigId, fixture }, fixtureEnvironment, new Date());
   const source = await repositories.sources.get(job.sourceConfigId);
   if (!source) throw new Error("Sync source configuration was not found");
   const config: SourceProjectConfig = {
@@ -56,8 +57,8 @@ const syncJobRunner: SyncJobRunner | undefined = repositories ? async (job) => {
     ownerNames: source.ownerNames, fieldMap: source.fieldMap,
   };
   const persistence = createPostgresSyncPersistence(repositories, job.sourceConfigId);
-  const taskSource = job.testFixture
-    ? { async listRequirements(cfg: SourceProjectConfig) { return { items: [createSyntheticFixtureTask(job.batchId, cfg.requirementTypeId)], hasMore: false, nextCursor: null }; } }
+  const taskSource = fixture
+    ? { async listRequirements(cfg: SourceProjectConfig) { return { items: createSyntheticFixtureTasks(job.batchId, cfg.requirementTypeId, job.onlyIds), hasMore: false, nextCursor: null }; } }
     : { async listRequirements(cfg: SourceProjectConfig) { return { items: await new TeambitionClient().listRequirementTasks(cfg), hasMore: false, nextCursor: null }; } };
   const orchestrator = new SyncOrchestrator(taskSource, persistence);
   const result = await orchestrator.run({ batchId: job.batchId, sourceConfigId: job.sourceConfigId, config, ...(job.mode === undefined ? {} : { mode: job.mode }), ...(job.onlyIds === undefined ? {} : { onlyIds: job.onlyIds }) });

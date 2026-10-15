@@ -14,6 +14,7 @@
 - 指定来源仍须在数据库中 enabled + schedule_enabled；按真实持久时间/时区计算窗口。使用 `fixture-sched:` 批次幂等前缀，作业携带 `testFixture=true`，不占用正式 `sched:` 窗口。
 - 测试模式期间所有 sync、analysis、Base push 只允许指定来源的合成作业。analysis/push 根据持久化需求的 `rqsys-fixture-` 身份判定，不能依赖只存在于 sync payload 的标记。合成输入无提出人/负责人，不自动通知其他人。
 - 无论是否已退出定时测试模式，合成作业每次执行（包括延迟重试、手动重跑）都必须重新通过现有 fixture 开关和精确 POC Base 守卫；正式 Base 下直接拒绝。任何外部调用前执行守卫，避免恢复配置后夹具继续推送。保留已有快照/审计。
+- 单项重试从持久 `onlyIds` 识别合成身份并沿用原需求 ID，拒绝混合真实/合成 ID，兼容旧队列缺少 marker 的情况。策略拒绝为终态；同步批次的失败收敛与 job 的 `running + expectedAttempt` 检查由同一条 PostgreSQL CTE 原子完成，避免孤儿批次和迟到 worker 覆盖结果。
 
 ## 执行与恢复
 

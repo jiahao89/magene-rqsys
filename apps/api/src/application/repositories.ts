@@ -205,6 +205,8 @@ export interface PipelineJobRepository {
       errorCode?: string;
       errorSummary?: string;
       now: string;
+      /** 同一条原子 SQL 内，在有效 claim 成功终结后收敛 sync 批次。 */
+      settleSyncBatch?: boolean;
     },
   ): Promise<PipelineJobRecord | null>;
 }

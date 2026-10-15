@@ -4,6 +4,10 @@ const SAFE_BASE = {
   tableId: "tblxbyvbdLGVnLaO",
 } as const;
 
+export class FixturePolicyError extends Error {
+  constructor(message: string) { super(message); this.name = "FixturePolicyError"; }
+}
+
 export function canEnableTestFixtures(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.RQSYS_ENABLE_TEST_FIXTURES === "true"
     && env.BASE_APP_TOKEN === SAFE_BASE.appToken
@@ -14,21 +18,21 @@ export function canEnableTestFixtures(env: NodeJS.ProcessEnv = process.env): boo
 export function readScheduledFixtureSource(env: NodeJS.ProcessEnv, now: Date): string | undefined {
   const raw = env.RQSYS_SCHEDULE_FIXTURE;
   if (!raw) return undefined;
-  if (!canEnableTestFixtures(env)) throw new Error("Scheduled fixtures require the enabled isolated POC Base");
+  if (!canEnableTestFixtures(env)) throw new FixturePolicyError("Scheduled fixtures require the enabled isolated POC Base");
   let value: unknown;
-  try { value = JSON.parse(raw); } catch { throw new Error("Invalid scheduled fixture configuration"); }
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid scheduled fixture configuration");
+  try { value = JSON.parse(raw); } catch { throw new FixturePolicyError("Invalid scheduled fixture configuration"); }
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new FixturePolicyError("Invalid scheduled fixture configuration");
   const mode = value as Record<string, unknown>;
   if (Object.keys(mode).some((key) => key !== "sourceId" && key !== "expiresAt")
     || typeof mode.sourceId !== "string"
     || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(mode.sourceId)
     || typeof mode.expiresAt !== "string"
     || !/T.+(?:Z|[+-]\d{2}:\d{2})$/.test(mode.expiresAt)) {
-    throw new Error("Invalid scheduled fixture configuration");
+    throw new FixturePolicyError("Invalid scheduled fixture configuration");
   }
   const remainingMs = Date.parse(mode.expiresAt) - now.getTime();
   if (!Number.isFinite(remainingMs) || remainingMs <= 0 || remainingMs > 2 * 60 * 60 * 1000) {
-    throw new Error("Scheduled fixture configuration is expired or exceeds two hours");
+    throw new FixturePolicyError("Scheduled fixture configuration is expired or exceeds two hours");
   }
   return mode.sourceId;
 }
@@ -40,14 +44,24 @@ export function assertFixtureWorkAllowed(
   now: Date,
 ): void {
   const scheduledSource = readScheduledFixtureSource(env, now);
-  if (work.fixture && !canEnableTestFixtures(env)) throw new Error("Fixture work requires the enabled isolated POC Base");
+  if (work.fixture && !canEnableTestFixtures(env)) throw new FixturePolicyError("Fixture work requires the enabled isolated POC Base");
   if (scheduledSource && (!work.fixture || work.sourceId !== scheduledSource)) {
-    throw new Error("Only the selected synthetic source may run during scheduled acceptance");
+    throw new FixturePolicyError("Only the selected synthetic source may run during scheduled acceptance");
   }
 }
 
 export function isSyntheticFixtureRequirement(sourceRequirementId: string): boolean {
   return sourceRequirementId.startsWith("rqsys-fixture-");
+}
+
+/** 兼容旧的单项重试队列：身份以持久化条目 ID 为准，不只依赖 marker。 */
+export function isSyntheticFixtureSyncJob(job: { testFixture?: boolean; onlyIds?: readonly string[] }): boolean {
+  const ids = job.onlyIds ?? [];
+  const hasFixtureId = ids.some(isSyntheticFixtureRequirement);
+  if ((hasFixtureId || job.testFixture) && ids.some((id) => !isSyntheticFixtureRequirement(id))) {
+    throw new FixturePolicyError("Synthetic and real source identities cannot be mixed");
+  }
+  return job.testFixture === true || hasFixtureId;
 }
 
 export function createSyntheticFixtureTask(batchId: string, requirementTypeId: string) {
@@ -61,4 +75,10 @@ export function createSyntheticFixtureTask(batchId: string, requirementTypeId: s
     scenariofield_config_id: requirementTypeId,
     custom_fields: [],
   };
+}
+
+export function createSyntheticFixtureTasks(batchId: string, requirementTypeId: string, onlyIds?: readonly string[]) {
+  if (onlyIds?.some((id) => !isSyntheticFixtureRequirement(id))) throw new FixturePolicyError("Fixture retries require synthetic identities");
+  const ids = onlyIds ?? [`rqsys-fixture-${batchId}`];
+  return ids.map((id) => ({ ...createSyntheticFixtureTask(batchId, requirementTypeId), id }));
 }

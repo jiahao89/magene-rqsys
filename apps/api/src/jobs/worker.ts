@@ -1,3 +1,4 @@
+import { FixturePolicyError } from "../sync/test-fixture.js";
 import type { PipelineJobRecord } from "../domain/persistence.js";
 import type { PipelineJobRepository } from "../application/repositories.js";
 import type { SyncJobRunner } from "../sync/service.js";
@@ -41,14 +42,16 @@ export class PipelineJobWorker {
       const stage = STAGE_FOR_JOB_TYPE[job.jobType];
       const terminal =
         error instanceof UnsupportedJobTypeError ||
+        error instanceof FixturePolicyError ||
         job.attemptCount >= job.maxAttempts ||
         stage === undefined;
       if (terminal) {
-        const code = error instanceof UnsupportedJobTypeError ? "unsupported_job_type" : "max_attempts_reached";
+        const code = error instanceof FixturePolicyError ? "fixture_policy_denied" : error instanceof UnsupportedJobTypeError ? "unsupported_job_type" : "max_attempts_reached";
         const recorded = await this.options.jobs.complete(job.id, {
           expectedAttempt: job.attemptCount,
           status: "failed", errorCode: code,
-          errorSummary: code === "unsupported_job_type"
+          ...(error instanceof FixturePolicyError && job.jobType === "sync" ? { settleSyncBatch: true } : {}),
+          errorSummary: code === "fixture_policy_denied" ? "Synthetic acceptance policy denied this job; restore a safe configuration before retrying." : code === "unsupported_job_type"
             ? "No handler is registered for this job type."
             : "Max attempts reached; manual retry is available.",
           now: this.now().toISOString(),

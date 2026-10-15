@@ -4,6 +4,7 @@ import type { PipelineJobRecord } from "../domain/persistence.js";
 import type { PipelineJobRepository } from "../application/repositories.js";
 import type { SyncJobRunner } from "../sync/service.js";
 import { PipelineJobWorker } from "./worker.js";
+import { FixturePolicyError } from "../sync/test-fixture.js";
 
 const NOW = "2026-10-08T00:00:00.000Z";
 function job(overrides: Partial<PipelineJobRecord> = {}): PipelineJobRecord {
@@ -96,6 +97,14 @@ test("不变量4：max attempts reached completes the job as failed terminal", a
   const completion = (h.calls[2] as unknown[])[2] as Record<string, unknown>;
   assert.equal(completion.status, "failed");
   assert.equal(completion.errorCode, "max_attempts_reached");
+});
+
+test("fixture policy denial is terminal and never schedules an unsafe retry", async () => {
+  const h = harness(job(), { handlerError: new FixturePolicyError("Unsafe fixture target") });
+  const worker = new PipelineJobWorker({ jobs: h.jobs, sync: h.sync, workerId: "worker", leaseMs: 30_000, now: () => new Date(NOW) });
+  assert.equal((await worker.runOnce()).kind, "failed");
+  assert.deepEqual(h.calls.map((call) => (call as unknown[])[0]), ["claim", "sync", "complete"]);
+  assert.equal(((h.calls.at(-1) as unknown[])[2] as Record<string, unknown>).errorCode, "fixture_policy_denied");
 });
 
 test("partial_failure sync is retryable; job types without a handler fail closed (terminal)", async () => {
