@@ -20,10 +20,12 @@ test("creates/upserts on the project + requirement key, permits empty owner, and
   const result = await adapter.push({ projectId: "p", requirementId: "r", title: "Title", description: "Desc", owner: null, sourceVersion: 1, substantiveChanged: false, idempotencyKey: "p:r:v1" });
   assert.equal(result.recordId, "record-new");
   assert.equal(fake.row()?.fields["执行人"], null);
-  assert.equal(fake.row()?.fields["PM状态"], undefined);
+  assert.equal(fake.row()?.fields["PM状态"], "待处理");
   assert.equal(fake.calls.join(","), "find,create");
+  await fake.client.update(result.recordId, { "PM状态": "已采纳" });
   await adapter.push({ projectId: "p", requirementId: "r", title: "Title", description: "Desc", owner: null, sourceVersion: 1, substantiveChanged: false, idempotencyKey: "p:r:v1" });
   assert.equal(fake.calls.filter((call) => call === "create").length, 1);
+  assert.equal(fake.row()?.fields["PM状态"], "已采纳");
 });
 
 test("snapshots before substantive update and only then resets PM status", async () => {

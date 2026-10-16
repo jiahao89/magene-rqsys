@@ -114,6 +114,8 @@ export class FeishuBasePushAdapter {
       delta[metadata.lastPushedAt] = timestamp;
     }
     if (!existing) {
+      const pmStatusField = this.fields.pm[0];
+      if (pmStatusField) delta[pmStatusField] = this.selectValue(pmStatusField, "待处理");
       const created = await this.client.create(delta);
       return { recordId: created.recordId, created: true, omittedFields };
     }

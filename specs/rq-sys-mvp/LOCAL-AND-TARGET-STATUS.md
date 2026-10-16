@@ -1,6 +1,13 @@
-# RQ-Sys MVP implementation and acceptance status (2026-10-15)
+# RQ-Sys MVP implementation and acceptance status (2026-10-16)
 
-## Latest Online acceptance and restoration (2026-10-15 afternoon)
+## Latest closeout update (2026-10-16)
+
+- **Notification POC:** isolated Base capability probe is complete with bounded passes for frozen trigger payloads, replay silence, self-recipient delivery, owner clear/reassignment and a stale conditional update affecting zero rows. Atomicity of condition-and-write and exact partial-recipient resend are unproven, so the approved four-field route stopped before formal rollout. The formal notification workflow remains disabled with no steps; the Monday 09:00 schedule remains disabled. Full evidence: `NOTIFICATION-CAPABILITY-RESULTS.md`.
+- **Data/source acceptance:** current Online source-only batch `b3837657-b5b5-41ec-9d37-c048ff687738` finished 314/314 with zero failures. Its unique ID set matches the current Teambition raw response (314/314, no missing or extra IDs). This validates source import only; it deliberately did not analyze, push to Base, or notify. It does not retroactively identify the three historical rows behind the old `311/314` display.
+- **Code closeout in progress:** fixed new Base rows to explicitly set PM status `待处理`; ordinary upserts continue preserving existing PM status. Root and Miaoda regressions were first made red and then passed before the dependency refresh. The app lockfile had 69 missing optional platform package entries; these have been added without changing existing versions, and a clean `npm ci` is in progress. The fix has not yet been committed, pushed or released.
+- **Not fully accepted:** formal notifications, a published calibration rule, independent second-user write/read verification (the colleague only reported login), and Dev editor sandbox recovery remain open. Do not call the MVP 100% complete. Local test/build and the previously successful Online synthetic flows do not fill these remaining gates.
+
+## Online acceptance and restoration (2026-10-15 afternoon)
 
 The approved isolated Online test passed manual fixture → actual model → POC Base and the combined platform cron → persisted enabled safe source → queue → AI → Base path. Automation UI recorded successful deliveries/executions at 15:40:24 and 15:45:59; both reused one weekly fixture batch `25638a3a-9695-4c6e-9483-7e70b223e1f1` (1/1, no failure). Its independent Base readback is `reczz28Nbhq0Mvtw`, source/analysis v1, 待处理/已推送, blank module/priority. Manual batch `9fc4b67f` independently reads as record `reczz28NbRH5CwFh`. Low confidence, unknown module, blank priority and no owner did not block push. No TB request or third-party notification was made.
 

@@ -27,6 +27,7 @@ The pipeline must resolve Teambition owners to Feishu users when possible, push 
 ## Base write and field protection
 
 - Upsert by project ID + TB requirement ID; do not create a second row for the same key.
+- Initialize the configured PM status to 待处理 only when creating a new Base record; do not rely on a table default or initialize an existing record during a non-substantive upsert.
 - Keep source facts, AI suggestions, owner, PM confirmations/status, and push metadata in distinct field groups.
 - The sync service writes only source-owned fields. The analysis service writes only AI-owned fields. Human PM fields are never overwritten by either.
 - On substantive source changes, read and persist a PM snapshot before mutating Base. After the snapshot succeeds, update source/AI fields, retain prior confirmations in history, and set PM status to 待处理.

@@ -2,6 +2,10 @@
 
 来源：`specs/rq-sys-mvp/`，以当前 PRD revision 60 为产品行为基线。此处是本地待评审 ticket 草案，尚未发布到外部 tracker。
 
+## 最新验收状态（2026-10-16）
+
+通知隔离 POC 已部分通过，但条件更新原子性和部分收件人精确补发未证明；按停止条件未启用正式通知，正式通知、周计划保持关闭。Online source-only 当前批次314/314与原始ID集合一致，但未分析或推送。新 Base 行初始化 `待处理` 的双仓修复正在干净安装/全量回归及提交发布，尚未算完成。第二用户仅登录有反馈，Dev 编辑器沙箱仍是平台阻塞。细节见 [09验收](./09-target-acceptance.md) 和 [验收状态](../../../specs/rq-sys-mvp/LOCAL-AND-TARGET-STATUS.md)。
+
 Agent 可直接使用的总任务说明：[`../AGENT-HANDOFF.md`](../AGENT-HANDOFF.md)。
 
 技术栈建议见 [`../../../specs/rq-sys-mvp/TECHNICAL-PLAN-MIAODA.md`](../../../specs/rq-sys-mvp/TECHNICAL-PLAN-MIAODA.md)；首个 POC 需核对 GitHub 仓库与妙搭之间的代码导入/发布方式。
@@ -45,14 +49,14 @@ flowchart LR
 |---|---|---|---|
 | 00 | Miaoda runtime capability POC | target runtime path verified（Online 手动合成及 cron/持久安全计划→AI→POC Base通过，配置已恢复；Dev编辑器沙箱/IDE仍间歇失败，保留平台限制。详见09。） | — |
 | 01 | Teambition API and field mapping POC | partially verified（2026-10-13 原始接口返回 311 条、311 个非空唯一 ID；Dev source-only 批次 311/311 成功且逐项匹配持久化需求。历史 UI `311/314` 不再是当前 Dev 对齐差异；旧分母由分页数据计算，历史多出的 3 条没有独立识别。字段类型/绑定及更大数据集的分页完整性仍待核实。） | — |
-| 02 | Feishu Base schema, upsert, and automation POC | POC target verified（Online实际upsert与独立Base读回通过；Dev仅本人通知的自动化运行及私聊实收已验证。正式全量业务推送未执行；优先级规则未发布。详见09。） | — |
+| 02 | Feishu Base schema, upsert, and automation POC | push/schema target POC verified（既有POC upsert与独立读回通过；通知能力仅部分通过，正式workflow disabled。原子条件更新、部分收件人精确补发未证明；优先级规则未发布。详见09及通知能力结果。） | — |
 | 03 | AI provider and data-policy decision/POC | done（2026-10-08 离线校验 5/5 + 超时/无效 key 在线实测 + PII 掩码断言；2026-10-09 有效 key 补跑 T1–T3 全部通过 + 生产适配器冒烟通过并修复 factory env 断链/prompt 样例缺失，证据：specs/rq-sys-mvp/AI-ANALYSIS-POC.md） | D-06 已确认；T1–T3 已验证 |
 | 04 | Persisted domain model and server API foundation | implemented / core target persistence verified（Online实际batch/job/snapshot/analysis/push持久化与Dev目录CRUD通过；其他端点逐项证据见09，不以本地测试替代目标验证。） | 00 |
 | 05 | Manual Teambition sync vertical slice | implemented-target-data-aligned（Dev `source_only` 批次 `2d372363-31f5-482a-aca9-4c26cb43010c`：311/311 成功、0 失败、0 缺失真实需求；Dev 保留 7 条合成夹具。该批次未触发 AI、负责人匹配、Base 推送或通知。） | 00, 01, 04, D-08 |
 | 06 | AI analysis vertical slice | target verified with synthetic data（Online手动/定时夹具实际模型分析通过；无法识别/低置信度/空优先级不阻塞推送。详见09。） | 03, 05 |
 | 07 | Owner mapping and Feishu Base push vertical slice | target POC verified（Online空负责人upsert/readback通过；既有Dev仅本人分配通知实收、8个模块省略与PM字段保护/幂等重放通过。详见09。） | 02, 05 |
 | 08 | Weekly schedule, retry, and audit | target verified with safe fixtures（真实cron两次成功回调，同一持久周窗口唯一batch/job/需求/Base行，完整分析推送通过；错窗/租约接管已验证。原关闭状态已恢复，未调用TB。详见09。） | 00, 05, 06, 07 |
-| 09 | Target-environment end-to-end acceptance | core Online flow verified; Dev editor limitation remains（Online手动合成和真实cron/持久安全计划组合路径已通过、原配置全部恢复；目录CRUD/模块省略/本人通知已有证据。另一账号仅登录按反馈通过。详见09。） | 00–08, 12–17 |
+| 09 | Target-environment end-to-end acceptance | partial; core synthetic flow verified（Online手动合成与真实cron组合路径此前已通过并恢复；本次通知POC未达到正式通知门槛；当前source-only为314/314。另一账号仅登录按反馈通过，Dev编辑器沙箱仍有平台限制。详见09。） | 00–08, 12–17 |
 | D-08 | Resolve production UI component baseline after repo inspection | resolved（2026-10-08，ADR-001：基线已推送（main，03aef74）并检视——仓库无 UI 依赖，按 design.md 采用 HeroUI v3 + Tailwind；UI 托管方式留待 00） | ADR-001 已产出 |
 | 10 | Grant `spark:app:read` user scope for Miaoda apps | resolved（2026-10-09 根因确认：TraeWork 注入凭证遮蔽本地授权；加 `env -u LARKSUITE_CLI_APP_ID -u LARKSUITE_CLI_USER_ACCESS_TOKEN -u LARKSUITE_CLI_BRAND` 后 apps +list/+get/release 与 observability 命令调用成功。member APIs 仍为 feature_not_available；观测数据部分为空/null，详见工单 evidence） | — |
 | 11 | Grant `spark:app:write` user scope for Miaoda apps | resolved（2026-10-09 双路径验证：member-add 路径返回 feature_not_available 3340005（该 full_stack app 不支持 CLI 协作者管理，非 scope 问题）；**release-create 路径验证通过**——同一 env -u 前缀下 `+release-create --branch sprint/default --apply-reason` 真实发布成功，release 7694661855108893966 publishing→finished、error_logs 空、无 missing_scope（方案A，用户显式确认；命令 Risk: write 无 --yes 门禁）。spark:app:write 对发布类写操作可用） | — |
