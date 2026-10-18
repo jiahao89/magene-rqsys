@@ -4,7 +4,7 @@
 
 ## 最新验收状态（2026-10-18）
 
-负责人目录已定位到调用合同错误，平台选人/服务端Open ID转换修复已提交（root15a5e85；app5434ed2已推送、release dry-run通过）；API287/Web45/Miaoda84及构建检查通过，尚未部署。root main推送受GitHub TLS传输失败阻塞；release等待本次不附不支持的--yes的明确确认。发布待办统一收敛为R1负责人→Base、R2通知剩余开发与补发、R3当前版本定时复验，见[发布收尾清单](../../../specs/rq-sys-mvp/RELEASE-CLOSEOUT.md)。下面较早快照保留历史证据，不作为重复阻塞清单。
+负责人修复5434ed2已发布（release7697920647795690499 finished），Online搜索/身份转换/映射保存通过。真实Base更新发现1254061数字字段类型错误；已按正式number/POC text实现schema序列化并补齐限流链路，本地API289/Web45/Miaoda86通过，待新修复发布和3条记录回读。正式通知与周计划保持关闭。剩余只保留R1真实推送闭环、R2通知开发/补发、R3当前版本隔离定时复验，见[发布收尾清单](../../../specs/rq-sys-mvp/RELEASE-CLOSEOUT.md)。
 
 2026-10-18 本地全量复验通过：root API 286/286、Web 45/45；typecheck、build、`git diff --check`、两仓共用模块对齐 21/21 通过；Miaoda 路由验收79/79及类型、lint、stylelint、build通过。线上续验复现负责人搜索503；对应线上日志的上游状态 unresolved，Online release仍运行旧 commit `ad4620a`，安全诊断 commit `146d918` 未发布，故具体是应用权限/数据范围、凭据还是网络仍未知。实际发布受 `--yes` 门禁阻塞，未绕过。Dev 搜索返回400，与Online错误不同；编辑器重连后恢复但沙箱长期稳定性未证明。正式通知、周计划和恢复 cron 均关闭，没有同步 TB、写 Base 或发干系人消息；通知补发无失败样本。root `application/ports.ts` 对齐修复尚未提交。第二用户人员 CRUD不属验收范围，优先级校准规则留空是已接受决策。MVP尚未全量验收。详情见 [09验收](./09-target-acceptance.md) 和 [验收状态](../../../specs/rq-sys-mvp/LOCAL-AND-TARGET-STATUS.md)。
 
@@ -60,7 +60,7 @@ flowchart LR
 | 06 | AI analysis vertical slice | target verified with synthetic data（Online手动/定时夹具实际模型分析通过；无法识别/低置信度/空优先级不阻塞推送。详见09。） | 03, 05 |
 | 07 | Owner mapping and Feishu Base push vertical slice | target POC verified（Online空负责人upsert/readback通过；既有Dev仅本人分配通知实收、8个模块省略与PM字段保护/幂等重放通过。详见09。） | 02, 05 |
 | 08 | Weekly schedule, retry, and audit | historical target path verified（10月15日真实cron/安全计划→AI→POC Base通过；本轮新验证窗未产生cron日志或scheduled batch，不能作为当前触发通过证据；恢复 cron/周计划均关闭。错窗/租约接管已验证。详见09。） | 00, 05, 06, 07 |
-| 09 | Target-environment end-to-end acceptance | blocked（负责人搜索合同错误已修复、本地验证完成，未部署；发布收敛为R1负责人→Base、R2正式通知开发/失败补发、R3当前版本定时复验与交接。历史计数、第二用户CRUD、接受的字段限制不再重复阻塞；详见RELEASE-CLOSEOUT.md和09。） | 00–08, 12–17 |
+| 09 | Target-environment end-to-end acceptance | blocked（负责人选人修复已发布并验证；Base数字字段错误已本地修复待发布；发布收敛为R1负责人→Base、R2正式通知开发/失败补发、R3当前版本定时复验与交接。历史计数、第二用户CRUD、接受的字段限制不再重复阻塞；详见RELEASE-CLOSEOUT.md和09。） | 00–08, 12–17 |
 | 18 | Formal notifications and failure resend closeout | design-required（正式workflow仍未实现，四字段POC部分通过；先确认不可变事件/逐收件人恢复设计，再开发和安全目标验收。对应RELEASE-CLOSEOUT R2。） | 02, 14 |
 | D-08 | Resolve production UI component baseline after repo inspection | resolved（2026-10-08，ADR-001：基线已推送（main，03aef74）并检视——仓库无 UI 依赖，按 design.md 采用 HeroUI v3 + Tailwind；UI 托管方式留待 00） | ADR-001 已产出 |
 | 10 | Grant `spark:app:read` user scope for Miaoda apps | resolved（2026-10-09 根因确认：TraeWork 注入凭证遮蔽本地授权；加 `env -u LARKSUITE_CLI_APP_ID -u LARKSUITE_CLI_USER_ACCESS_TOKEN -u LARKSUITE_CLI_BRAND` 后 apps +list/+get/release 与 observability 命令调用成功。member APIs 仍为 feature_not_available；观测数据部分为空/null，详见工单 evidence） | — |

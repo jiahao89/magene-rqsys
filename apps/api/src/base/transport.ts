@@ -31,7 +31,7 @@ interface FeishuEnvelope {
   };
 }
 
-export type FeishuAction = "token endpoint" | "token request" | "records filter" | "record read" | "record create" | "record update";
+export type FeishuAction = "token endpoint" | "token request" | "field schema" | "records filter" | "record read" | "record create" | "record update";
 export type FeishuFailureKind = "http" | "api" | "invalid_response" | "ambiguous_response";
 
 /** Structured safe error metadata; callers should use fields, never parse message text. */
@@ -66,6 +66,7 @@ async function feishuHttpFailure(response: Response, action: FeishuAction): Prom
 
 export class FeishuBitableClient implements BaseClient {
   private cachedToken: { value: string; expiresAtMs: number } | null = null;
+  private cachedFieldTypes: { types: Map<string, number>; expiresAtMs: number } | null = null;
   private readonly baseUrl: string;
   private readonly fetcher: FetchLike;
 
@@ -96,8 +97,45 @@ export class FeishuBitableClient implements BaseClient {
     return this.fetcher(url, { ...init, headers });
   }
 
-  private assertOk(payload: FeishuEnvelope, action: FeishuAction): void {
+  private assertOk(payload: Pick<FeishuEnvelope, "code">, action: FeishuAction): void {
     if (payload.code !== 0) throw new FeishuApiError("api", action, undefined, payload.code);
+  }
+
+  async readFieldType(fieldName: string): Promise<number> {
+    if (this.cachedFieldTypes && Date.now() < this.cachedFieldTypes.expiresAtMs) {
+      const type = this.cachedFieldTypes.types.get(fieldName);
+      if (type !== undefined) return type;
+      throw new FeishuApiError("invalid_response", "field schema");
+    }
+    const types = new Map<string, number>();
+    const seenTokens = new Set<string>();
+    let pageToken: string | undefined;
+    for (let page = 0; page < 20; page++) {
+      const query = new URLSearchParams({ page_size: "100", ...(pageToken ? { page_token: pageToken } : {}) });
+      const res = await this.authed(`${this.baseUrl}/open-apis/bitable/v1/apps/${this.config.appToken}/tables/${this.config.tableId}/fields?${query}`, { method: "GET" });
+      if (!res.ok) throw await feishuHttpFailure(res, "field schema");
+      const payload = await res.json() as { code?: number; data?: { items?: Array<{ field_name?: unknown; type?: unknown }>; has_more?: boolean; page_token?: unknown } };
+      this.assertOk(payload, "field schema");
+      if (!Array.isArray(payload.data?.items)) throw new FeishuApiError("invalid_response", "field schema");
+      for (const field of payload.data.items) {
+        if (typeof field.field_name !== "string" || typeof field.type !== "number" || !Number.isSafeInteger(field.type) || types.has(field.field_name)) {
+          throw new FeishuApiError("invalid_response", "field schema");
+        }
+        types.set(field.field_name, field.type);
+      }
+      if (payload.data.has_more === false) {
+        const type = types.get(fieldName);
+        if (type === undefined) throw new FeishuApiError("invalid_response", "field schema");
+        this.cachedFieldTypes = { types, expiresAtMs: Date.now() + 300_000 };
+        return type;
+      }
+      if (payload.data.has_more !== true || typeof payload.data.page_token !== "string" || !payload.data.page_token || seenTokens.has(payload.data.page_token)) {
+        throw new FeishuApiError("invalid_response", "field schema");
+      }
+      pageToken = payload.data.page_token;
+      seenTokens.add(pageToken);
+    }
+    throw new FeishuApiError("invalid_response", "field schema");
   }
 
   async findByRequirementKey(key: BaseRequirementKey): Promise<BaseRecord | null> {

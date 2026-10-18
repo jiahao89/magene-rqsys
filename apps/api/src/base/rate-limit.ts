@@ -54,6 +54,10 @@ export class RateLimitedBaseClient implements BaseClient {
     return this.schedule(() => this.inner.findByRequirementKey(key));
   }
 
+  readFieldType(fieldName: string): Promise<number> {
+    return this.schedule(() => this.inner.readFieldType ? this.inner.readFieldType(fieldName) : Promise.resolve(1));
+  }
+
   create(fields: Record<string, unknown>): Promise<BaseRecord> {
     return this.schedule(() => this.inner.create(fields));
   }

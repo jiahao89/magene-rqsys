@@ -1,8 +1,10 @@
 export interface BaseRequirementKey { projectId: string; requirementId: string }
 export interface BaseRecord { recordId: string; fields: Record<string, unknown> }
 
-// Only this injected interface can reach Feishu; production transport is intentionally absent.
+// External Base access is isolated behind this transport interface.
 export interface BaseClient {
+  // Production transport resolves the target schema; legacy injected test clients use text metadata.
+  readFieldType?(fieldName: string): Promise<number>;
   findByRequirementKey(key: BaseRequirementKey): Promise<BaseRecord | null>;
   create(fields: Record<string, unknown>): Promise<BaseRecord>;
   update(recordId: string, fields: Record<string, unknown>): Promise<BaseRecord>;
@@ -106,7 +108,12 @@ export class FeishuBasePushAdapter {
       else delta[field] = value;
     }
     const metadata = this.fields.metadata ?? {};
-    if (metadata.sourceVersion) delta[metadata.sourceVersion] = String(input.sourceVersion);
+    if (metadata.sourceVersion) {
+      const type = this.client.readFieldType ? await this.client.readFieldType(metadata.sourceVersion) : 1;
+      if (type !== 1 && type !== 2) throw new Error("Base source-version field must be text or number");
+      if (!Number.isSafeInteger(input.sourceVersion) || input.sourceVersion < 1) throw new Error("Invalid Base source version");
+      delta[metadata.sourceVersion] = type === 2 ? input.sourceVersion : String(input.sourceVersion);
+    }
     if (metadata.pushState) delta[metadata.pushState] = this.selectValue(metadata.pushState, "已推送");
     if (metadata.lastPushedAt && input.pushedAt) {
       const timestamp = Date.parse(input.pushedAt);

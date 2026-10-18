@@ -1,12 +1,62 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { FeishuBitableClient } from "./transport.js";
+import { FeishuBasePushAdapter } from "./client.js";
+import { RateLimitedBaseClient } from "./rate-limit.js";
 
 const CONFIG = {
   appId: "cli_x", appSecret: "s3cret", appToken: "app-token", tableId: "tbl-1",
   keyFields: { projectId: "TB项目ID", requirementId: "TB需求ID" },
   baseUrl: "https://open.feishu.test",
 };
+
+test("source versions use the actual target field type for both numeric production and text POC tables", async () => {
+  for (const type of [2, 1, 3]) {
+    const writes: Record<string, unknown>[] = [];
+    const client = new FeishuBitableClient({ ...CONFIG, fetch: fakeFetch((path, init) => {
+      if (path.includes("/tenant_access_token")) return { body: { code: 0, tenant_access_token: "test-token", expire: 3600 } };
+      if (path.includes("/fields?")) return { body: { code: 0, data: { items: [{ field_name: "源版本", type }], has_more: false } } };
+      if (init?.method === "PUT") {
+        const { fields } = JSON.parse(String(init.body)) as { fields: Record<string, unknown> };
+        writes.push(fields);
+        return { body: { code: 0, data: { record: { record_id: "rec-existing", fields } } } };
+      }
+      return { body: { code: 0, data: { items: [{ record_id: "rec-existing", fields: {} }] } } };
+    }, []) });
+    const adapter = new FeishuBasePushAdapter(new RateLimitedBaseClient(client), {
+      projectId: "TB项目ID", requirementId: "TB需求ID", owner: "执行人", source: {}, ai: {}, pm: [],
+      metadata: { sourceVersion: "源版本" },
+    });
+    const input = { projectId: "p", requirementId: "r", title: "synthetic", owner: null, sourceVersion: 3,
+      substantiveChanged: false, idempotencyKey: "synthetic-v3" };
+    if (type === 3) {
+      await assert.rejects(() => adapter.push(input));
+      assert.equal(writes.length, 0);
+    } else {
+      await adapter.push(input);
+      assert.equal(writes[0]?.["源版本"], type === 2 ? 3 : "3");
+    }
+  }
+});
+
+test("field schema follows pagination, caches reads, and rejects incomplete or cyclic responses", async () => {
+  const calls: string[] = [];
+  const client = new FeishuBitableClient({ ...CONFIG, fetch: fakeFetch((path) => {
+    if (path.includes("/tenant_access_token")) return { body: { code: 0, tenant_access_token: "test-token", expire: 3600 } };
+    if (path.includes("page_token=next")) return { body: { code: 0, data: { items: [{ field_name: "源版本", type: 2 }], has_more: false } } };
+    return { body: { code: 0, data: { items: [{ field_name: "标题", type: 1 }], has_more: true, page_token: "next" } } };
+  }, calls) });
+  assert.equal(await client.readFieldType("源版本"), 2);
+  assert.equal(await client.readFieldType("标题"), 1);
+  assert.equal(calls.filter(call => call.includes("/fields?")).length, 2);
+  await assert.rejects(() => client.readFieldType("missing"));
+  for (const data of [undefined, { items: [] }, { items: [], has_more: true, page_token: "repeat" }]) {
+    const invalid = new FeishuBitableClient({ ...CONFIG, fetch: fakeFetch(path => path.includes("/tenant_access_token")
+      ? { body: { code: 0, tenant_access_token: "test-token", expire: 3600 } }
+      : { body: { code: 0, data } }, []) });
+    await assert.rejects(() => invalid.readFieldType("源版本"));
+  }
+});
 
 function fakeFetch(handler: (url: string, init?: RequestInit) => { status?: number; body: unknown }, calls: string[]) {
   return (async (url: string | URL, init?: RequestInit) => {
