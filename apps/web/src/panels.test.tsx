@@ -206,6 +206,30 @@ describe("MappingsPanel (ticket 17)", () => {
 describe("RequirementsPanel (ticket 17)", () => {
   const row = { id: "req-1", sourceRequirementId: "tb-1", title: "需要报表", sourceVersion: 2, pipeline: { pull: "synced", analysis: "analyzed", owner: "auto_mapped", push: "pushed" } };
 
+  it("lets an operator refresh a mapped owner after a failed Base push", async () => {
+    const failedRow = { ...row, pipeline: { ...row.pipeline, owner: "manually_mapped", push: "failed" } };
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/requirements/req-1") return jsonOk({ ...failedRow, analysis: null, analyses: [] });
+      if (path === "/api/feishu/users?q=Alex") return jsonOk({ items: [{ openId: "ou-alex-new", name: "Alex Chen" }] });
+      if (path === "/api/requirements/req-1/owner" && init?.method === "PUT") return jsonOk({ requirementId: "req-1", ownerState: "manually_mapped", status: "queued" });
+      return jsonOk({ items: [failedRow], nextCursor: null });
+    });
+
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    fireEvent.click(await screen.findByRole("button", { name: "查看" }));
+    expect(await screen.findByText(/负责人 manually_mapped · 推送 failed/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("搜索飞书用户"), { target: { value: "Alex" } });
+    fireEvent.click(screen.getByRole("button", { name: "搜索" }));
+    fireEvent.click(await screen.findByRole("option", { name: /Alex Chen/ }));
+    fireEvent.click(screen.getByRole("button", { name: "更新负责人并重试推送" }));
+
+    expect(await screen.findByText(/推送已排队/)).toBeInTheDocument();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/requirements/req-1/owner", expect.objectContaining({
+      method: "PUT", body: JSON.stringify({ feishuUserId: "ou-alex-new", feishuIdType: "open_id" }),
+    })));
+  });
+
   it("refreshes an expanded requirement after background analysis and push finish", async () => {
     let completed = false;
     fetchMock.mockImplementation(async (input) => {

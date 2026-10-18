@@ -419,7 +419,7 @@ export function RequirementsPanel({ onRefresh }: { onRefresh: () => void }) {
   };
   const runAction = async (action: () => Promise<string>, detailId: string) => {
     setBusy(true); setNotice(null);
-    try { setNotice(await action()); onRefresh(); await open(detailId); }
+    try { const message = await action(); onRefresh(); await open(detailId); setNotice(message); }
     catch (cause) { setNotice(errorText(cause)); }
     finally { setBusy(false); }
   };
@@ -512,6 +512,7 @@ function RequirementDetailCard({ selected, structured, busy, onClose, onAct }: {
     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
       {["failed_retryable", "pending"].includes(selected.pipeline.analysis) && <HeroButton className="button button-secondary button-small" onPress={() => void onAct(async () => { await retryAnalysis(selected.id); return "AI 分析重试已入队"; }, selected.id)} isDisabled={busy}>重试 AI 分析</HeroButton>}
       {selected.pipeline.owner === "pending_mapping" && <FeishuUserPicker disabled={busy} onMap={(user) => onAct(async () => { const result = await setOwner(selected.id, { feishuUserId: user.openId, feishuIdType: "open_id" }); return `${user.name} 映射已保存（${result.ownerState}），推送已排队`; }, selected.id)} />}
+      {selected.pipeline.push === "failed" && ["auto_mapped", "manually_mapped"].includes(selected.pipeline.owner) && <FeishuUserPicker disabled={busy} saveLabel="更新负责人并重试推送" onMap={(user) => onAct(async () => { const result = await setOwner(selected.id, { feishuUserId: user.openId, feishuIdType: "open_id" }); return `${user.name} 负责人映射已更新（${result.ownerState}），推送已排队`; }, selected.id)} />}
       {selected.pipeline.push === "failed" && <HeroButton className="button button-secondary button-small" onPress={() => void onAct(async () => { const result = await pushRequirement(selected.id); return result.status === "queued" ? "Base 推送重试已入队" : `推送状态：${result.status}`; }, selected.id)} isDisabled={busy}>重试 Base 推送</HeroButton>}
       <span style={{ fontSize: 9, color: "#818b9a" }}>推送成功不代表飞书 PM 通知已送达。</span>
     </div>

@@ -49,7 +49,9 @@ test("owner 迁移：auto_mapped → manually_mapped 允许，人工映射不可
   assert.equal(canTransition("owner", "pending_mapping", "manually_mapped"), true);
   assert.equal(canTransition("owner", "pending_mapping", "not_required"), true);
   assert.equal(canTransition("owner", "auto_mapped", "manually_mapped"), true);
-  // 关键保护：manually_mapped 是迁移终点，自动流程不能改写
+  // 人工可将负责人改派给另一位手动选择的用户，状态保持 manually_mapped。
+  assert.equal(canTransition("owner", "manually_mapped", "manually_mapped"), true);
+  // 关键保护：自动流程不能覆盖人工选择。
   assert.equal(canTransition("owner", "manually_mapped", "auto_mapped"), false);
   assert.equal(canTransition("owner", "manually_mapped", "pending_mapping"), true); // TB 负责人实质变更后重新解析；无匹配时仓储保留 Base 手动负责人
   assert.equal(canTransition("owner", "not_required", "pending_mapping"), true);
