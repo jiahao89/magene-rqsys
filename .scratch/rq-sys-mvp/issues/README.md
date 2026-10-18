@@ -2,9 +2,13 @@
 
 来源：`specs/rq-sys-mvp/`，以当前 PRD revision 60 为产品行为基线。此处是本地待评审 ticket 草案，尚未发布到外部 tracker。
 
-## 最新验收状态（2026-10-16）
+## 最新验收状态（2026-10-18）
 
-通知隔离 POC 已部分通过，但条件更新原子性和部分收件人精确补发未证明；按停止条件未启用正式通知，正式通知、周计划保持关闭。Online source-only 当前批次314/314与原始ID集合一致，但未分析或推送。新 Base 行初始化 `待处理` 的双仓修复正在干净安装/全量回归及提交发布，尚未算完成。第二用户仅登录有反馈，Dev 编辑器沙箱仍是平台阻塞。细节见 [09验收](./09-target-acceptance.md) 和 [验收状态](../../../specs/rq-sys-mvp/LOCAL-AND-TARGET-STATUS.md)。
+负责人目录已定位到调用合同错误，平台选人/服务端Open ID转换修复已提交（root15a5e85；app5434ed2已推送、release dry-run通过）；API287/Web45/Miaoda84及构建检查通过，尚未部署。root main推送受GitHub TLS传输失败阻塞；release等待本次不附不支持的--yes的明确确认。发布待办统一收敛为R1负责人→Base、R2通知剩余开发与补发、R3当前版本定时复验，见[发布收尾清单](../../../specs/rq-sys-mvp/RELEASE-CLOSEOUT.md)。下面较早快照保留历史证据，不作为重复阻塞清单。
+
+2026-10-18 本地全量复验通过：root API 286/286、Web 45/45；typecheck、build、`git diff --check`、两仓共用模块对齐 21/21 通过；Miaoda 路由验收79/79及类型、lint、stylelint、build通过。线上续验复现负责人搜索503；对应线上日志的上游状态 unresolved，Online release仍运行旧 commit `ad4620a`，安全诊断 commit `146d918` 未发布，故具体是应用权限/数据范围、凭据还是网络仍未知。实际发布受 `--yes` 门禁阻塞，未绕过。Dev 搜索返回400，与Online错误不同；编辑器重连后恢复但沙箱长期稳定性未证明。正式通知、周计划和恢复 cron 均关闭，没有同步 TB、写 Base 或发干系人消息；通知补发无失败样本。root `application/ports.ts` 对齐修复尚未提交。第二用户人员 CRUD不属验收范围，优先级校准规则留空是已接受决策。MVP尚未全量验收。详情见 [09验收](./09-target-acceptance.md) 和 [验收状态](../../../specs/rq-sys-mvp/LOCAL-AND-TARGET-STATUS.md)。
+
+2026-10-16 最新复核：3 条已导入真实需求 AI 分析成功（模块分别为训练-课程训练/训练-模拟路线/偏好设置；置信度中/高/中；优先级留空），Online 与 Dev 页面都显示“已分析 / 待匹配 / 等待推送”。Online 负责人搜索 `GET /api/feishu/users` 为 HTTP 503，仍未映射/推送。安全诊断代码 commit `146d918` 已推送 `sprint/default`，本地 79/79 路由回归及构建检查通过；release dry-run 已核对，实际发布被自动审批拦截（要求 CLI 不支持的 `--yes`），未绕过，故 Online 还没有具体上游错误诊断。隔离 POC 已有5条本人测试消息通过只读回读，确认正常发送/本人收件；没有失败样本，补发机制和失败概率仍未知。周计划/恢复 cron 与正式通知保持关闭；历史 10月15日组合调度曾通过，10月16日获批观察窗未触发。Dev 独立预览本次可加载且 API 已连接；此前 `ErrorSandboxNotRunning` 未复现，但长期稳定性/根因未证明。用户确认 311→314 来自新增需求；旧 `314/317` 口径未复核。第二用户人员 CRUD 不属验收要求；仅有另一成员登录反馈。MVP 尚未全量验收。详情见 [09验收](./09-target-acceptance.md) 和 [验收状态](../../../specs/rq-sys-mvp/LOCAL-AND-TARGET-STATUS.md)。
 
 Agent 可直接使用的总任务说明：[`../AGENT-HANDOFF.md`](../AGENT-HANDOFF.md)。
 
@@ -48,15 +52,16 @@ flowchart LR
 | ID | Ticket | Status | Depends on |
 |---|---|---|---|
 | 00 | Miaoda runtime capability POC | target runtime path verified（Online 手动合成及 cron/持久安全计划→AI→POC Base通过，配置已恢复；Dev编辑器沙箱/IDE仍间歇失败，保留平台限制。详见09。） | — |
-| 01 | Teambition API and field mapping POC | partially verified（2026-10-13 原始接口返回 311 条、311 个非空唯一 ID；Dev source-only 批次 311/311 成功且逐项匹配持久化需求。历史 UI `311/314` 不再是当前 Dev 对齐差异；旧分母由分页数据计算，历史多出的 3 条没有独立识别。字段类型/绑定及更大数据集的分页完整性仍待核实。） | — |
+| 01 | Teambition API and field mapping POC | partially verified（历史 API/Dev 快照为311/311；用户说明之后 311→314 的增长来自新增需求。最近 Online/TB source-only 快照314/314 ID一致。独立 UI `314/317` 显示口径尚未复核；字段类型/绑定及更大数据集分页完整性仍待核实。） | — |
 | 02 | Feishu Base schema, upsert, and automation POC | push/schema target POC verified（既有POC upsert与独立读回通过；通知能力仅部分通过，正式workflow disabled。原子条件更新、部分收件人精确补发未证明；优先级规则未发布。详见09及通知能力结果。） | — |
 | 03 | AI provider and data-policy decision/POC | done（2026-10-08 离线校验 5/5 + 超时/无效 key 在线实测 + PII 掩码断言；2026-10-09 有效 key 补跑 T1–T3 全部通过 + 生产适配器冒烟通过并修复 factory env 断链/prompt 样例缺失，证据：specs/rq-sys-mvp/AI-ANALYSIS-POC.md） | D-06 已确认；T1–T3 已验证 |
 | 04 | Persisted domain model and server API foundation | implemented / core target persistence verified（Online实际batch/job/snapshot/analysis/push持久化与Dev目录CRUD通过；其他端点逐项证据见09，不以本地测试替代目标验证。） | 00 |
 | 05 | Manual Teambition sync vertical slice | implemented-target-data-aligned（Dev `source_only` 批次 `2d372363-31f5-482a-aca9-4c26cb43010c`：311/311 成功、0 失败、0 缺失真实需求；Dev 保留 7 条合成夹具。该批次未触发 AI、负责人匹配、Base 推送或通知。） | 00, 01, 04, D-08 |
 | 06 | AI analysis vertical slice | target verified with synthetic data（Online手动/定时夹具实际模型分析通过；无法识别/低置信度/空优先级不阻塞推送。详见09。） | 03, 05 |
 | 07 | Owner mapping and Feishu Base push vertical slice | target POC verified（Online空负责人upsert/readback通过；既有Dev仅本人分配通知实收、8个模块省略与PM字段保护/幂等重放通过。详见09。） | 02, 05 |
-| 08 | Weekly schedule, retry, and audit | target verified with safe fixtures（真实cron两次成功回调，同一持久周窗口唯一batch/job/需求/Base行，完整分析推送通过；错窗/租约接管已验证。原关闭状态已恢复，未调用TB。详见09。） | 00, 05, 06, 07 |
-| 09 | Target-environment end-to-end acceptance | partial; core synthetic flow verified（Online手动合成与真实cron组合路径此前已通过并恢复；本次通知POC未达到正式通知门槛；当前source-only为314/314。另一账号仅登录按反馈通过，Dev编辑器沙箱仍有平台限制。详见09。） | 00–08, 12–17 |
+| 08 | Weekly schedule, retry, and audit | historical target path verified（10月15日真实cron/安全计划→AI→POC Base通过；本轮新验证窗未产生cron日志或scheduled batch，不能作为当前触发通过证据；恢复 cron/周计划均关闭。错窗/租约接管已验证。详见09。） | 00, 05, 06, 07 |
+| 09 | Target-environment end-to-end acceptance | blocked（负责人搜索合同错误已修复、本地验证完成，未部署；发布收敛为R1负责人→Base、R2正式通知开发/失败补发、R3当前版本定时复验与交接。历史计数、第二用户CRUD、接受的字段限制不再重复阻塞；详见RELEASE-CLOSEOUT.md和09。） | 00–08, 12–17 |
+| 18 | Formal notifications and failure resend closeout | design-required（正式workflow仍未实现，四字段POC部分通过；先确认不可变事件/逐收件人恢复设计，再开发和安全目标验收。对应RELEASE-CLOSEOUT R2。） | 02, 14 |
 | D-08 | Resolve production UI component baseline after repo inspection | resolved（2026-10-08，ADR-001：基线已推送（main，03aef74）并检视——仓库无 UI 依赖，按 design.md 采用 HeroUI v3 + Tailwind；UI 托管方式留待 00） | ADR-001 已产出 |
 | 10 | Grant `spark:app:read` user scope for Miaoda apps | resolved（2026-10-09 根因确认：TraeWork 注入凭证遮蔽本地授权；加 `env -u LARKSUITE_CLI_APP_ID -u LARKSUITE_CLI_USER_ACCESS_TOKEN -u LARKSUITE_CLI_BRAND` 后 apps +list/+get/release 与 observability 命令调用成功。member APIs 仍为 feature_not_available；观测数据部分为空/null，详见工单 evidence） | — |
 | 11 | Grant `spark:app:write` user scope for Miaoda apps | resolved（2026-10-09 双路径验证：member-add 路径返回 feature_not_available 3340005（该 full_stack app 不支持 CLI 协作者管理，非 scope 问题）；**release-create 路径验证通过**——同一 env -u 前缀下 `+release-create --branch sprint/default --apply-reason` 真实发布成功，release 7694661855108893966 publishing→finished、error_logs 空、无 missing_scope（方案A，用户显式确认；命令 Risk: write 无 --yes 门禁）。spark:app:write 对发布类写操作可用） | — |

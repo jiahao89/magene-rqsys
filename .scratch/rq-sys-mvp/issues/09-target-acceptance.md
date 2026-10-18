@@ -1,11 +1,52 @@
-# [核心链路验收通过；Dev 编辑器平台预览问题保留] 09 — 目标环境端到端验收
+# [核心链路部分通过；目标环境门槛保留] 09 — 目标环境端到端验收
 
-## 最新验收补记（2026-10-16）
+## 负责人搜索根因修复与发布收敛（2026-10-18）
+
+- 已从飞书官方Markdown规范确认旧实现的路径、HTTP方法、令牌身份和返回结构均不正确；不再将负责人503仅归因于通讯录权限。独立适配器已修正为官方GET用户令牌合同；妙搭使用平台通讯录SDK搜索内部成员，再在可信登录请求中转换成Base应用视角Open ID，不保存用户令牌。
+- 新增只读GET /api/feishu/users/resolve；企业员工关联、服务端姓名、应用视角Open ID和大整数ID字符串均有回归。Controller接线及伪造身份拒绝已验证。搜索/解析不写数据库；保存映射与推送仍沿用原API。
+- 本地root API287/287、Web45/45及类型/构建通过；Miaoda适配器/路由84/84、类型、lint、stylelint和生产构建通过，共用逻辑21/21一致。root代码提交15a5e85；app代码5434ed2已推送sprint/default，release dry-run通过。root推送main两次均为GitHub TLS传输失败，未修改网络/TLS设置。实际release等待本次不附不支持的--yes的明确确认；尚未部署，目标验收不能标为通过。
+- 发布只保留三个门槛：R1发布修复并完成负责人→Base链路；R2补齐正式通知实现及失败补发；R3当前版本定时复验与运行交接。详见[发布收尾清单](../../../specs/rq-sys-mvp/RELEASE-CLOSEOUT.md)。Dev长期稳定、第二用户CRUD、已解释的历史计数和已接受的字段限制不继续阻塞发布。
+
+
+## 本地全量复验与当前上线门槛（2026-10-18）
+
+- root API 286/286、Web 45/45；typecheck、生产 build、diff check 通过。两仓共用逻辑由 20/21 修复为 21/21 一致。
+- Miaoda app 路由验收 79/79、server/client typecheck、lint、stylelint、production build 通过。构建有 Vite 配置和大 chunk 警告，但退出码为 0。
+- 首次 PostgreSQL 集成测试遇到本机 Unix socket `EPERM`；之后按项目约定在本机数据库的随机临时 schema 执行并清理，root 全量测试通过。未触碰妙搭数据库。
+- Online 页面复现 `GET /api/feishu/users` HTTP 503 `DEPENDENCY_UNAVAILABLE`。对应线上错误日志记录了路由、约 11 秒耗时及运行 commit `ad4620a`，但 `source_stack_status=unresolved`，没有 provider 错误细节；按路由筛选日志为0不能作为“无失败请求”的依据。当前 release `7697174860666604799` finished，绑定旧 commit `ad4620a958fd57ef160083b803b5de6c320e4219`；诊断 commit `146d91846666024254f54334a3d41cd4cf469584` 未部署。只核对到 `FEISHU_APP_ID`、`FEISHU_APP_SECRET` 环境变量名存在，未读取值，不能证明凭据有效或权限足够。飞书官方[通讯录权限说明](https://open.feishu.cn/document/server-docs/api-call-guide/generic-error-code)表明 tenant_access_token 通讯录调用受应用权限和数据范围限制；权限/数据范围是排查方向，根因仍未确认。
+- 诊断版实际发布被门禁拒绝：CLI `+release-create` 不支持规定的 `--yes` 确认参数。本轮没有用 UI/API 等替代入口绕过。另，独立 Dev 预览的同一负责人搜索返回 HTTP 400 `REQUEST_FAILED`（不同于 Online 503）；编辑器短暂重连失败后恢复，沙箱长期稳定性仍未证明。
+- 正式通知、周计划与恢复 cron 均关闭；本轮没有同步 TB、进行真实需求 Base 写入或向干系人发通知。POC 通知只有成功样本，无失败/精确补发样本。生产关键的负责人映射与真实需求推送被目录 503 阻塞；Dev 沙箱长期稳定性也未验证。故本地检查已通过，但产品仍不具备可确认的生产上线状态。
+
+## 后续实测补记（2026-10-16）
+
+- **负责人目录诊断提交尚未发布：** Online `GET /api/feishu/users` 当前为 HTTP 503 `DEPENDENCY_UNAVAILABLE`。应用仓新增安全诊断 commit `146d91846666024254f54334a3d41cd4cf469584` 已推送到 `sprint/default`，本地路由测试79/79及类型检查、lint、stylelint、生产构建通过。诊断只记录阶段、原因类别、HTTP 状态、数字错误码，不记录查询词、响应正文或凭据。发布 dry-run 已核对；实际 `+release-create` 被自动审批拒绝，因为要求 `--yes` 而该命令不支持此参数。未通过替代路径绕过门禁，诊断版没有上线，具体上游失败原因仍未知。
+- **POC 通知实收补充：** 对原隔离流程生成的5条、均发给当前用户的测试消息进行只读批量回读，5/5 均找到，载荷与事件类型吻合。正常发送和本人收件可确认；没有失败投递样本，所以“失败后补发”和失败概率仍未知。本轮没有新发通知，没有改正式流程。
+- **继续验收复核：** 独立 Dev 预览当前可加载、API 已连接；Online 与 Dev 页面均显示最新3条真实需求为“已分析 / 待匹配 / 等待推送”。审计日志中的3条 `analysis.terminal` 均成功（17:46:52、17:47:44、17:50:37）；第三条详情“偏好设置”/中置信度/优先级留空，含原文证据。没有再次同步 TB、写 Base、发通知或启用调度。AI 阶段通过不等于完整链路通过。
+
+- **AI 阶段通过（3 条已导入的最新真实需求）：** 本轮没有再次同步 TB。逐条 AI 重试均成功：`REQ-6a951b81648c3a16a805d619` 建议模块“训练-课程训练”、中置信度；`REQ-6a90e072648c3a16a8f5f954` 建议“训练-模拟路线”、高置信度；`REQ-68e7d0369e69f4b40769d56` 建议“偏好设置”、中置信度。均有整体理由/证据，优先级留空。三条负责人仍待匹配、Base 推送等待中，本轮没有写 Base 或向干系人发通知。
+- **当前 Base 阻塞：** 线上负责人选择器搜索“毕梓浩”返回 `DEPENDENCY_UNAVAILABLE`，没有保存映射。实现中目录缺失或上游失败都会被归并成 503 `DEPENDENCY_UNAVAILABLE`；没有本轮 Network HTTP 明细，具体是应用配置、通讯录权限还是 Online runtime 仍未知。沙箱内的只读 `lark-cli contact +search-user` DNS 查询失败；随后获批的沙箱外只读查询成功，得到唯一的内部用户匹配，证明该用户可从通讯录查询，但不能证明 RQ-Sys 服务端应用令牌有通讯录权限。线上查询仍需定位；不得将其指派给测试用户或绕过应用映射流程。
+- **定时器：** 页面配置为周一 09:00 Asia/Shanghai；来源同步已开启，但周计划复选框未开启，恢复 cron `rqsysWeeklySyncRecovery` 也 disabled，所以当前没有启用的定时。10月15日历史组合链路通过；10月16日观察窗无调度日志/新 scheduled batch，只能说明近期未复现。调度配置保持关闭。
+- **一次通知与补发边界：** 隔离 POC Base 上只向本人贾浩触发了一次负责人变更通知；运行 `7697189420949359607` 显示4秒成功，两个自动化步骤均成功。消息搜索因本机 DNS 无法解析飞书域名而失败，故只确认自动化执行成功，未独立核对收件箱。没有失败样本/失败任务，本轮未完成“失败后补发”测试，无法计算失败概率或确定失败原因；正式通知仍关闭。
+- **第二用户范围修正：** 第二位成员的人员新增/改名/删除不属于 MVP 验收要求；推送目标为产品组指定成员。用户反馈另一成员已登录，但未独立核查其完整页面访问，记录为登录反馈而非写入验收。
+- **Dev 沙箱：** 本轮独立 Dev 预览可加载且 API 已连接，之前 `400 ErrorSandboxNotRunning` / `biz_status:toStart` 未复现；问题的长期稳定性/平台根因仍未证明。
+- **数据计数：** 用户确认历史 311→314 的增量由新录入 TB 需求造成；最新一次已记录的 Online/TB source-only 快照为 314/314 ID 匹配。本轮没有重拉 TB。旧截图 314/317 的另一显示口径未复核。
+
+## 下午复核（2026-10-16）
+
+- **诊断代码已发布：** Miaoda `sprint/default` commit `ad4620a958fd57ef160083b803b5de6c320e4219`；诊断发布 `7697164491130408240` finished。夹具策略拒绝现在记录有限原因码，不暴露任何环境值。
+- **手动合成批次定位到 worker 环境不一致：** batch `f6910bc1-d8b3-45c4-a1a9-9ade89cb1c14` 拉取1/1成功；需求 `ee98df87-539b-4a48-9ae6-b2f082803400` 的 analysis job 终态失败，原因码 `fixture_policy_denied`、安全原因 `fixture_flag_disabled`。需求当前 analysis/push 均 pending、`base_record_id=null`。这证明处理该队列任务的 worker 未加载夹具开关；没有调用模型、写 Base 或发通知。Online 冷加载读回 API 已连接、314/314，合成入口已隐藏；该批次显示拉取完成、分析等待中。
+- **隔离 cron 未在观察窗触发：** 已按批准方案临时设置来源范围/到期时间夹具并启用 `rqsysWeeklySyncRecovery`（`*/30 * * * *`、Asia/Shanghai），从15:35左右观察至16:10；日志没有出现调度完成记录，数据库没有新 scheduled batch。正式来源 `schedule_enabled=false`，没有处理真实需求。不能把“触发器 enabled”算作定时验收通过。
+- **已恢复线上配置：** 先停用 cron，再从权限受限备份写回原 `BASE_APP_TOKEN`、`BASE_TABLE_ID`；其他原变量未改；删除 `RQSYS_ENABLE_TEST_FIXTURES`、`RQSYS_SCHEDULE_FIXTURE`。env-list 只显示原8个 key，无 `RQSYS_*`；两项写回返回成功。来源周计划仍关闭，触发器恢复为 `*/30 * * * *`、Asia/Shanghai、disabled；Online 队列 queued/running 为0。恢复发布 `7697174860666604799` finished，commit `ad4620a958fd57ef160083b803b5de6c320e4219`，`error_logs=[]`。冷加载 UI 显示 API 已连接、314/314，合成入口不存在。
+- **当时未通过项（由上方后续实测补记更新）：** 异步 worker 夹具开关传播/新行“PM状态=待处理”目标语义、当前 cron 触发、通知并发原子性/部分失败补发、Dev 编辑器沙箱仍待确认。第二账号人员 CRUD 已明确不属于验收范围；优先级规则未发布是已接受的产品决策。
+
+## 同日较早验收补记（2026-10-16）
 
 - **本次隔离通知 POC 部分通过并已恢复：** POC 的不可变触发载荷样本、同事件重放静默、本人收件、负责人清空/重新分配及迟到条件更新“变更0条”均有真实 Base/消息证据；条件更新原子性及部分收件人失败后的精确补发仍未证明。按批准的停止条件，不将四字段方案扩展至正式表。新增的两个 POC 流程均 disabled，原 POC 负责人流程恢复 enabled；正式 Base 工作流保持 disabled/steps=[]，正式周计划/恢复 cron 保持关闭；正式表无改动。详见 `specs/rq-sys-mvp/NOTIFICATION-CAPABILITY-RESULTS.md`。
 - **当前源数据对齐：** Online `source_only` batch `b3837657-b5b5-41ec-9d37-c048ff687738` 为314/314成功、0失败；与当前原始接口的314个唯一ID集合完全一致。该次没有 AI、Base 写入或通知，且没有解释旧快照 `311/314` 中多出的三条具体历史记录。
-- **新需求状态修复尚未发布：** 两仓已实现新建 Base 行显式初始化 `PM状态=待处理`，既有行普通 upsert 保持原 PM 决策；回归先红后绿。应用锁文件正在修复并验证干净安装。提交、推送及 release 结果待后续补记。
-- 因此 MVP 尚未全部验收：正式通知链路未交付；另一账号仅有登录反馈，没有写入验证；Dev 编辑器沙箱/内嵌预览限制未解除。周计划继续关闭。
+- **新需求状态修复已发布，但目标语义验证未通过：** root `ba6fe96` 已推送 `main`；Miaoda `05534e95c59948f70c742112fb7978d9b2685158` 已推送 `sprint/default`。clean install 和本地检查已完成。修复发布 release `7697152329431452920` finished，绑定 app commit 且无错误日志。
+- **隔离目标夹具尝试被安全策略拒绝：** 临时启用夹具入口后只运行一次，批次 `0b1a0d00-36bb-4983-a773-1d3e14525c47` 返回 `unsafe_poc_base`，总量0、完成0；未创建需求、Base 记录或通知。环境控制面读回与获批 POC Base 配置一致，但 app runtime 仍拒绝，原因未查明；没有重试。之后已恢复 Online 原8项环境变量（值逐项与安全备份一致）、删除临时 `RQSYS_*` 开关；恢复 release `7697152600538909993` finished，提交为 `05534e95c59948f70c742112fb7978d9b2685158`、错误日志为空。线上冷加载显示 API 已连接、314/314，合成入口消失，周计划仍关闭。
+- **根因诊断仍为推测：** 源码中 `/api/dev/fixtures/status`、夹具入队和 worker 共用每个 Node 进程内的 `createRuntime()` 环境快照；worker 认领队列任务时会再次核验同一 POC Base 条件。因而“API 已接受、worker 拒绝”与不同/过期进程快照相符，但不能仅凭批次错误确认是妙搭多实例、旧 worker 或其他 runtime 问题。对应 Online 日志检索仅有前端 API INFO 记录，没有 worker 配置指纹。下一次目标验证前应先加入不含环境值的布尔诊断（API 和 worker 各自是否启用夹具、是否匹配 POC），并在同一隔离发布窗口验证；本轮未改代码、未再次运行夹具。
+- **因此 MVP 尚未全部验收：** 新建 Base 行 PM 状态需要目标写入链路验证；正式通知链路未交付；另一账号仅有登录反馈，没有写入验证；Dev 编辑器沙箱/内嵌预览限制未解除。优先级规则仍有意保持未发布/优先级留空。来源周计划关闭；恢复 cron `rqsysWeeklySyncRecovery` 回读为 `*/30 * * * *` Asia/Shanghai、disabled。
 
 ## Online 隔离验收与恢复（2026-10-15 下午）
 
