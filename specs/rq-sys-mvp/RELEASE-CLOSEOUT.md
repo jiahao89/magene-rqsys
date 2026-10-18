@@ -2,11 +2,11 @@
 
 ## 当前结论
 
-当前不能签署全量生产验收。负责人搜索修复已发布并通过Online选人/身份转换/保存验证；真实推送新发现源版本数字字段序列化错误，本地已修复，等待新修复发布后复验；正式通知仍有未完成开发，不能靠反复执行验收消除。以本页三个发布门槛为当前收尾入口；历史逐次证据保留在 Ticket 09，不再把旧快照中的已解决问题重新登记成阻塞。
+当前不能签署全量生产验收。负责人搜索、源版本schema修复均已发布；新版本真实Base写入进一步确认跨应用Open ID不能用于Base人员字段，同一负责人的`user_id`可成功写入。现在已将选人返回的ID类型贯通到Base transport，本地回归通过，仍需发布后完成3条真实需求的完整推送验证。正式通知仍有未完成开发，不能靠反复执行验收消除。以本页三个发布门槛为当前收尾入口。
 
 | 顺序 | 工作 | 完成条件 | 状态 |
 | --- | --- | --- | --- |
-| R1 | 发布负责人选择修复，完成少量真实需求链路 | Online用平台通讯录搜索内部成员；服务端将妙搭ID按Base应用的FEISHU_APP_ID转换为Open ID；选定正确负责人后，3条已分析的最新需求推送成功，Base独立回读无重复、负责人正确、新行待处理、PM字段保护有效。所有测试消息只发贾浩，正式通知保持关闭。 | 5434ed2已发布且选人链路通过；前2条真实需求写入报1254061，源版本number/text类型修复本地通过，待发布；第3条未映射，3条Base写入尚未通过 |
+| R1 | 发布负责人选择修复，完成少量真实需求链路 | Online用平台通讯录搜索内部成员；服务端以可信Miaoda身份解析企业成员的Feishu`user_id`，并在Base写入时传`user_id_type=user_id`；3条已分析的最新需求推送成功，Base独立回读无重复、负责人正确、新行待处理、PM字段保护有效。所有测试消息只发贾浩，正式通知保持关闭。 | 源版本schema修复已发布；Open ID写入复现1254066，直接以同一人的`user_id`更新获批记录成功；类型贯通修复已在两仓完成本地回归，待提交/发布后对3条需求重选负责人、重试与独立回读 |
 | R2 | 补齐通知实现与安全验收 | 首次/实质变更/负责人分配变更/AI重试成功的通知规则有实际实现；事件与收件人固定，重放静默；用本人收件的受控故障验证补发，成功者不重复；完成后再配置正式自动化。 | 未完成开发；原四字段POC只部分通过，正式workflow仍无steps |
 | R3 | 当前版本定时复验与运行交接 | 隔离定时夹具在当前发布版本上完成cron→持久周窗口→worker→AI→POC Base，同窗口不重复；确认API与worker加载相同测试策略，恢复配置后0活动任务；R1/R2通过后再启用周一09:00 Asia/Shanghai及恢复cron。 | 历史10月15日通过；10月16日worker策略与触发问题仍需当前版本复验 |
 
@@ -16,13 +16,13 @@ R1先执行。R2的实现设计和R3的夹具排查可独立准备；正式计�
 
 飞书官方[搜索用户规范](https://open.feishu.cn/document/server-docs/contact-v3/user/search-users.md)规定：GET /open-apis/search/v1/user，用户身份user_access_token，contact:user:search权限，结果位于data.users。旧实现用了POST /contact/v3/users/search、tenant_access_token和data.items，且要求官方结果中不存在的is_cross_tenant标记。以上是已确认代码缺陷，不能继续把503仅归因于租户管理员权限。
 
-妙搭生产实现使用已安装SDK的浏览器UserService.searchUsers（searchExternalContact=false、needFullFields=false），仅保留内部成员的字符串ID/姓名/部门供选择。选定后GET /api/feishu/users/resolve经NeedLogin和可信userContext校验，服务端AuthNPaasService检查企业员工关联，用getBatchOpenIds指定FEISHU_APP_ID，并从平台回填姓名。既有PUT owner负责持久映射和入队；搜索和身份解析不写数据库。个人信息不进入模型。
+妙搭生产实现使用已安装SDK的浏览器UserService.searchUsers（searchExternalContact=false、needFullFields=false），仅保留内部成员的字符串ID/姓名/部门供选择。选定后GET /api/feishu/users/resolve经NeedLogin和可信userContext校验，服务端AuthNPaasService检查企业员工关联和资料，并返回明确标记为`user_id`的关联ID。在线真实Base验证发现指定`user_id_type=user_id`写入成功；SDK转换得到的应用级Open ID写入失败1254066。PUT owner持久化ID和类型并入队；搜索和解析不写数据库。个人信息不进入模型。
 
 独立本地API适配器已改为官方GET+用户令牌合同，仅在服务端配置FEISHU_USER_ACCESS_TOKEN时提供搜索；妙搭运行时不使用此临时令牌，不新增用户令牌保存或OAuth流程。
 
 ## 当前交付快照
 
-root API289/289、Web45/45；Miaoda路由/适配器86/86；两仓类型/构建、app lint/stylelint、共用模块21/21、diff检查通过。root实现提交15a5e85；app提交5434ed2已推送sprint/default。GitHub main推送两次均遇到TLS错误；保留本地提交，不改TLS或代理设置。负责人release7697920647795690499已finished且commit5434ed2一致。新类型修复仍需发布后目标写入验证。
+root API290/290、Web45/45；Miaoda路由/适配器87/87；两仓类型/生产构建、app lint/stylelint、共用模块21/21、diff检查通过。根仓最新main已包含本轮代码和文档修改，需提交推送；app`sprint/default`当前需提交本轮`user_id`类型修复，尚未发布。release`7697925439222664200`已发布schema修复。R1仍需本次修复发布后完成三条目标需求和独立Base回读。
 
 ## R2收敛决策
 
@@ -45,12 +45,13 @@ root API289/289、Web45/45；Miaoda路由/适配器86/86；两仓类型/构建�
 
 项目AGENTS要求spark写入dry-run→显式确认→--yes。当前官方+release-create的Risk为write且不接受--yes。此前自动审批已拒绝实际发布，不能改入口规避。修复代码完成、提交并准备dry-run后，需要用户针对本次官方release命令明确确认可不附不支持的--yes；之后仍保留dry-run、人工确认和release状态回读。没有此例外前不创建release、不启用计划。
 
-## 已发布负责人修复及新的Base类型缺陷（2026-10-18 续验）
+## 已发布负责人与源版本修复；新增跨应用负责人ID类型问题（2026-10-18 续验）
 
 - 用户批准本次官方发布命令不附不支持的`--yes`。release `7697920647795690499`已回读`finished`，commit `5434ed2c4174d40caeaff389e4348ec925c9828f`，`error_logs=[]`。原负责人搜索503不再是当前发布阻塞。
 - Online实际UI已能搜索“贾浩／平台组”和“毕梓浩／专项组”；服务端身份转换及映射保存成功。合成需求`rqsys-fixture-f6910bc1-d8b3-45c4-a1a9-9ade89cb1c14`映射保存后，worker按`fixture_flag_disabled`拒绝推送，未写正式Base，之后0活动作业。该结果只证明选人链路和安全守卫，不算POC推送成功。
-- 仅调用一次TB成员表，确认`67283a091d6a0f8ed077de13`为毕梓浩、`69c0ceea0dd8850a761d310f`为刘媛媛；未调用TB需求列表。前两条真实需求已按正确负责人映射，但Base更新均未通过，安全错误码为`FEISHU_RECORD_UPDATE_CODE_1254061`。第三条保持待匹配，未错误分配给测试用户。
-- 官方错误表定义1254061为`NumberFieldConvFail`。正式表源版本为number，POC为text；旧代码统一`String(sourceVersion)`。新增目标schema读取及按type=2/1写数字/文本，并让限流装饰器转发该能力；字段缺失、分页不完整或不支持类型在外部写前失败。两个组合测试均先红后绿，覆盖实际限流→transport→adapter链路。
+- 仅调用一次TB成员表，确认`67283a091d6a0f8ed077de13`为毕梓浩、`69c0ceea0dd8850a761d310f`为刘媛媛；未调用TB需求列表。前两条真实需求在schema修复发布前因1254061失败；schema修复发布后，三条需求尝试仍未全部通过。
+- 官方错误表定义1254061为`NumberFieldConvFail`。正式表源版本为number，POC为text；schema修复按目标字段类型写number/text，并让限流装饰器转发字段类型读取。随后第三条记录以跨应用Open ID更新负责人得到1254066`UserFieldConvFail`。同一负责人的平台`user_id`经真实Base接口写入获批第三条记录成功，结果code 0；本次只更新该记录的执行人字段，未更新RQ-Sys状态、未跑全链路、未发通知。
+- 当前代码移除选人时对Base应用Open ID的转换，身份解析返回经资料校验的`user_id`及类型；Base adapter→限流器→transport创建/更新均携带`user_id_type`。用户选择API及OpenAPI契约也改为返回`feishuUserId`+`feishuIdType`。
 - 已用应用凭据执行只读实时schema探针：正式表返回type2，POC返回type1；未展示凭据、未改字段结构。此探针是本地新代码→真实飞书读权限的证据，不能替代新版本部署后的写入验收。
-- 最终本地验证：API289/289、Web45/45、Miaoda86/86；两仓类型、生产构建、app lint/stylelint、diff检查通过，共用逻辑21/21一致。app最终修复20d4002（包含1f6e28e）已推送、dry-run通过，但尚未发布；R1剩余部署后重试3条、独立Base回读及幂等/PM保护。
+- 本轮本地验证：root API290/290、Web45/45；Miaoda87/87；两仓类型、生产构建、app lint/stylelint、diff检查通过，共用逻辑21/21一致。首次root集成测试受沙箱socket权限限制，获准后在本机随机临时schema重跑通过并清理。新`user_id`类型修复仍待提交/发布；R1剩余三条真实需求的应用链路、独立Base回读、幂等与PM字段保护。
 - 正式Base工作流`wkfYO1EEYxJXbCaN`实时只读回查仍disabled，周计划仍false，未向干系人发消息。R2通知开发与失败补发、R3当前版本隔离定时复验仍未通过，不能签署生产全量验收。

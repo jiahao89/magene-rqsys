@@ -26,7 +26,7 @@ The pipeline must resolve Teambition owners to Feishu users when possible, push 
 
 ## Verified owner-selection integration (2026-10-18)
 
-Miaoda searches internal members through its browser platform SDK. A selected Miaoda ID is resolved server-side through AuthNPaasService in the authenticated request context; verify an enterprise employee association and convert Open ID with FEISHU_APP_ID matching the Base writer. Do not substitute Miaoda ID, employee ID or another app's Open ID. GET /api/feishu/users/resolve is read-only; PUT owner still persists the manual selection and enqueues push. The standalone search adapter uses the official user-token GET API, not a tenant token. See RELEASE-CLOSEOUT.md for source evidence and target verification still pending.
+Miaoda searches internal members through its browser platform SDK. A selected Miaoda ID is resolved server-side through AuthNPaasService in the authenticated request context; verify the enterprise employee association and profile, then return the associated Feishu `user_id` with an explicit `feishuIdType=user_id`. A live write to the approved Base table confirmed this identity format is accepted, while the app-scoped Open ID returned by the SDK was rejected for the same person. The Base create/update request must pass `user_id_type=user_id`; never label one ID format as another. GET `/api/feishu/users/resolve` is read-only; PUT owner persists the typed selection and enqueues push. The standalone search adapter uses the official user-token GET API, not a tenant token. See RELEASE-CLOSEOUT.md for release and end-to-end evidence.
 
 ## Base write and field protection
 

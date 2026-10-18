@@ -6,9 +6,13 @@ export interface BaseClient {
   // Production transport resolves the target schema; legacy injected test clients use text metadata.
   readFieldType?(fieldName: string): Promise<number>;
   findByRequirementKey(key: BaseRequirementKey): Promise<BaseRecord | null>;
-  create(fields: Record<string, unknown>): Promise<BaseRecord>;
-  update(recordId: string, fields: Record<string, unknown>): Promise<BaseRecord>;
+  create(fields: Record<string, unknown>, options?: BaseWriteOptions): Promise<BaseRecord>;
+  update(recordId: string, fields: Record<string, unknown>, options?: BaseWriteOptions): Promise<BaseRecord>;
   readPmFields(recordId: string): Promise<Record<string, unknown>>;
+}
+
+export interface BaseWriteOptions {
+  userIdType?: "open_id" | "user_id" | "union_id";
 }
 
 export interface BaseFieldMap {
@@ -123,7 +127,7 @@ export class FeishuBasePushAdapter {
     if (!existing) {
       const pmStatusField = this.fields.pm[0];
       if (pmStatusField) delta[pmStatusField] = this.selectValue(pmStatusField, "待处理");
-      const created = await this.client.create(delta);
+      const created = await this.client.create(delta, input.owner ? { userIdType: input.owner.idType } : undefined);
       return { recordId: created.recordId, created: true, omittedFields };
     }
 
@@ -137,7 +141,7 @@ export class FeishuBasePushAdapter {
     }
     // Unmapped and empty TB ownership never erases a human-assigned Base owner.
     if (input.owner === null) delete delta[this.fields.owner];
-    const updated = await this.client.update(existing.recordId, delta);
+    const updated = await this.client.update(existing.recordId, delta, input.owner ? { userIdType: input.owner.idType } : undefined);
     return { recordId: updated.recordId, created: false, omittedFields };
   }
 }

@@ -1,13 +1,13 @@
 # RQ-Sys MVP implementation and acceptance status (2026-10-18)
 
-## 已发布负责人修复及新的Base类型缺陷（2026-10-18 续验）
+## 已发布负责人与源版本修复；新增跨应用负责人ID类型问题（2026-10-18 续验）
 
 - 用户批准本次官方发布命令不附不支持的`--yes`。release `7697920647795690499`已回读`finished`，commit `5434ed2c4174d40caeaff389e4348ec925c9828f`，`error_logs=[]`。原负责人搜索503不再是当前发布阻塞。
 - Online实际UI已能搜索“贾浩／平台组”和“毕梓浩／专项组”；服务端身份转换及映射保存成功。合成需求`rqsys-fixture-f6910bc1-d8b3-45c4-a1a9-9ade89cb1c14`映射保存后，worker按`fixture_flag_disabled`拒绝推送，未写正式Base，之后0活动作业。该结果只证明选人链路和安全守卫，不算POC推送成功。
-- 仅调用一次TB成员表，确认`67283a091d6a0f8ed077de13`为毕梓浩、`69c0ceea0dd8850a761d310f`为刘媛媛；未调用TB需求列表。前两条真实需求已按正确负责人映射，但Base更新均未通过，安全错误码为`FEISHU_RECORD_UPDATE_CODE_1254061`。第三条保持待匹配，未错误分配给测试用户。
-- 官方错误表定义1254061为`NumberFieldConvFail`。正式表源版本为number，POC为text；旧代码统一`String(sourceVersion)`。新增目标schema读取及按type=2/1写数字/文本，并让限流装饰器转发该能力；字段缺失、分页不完整或不支持类型在外部写前失败。两个组合测试均先红后绿，覆盖实际限流→transport→adapter链路。
+- 仅调用一次TB成员表，确认`67283a091d6a0f8ed077de13`为毕梓浩、`69c0ceea0dd8850a761d310f`为刘媛媛；未调用TB需求列表。正式表源版本类型错误以release`7697925439222664200`修复。随后Open ID写负责人字段报1254066`UserFieldConvFail`；同一负责人的企业`user_id`通过真实Base接口写入获批第三条记录成功（仅负责人字段，未完成RQ-Sys推送状态更新）。
+- 当前实现把企业`user_id`与`feishuIdType=user_id`从已登录身份解析贯通到Base创建/更新的`user_id_type`参数；搜索/身份解析保持只读。Open ID、user_id类型贯通的完整adapter→rate limiter→transport回归已补充。
 - 已用应用凭据执行只读实时schema探针：正式表返回type2，POC返回type1；未展示凭据、未改字段结构。此探针是本地新代码→真实飞书读权限的证据，不能替代新版本部署后的写入验收。
-- 最终本地验证：API289/289、Web45/45、Miaoda86/86；两仓类型、生产构建、app lint/stylelint、diff检查通过，共用逻辑21/21一致。新Base类型修复尚未发布；R1剩余部署后重试3条、独立Base回读及幂等/PM保护。
+- 本轮本地验证：API290/290、Web45/45、Miaoda87/87；两仓类型、生产构建、app lint/stylelint、diff检查通过，共用逻辑21/21一致。R1当前ID类型修复待提交/发布；发布后重选三条负责人并完成Base写入、独立回读、幂等与PM字段保护验收。
 - 正式Base工作流`wkfYO1EEYxJXbCaN`实时只读回查仍disabled，周计划仍false，未向干系人发消息。R2通知开发与失败补发、R3当前版本隔离定时复验仍未通过，不能签署生产全量验收。
 
 ## 负责人搜索根因修复与发布收敛（2026-10-18）

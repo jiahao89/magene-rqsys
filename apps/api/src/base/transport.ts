@@ -3,7 +3,7 @@
 // 由服务端环境注入；tenant_access_token 缓存至过期前 60 秒。
 // 测试用注入 fetch 的假实现；真实调用需部署环境凭证（工单 00/W7）。
 
-import type { BaseClient, BaseRecord, BaseRequirementKey } from "./client.js";
+import type { BaseClient, BaseRecord, BaseRequirementKey, BaseWriteOptions } from "./client.js";
 
 export interface FetchLike {
   (input: string | URL, init?: RequestInit): Promise<Response>;
@@ -161,9 +161,12 @@ export class FeishuBitableClient implements BaseClient {
     return record ? { recordId: record.record_id, fields: record.fields ?? {} } : null;
   }
 
-  async create(fields: Record<string, unknown>): Promise<BaseRecord> {
+  async create(fields: Record<string, unknown>, options?: BaseWriteOptions): Promise<BaseRecord> {
+    const query = new URLSearchParams();
+    if (options?.userIdType) query.set("user_id_type", options.userIdType);
+    const suffix = query.size ? `?${query.toString()}` : "";
     const res = await this.authed(
-      `${this.baseUrl}/open-apis/bitable/v1/apps/${this.config.appToken}/tables/${this.config.tableId}/records`,
+      `${this.baseUrl}/open-apis/bitable/v1/apps/${this.config.appToken}/tables/${this.config.tableId}/records${suffix}`,
       { method: "POST", body: JSON.stringify({ fields }) },
     );
     if (!res.ok) throw await feishuHttpFailure(res, "record create");
@@ -173,9 +176,12 @@ export class FeishuBitableClient implements BaseClient {
     return { recordId: payload.data.record.record_id, fields: payload.data.record.fields ?? {} };
   }
 
-  async update(recordId: string, fields: Record<string, unknown>): Promise<BaseRecord> {
+  async update(recordId: string, fields: Record<string, unknown>, options?: BaseWriteOptions): Promise<BaseRecord> {
+    const query = new URLSearchParams();
+    if (options?.userIdType) query.set("user_id_type", options.userIdType);
+    const suffix = query.size ? `?${query.toString()}` : "";
     const res = await this.authed(
-      `${this.baseUrl}/open-apis/bitable/v1/apps/${this.config.appToken}/tables/${this.config.tableId}/records/${recordId}`,
+      `${this.baseUrl}/open-apis/bitable/v1/apps/${this.config.appToken}/tables/${this.config.tableId}/records/${recordId}${suffix}`,
       { method: "PUT", body: JSON.stringify({ fields }) },
     );
     if (!res.ok) throw await feishuHttpFailure(res, "record update");

@@ -4,7 +4,7 @@
 
 ## 最新验收状态（2026-10-18）
 
-负责人修复5434ed2已发布（release7697920647795690499 finished），Online搜索/身份转换/映射保存通过。真实Base更新发现1254061数字字段类型错误；已按正式number/POC text实现schema序列化并补齐限流链路，本地API289/Web45/Miaoda86通过，待新修复发布和3条记录回读。正式通知与周计划保持关闭。剩余只保留R1真实推送闭环、R2通知开发/补发、R3当前版本隔离定时复验，见[发布收尾清单](../../../specs/rq-sys-mvp/RELEASE-CLOSEOUT.md)。
+负责人搜索、源版本字段类型修复已发布。真实Base写入随后发现应用级Open ID不能跨应用写入人员字段；同一负责人的企业user_id已由真实Base接口接受。类型贯通实现已完成，本地API290/Web45/Miaoda87、类型检查、生产构建、app lint/stylelint和两仓对齐21/21通过，待本次修复发布后重试获批的3条需求。正式通知与周计划保持关闭。剩余R1真实推送闭环、R2通知开发/补发、R3当前版本隔离定时复验，见[发布收尾清单](../../../specs/rq-sys-mvp/RELEASE-CLOSEOUT.md)。
 
 2026-10-18 本地全量复验通过：root API 286/286、Web 45/45；typecheck、build、`git diff --check`、两仓共用模块对齐 21/21 通过；Miaoda 路由验收79/79及类型、lint、stylelint、build通过。线上续验复现负责人搜索503；对应线上日志的上游状态 unresolved，Online release仍运行旧 commit `ad4620a`，安全诊断 commit `146d918` 未发布，故具体是应用权限/数据范围、凭据还是网络仍未知。实际发布受 `--yes` 门禁阻塞，未绕过。Dev 搜索返回400，与Online错误不同；编辑器重连后恢复但沙箱长期稳定性未证明。正式通知、周计划和恢复 cron 均关闭，没有同步 TB、写 Base 或发干系人消息；通知补发无失败样本。root `application/ports.ts` 对齐修复尚未提交。第二用户人员 CRUD不属验收范围，优先级校准规则留空是已接受决策。MVP尚未全量验收。详情见 [09验收](./09-target-acceptance.md) 和 [验收状态](../../../specs/rq-sys-mvp/LOCAL-AND-TARGET-STATUS.md)。
 

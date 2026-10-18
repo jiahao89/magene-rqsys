@@ -1,6 +1,12 @@
 # [核心链路部分通过；目标环境门槛保留] 09 — 目标环境端到端验收
 
-## 已发布负责人修复及新的Base类型缺陷（2026-10-18 续验）
+## 已发布负责人与源版本修复；新增跨应用负责人ID类型问题（2026-10-18 续验）
+
+- release `7697925439222664200`包含number/text源版本schema修复且已完成发布。此前1254061已不再复现。
+- 正式Base尝试用SDK返回的应用级Open ID更新人员字段，得到1254066 `UserFieldConvFail`；将同一负责人的企业user_id用于相同Base记录和字段后，真实接口返回code 0。该探针仅直接更新负责人字段，不代表RQ-Sys推送状态成功或完整链路通过。
+- 已修复Miaoda成员解析，使选择API返回明确的feishuUserId和feishuIdType=user_id；Base创建/更新从适配器经限流器传至transport并附user_id_type。两仓本地类型/生产构建通过。
+- 本轮root API 290/290、Web 45/45，Miaoda路由/适配器 87/87；两仓lint/stylelint、差异检查通过。root首次运行的集成测试因沙箱阻止本机PostgreSQL Unix socket失败，获准访问后使用随机临时schema全量通过并清理；未连接妙搭数据库。
+- 新ID类型修复尚未提交/发布；之后需在Online对用户已批准的三条需求重新选择正确负责人并重试，核对应用状态、Base行数/负责人/源版本/AI字段及PM字段保护。周计划和正式通知保持关闭。
 
 - 用户批准本次官方发布命令不附不支持的`--yes`。release `7697920647795690499`已回读`finished`，commit `5434ed2c4174d40caeaff389e4348ec925c9828f`，`error_logs=[]`。原负责人搜索503不再是当前发布阻塞。
 - Online实际UI已能搜索“贾浩／平台组”和“毕梓浩／专项组”；服务端身份转换及映射保存成功。合成需求`rqsys-fixture-f6910bc1-d8b3-45c4-a1a9-9ade89cb1c14`映射保存后，worker按`fixture_flag_disabled`拒绝推送，未写正式Base，之后0活动作业。该结果只证明选人链路和安全守卫，不算POC推送成功。

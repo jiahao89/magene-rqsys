@@ -39,15 +39,21 @@ export interface FeishuUserCandidate {
   enName?: string;
 }
 
+export interface FeishuUserSelection {
+  feishuUserId: string;
+  feishuIdType: "open_id" | "user_id" | "union_id";
+  name: string;
+}
+
 export interface FeishuUserSelectionResolver {
-  resolve(platformUserId: string): Promise<FeishuUserCandidate | null>;
+  resolve(platformUserId: string): Promise<FeishuUserSelection | null>;
 }
 
 export interface FeishuUserDirectory {
   search(query: string): Promise<FeishuUserCandidate[]>;
 }
 
-export type FeishuDirectoryFailurePhase = "tenant_token" | "user_search" | "platform_configuration" | "platform_employee" | "platform_open_id" | "platform_profile";
+export type FeishuDirectoryFailurePhase = "tenant_token" | "user_search" | "platform_configuration" | "platform_employee" | "platform_profile";
 export type FeishuDirectoryFailureReason = "network_error" | "http_error" | "provider_error" | "invalid_response";
 
 // Safe, bounded diagnostics only. Never retain provider messages, tokens, or request payloads.

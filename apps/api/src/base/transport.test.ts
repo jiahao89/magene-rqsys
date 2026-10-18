@@ -10,6 +10,10 @@ const CONFIG = {
   baseUrl: "https://open.feishu.test",
 };
 
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+}
+
 test("source versions use the actual target field type for both numeric production and text POC tables", async () => {
   for (const type of [2, 1, 3]) {
     const writes: Record<string, unknown>[] = [];
@@ -37,6 +41,26 @@ test("source versions use the actual target field type for both numeric producti
       assert.equal(writes[0]?.["源版本"], type === 2 ? 3 : "3");
     }
   }
+});
+
+test("owner ID type passes through the production adapter and rate limiter", async () => {
+  const calls: Array<{ url: URL; method: string; body?: string }> = [];
+  const client = new FeishuBitableClient({ ...CONFIG, fetch: async (input, init = {}) => {
+    const url = new URL(String(input));
+    calls.push({ url, method: init.method ?? "GET", ...(typeof init.body === "string" ? { body: init.body } : {}) });
+    if (url.pathname.endsWith("/auth/v3/tenant_access_token/internal")) return jsonResponse({ code: 0, tenant_access_token: "test-token", expire: 3600 });
+    if (url.pathname.endsWith("/records") && init.method === "POST") return jsonResponse({ code: 0, data: { record: { record_id: "rec-created", fields: {} } } });
+    if (url.pathname.endsWith("/records")) return jsonResponse({ code: 0, data: { items: [], has_more: false } });
+    if (url.pathname.endsWith("/records/rec-existing") && init.method === "PUT") return jsonResponse({ code: 0, data: { record: { record_id: "rec-existing", fields: {} } } });
+    return jsonResponse({ code: 999, msg: "unexpected" });
+  } });
+  const adapter = new FeishuBasePushAdapter(new RateLimitedBaseClient(client), {
+    projectId: "TB项目ID", requirementId: "TB需求ID", owner: "执行人", source: {}, ai: {}, pm: [],
+  });
+  await adapter.push({ projectId: "p", requirementId: "new", title: "new", owner: { userId: "employee-id", idType: "user_id" }, sourceVersion: 1, substantiveChanged: false, idempotencyKey: "new" });
+  const create = calls.find((call) => call.method === "POST" && call.url.pathname.endsWith("/records"));
+  assert.equal(create?.url.searchParams.get("user_id_type"), "user_id");
+  assert.deepEqual(JSON.parse(create?.body ?? "{}").fields["执行人"], [{ id: "employee-id" }]);
 });
 
 test("field schema follows pagination, caches reads, and rejects incomplete or cyclic responses", async () => {

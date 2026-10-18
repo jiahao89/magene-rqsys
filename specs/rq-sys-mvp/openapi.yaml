@@ -366,8 +366,8 @@ paths:
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /api/feishu/users/resolve:
     get:
-      summary: Resolve a selected Miaoda internal user to the Base Feishu app Open ID
-      description: Requires trusted Miaoda login context. The server checks the tenant employee association and resolves name and Open ID through platform SDK with FEISHU_APP_ID; it does not save a mapping or enqueue a push.
+      summary: Resolve a selected Miaoda internal user to a verified Feishu identity
+      description: Requires trusted Miaoda login context. The server verifies the tenant employee association and profile, returning a typed Feishu user ID; it does not save a mapping or enqueue a push.
       parameters:
         - name: platformUserId
           in: query
@@ -375,15 +375,16 @@ paths:
           schema: { type: string, pattern: '^\d{1,30}$' }
       responses:
         '200':
-          description: Verified Feishu identity for the existing manual owner mapping action
+          description: Verified, typed Feishu identity for the existing manual owner mapping action
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  openId: { type: string }
+                  feishuUserId: { type: string }
+                  feishuIdType: { type: string, enum: [open_id, user_id, union_id] }
                   name: { type: string }
-                required: [openId, name]
+                required: [feishuUserId, feishuIdType, name]
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }

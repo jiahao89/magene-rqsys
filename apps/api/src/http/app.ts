@@ -320,7 +320,7 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     try {
       const user = await dependencies.feishuUserSelections.resolve(platformUserId);
       if (!user) return jsonError("NOT_FOUND", "所选成员尚未关联本企业飞书账号，请重新选择。");
-      return json({ openId: user.openId, name: user.name });
+      return json({ feishuUserId: user.feishuUserId, feishuIdType: user.feishuIdType, name: user.name });
     } catch { return jsonError("DEPENDENCY_UNAVAILABLE", "飞书人员身份转换暂不可用，请稍后重试。"); }
   }
   if (method === "GET" && url.pathname === "/api/feishu/users") {
