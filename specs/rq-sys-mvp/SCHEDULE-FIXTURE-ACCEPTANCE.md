@@ -64,5 +64,5 @@
 - 按已批准的隔离夹具方案检查两个在线 cron 窗口，没有捕获 app handler/guard 日志、scheduled batch 或 job。此证据无法区分平台未投递、handler 初始化失败或调度处理失败；没有启动 TB、AI、Base 或通知业务。
 - 根因代码检查：`RqsysAutomation.pollDueSyncs` 原先仅在 `pollOnce()` 成功返回后打印完成日志；`getRuntime()` 或 `pollOnce()` 抛错时，应用侧没有对应阶段日志。平台 automation CLI 只提供触发器配置读写，不提供触发实例历史查询。
 - 修复：handler 增加安全的 started、runtime-initialization failure、durable-poll failure、completed 日志。失败时仅输出错误类别，不输出异常消息/数据，并继续抛出原错误供平台判失败。
-- 本地回归曾在修复前失败、修复后通过；Miaoda 路由测试90/90、server/client typecheck、lint、stylelint、production build通过。当前修复 commit `9f6fb5d` 已推送 `sprint/default`，release dry-run目标正确；实际发布待确认，目标环境验证尚未做。
-- Online 状态已恢复：fixture 配置移除，source weekly plan disabled，`rqsysWeeklySyncRecovery` disabled (`*/30 * * * *`, `Asia/Shanghai`)，无 queued/running jobs 或 running batches。下次验证须先发布上述日志修复，然后仅在周计划关闭且无活动作业时确认 cron 到达 handler；若到达，再用隔离来源完成 scheduled fixture 链路并恢复原配置。
+- 本地回归曾在修复前失败、修复后通过；Miaoda 路由测试90/90、server/client typecheck、lint、stylelint、production build通过。commit `9f6fb5d` 已发布为 release `7698043401983593483`（finished、`error_logs=[]`）。新标签冷启动 API 已连接，314/314需求可读；这只证明发布和普通请求，尚未证明 cron handler 接收调用。
+- Online 状态已恢复：fixture 配置移除，source weekly plan disabled，`rqsysWeeklySyncRecovery` disabled (`*/30 * * * *`, `Asia/Shanghai`)，无 queued/running jobs 或 running batches。上述日志修复现已发布。下一步需在周计划关闭且无活动作业时临时启用该恢复触发器观察一个窗口；若 handler 到达，再评估隔离来源的 scheduled fixture 链路。正式周计划和通知保持关闭，恢复触发器原态仍为 disabled。

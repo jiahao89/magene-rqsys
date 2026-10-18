@@ -4,7 +4,7 @@
 
 ## 最新验收状态（2026-10-19）
 
-最新 app commit `187b4d983425ebd5515b994e02429358ccce90d1` 已发布（release `7698012715814472718`），三条获批的已分析需求完成负责人→Base推送及独立回读：无重复、负责人正确、PM状态为“待处理”、PM字段保护通过。恢复发布 `7698036998015028248` 完成，Online冷加载正常；临时变量恢复/清除、周计划和恢复触发器关闭，0活动jobs/batches。MVP仍未全量生产验收：R2通知精准补发未证明，R3本轮两个cron观察窗未捕获执行证据。历史10月15日定时通过仍保留为历史结果。详情见[发布收尾清单](../../../specs/rq-sys-mvp/RELEASE-CLOSEOUT.md)及[09验收](./09-target-acceptance.md)。
+app commit `187b4d983425ebd5515b994e02429358ccce90d1` 已发布（release `7698012715814472718`），三条获批的已分析需求完成负责人→Base推送及独立回读：无重复、负责人正确、PM状态为“待处理”、PM字段保护通过。调度日志修复 commit `9f6fb5dd7ebd7b2343ea6bfbe9bae6513fa95b32` 已发布（release `7698043401983593483`，finished、无发布错误）；新标签冷启动 API 连接正常，314/314需求可读。cron尚未在本次新版本上复验，正式周计划和恢复触发器保持关闭；R2通知精准补发仍未证明。MVP尚未全量生产验收。详情见[发布收尾清单](../../../specs/rq-sys-mvp/RELEASE-CLOSEOUT.md)及[09验收](./09-target-acceptance.md)。
 
 2026-10-18 本地全量复验通过：root API 286/286、Web 45/45；typecheck、build、`git diff --check`、两仓共用模块对齐 21/21 通过；Miaoda 路由验收79/79及类型、lint、stylelint、build通过。线上续验复现负责人搜索503；对应线上日志的上游状态 unresolved，Online release仍运行旧 commit `ad4620a`，安全诊断 commit `146d918` 未发布，故具体是应用权限/数据范围、凭据还是网络仍未知。实际发布受 `--yes` 门禁阻塞，未绕过。Dev 搜索返回400，与Online错误不同；编辑器重连后恢复但沙箱长期稳定性未证明。正式通知、周计划和恢复 cron 均关闭，没有同步 TB、写 Base 或发干系人消息；通知补发无失败样本。root `application/ports.ts` 对齐修复尚未提交。第二用户人员 CRUD不属验收范围，优先级校准规则留空是已接受决策。MVP尚未全量验收。详情见 [09验收](./09-target-acceptance.md) 和 [验收状态](../../../specs/rq-sys-mvp/LOCAL-AND-TARGET-STATUS.md)。
 
@@ -59,8 +59,8 @@ flowchart LR
 | 05 | Manual Teambition sync vertical slice | implemented-target-data-aligned（Dev `source_only` 批次 `2d372363-31f5-482a-aca9-4c26cb43010c`：311/311 成功、0 失败、0 缺失真实需求；Dev 保留 7 条合成夹具。该批次未触发 AI、负责人匹配、Base 推送或通知。） | 00, 01, 04, D-08 |
 | 06 | AI analysis vertical slice | target verified with synthetic data（Online手动/定时夹具实际模型分析通过；无法识别/低置信度/空优先级不阻塞推送。详见09。） | 03, 05 |
 | 07 | Owner mapping and Feishu Base push vertical slice | target verified with 3 real analyzed requirements（release `7698012715814472718`后完成负责人映射、Base推送和独立回读；无重复、PM状态待处理、字段保护通过。详见09。） | 02, 05 |
-| 08 | Weekly schedule, retry, and audit | historical target path verified（10月15日真实cron/安全计划→AI→POC Base通过；本轮新验证窗未产生cron日志或scheduled batch，不能作为当前触发通过证据；恢复 cron/周计划均关闭。错窗/租约接管已验证。详见09。） | 00, 05, 06, 07 |
-| 09 | Target-environment end-to-end acceptance | partially accepted; production gates remain（R1真实需求推送通过；R2通知可靠性设计/精准补发未验收；R3脱敏handler观测修复 commit `9f6fb5d` 已推送且本地90/90/build通过，release dry-run正确，待实际发布和cron窗口复验。正式通知/计划关闭。详见RELEASE-CLOSEOUT.md和09。） | 00–08, 12–17 |
+| 08 | Weekly schedule, retry, and audit | partially verified（错窗/租约接管及10月15日目标cron组合链路曾通过；当前handler日志修复已发布，但当前trigger仍disabled，当前版本cron投递待复验。正式周计划关闭。详见09。） | 00, 05, 06, 07 |
+| 09 | Target-environment end-to-end acceptance | partially accepted; production gates remain（R1真实需求推送通过；R2通知可靠性设计/精准补发未验收；R3脱敏handler观测修复 commit `9f6fb5d` 已发布且新标签冷启动API通过，定时触发仍待观测。正式通知/计划关闭。详见RELEASE-CLOSEOUT.md和09。） | 00–08, 12–17 |
 | 18 | Formal notifications and failure resend closeout | design-required（正式workflow仍未实现，四字段POC部分通过；先确认不可变事件/逐收件人恢复设计，再开发和安全目标验收。对应RELEASE-CLOSEOUT R2。） | 02, 14 |
 | D-08 | Resolve production UI component baseline after repo inspection | resolved（2026-10-08，ADR-001：基线已推送（main，03aef74）并检视——仓库无 UI 依赖，按 design.md 采用 HeroUI v3 + Tailwind；UI 托管方式留待 00） | ADR-001 已产出 |
 | 10 | Grant `spark:app:read` user scope for Miaoda apps | resolved（2026-10-09 根因确认：TraeWork 注入凭证遮蔽本地授权；加 `env -u LARKSUITE_CLI_APP_ID -u LARKSUITE_CLI_USER_ACCESS_TOKEN -u LARKSUITE_CLI_BRAND` 后 apps +list/+get/release 与 observability 命令调用成功。member APIs 仍为 feature_not_available；观测数据部分为空/null，详见工单 evidence） | — |
