@@ -24,6 +24,10 @@ The pipeline must resolve Teambition owners to Feishu users when possible, push 
 - If TB owner is empty or cannot be matched, preserve a manually assigned Base owner.
 - Do not design behavior for users outside the configured project scope in this MVP.
 
+## Verified owner-selection integration (2026-10-18)
+
+Miaoda searches internal members through its browser platform SDK. A selected Miaoda ID is resolved server-side through AuthNPaasService in the authenticated request context; verify an enterprise employee association and convert Open ID with FEISHU_APP_ID matching the Base writer. Do not substitute Miaoda ID, employee ID or another app's Open ID. GET /api/feishu/users/resolve is read-only; PUT owner still persists the manual selection and enqueues push. The standalone search adapter uses the official user-token GET API, not a tenant token. See RELEASE-CLOSEOUT.md for source evidence and target verification still pending.
+
 ## Base write and field protection
 
 - Upsert by project ID + TB requirement ID; do not create a second row for the same key.

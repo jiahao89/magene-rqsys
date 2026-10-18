@@ -156,8 +156,8 @@ function parseBaseFields(raw: string | undefined): typeof DEFAULT_BASE_FIELDS {
   }
 }
 const baseFields = parseBaseFields(process.env.BASE_FIELDS_JSON);
-const feishuUserDirectory = process.env.FEISHU_APP_ID && process.env.FEISHU_APP_SECRET
-  ? new FeishuUserDirectoryClient({ appId: process.env.FEISHU_APP_ID, appSecret: process.env.FEISHU_APP_SECRET })
+const feishuUserDirectory = process.env.FEISHU_USER_ACCESS_TOKEN
+  ? new FeishuUserDirectoryClient({ userAccessToken: async () => process.env.FEISHU_USER_ACCESS_TOKEN ?? "" })
   : undefined;
 const baseClient = process.env.FEISHU_APP_ID && process.env.FEISHU_APP_SECRET && process.env.BASE_APP_TOKEN && process.env.BASE_TABLE_ID
   ? new RateLimitedBaseClient(new FeishuBitableClient({

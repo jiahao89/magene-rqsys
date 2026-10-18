@@ -1,5 +1,5 @@
 import type { Pool } from "pg";
-import { SourceProjectResolutionError, type FeishuUserDirectory, type IdentityProvider, type TeambitionSourceProjectResolver } from "../application/ports.js";
+import { SourceProjectResolutionError, type FeishuUserDirectory, type FeishuUserSelectionResolver, type IdentityProvider, type TeambitionSourceProjectResolver } from "../application/ports.js";
 import { normalizeScheduleTime } from "../domain/workflow.js";
 import type { AuditEventRepository, AnalysisRunRepository, PipelineJobRepository, SourceConfigRepository, SyncBatchRepository, SyncItemRepository, PersonMappingRepository, RequirementQueryRepository, BasePushRunRepository, ModuleDictionaryRepository, PriorityRuleRepository, SourceSnapshotRepository, TeamDirectoryRepository } from "../application/repositories.js";
 import type { PersonMappingRecord, AnalysisRunRecord, ModuleDictionaryVersionRecord, PriorityRuleVersionRecord, RequirementRecord, SourceConfigRecord, SyncBatchRecord } from "../domain/persistence.js";
@@ -35,6 +35,7 @@ export interface ApiDependencies {
   repositories: ApiRepositories | undefined;
   teambitionSourceProjects?: TeambitionSourceProjectResolver;
   feishuUsers?: FeishuUserDirectory;
+  feishuUserSelections?: FeishuUserSelectionResolver;
   enableTestFixtures?: boolean;
   now: (() => Date) | undefined;
 }
@@ -310,6 +311,17 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const source = (await repositories.sources.list())[0] ?? null;
     const items = source ? await repositories.people.listActive(source.id) : [];
     return json({ items: items.map(mappingDto) });
+  }
+  if (method === "GET" && url.pathname === "/api/feishu/users/resolve") {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    const platformUserId = url.searchParams.get("platformUserId") ?? "";
+    if (!/^\d{1,30}$/.test(platformUserId)) return jsonError("VALIDATION_FAILED");
+    if (!dependencies.feishuUserSelections) return jsonError("DEPENDENCY_UNAVAILABLE");
+    try {
+      const user = await dependencies.feishuUserSelections.resolve(platformUserId);
+      if (!user) return jsonError("NOT_FOUND", "所选成员尚未关联本企业飞书账号，请重新选择。");
+      return json({ openId: user.openId, name: user.name });
+    } catch { return jsonError("DEPENDENCY_UNAVAILABLE", "飞书人员身份转换暂不可用，请稍后重试。"); }
   }
   if (method === "GET" && url.pathname === "/api/feishu/users") {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;

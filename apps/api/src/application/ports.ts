@@ -39,6 +39,26 @@ export interface FeishuUserCandidate {
   enName?: string;
 }
 
+export interface FeishuUserSelectionResolver {
+  resolve(platformUserId: string): Promise<FeishuUserCandidate | null>;
+}
+
 export interface FeishuUserDirectory {
   search(query: string): Promise<FeishuUserCandidate[]>;
+}
+
+export type FeishuDirectoryFailurePhase = "tenant_token" | "user_search" | "platform_configuration" | "platform_employee" | "platform_open_id" | "platform_profile";
+export type FeishuDirectoryFailureReason = "network_error" | "http_error" | "provider_error" | "invalid_response";
+
+// Safe, bounded diagnostics only. Never retain provider messages, tokens, or request payloads.
+export class FeishuDirectoryFailure extends Error {
+  constructor(
+    readonly phase: FeishuDirectoryFailurePhase,
+    readonly reason: FeishuDirectoryFailureReason,
+    readonly httpStatus?: number,
+    readonly providerCode?: number,
+  ) {
+    super("Feishu user directory request failed.");
+    this.name = "FeishuDirectoryFailure";
+  }
 }

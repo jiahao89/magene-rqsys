@@ -46,6 +46,21 @@ test("delayed fixture analysis or push cannot run after restoring a formal Base"
   assert.doesNotThrow(() => assertFixtureWorkAllowed({ sourceId: SOURCE, fixture: false }, {}, NOW));
 });
 
+test("fixture policy denial identifies a safe Base app mismatch without exposing the configured value", () => {
+  assert.throws(
+    () => assertFixtureWorkAllowed({ sourceId: SOURCE, fixture: true }, { ...safe, BASE_APP_TOKEN: "private-formal-app" }, NOW),
+    (error: unknown) => error instanceof fixtures.FixturePolicyError && error.reason === "base_app_not_poc",
+  );
+  assert.throws(
+    () => assertFixtureWorkAllowed({ sourceId: SOURCE, fixture: true }, { ...safe, BASE_TABLE_ID: "private-formal-table" }, NOW),
+    (error: unknown) => error instanceof fixtures.FixturePolicyError && error.reason === "base_table_not_poc",
+  );
+  assert.throws(
+    () => assertFixtureWorkAllowed({ sourceId: SOURCE, fixture: true }, { ...safe, RQSYS_ENABLE_TEST_FIXTURES: "false" }, NOW),
+    (error: unknown) => error instanceof fixtures.FixturePolicyError && error.reason === "fixture_flag_disabled",
+  );
+});
+
 test("fixed source identity survives retry and has no owner or proposer", () => {
   const task = createSyntheticFixtureTask("batch-1", "type-1");
   assert.deepEqual(task, createSyntheticFixtureTask("batch-1", "type-1"));

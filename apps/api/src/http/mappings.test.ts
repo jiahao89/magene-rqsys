@@ -59,3 +59,18 @@ test("Feishu user search validates query and is available to any authenticated u
   const allowed = await handleApiRequest(new Request("http://localhost/api/feishu/users?q=Ada"), fixture);
   assert.equal(allowed.status, 200);
 });
+
+test("resolves a platform selection only after login and keeps the I64 identifier as text", async () => {
+  const fixture = makeFixture();
+  const platformUserId = "1877652261857433123";
+  fixture.feishuUserSelections = { resolve: async (id) => {
+    assert.equal(id, platformUserId);
+    return { openId: "ou_selected", name: "已校验成员" };
+  } };
+  const url = `http://localhost/api/feishu/users/resolve?platformUserId=${platformUserId}`;
+  const result = await handleApiRequest(new Request(url), fixture);
+  assert.equal(result.status, 200);
+  assert.deepEqual(await result.json(), { openId: "ou_selected", name: "已校验成员" });
+  assert.equal((await handleApiRequest(new Request(url), unauthenticated)).status, 401);
+  assert.equal((await handleApiRequest(new Request("http://localhost/api/feishu/users/resolve?platformUserId=1e20"), fixture)).status, 400);
+});

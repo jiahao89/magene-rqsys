@@ -335,7 +335,7 @@ paths:
   /api/feishu/users:
     get:
       summary: Search Feishu users for manual owner mapping
-      description: Requires Feishu login and the server-side Feishu contact-search permission. Returns only same-tenant Open IDs and display names.
+      description: Standalone host only. Requires a server-side user_access_token with contact:user:search; tenant_access_token is unsupported. Miaoda uses its platform user search followed by /api/feishu/users/resolve instead.
       parameters:
         - name: q
           in: query
@@ -363,6 +363,30 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /api/feishu/users/resolve:
+    get:
+      summary: Resolve a selected Miaoda internal user to the Base Feishu app Open ID
+      description: Requires trusted Miaoda login context. The server checks the tenant employee association and resolves name and Open ID through platform SDK with FEISHU_APP_ID; it does not save a mapping or enqueue a push.
+      parameters:
+        - name: platformUserId
+          in: query
+          required: true
+          schema: { type: string, pattern: '^\d{1,30}$' }
+      responses:
+        '200':
+          description: Verified Feishu identity for the existing manual owner mapping action
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  openId: { type: string }
+                  name: { type: string }
+                required: [openId, name]
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /api/rules/dictionary:
     get:

@@ -4,23 +4,29 @@ const SAFE_BASE = {
   tableId: "tblxbyvbdLGVnLaO",
 } as const;
 
-export type FixturePolicyReason = "unsafe_poc_base" | "invalid_config" | "expired_config" | "source_mismatch" | "mixed_identities" | "unspecified";
+export type FixturePolicyReason = "fixture_flag_disabled" | "base_app_not_poc" | "base_table_not_poc" | "invalid_config" | "expired_config" | "source_mismatch" | "mixed_identities" | "unspecified";
 
 export class FixturePolicyError extends Error {
   constructor(message: string, readonly reason: FixturePolicyReason = "unspecified") { super(message); this.name = "FixturePolicyError"; }
 }
 
+function fixturePolicyFailureReason(env: NodeJS.ProcessEnv): FixturePolicyReason | undefined {
+  if (env.RQSYS_ENABLE_TEST_FIXTURES !== "true") return "fixture_flag_disabled";
+  if (env.BASE_APP_TOKEN !== SAFE_BASE.appToken) return "base_app_not_poc";
+  if (env.BASE_TABLE_ID !== SAFE_BASE.tableId) return "base_table_not_poc";
+  return undefined;
+}
+
 export function canEnableTestFixtures(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.RQSYS_ENABLE_TEST_FIXTURES === "true"
-    && env.BASE_APP_TOKEN === SAFE_BASE.appToken
-    && env.BASE_TABLE_ID === SAFE_BASE.tableId;
+  return fixturePolicyFailureReason(env) === undefined;
 }
 
 /** 设置了测试模式却不安全时拒绝执行，不能回落成真实同步。 */
 export function readScheduledFixtureSource(env: NodeJS.ProcessEnv, now: Date): string | undefined {
   const raw = env.RQSYS_SCHEDULE_FIXTURE;
   if (!raw) return undefined;
-  if (!canEnableTestFixtures(env)) throw new FixturePolicyError("Scheduled fixtures require the enabled isolated POC Base", "unsafe_poc_base");
+  const policyFailure = fixturePolicyFailureReason(env);
+  if (policyFailure) throw new FixturePolicyError("Scheduled fixtures require the enabled isolated POC Base", policyFailure);
   let value: unknown;
   try { value = JSON.parse(raw); } catch { throw new FixturePolicyError("Invalid scheduled fixture configuration", "invalid_config"); }
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new FixturePolicyError("Invalid scheduled fixture configuration", "invalid_config");
@@ -46,7 +52,8 @@ export function assertFixtureWorkAllowed(
   now: Date,
 ): void {
   const scheduledSource = readScheduledFixtureSource(env, now);
-  if (work.fixture && !canEnableTestFixtures(env)) throw new FixturePolicyError("Fixture work requires the enabled isolated POC Base", "unsafe_poc_base");
+  const policyFailure = fixturePolicyFailureReason(env);
+  if (work.fixture && policyFailure) throw new FixturePolicyError("Fixture work requires the enabled isolated POC Base", policyFailure);
   if (scheduledSource && (!work.fixture || work.sourceId !== scheduledSource)) {
     throw new FixturePolicyError("Only the selected synthetic source may run during scheduled acceptance", "source_mismatch");
   }

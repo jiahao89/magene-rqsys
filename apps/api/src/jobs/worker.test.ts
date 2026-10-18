@@ -119,7 +119,7 @@ test("fixture rejection persists a bounded reason without disclosing environment
   const worker = new PipelineJobWorker({ jobs: h.jobs, sync: h.sync, workerId: "worker", leaseMs: 30_000, now: () => new Date(NOW) });
   await worker.runOnce();
   const result = (h.calls.at(-1) as unknown[])[2] as Record<string, unknown>;
-  assert.match(String(result.errorSummary), /unsafe_poc_base/);
+  assert.match(String(result.errorSummary), /base_app_not_poc/);
   assert.equal(JSON.stringify(result).includes("secret-formal-base"), false);
   assert.equal(JSON.stringify(result).includes("private-table"), false);
 });
