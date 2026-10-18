@@ -1,4 +1,16 @@
-# RQ-Sys MVP implementation and acceptance status (2026-10-18)
+# RQ-Sys MVP implementation and acceptance status (updated 2026-10-19)
+
+
+## Latest target acceptance (2026-10-19)
+
+- **R1 passed:** app commit `187b4d983425ebd5515b994e02429358ccce90d1` was published as release `7698012715814472718` (finished, no error logs). Three approved, analyzed requirements completed owner mapping and AI→Base push. Independent Base readback found one row per requirement, correct owners, new rows in “待处理”, PM fields preserved, and no duplicate on replay.
+- **Restoration confirmed:** restore release `7698036998015028248` finished on the same commit with no error logs. The cold Online UI reports API connected and 314/314 pulled. All eight original Online env-var names were restored, both temporary fixture vars removed, the Monday 09:00 Asia/Shanghai source plan and `*/30 * * * *` recovery trigger are disabled, and DB readback found zero queued/running jobs, zero running batches, and zero new batches in the last two hours.
+- **R3 not verified:** two current cron windows produced no captured app handler/guard log, scheduled batch, or job. This does not identify whether the platform failed to deliver or the handler failed at runtime. The historical 2026-10-15 scheduled-chain pass remains valid historical evidence, but does not prove this release's trigger path.
+- **R3 observability root cause and local fix:** the app handler previously logged only after `pollOnce()` completed; runtime initialization or poll failures therefore left no app log. The CLI has no trigger-instance history endpoint. Added sanitized start, runtime-initialization-failure, durable-poll-failure, and completion logs; regression test first failed against the old handler, then passed. The new code is locally verified (90/90 app route tests, server/client typecheck, lint, stylelint, production build); commit `9f6fb5d` is pushed to `sprint/default`, and release dry-run targets the correct app/branch. Actual release and target verification remain pending.
+- **R2 remains open:** notification condition/write atomicity and precise per-recipient resend after partial failure are not implemented or proven; formal notifications remain disabled.
+- **MVP status:** not fully accepted for production. No TB pull, model invocation, Base write, or stakeholder notification occurred during this cron observation. See [release closeout](./RELEASE-CLOSEOUT.md) and [target acceptance ticket](../../.scratch/rq-sys-mvp/issues/09-target-acceptance.md).
+
+## Historical acceptance records
 
 ## 已发布负责人与源版本修复；新增跨应用负责人ID类型问题（2026-10-18 续验）
 
