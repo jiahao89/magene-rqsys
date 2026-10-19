@@ -1,5 +1,15 @@
 # RQ-Sys MVP implementation and acceptance status (updated 2026-10-19)
 
+> **当前状态（2026-10-19 15:40，取代下文更早的验收快照）**
+>
+> - 最新发布 `7698268411600276761` / commit `f7bc228`，`finished`，`error_logs=[]`。
+> - R1（负责人→Base 链路）、R2（通知）、R3（定时触发）**均已通过**，详见 `RELEASE-CLOSEOUT.md` 顶部当前结论。
+> - 分析：314 条中 313 条已完成，1 条自动重试中。
+> - 通知：正式表 4 字段 + 自动化工作流 `wkfMnsnvaDS4Auj4` 已启用；收件人规则为单收件人两步走（首推→PM Leader 王赵云，分配后→负责人，提出人不通知），已同步到 Spec 03。
+> - 定时：触发器 enabled、`schedule_enabled=true`（周一 09:00 Asia/Shanghai）。
+> - 数据：应用库 314 条全为真实需求；正式 Base 311 条、0 孤儿行。
+> - 已知平台事实：cron 投递可能晚约 12 分钟，验收窗口须 ≥15 分钟。
+
 
 ## Latest target acceptance (2026-10-19; supersedes earlier same-day snapshot)
 

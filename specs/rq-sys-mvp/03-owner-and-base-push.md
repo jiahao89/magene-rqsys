@@ -43,14 +43,18 @@ Miaoda searches internal members through its browser platform SDK. A selected Mi
 
 Use Base automation where the target Base can express the trigger and recipient rules. Verify each trigger and deduplication in the target table.
 
-| Event | Recipients | Deduplication |
+**Recipient rule (confirmed 2026-10-19, supersedes the earlier multi-recipient design).** One notification has exactly one recipient, and the flow is two-step: the first push tells the PM Leader so they can assign, and once assigned the owner is told. The proposer is never notified — the current field map has no approved proposer projection, so it stays recorded as `proposer_field_unavailable` rather than being guessed from the title or names. This deliberately narrows the earlier "PM Leader + proposer + owner" rule; multi-recipient fan-out and per-recipient resend were dropped because Base automation cannot express per-recipient outcomes, and the product decision is that a multi-recipient notification does not occur.
+
+| Event | Recipient | Deduplication |
 |---|---|---|
-| First successful push | PM Leader, resolvable proposer, current mapped/assigned owner | One per source requirement and push version |
-| Substantive source change successfully pushed | Same recipients as the initial push; omit unresolved proposer/empty owner | One per substantive source version |
+| First successful push | **PM Leader** (even when an owner already resolved) | One per source requirement and push version |
+| Substantive source change successfully pushed | Current owner; PM Leader when there is no owner | One per substantive source version |
 | Owner assigned after an empty-owner push | Newly assigned owner | One per assignment event |
 | TB owner changes to a mapped person | New owner | One per mapped owner change |
-| AI retry succeeds with new result | PM Leader and assigned owner | One per new analysis result |
+| AI retry succeeds with new result | Current owner; PM Leader when there is no owner | One per new analysis result |
 | No-op scheduled sync or retry with no new result | None | Silent |
+
+PM Leader is configured by the environment variable `RQSYS_PM_LEADER_USER_ID` as a Feishu `user_id`. When it is absent, a first push writes no notification fields rather than falling back to the owner. Because Feishu's `user_id_type` is request-level, the notification fields are written in a second request when the owner's id type differs from the recipient's; otherwise a first push on an already-owned requirement would mix `open_id` and `user_id` and hit `1254066`.
 
 A failed Base upsert must not emit a success notification. A notification delivery status is not represented as a Web workflow state.
 

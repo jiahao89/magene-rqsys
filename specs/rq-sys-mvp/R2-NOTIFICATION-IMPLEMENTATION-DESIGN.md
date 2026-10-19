@@ -1,4 +1,6 @@
-# R2 完整通知实施设计（待评审确认）
+# R2 完整通知实施设计（已被更简单的最终方案取代）
+
+> **状态：已取代。** 本文提出的"应用侧 outbox + 逐收件人台账"在 2026-10-19 被产品决策否决：确认不存在一条通知发多人的场景，且不要求逐收件人送达记录。最终实现改为「应用写 4 个系统字段 + 多维表格自动化发送 + 单收件人两步走」，见 `03-owner-and-base-push.md` 的收件人规则与 `RELEASE-CLOSEOUT.md` 的当前结论。本文保留作为取舍记录。
 
 > 状态：**设计稿，待确认后实施**。依据工单 18、`NOTIFICATION-CLOSEOUT-DESIGN.md`（2026-10-16 已批准的隔离 POC 方案）与 `NOTIFICATION-CAPABILITY-RESULTS.md`（POC 结果）。
 >
@@ -134,7 +136,7 @@ WHERE id=$2 AND source_version <= $3 AND push_version < $4
 
 | 事件 | 触发条件 | 收件人 |
 |---|---|---|
-| `first_push` | 应用首次成功推送该需求 | PM Leader + 可解析提出人 + 当前负责人 |
+| `first_push` | 应用首次成功推送该需求 | **PM Leader**（最终实现；提出人不通知） |
 | `substantive_update` | 实质字段 hash 变化且推送成功 | 同上 |
 | `owner_assigned` / `owner_changed` | 负责人由空→A 或 A→B（含仅映射变化、源版本未变） | 新负责人 |
 | `ai_retry_success` | AI 由失败转成功且推送成功 | PM Leader + 当前负责人 |
