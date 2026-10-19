@@ -228,7 +228,7 @@ test("first push notifies the resolved owner with a deterministic first_push eve
   const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
   assert.equal(result.kind, "pushed");
   assert.deepEqual(h.baseInput?.notification, {
-    eventType: "first_push",
+    eventType: "首次推送",
     eventId: "first_push:req-1:sv2",
     recipientUserId: "ou-owner",
     ownerMergeUserId: "ou-owner",
@@ -250,7 +250,7 @@ test("a substantive change notifies the current owner with substantive_update", 
   assert.equal(result.kind, "pushed");
   assert.equal(h.baseInput?.substantiveChanged, true);
   assert.deepEqual(h.baseInput?.notification, {
-    eventType: "substantive_update",
+    eventType: "需求内容变更",
     eventId: "substantive_update:req-1:sv2",
     recipientUserId: "ou-owner",
     ownerMergeUserId: "ou-owner",
@@ -273,7 +273,7 @@ test("an owner appearing for the first time produces owner_assigned for the new 
   assert.equal(result.kind, "pushed");
   assert.equal(h.baseInput?.substantiveChanged, false);
   assert.deepEqual(h.baseInput?.notification, {
-    eventType: "owner_assigned",
+    eventType: "已分配负责人",
     eventId: "owner_assigned:req-1:sv2:none:ou-owner",
     recipientUserId: "ou-owner",
     ownerMergeUserId: "ou-owner",
@@ -295,7 +295,7 @@ test("an owner A→B change produces owner_changed with the previous and new use
   const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
   assert.equal(result.kind, "pushed");
   assert.deepEqual(h.baseInput?.notification, {
-    eventType: "owner_changed",
+    eventType: "负责人变更",
     eventId: "owner_changed:req-1:sv2:ou-previous:ou-owner",
     recipientUserId: "ou-owner",
     ownerMergeUserId: "ou-owner",
@@ -320,7 +320,7 @@ test("AI failure followed by success on the same source version produces ai_retr
   assert.equal(result.kind, "pushed");
   assert.equal(h.baseInput?.substantiveChanged, false);
   assert.deepEqual(h.baseInput?.notification, {
-    eventType: "ai_retry_success",
+    eventType: "AI 重试成功",
     eventId: "ai_retry_success:req-1:sv2",
     recipientUserId: "ou-owner",
     ownerMergeUserId: "ou-owner",
@@ -358,7 +358,7 @@ test("falls back to the configured PM Leader when the requirement has no owner",
   const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
   assert.equal(result.kind, "pushed");
   assert.deepEqual(h.baseInput?.notification, {
-    eventType: "first_push",
+    eventType: "首次推送",
     eventId: "first_push:req-1:sv2",
     recipientUserId: "ou-pm-leader",
     ownerMergeUserId: null,

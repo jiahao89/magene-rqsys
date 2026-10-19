@@ -34,6 +34,14 @@ export interface BasePushServiceDeps {
 
 /** 4 类通知事件（负责人分配/变更同属负责人事件）。 */
 export type NotificationEventType = "first_push" | "substantive_update" | "owner_assigned" | "owner_changed" | "ai_retry_success";
+// 写入 Base 的是给干系人看的文案；机器码仍用于事件ID，保证同一事件幂等。
+const EVENT_TYPE_LABELS: Record<NotificationEventType, string> = {
+  first_push: "首次推送",
+  substantive_update: "需求内容变更",
+  owner_assigned: "已分配负责人",
+  owner_changed: "负责人变更",
+  ai_retry_success: "AI 重试成功",
+};
 
 /**
  * 一次推送要写入的通知系统字段载荷。
@@ -41,6 +49,8 @@ export type NotificationEventType = "first_push" | "substantive_update" | "owner
  */
 export interface PushNotification {
   eventType: NotificationEventType;
+  /** 写给 Base 的中文文案；机器码 eventType 只用于事件ID。 */
+  eventTypeLabel: string;
   eventId: string;
   recipientUserId: string;
   /** 本次实际写入的负责人；无负责人时为 null（该人员字段不写）。 */
@@ -196,7 +206,7 @@ export function createBasePushService(deps: BasePushServiceDeps) {
     const eventId = ownerEvent
       ? `${eventType}:${input.req.id}:sv${input.req.sourceVersion}:${fromUserId ?? "none"}:${currentOwnerUserId}`
       : `${eventType}:${input.req.id}:sv${input.req.sourceVersion}`;
-    return { eventType, eventId, recipientUserId, ownerMergeUserId: currentOwnerUserId };
+    return { eventType, eventTypeLabel: EVENT_TYPE_LABELS[eventType], eventId, recipientUserId, ownerMergeUserId: currentOwnerUserId };
   };
 
   async function pushRequirementUnlocked(requirementId: string, idempotencyKey: string): Promise<PushOutcome> {
@@ -300,7 +310,12 @@ export function createBasePushService(deps: BasePushServiceDeps) {
         },
         aiValues: ai,
         // 静默场景（重复同步无变化、同键重放）不传 notification，即不写四个通知字段。
-        ...(notification ? { notification } : {}),
+        ...(notification ? { notification: {
+        eventId: notification.eventId,
+        eventType: notification.eventTypeLabel,
+        recipientUserId: notification.recipientUserId,
+        ownerMergeUserId: notification.ownerMergeUserId,
+      } } : {}),
       });
     } catch (error) {
       const failure = safeBaseFailure(error);
