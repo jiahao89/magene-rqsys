@@ -66,3 +66,10 @@
 - 修复：handler 增加安全的 started、runtime-initialization failure、durable-poll failure、completed 日志。失败时仅输出错误类别，不输出异常消息/数据，并继续抛出原错误供平台判失败。
 - 本地回归曾在修复前失败、修复后通过；Miaoda 路由测试90/90、server/client typecheck、lint、stylelint、production build通过。commit `9f6fb5d` 已发布为 release `7698043401983593483`（finished、`error_logs=[]`）。新标签冷启动 API 已连接，314/314需求可读；这只证明发布和普通请求，尚未证明 cron handler 接收调用。
 - Online 状态已恢复：fixture 配置移除，source weekly plan disabled，`rqsysWeeklySyncRecovery` disabled (`*/30 * * * *`, `Asia/Shanghai`)，无 queued/running jobs 或 running batches。上述日志修复现已发布。下一步需在周计划关闭且无活动作业时临时启用该恢复触发器观察一个窗口；若 handler 到达，再评估隔离来源的 scheduled fixture 链路。正式周计划和通知保持关闭，恢复触发器原态仍为 disabled。
+
+## 最新 Online release 与手动全量批次（2026-10-19）
+
+- Online 已发布 app commit `9cf3dc492ca1f951c7e50ee72b61fb7157d0e3c5`（release `7698200680474332465`，`finished`、`error_logs=[]`）。这是定时日志修复之后的版本；当前 release 的 cron handler 仍未取得窗口级触发证据。
+- 用户手动启动的 full_pipeline 批次 `4c75a3f7-c14e-4f85-9f86-4ae446831f6b` 源同步314条成功。该批次有7条 analysis run 为 `failed_retryable`、1条仍标记 `running`；该 running 记录对应的最新作业已 `failed/max_attempts_reached`，不是仍在执行的 cron/worker 作业。本轮没有重拉TB或重试AI。
+- 当前正式周计划与 `rqsysWeeklySyncRecovery` 仍 disabled；本轮未更改调度配置。重新启用当前触发器观察窗口需单独明确授权。
+- 独立 Base 回读：项目311条记录、311个唯一需求键；本批次314个源需求中缺少的3个键均处于 `pending/pending_mapping`，60个已推送键均存在且版本/状态一致。58条映射记录的 Base 人员字段非空，但 Base 回读 OpenID 与 RQ-Sys 保存的 user_id 类型不同，精确身份对应仍待验证。
