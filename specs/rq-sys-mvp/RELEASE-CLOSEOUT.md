@@ -5,7 +5,7 @@
 > **R1 / R2 / R3 三个门槛均已通过，MVP 达到生产可用。**
 >
 > - 线上最新发布：`7698268411600276761`（app commit `f7bc228`），`status=finished`、`error_logs=[]`。该版本包含分析自动恢复与通知收件人规则修正。
-> - 分析数据：314 条中 **313 条已完成分析**，1 条仍在自动重试（每需求每源版本上限 3 次）。此前 306/7/1 的分布已被自动恢复修复（`analysis.recovery` 1 条、`analysis.retry_requested` 7 条，ERROR 日志 0 条）。
+> - 分析数据：314 条中 **314 条全部完成分析**（最后 1 条已由自动恢复补上）。此前 306/7/1 的分布已被自动恢复修复（`analysis.recovery` 1 条、`analysis.retry_requested` 7 条，ERROR 日志 0 条）。
 > - 通知：正式表 4 个系统字段已建、自动化工作流 `wkfMnsnvaDS4Auj4` 已启用；触发与静默均有正式表实测证据。收件人规则为**单收件人两步走**（首推→PM Leader，分配后→负责人，提出人不通知），Spec 03 已同步。
 > - 定时：触发器 `rqsysWeeklySyncRecovery` **enabled**、`source_configs.schedule_enabled=true`（周一 09:00 Asia/Shanghai）。投递链路已有 INFO 证据（dispatch→gateway→handler started/completed，0 ERROR）。
 > - 数据卫生：应用库 3 条 `rqsys-fixture-*` 合成需求已删除（314 条全为真实需求）；正式 Base 5 条无 TB 主键的空行已删除（311 条，0 孤儿行）。
