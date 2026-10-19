@@ -43,11 +43,11 @@ Miaoda searches internal members through its browser platform SDK. A selected Mi
 
 Use Base automation where the target Base can express the trigger and recipient rules. Verify each trigger and deduplication in the target table.
 
-**Recipient rule (confirmed 2026-10-19, supersedes the earlier multi-recipient design).** One notification has exactly one recipient, and the flow is two-step: the first push tells the PM Leader so they can assign, and once assigned the owner is told. The proposer is never notified — the current field map has no approved proposer projection, so it stays recorded as `proposer_field_unavailable` rather than being guessed from the title or names. This deliberately narrows the earlier "PM Leader + proposer + owner" rule; multi-recipient fan-out and per-recipient resend were dropped because Base automation cannot express per-recipient outcomes, and the product decision is that a multi-recipient notification does not occur.
+**Recipient rule (confirmed 2026-10-19, supersedes the earlier multi-recipient design).** One notification has exactly one recipient. The first push is silent: the Base table is the PM Leader's workbench, and notifying per requirement turns a 151-requirement backfill into 151 messages that bury the only event needing action. Once an owner is assigned or changed, that owner is told. The proposer is never notified — the current field map has no approved proposer projection, so it stays recorded as `proposer_field_unavailable` rather than being guessed from the title or names. This deliberately narrows the earlier "PM Leader + proposer + owner" rule; multi-recipient fan-out and per-recipient resend were dropped because Base automation cannot express per-recipient outcomes, and the product decision is that a multi-recipient notification does not occur.
 
 | Event | Recipient | Deduplication |
 |---|---|---|
-| First successful push | **PM Leader** (even when an owner already resolved) | One per source requirement and push version |
+| First successful push | **Silent** — no notification fields written | Not applicable |
 | Substantive source change successfully pushed | Current owner; PM Leader when there is no owner | One per substantive source version |
 | Owner assigned after an empty-owner push | Newly assigned owner | One per assignment event |
 | TB owner changes to a mapped person | New owner | One per mapped owner change |

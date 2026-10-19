@@ -204,10 +204,14 @@ export function createBasePushService(deps: BasePushServiceDeps) {
     }
     if (!eventType && aiRetrySuccess) eventType = "ai_retry_success";
     if (!eventType) return undefined;
+    // 首次推送静默（产品确认）：新需求入场不逐条通知 PM Leader。
+    // 151 条需求一起推时会变成 151 条消息，把真正需要动作的"分配后通知负责人"淹没；
+    // Base 表格本身就是 PM Leader 的工作台。归属变化仍按下方规则逐条通知。
+    if (eventType === "first_push") return undefined;
 
     const ownerEvent = eventType === "owner_assigned" || eventType === "owner_changed";
     // 产品最终确认的收件人规则：
-    //   first_push → PM Leader（团队要知道新需求入场，即使已经解析到负责人也不发给负责人）；
+    //   first_push → 静默（不写通知字段）；
     //   负责人事件 → 新的当前负责人；
     //   substantive_update / ai_retry_success → 当前负责人，无负责人时回落 PM Leader。
     // 同时给出收件人的 ID 类型：负责人映射可能是 open_id，而 PM Leader 是 user_id；
@@ -215,9 +219,8 @@ export function createBasePushService(deps: BasePushServiceDeps) {
     const ownerIdType = input.mapping?.feishuIdType ?? null;
     const ownerRecipient = currentOwnerUserId && ownerIdType ? { userId: currentOwnerUserId, idType: ownerIdType } : null;
     const pmLeaderRecipient = pmLeaderUserId ? { userId: pmLeaderUserId, idType: "user_id" as const } : null;
-    const recipient = eventType === "first_push"
-      ? pmLeaderRecipient
-      : ownerEvent ? ownerRecipient : (ownerRecipient ?? pmLeaderRecipient);
+    // first_push 已在上方静默返回，这里只剩负责人事件与"负责人优先、PM Leader 兜底"两类。
+    const recipient = ownerEvent ? ownerRecipient : (ownerRecipient ?? pmLeaderRecipient);
     if (!recipient) return undefined;
     // 事件ID 确定性：同一事件重复推送得到同一个 ID，Base 自动化据此不重复发送。
     // 负责人事件追加 from/to，区分 A→B 与空→A 等不同事件。

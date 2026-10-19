@@ -224,20 +224,15 @@ test("reconciles a Base record left by a previous push whose local record was ne
 
 // ---- 通知事件载荷（四个系统字段）与收件人规则 ----
 
-test("first push notifies the PM Leader, not the resolved owner, with a deterministic first_push event", async () => {
-  // 回归：早期实现是 `负责人 ?? PM Leader`，首推在已有负责人时发给了负责人。
-  // 产品最终确认：first_push 固定通知 PM Leader。
+test("first push stays silent so a bulk backfill cannot flood the PM Leader", async () => {
+  // 产品最终确认：首次推送静默。151 条需求一起推时，逐条通知会把"分配后通知负责人"淹没；
+  // Base 表格本身就是 PM Leader 的工作台。首推仍要写业务字段，只是不写通知字段。
   const req = requirement({ executorUserId: "tb-owner", executorName: "Owner" });
   const h = makeHarness({ req, mapping: mappingRecord(), pmLeaderUserId: PM_LEADER_USER_ID });
   const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
   assert.equal(result.kind, "pushed");
-  assert.deepEqual(h.baseInput?.notification, {
-    eventType: "首次推送",
-    eventId: "first_push:req-1:sv2",
-    recipientUserId: PM_LEADER_USER_ID,
-    recipientIdType: "user_id",
-    ownerMergeUserId: "ou-owner",
-  });
+  assert.equal(h.baseInput?.notification, undefined);
+  assert.ok(h.calls.includes("base"));
 });
 
 test("a substantive change notifies the current owner with substantive_update", async () => {
@@ -405,19 +400,13 @@ test("replaying a pushed idempotency key is silent and never touches Base again"
   assert.equal(h.baseInput, null);
 });
 
-test("first push without an owner notifies the configured PM Leader", async () => {
+test("first push without an owner is also silent", async () => {
+  // 静默规则与是否有负责人无关：首推一律不写通知字段，避免批量回填刷屏。
   const h = makeHarness({ pmLeaderUserId: PM_LEADER_USER_ID });
   const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
   assert.equal(result.kind, "pushed");
-  assert.deepEqual(h.baseInput?.notification, {
-    eventType: "首次推送",
-    eventId: "first_push:req-1:sv2",
-    recipientUserId: PM_LEADER_USER_ID,
-    recipientIdType: "user_id",
-    ownerMergeUserId: null,
-  });
+  assert.equal(h.baseInput?.notification, undefined);
 });
-
 test("first push with an owner but no PM Leader stays silent instead of falling back to the owner", async () => {
   // 规则是 first_push → PM Leader；PM Leader 未配置时本次不写通知字段，
   // 而不是退回负责人（那会把「新需求入场」通知发给个人，与产品规则相反）。
