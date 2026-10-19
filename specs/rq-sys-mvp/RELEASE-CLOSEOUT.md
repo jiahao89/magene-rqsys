@@ -2,15 +2,24 @@
 
 ## 当前结论
 
-**MVP 尚未达到全量生产验收。** R1 真实需求推送和独立回读通过。定时 handler 的脱敏阶段日志修复已发布；线上新标签冷启动后 API 连接正常，但 cron handler 尚未复验（恢复触发器保持关闭）。通知失败补发仍没有实现/验收证据。
+**MVP 尚未达到全量生产验收。** 最新 Online release `7698200680474332465`（commit `9cf3dc492ca1f951c7e50ee72b61fb7157d0e3c5`）已完成，`error_logs=[]`。用户发起的全量同步拉取314条；本批次57条新 Base 推送成功，另3条此前已推送。分析尚有7条失败可重试和1条被最大尝试次数终止的孤立运行记录；254条因负责人待匹配尚未推送。当前版本 cron 尚未观察到 handler 调用，通知部分失败的精确补发未实现/验收。周计划、恢复触发器和正式通知均保持关闭。
 
 | 顺序 | 工作 | 完成条件 | 状态 |
 | --- | --- | --- | --- |
-| R1 | 负责人→Base真实需求链路 | 3条已分析需求推送成功；Base独立回读唯一、负责人正确、新行待处理、PM字段未被覆盖、重试不重复。 | **通过**。Release `7698012715814472718`（代码 `187b4d983425ebd5515b994e02429358ccce90d1`）完成且 `error_logs=[]`。三条获批记录均写入 Base，独立回读无重复，负责人映射正确，PM 状态保持“待处理”，字段保护通过。 |
+| R1 | 负责人→Base真实需求链路 | 3条已分析需求推送成功；Base独立回读唯一、负责人正确、新行待处理、PM字段未被覆盖、重试不重复。 | **三条指定需求通过；全量批次部分通过**。原三条记录的独立回读、负责人、PM字段保护和幂等验收仍有效。最新用户批次新增57条推送成功，3条已在批次前推送；本轮未对这57条独立回读或重放。 |
 | R2 | 通知实现与失败补发 | 首次/实质变更/负责人分配事件可通知；通知意图与逐收件人结果可恢复；重放静默；受控失败后只补发失败收件人且成功收件人不重复。 | **未通过**。POC 只证明有限的正常自动化样本；条件更新原子性、部分收件人精确补发均未证明，正式通知 workflow 保持关闭。 |
-| R3 | 当前版本定时触发与运行交接 | 当前发布版本观察到 cron→应用 handler→持久周窗口→worker；同一窗口不重复；隔离链路完成后恢复配置并确认无活动任务。 | **部分完成，定时运行仍未验收**。根因代码修复已发布：app commit `9f6fb5dd7ebd7b2343ea6bfbe9bae6513fa95b32`，release `7698043401983593483` finished、`error_logs=[]`。线上新标签冷启动后 API 已连接、314/314 需求可读。当前触发器仍为 disabled、来源周计划关闭，因此还没有新日志可验证 cron 是否到达 handler。上一轮两个窗口无日志的问题，部分源于 handler 只在 `pollOnce()` 成功后记录完成；现在增加了脱敏的开始/初始化失败/调度失败/完成阶段日志。CLI 无 trigger-instance 历史查询接口。下一步需在周计划继续关闭、无活动任务时临时启用恢复触发器观察一个窗口；这需要明确确认。本轮没有发起 TB 拉取、模型调用、Base 写入或通知。历史 2026-10-15 定时链路曾通过，不能替代当前版本复验。 |
+| R3 | 当前版本定时触发与运行交接 | 当前发布版本观察到 cron→应用 handler→持久周窗口→worker；同一窗口不重复；隔离链路完成后恢复配置并确认无活动任务。 | **部分完成，定时运行仍未验收**。当前 Online 已发布 `9cf3dc492ca1f951c7e50ee72b61fb7157d0e3c5`；定时 handler 可观测性修复已包含在先前版本并随本次发布保留。当前版本 cron 尚未复验，source weekly plan 与 `rqsysWeeklySyncRecovery` 仍为 disabled。较早版本的观察窗口未取得 handler 日志、批次或作业，不能作为当前版本通过证据。重新启用恢复触发器需对当前窗口取得明确动作授权。 |
 
-## 本轮恢复确认
+## 本轮批次核查（2026-10-19）
+
+- 当前 release `7698200680474332465` / commit `9cf3dc492ca1f951c7e50ee72b61fb7157d0e3c5` 为 `finished`，`error_logs=[]`。
+- 手动 full_pipeline 批次 `4c75a3f7-c14e-4f85-9f86-4ae446831f6b` 于 09:17:02 开始，09:17:59 源同步完成，314/314。
+- 下游核查：302 条 analysis run `analyzed`、7 条 `failed_retryable`、1 条 `running`。唯一 running 记录对应的最新 analysis job 已 `failed/max_attempts_reached`，开始于当前 release 之前；没有活动作业可继续，本轮未重试或再次调用模型。
+- Base：批次开始后57条新推送成功；另3条此前已有成功推送。关联的3条历史失败记录（一条 `1254061`、两条 `1254066`）均早于本批次。当前数据库中60条需求状态为 `pushed`；此处是应用数据库回读，不是本轮独立 Base API 回读。
+- 254条需求仍为 `pending_mapping`。实时 Base schema 显示 `执行人` 为user、`AI模块建议` 为text、`AI优先级建议` 为select、`源版本` 为number、时间字段为datetime。旧错误没有字段级详情，无法仅凭错误码归因到具体字段值。
+- 正式周计划、恢复触发器和通知 automation 保持关闭。
+
+## Earlier restoration snapshot (before the 09:17 user-started batch)
 
 - 最新发布 `7698043401983593483` 已完成，绑定 app commit `9f6fb5dd7ebd7b2343ea6bfbe9bae6513fa95b32`，`error_logs=[]`。新 Chrome 标签冷启动后 API 已连接，页面显示 314/314、4/314 已分析、3/314 已匹配及已推送。
 - 定时恢复触发器为 disabled（cron `*/30 * * * *`、Asia/Shanghai）；来源的正式周计划仍为 disabled，设置为周一 09:00、Asia/Shanghai。
@@ -66,3 +75,25 @@ root API290/290、Web45/45；Miaoda路由/适配器87/87；两仓类型/生产�
 - 已用应用凭据执行只读实时schema探针：正式表返回type2，POC返回type1；未展示凭据、未改字段结构。此探针是本地新代码→真实飞书读权限的证据，不能替代新版本部署后的写入验收。
 - 本轮本地验证：root API290/290、Web45/45；Miaoda87/87；两仓类型、生产构建、app lint/stylelint、diff检查通过，共用逻辑21/21一致。首次root集成测试受沙箱socket权限限制，获准后在本机随机临时schema重跑通过并清理。新`user_id`类型修复仍待提交/发布；R1剩余三条真实需求的应用链路、独立Base回读、幂等与PM字段保护。
 - 正式Base工作流`wkfYO1EEYxJXbCaN`实时只读回查仍disabled，周计划仍false，未向干系人发消息。R2通知开发与失败补发、R3当前版本隔离定时复验仍未通过，不能签署生产全量验收。
+
+## R3 定时触发投递取证（2026-10-19，Online，当前发布版本）
+
+**结论：投递成功。cron 触发器 → 平台 gateway → 应用 handler 全链路已取得 INFO 证据，无 ERROR；守卫按预期判定无到期工作，未创建批次、未写库。这解决了此前"无法区分未投递与应用错误"的阻塞。**
+
+- 发布版本：release `7698200680474332465`（2026-10-19 10:32:34 创建），代码 commit `9cf3dc4`，含日志修复 `9f6fb5d`；因此"无日志"不能归因于修复未发布。
+- 触发器 `rqsysWeeklySyncRecovery`，`*/30 * * * *` Asia/Shanghai。临时启用（11:00:22）取证后**已恢复 disabled**（11:45:02，回读 confirmed，11:46 与独立复核二次确认仍为 disabled）。
+- 平台 dispatch 11:42:52.359（`module=trigger`，`status=succeed`，duration 10162ms，instance `17698216367715877146`，`HttpCode=200`，Response 解码 `{"code":200,"message":"success"}`，`startAt`=11:42:42.196）。
+- gateway `POST /spark/faas/app_17fqkjwyx1u/__innerapi__/automation/invoke` 11:42:52.343，status 200。
+- handler：`RQ-Sys scheduled work poll started` 11:42:52.321 → `RQ-Sys scheduled work poll completed` 11:42:52.734。
+- 守卫：handler 实查 `source_configs`(1 行，`schedule_enabled=false`)、`sync_batches`(0)、`pipeline_jobs` due(0) → 不建批次。DB 前后：`sync_batches` scheduled 1→1（同一历史行，未新增）；`pipeline_jobs` queued/running 0→0。
+- ERROR 日志 since 2h：0 条；近 90m 仅本次 1 个 dispatch instance。
+
+### 新增验收事实：平台 cron 投递存在显著延迟
+
+11:30 边界 → 实际 dispatch 11:42:42，**延迟约 12m42s**。11:31:30（边界 +90s）与 11:36:46（+6.7min）两次抓取均无日志，据此会误判"未投递"。
+
+**因此 R3 及后续定时验收必须使用 ≥15 分钟观察窗口，不得以"+90s 无日志"判定未投递。** 这很可能是此前多轮"R3 定时触发未取证"的误判来源。平台扫描粒度未获官方确认，仅记录本次观测值。
+
+证据原文：`/tmp/r3-evidence/SUMMARY.md` 及同目录 raw JSON（非长期唯一证据）。
+
+本轮仅执行触发器 enable/disable 两个写操作；DB 仅 SELECT；未触碰 Base、未发通知、未改代码、未调用 TB 或模型。
