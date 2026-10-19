@@ -23,6 +23,13 @@ export function buildManualIdempotencyKey(params: {
   return `manual:${params.sourceConfigId}:${params.teambitionRequirementId}:${randomUUID()}`;
 }
 
+// Base 推送幂等键：同一需求、同一源版本、同一分析版本只入队/执行一次推送。
+// 与妙搭仓 jobs/idempotency.ts 保持同一格式；root 的 application/idempotency-keys.ts 只是
+// 这个函数的 re-export，供历史 import 路径继续使用（单一实现，避免两处格式漂移）。
+export function basePushIdempotencyKey(requirementId: string, sourceVersion: number, analysisVersion: number, intentId?: string): string {
+  return `base-push:${requirementId}:sv${sourceVersion}:av${analysisVersion}${intentId ? `:${intentId}` : ""}`;
+}
+
 // 校验幂等键格式：最小长度 8，最大 128，非空且不含控制字符。
 export function isValidIdempotencyKey(key: string): boolean {
   if (typeof key !== "string") return false;

@@ -14,6 +14,7 @@ import { buildPriorityRule } from "./analysis/priority-rule.js";
 import { createDueSyncJobs } from "./scheduler/due-jobs.js";
 import { reapOrphanedBatches } from "./scheduler/reap.js";
 import { recoverAnalysisPipeline } from "./scheduler/analysis-recovery.js";
+import { recheckOwnerMappings } from "./scheduler/owner-recheck.js";
 import { FeishuBasePushAdapter } from "./base/client.js";
 import { FeishuBitableClient } from "./base/transport.js";
 import { RateLimitedBaseClient } from "./base/rate-limit.js";
@@ -310,6 +311,19 @@ if (worker && repositories && workerPollMs > 0) {
         for (const error of recovery.errors) process.stderr.write(`analysis recovery item failed: ${error}\n`);
       } catch (error) {
         process.stderr.write(`analysis recovery failed: ${String(error)}\n`);
+      }
+      // 负责人映射重新评估：人员映射补齐后，已分析完成但停在 pending_mapping 的需求
+      // 不会自己前进。本轮只处理能解析出映射的需求（limit 25），按正常链路入队 base_push；
+      // 解析不到的跳过且不写审计。失败不阻断本轮调度。
+      try {
+        const recheck = await recheckOwnerMappings({
+          requirements: repositories.requirements, people: repositories.people,
+          analyses: repositories.analyses, jobs: repositories.jobs, audit: repositories.audit, now,
+        });
+        if (recheck.enqueued > 0) process.stdout.write(`requeued ${recheck.enqueued} owner-mapped requirement(s) for Base push\n`);
+        for (const error of recheck.errors) process.stderr.write(`owner mapping recheck item failed: ${error}\n`);
+      } catch (error) {
+        process.stderr.write(`owner mapping recheck failed: ${String(error)}\n`);
       }
       await worker.runOnce();
     })().catch((error) => process.stderr.write(`worker tick failed: ${String(error)}\n`));
