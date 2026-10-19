@@ -27,8 +27,10 @@ function job(overrides: Partial<PipelineJobRecord> = {}): PipelineJobRecord {
 
 function harness(input: { batches: SyncBatchRecord[]; jobs: Record<string, PipelineJobRecord | null> }) {
   const settled: Array<{ id: string; status: string; errorSummary: string | null }> = [];
+  const completedJobs: Array<{ id: string; expectedAttempt: number; status: string; settleSyncBatch?: boolean; errorCode?: string }> = [];
   return {
     settled,
+    completedJobs,
     deps: {
       batches: {
         async list() { return { items: input.batches, nextCursor: null }; },
@@ -37,7 +39,13 @@ function harness(input: { batches: SyncBatchRecord[]; jobs: Record<string, Pipel
           return { ...batch({ id }), status: result.status } as SyncBatchRecord;
         },
       },
-      jobs: { async findByDedupeKey(key: string) { return input.jobs[key] ?? null; } },
+      jobs: {
+        async findByDedupeKey(key: string) { return input.jobs[key] ?? null; },
+        async complete(id: string, result: { expectedAttempt: number; status: string; settleSyncBatch?: boolean; errorCode?: string }) {
+          completedJobs.push({ id, expectedAttempt: result.expectedAttempt, status: result.status, ...(result.settleSyncBatch === undefined ? {} : { settleSyncBatch: result.settleSyncBatch }), ...(result.errorCode === undefined ? {} : { errorCode: result.errorCode }) });
+          return job({ id, status: "failed", attemptCount: result.expectedAttempt });
+        },
+      },
       now: NOW,
     },
   };
@@ -89,4 +97,52 @@ test("只扫描 running 批次", async () => {
   };
   await reapOrphanedBatches(deps as never);
   assert.equal(askedStatus, "running");
+});
+
+test("手动路径的作业键（sync:<sourceId>:<key>）也能找到作业，不误杀健康批次", async () => {
+  // 回归：早期 reap 只查 `sync:<batchId>`，而手动作业用的是 `sync:<sourceId>:<idempotencyKey>`。
+  // 只查一种会把健康的手动批次判成"作业不存在"，标记 failed 后并发守卫又会放行第二个同步。
+  const b = batch();
+  const h = harness({
+    batches: [b],
+    jobs: {
+      [`sync:${b.sourceConfigId}:${b.idempotencyKey}`]: job({ status: "running", dedupeKey: `sync:${b.sourceConfigId}:${b.idempotencyKey}` }),
+    },
+  });
+  const reaped = await reapOrphanedBatches(h.deps as never);
+  assert.equal(reaped.length, 0, "作业仍在 running 且未用尽尝试，不应被回收");
+  assert.equal(h.settled.length, 0);
+});
+
+test("running 且尝试用尽、租约过期 → 原子收敛（complete + settleSyncBatch）", async () => {
+  // 这是 BLOCKER 情形：claimNext 要求 attempt_count < max_attempts，complete 要求进程活着且 attempt 匹配。
+  // worker 在第 5 次尝试中途死亡后，作业既不能被认领也不能被收尾，批次永久 running → 来源永久 409。
+  const b = batch();
+  const h = harness({
+    batches: [b],
+    jobs: {
+      [`sync:${b.id}`]: job({ status: "running", attemptCount: 5, maxAttempts: 5, lockedUntil: "2026-01-01T11:00:00.000Z" }),
+    },
+  });
+  const reaped = await reapOrphanedBatches(h.deps as never);
+  assert.equal(reaped.length, 1);
+  assert.equal(reaped[0]?.reason, "sync job exhausted");
+  assert.equal(h.completedJobs.length, 1);
+  assert.equal(h.completedJobs[0]?.expectedAttempt, 5);
+  assert.equal(h.completedJobs[0]?.status, "failed");
+  assert.equal(h.completedJobs[0]?.errorCode, "lease_expired");
+  assert.equal(h.completedJobs[0]?.settleSyncBatch, true, "必须用同一条 CTE 原子收敛批次，避免两步之间再留孤儿");
+});
+
+test("尝试用尽但租约尚未过期 → 放过（可能仍有活着的 worker 在收尾）", async () => {
+  const b = batch();
+  const h = harness({
+    batches: [b],
+    jobs: {
+      [`sync:${b.id}`]: job({ status: "running", attemptCount: 5, maxAttempts: 5, lockedUntil: "2026-01-01T12:30:00.000Z" }),
+    },
+  });
+  const reaped = await reapOrphanedBatches(h.deps as never);
+  assert.equal(reaped.length, 0);
+  assert.equal(h.completedJobs.length, 0);
 });

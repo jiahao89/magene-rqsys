@@ -196,3 +196,35 @@ test("requirement detail returns the full analysis version history (spec 02 prio
   // 存储枚举 high/medium/low 转回展示层中文；provenance 字段随版本暴露（spec 02 L44）
   assert.deepEqual(body.analyses[0], { analysisVersion: 2, status: "analyzed", moduleSuggestion: "报表分析", confidence: "中", priority: "P1", provider: "deepseek", model: "m", promptVersion: "p", moduleDictionaryVersion: 1, priorityRuleVersionId: null, startedAt: "2026-10-08T00:00:00.000Z", completedAt: "2026-10-08T00:00:01.000Z", safeErrorSummary: null });
 });
+
+test("retries a requirement stranded in running by a crashed analysis handler", async () => {
+  // 回归：handler 先置 analysis=running 再调模型，进程死在这两步之间时状态停在 running，
+  // 且作业已终态。此前端点只接受 pending/failed_retryable → 该需求只能手工改库。
+  const d = makeDependencies();
+  const queued: Record<string, unknown>[] = [];
+  d.repositories!.requirements!.get = async (id: string) => id === requirement.id
+    ? { ...requirement, pipeline: { ...requirement.pipeline, analysis: "running" as const } } as RequirementRecord
+    : null;
+  d.repositories!.jobs.findByDedupeKey = async (key) => key === `analysis:${requirement.id}:sv1:after2`
+    ? { id: "crashed-job", jobType: "analysis", dedupeKey: key, payload: {}, status: "failed", attemptCount: 3, maxAttempts: 3, availableAt: "2026-10-08T00:00:00.000Z", lockedUntil: null, lastErrorCode: "max_attempts_reached", lastErrorSummary: null, createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z" }
+    : null;
+  d.repositories!.jobs.enqueue = async (input) => {
+    queued.push(input as unknown as Record<string, unknown>);
+    return { ...input, id: "analysis-job-2", status: "queued", attemptCount: 0, maxAttempts: 3, lockedUntil: null, lastErrorCode: null, lastErrorSummary: null, createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z" };
+  };
+  const response = await handleApiRequest(new Request(`http://localhost/api/analysis/${requirement.id}/retry`, { method: "POST" }), d);
+  assert.equal(response.status, 202);
+  assert.equal(queued.length, 1);
+});
+
+test("still rejects a retry while the analysis job is genuinely running", async () => {
+  const d = makeDependencies();
+  d.repositories!.requirements!.get = async (id: string) => id === requirement.id
+    ? { ...requirement, pipeline: { ...requirement.pipeline, analysis: "running" as const } } as RequirementRecord
+    : null;
+  d.repositories!.jobs.findByDedupeKey = async (key) => key === `analysis:${requirement.id}:sv1:after2`
+    ? { id: "live-job", jobType: "analysis", dedupeKey: key, payload: {}, status: "running", attemptCount: 1, maxAttempts: 3, availableAt: "2026-10-08T00:00:00.000Z", lockedUntil: "2026-10-08T00:05:00.000Z", lastErrorCode: null, lastErrorSummary: null, createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z" }
+    : null;
+  const response = await handleApiRequest(new Request(`http://localhost/api/analysis/${requirement.id}/retry`, { method: "POST" }), d);
+  assert.equal(response.status, 409);
+});

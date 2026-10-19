@@ -17,13 +17,13 @@ function fakeBase(initial?: { recordId: string; fields: Record<string, unknown> 
 test("creates/upserts on the project + requirement key, permits empty owner, and filters fields", async () => {
   const fake = fakeBase();
   const adapter = new FeishuBasePushAdapter(fake.client, { projectId: "TB项目ID", requirementId: "TB需求ID", owner: "执行人", source: { title: "标题", description: "需求说明" }, ai: { module: "AI模块建议" }, pm: ["PM状态", "PM确认模块", "PM确认优先级", "处理人", "处理时间", "结构化备注"] });
-  const result = await adapter.push({ projectId: "p", requirementId: "r", title: "Title", description: "Desc", owner: null, sourceVersion: 1, substantiveChanged: false, idempotencyKey: "p:r:v1" });
+  const result = await adapter.push({ projectId: "p", requirementId: "r", requirementDbId: "11111111-2222-4333-8444-555555555555", title: "Title", description: "Desc", owner: null, sourceVersion: 1, substantiveChanged: false, idempotencyKey: "p:r:v1" });
   assert.equal(result.recordId, "record-new");
   assert.equal(fake.row()?.fields["执行人"], null);
   assert.equal(fake.row()?.fields["PM状态"], "待处理");
   assert.equal(fake.calls.join(","), "find,create");
   await fake.client.update(result.recordId, { "PM状态": "已采纳" });
-  await adapter.push({ projectId: "p", requirementId: "r", title: "Title", description: "Desc", owner: null, sourceVersion: 1, substantiveChanged: false, idempotencyKey: "p:r:v1" });
+  await adapter.push({ projectId: "p", requirementId: "r", requirementDbId: "11111111-2222-4333-8444-555555555555", title: "Title", description: "Desc", owner: null, sourceVersion: 1, substantiveChanged: false, idempotencyKey: "p:r:v1" });
   assert.equal(fake.calls.filter((call) => call === "create").length, 1);
   assert.equal(fake.row()?.fields["PM状态"], "已采纳");
 });
@@ -32,7 +32,7 @@ test("snapshots before substantive update and only then resets PM status", async
   const fake = fakeBase({ recordId: "existing", fields: { "TB项目ID": "p", "TB需求ID": "r", "标题": "Old", "PM状态": "已采纳", "PM确认模块": "M", "结构化备注": "Note" } });
   const snapshots: unknown[] = [];
   const adapter = new FeishuBasePushAdapter(fake.client, { projectId: "TB项目ID", requirementId: "TB需求ID", owner: "执行人", source: { title: "标题", description: "需求说明" }, ai: {}, pm: ["PM状态", "PM确认模块", "PM确认优先级", "处理人", "处理时间", "结构化备注"] }, { savePmSnapshot: async (snapshot) => { snapshots.push(snapshot); } });
-  await adapter.push({ projectId: "p", requirementId: "r", title: "New", owner: null, sourceVersion: 2, substantiveChanged: true, idempotencyKey: "p:r:v2" });
+  await adapter.push({ projectId: "p", requirementId: "r", requirementDbId: "11111111-2222-4333-8444-555555555555", title: "New", owner: null, sourceVersion: 2, substantiveChanged: true, idempotencyKey: "p:r:v2" });
   assert.deepEqual(fake.calls, ["find", "snapshot", "update"]);
   assert.deepEqual((snapshots[0] as { pmValues: unknown }).pmValues, { "PM状态": "已采纳", "PM确认模块": "M", "PM确认优先级": null, "处理人": null, "处理时间": null, "结构化备注": "Note" });
   // 单选字段必须写字符串：真实环境 PUT 数组会被飞书以 1254062 拒绝
@@ -49,7 +49,7 @@ test("serializes Base selects and text metadata, while an unavailable module opt
     selectOptions: { module: ["其他"], priority: ["P0", "P1", "P2"] },
   });
   await adapter.push({
-    projectId: "p", requirementId: "r", title: "Title", owner: null, sourceVersion: 3,
+    projectId: "p", requirementId: "r", requirementDbId: "11111111-2222-4333-8444-555555555555", title: "Title", owner: null, sourceVersion: 3,
     pushedAt: "2026-10-11T01:00:00.000Z", substantiveChanged: false, idempotencyKey: "p:r:v3",
     aiValues: { module: "无法识别", priority: "P2", analysisVersion: 4 },
   });
@@ -66,7 +66,7 @@ test("snapshot failure leaves existing Base row untouched", async () => {
   const fake = fakeBase({ recordId: "existing", fields: { "TB项目ID": "p", "TB需求ID": "r", "标题": "Old", "PM状态": "已采纳" } });
   const before = structuredClone(fake.row());
   const adapter = new FeishuBasePushAdapter(fake.client, { projectId: "TB项目ID", requirementId: "TB需求ID", owner: "执行人", source: { title: "标题" }, ai: {}, pm: ["PM状态"] }, { savePmSnapshot: async () => { throw new Error("db unavailable"); } });
-  await assert.rejects(() => adapter.push({ projectId: "p", requirementId: "r", title: "New", owner: null, sourceVersion: 2, substantiveChanged: true, idempotencyKey: "p:r:v2" }));
+  await assert.rejects(() => adapter.push({ projectId: "p", requirementId: "r", requirementDbId: "11111111-2222-4333-8444-555555555555", title: "New", owner: null, sourceVersion: 2, substantiveChanged: true, idempotencyKey: "p:r:v2" }));
   assert.deepEqual(fake.calls, ["find", "snapshot"]);
   assert.deepEqual(fake.row(), before);
 });
@@ -80,7 +80,7 @@ test("reports an out-of-options select value instead of silently dropping it", a
   });
   // P3 是合法 schema 取值，但目标 Base 字段只有 P0–P2。
   const result = await adapter.push({
-    projectId: "p", requirementId: "r", title: "Title", owner: null, sourceVersion: 1,
+    projectId: "p", requirementId: "r", requirementDbId: "11111111-2222-4333-8444-555555555555", title: "Title", owner: null, sourceVersion: 1,
     substantiveChanged: false, idempotencyKey: "p:r:v1",
     aiValues: { module: "全新模块", priority: "P3" },
   });
@@ -102,7 +102,7 @@ test("distinguishes the deliberate 无法识别 omission from a rejected value",
     selectOptions: { module: ["需求澄清", "其他"] },
   });
   const result = await adapter.push({
-    projectId: "p", requirementId: "r", title: "Title", owner: null, sourceVersion: 1,
+    projectId: "p", requirementId: "r", requirementDbId: "11111111-2222-4333-8444-555555555555", title: "Title", owner: null, sourceVersion: 1,
     substantiveChanged: false, idempotencyKey: "p:r:v1", aiValues: { module: "无法识别" },
   });
   assert.deepEqual(result.omittedFields, [
@@ -118,7 +118,7 @@ test("reports no omissions when every value fits the Base options", async () => 
     selectOptions: { module: ["其他"], priority: ["P0", "P1", "P2"] },
   });
   const result = await adapter.push({
-    projectId: "p", requirementId: "r", title: "Title", owner: null, sourceVersion: 1,
+    projectId: "p", requirementId: "r", requirementDbId: "11111111-2222-4333-8444-555555555555", title: "Title", owner: null, sourceVersion: 1,
     substantiveChanged: false, idempotencyKey: "p:r:v1", aiValues: { module: "其他", priority: "P1" },
   });
   assert.deepEqual(result.omittedFields, []);

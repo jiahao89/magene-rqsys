@@ -186,6 +186,12 @@ export interface PipelineJobRepository {
   }): Promise<PipelineJobRecord>;
   findByDedupeKey?(key: string): Promise<PipelineJobRecord | null>;
   claimNext(workerId: string, leaseMs: number, now: string): Promise<PipelineJobRecord | null>;
+  /**
+   * 续约：仅当作业仍是本次认领的那次（status='running' 且 attempt_count 匹配）才延长租约。
+   * 返回 false 表示租约已被他人接管，调用方应停止续约（fencing 会拒绝最终结果）。
+   * 可选：内存实现可不提供，worker 会退化为"不续约"。
+   */
+  renewLease?(id: string, params: { expectedAttempt: number; leaseMs: number; now: string }): Promise<boolean>;
   // 失败重排：状态回到 queued，available_at 按退避推迟；超出最大尝试由 worker 判定终态。
   // expectedAttempt 是 fencing 令牌：仅当 attempt_count 仍等于认领时的值才允许更新（工单 15）。
   reschedule(id: string, params: {

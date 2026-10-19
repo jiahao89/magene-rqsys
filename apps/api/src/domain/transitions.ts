@@ -31,7 +31,10 @@ export const PIPELINE_TRANSITIONS: {
   },
   analysis: {
     pending: ["running"],
-    running: ["analyzed", "failed_retryable", "pending"], // 新源版本取代仍在运行的旧分析
+    // running→running 允许：handler 先置 running、再调用模型。进程死在这两步之间时状态停在 running，
+    // 重试会以同一状态重新进入。禁止该自迁移会让 5 次重试全部瞬间抛 InvalidTransitionError，
+    // 需求永久卡住且手动重试 409。并发仍由作业 lease/fencing 与 dedupe key 保护。
+    running: ["running", "analyzed", "failed_retryable", "pending"], // 新源版本取代仍在运行的旧分析
     analyzed: ["pending", "running"], // 新源版本先重置，再运行新分析版本
     failed_retryable: ["pending", "running"], // 新建分析版本重试
   },

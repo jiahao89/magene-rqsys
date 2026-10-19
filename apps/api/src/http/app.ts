@@ -394,10 +394,17 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.requirements || !repositories.jobs || !repositories.audit) return jsonError("DEPENDENCY_UNAVAILABLE");
     const req = await repositories.requirements.get(decodeURIComponent(analysisRetryMatch[1]!)); if (!req) return jsonError("NOT_FOUND");
-    if (req.pipeline.pull !== "synced" || !["pending", "failed_retryable"].includes(req.pipeline.analysis)) return jsonError("CONFLICT");
-    const now = (dependencies.now ?? (() => new Date()))().toISOString();
     const latestAnalysis = await repositories.analyses?.latest(req.id) ?? null;
     const priorAnalysisVersion = latestAnalysis?.analysisVersion ?? 0;
+    let retryAllowed = ["pending", "failed_retryable"].includes(req.pipeline.analysis);
+    if (!retryAllowed && req.pipeline.analysis === "running") {
+      // 崩溃残留：handler 已把状态置为 running，但作业已终态或从未入队。
+      // 放行重试（配合状态机的 running→running 自迁移），否则该需求只能手工改库。
+      const stuck = await repositories.jobs.findByDedupeKey?.(`analysis:${req.id}:sv${req.sourceVersion}:after${priorAnalysisVersion}`);
+      retryAllowed = !stuck || ["succeeded", "failed", "cancelled"].includes(stuck.status);
+    }
+    if (req.pipeline.pull !== "synced" || !retryAllowed) return jsonError("CONFLICT");
+    const now = (dependencies.now ?? (() => new Date()))().toISOString();
     const dedupeKey = `analysis:${req.id}:sv${req.sourceVersion}:after${priorAnalysisVersion}`;
     const currentJob = await repositories.jobs.findByDedupeKey?.(dedupeKey);
     const auditRetry = (result: "succeeded" | "failed" | "denied", analysisStatus: string) => appendAudit(repositories, {

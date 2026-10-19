@@ -31,7 +31,7 @@ test("source versions use the actual target field type for both numeric producti
       projectId: "TB项目ID", requirementId: "TB需求ID", owner: "执行人", source: {}, ai: {}, pm: [],
       metadata: { sourceVersion: "源版本" },
     });
-    const input = { projectId: "p", requirementId: "r", title: "synthetic", owner: null, sourceVersion: 3,
+    const input = { projectId: "p", requirementId: "r", requirementDbId: "11111111-2222-4333-8444-555555555555", title: "synthetic", owner: null, sourceVersion: 3,
       substantiveChanged: false, idempotencyKey: "synthetic-v3" };
     if (type === 3) {
       await assert.rejects(() => adapter.push(input));
@@ -57,7 +57,7 @@ test("owner ID type passes through the production adapter and rate limiter", asy
   const adapter = new FeishuBasePushAdapter(new RateLimitedBaseClient(client), {
     projectId: "TB项目ID", requirementId: "TB需求ID", owner: "执行人", source: {}, ai: {}, pm: [],
   });
-  await adapter.push({ projectId: "p", requirementId: "new", title: "new", owner: { userId: "employee-id", idType: "user_id" }, sourceVersion: 1, substantiveChanged: false, idempotencyKey: "new" });
+  await adapter.push({ projectId: "p", requirementId: "new", requirementDbId: "11111111-2222-4333-8444-555555555555", title: "new", owner: { userId: "employee-id", idType: "user_id" }, sourceVersion: 1, substantiveChanged: false, idempotencyKey: "new" });
   const create = calls.find((call) => call.method === "POST" && call.url.pathname.endsWith("/records"));
   assert.equal(create?.url.searchParams.get("user_id_type"), "user_id");
   assert.deepEqual(JSON.parse(create?.body ?? "{}").fields["执行人"], [{ id: "employee-id" }]);

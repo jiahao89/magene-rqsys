@@ -26,18 +26,49 @@ export class PipelineJobWorker {
     this.now = options.now ?? (() => new Date());
   }
 
+  /**
+   * 启动租约续约定时器。返回停止函数（可重复调用）。
+   * 续约失败（租约被接管）时停止继续续约，把结果交给 fencing 判定。
+   */
+  private startHeartbeat(job: PipelineJobRecord): () => void {
+    const renew = this.options.jobs.renewLease?.bind(this.options.jobs);
+    if (!renew) return () => {};
+    const periodMs = Math.max(100, Math.floor(this.options.leaseMs / 3));
+    let stopped = false;
+    const timer = setInterval(() => {
+      if (stopped) return;
+      void renew(job.id, { expectedAttempt: job.attemptCount, leaseMs: this.options.leaseMs, now: this.now().toISOString() })
+        .then((stillOurs) => { if (!stillOurs) stop(); })
+        .catch(() => { /* 续约失败不影响 handler；租约过期后由 fencing/reaper 接管 */ });
+    }, periodMs);
+    // 不阻止进程退出
+    if (typeof timer.unref === "function") timer.unref();
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      clearInterval(timer);
+    };
+    return stop;
+  }
+
   async runOnce(): Promise<WorkerResult> {
     const now = this.now().toISOString();
     const job = await this.options.jobs.claimNext(this.options.workerId, this.options.leaseMs, now);
     if (!job) return { kind: "idle" };
+    // 心跳：dispatch 可能远超租约（314 条同步、限流的 Base 批量）。不续约的话租约过期后
+    // 另一个实例会认领同一作业并发执行同一 handler，产生重复的 AI 调用/Base 写入；
+    // fencing 只保护最终写入，挡不住副作用。这里在 dispatch 期间按租约的 1/3 周期续约。
+    const stopHeartbeat = this.startHeartbeat(job);
     try {
       await this.dispatch(job);
       // fencing：仅当 attempt 仍等于认领时的值才接受结果（工单 15）；
       // 返回 null 说明租约已被其他 worker 重新认领，本 worker 迟到的结果被拒绝且不覆盖新状态。
+      stopHeartbeat();
       const completed = await this.options.jobs.complete(job.id, { expectedAttempt: job.attemptCount, status: "succeeded", now: this.now().toISOString() });
       if (!completed) return { kind: "failed", jobId: job.id };
       return { kind: "succeeded", jobId: job.id };
     } catch (error) {
+      stopHeartbeat();
       // 重试策略：有剩余尝试则按阶段退避重排（保留先前成功结果）；超限或永久错误进入终态
       const stage = STAGE_FOR_JOB_TYPE[job.jobType];
       const terminal =

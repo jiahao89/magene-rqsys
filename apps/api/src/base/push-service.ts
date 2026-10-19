@@ -146,7 +146,7 @@ export function createBasePushService(deps: BasePushServiceDeps) {
           : {};
         const sourceCreatedAt = req.sourceCreatedAt ? Date.parse(req.sourceCreatedAt) : Number.NaN;
         pushedResult = await deps.base.push({
-          projectId: deps.sourceProjectId, requirementId: req.teambitionRequirementId,
+          projectId: deps.sourceProjectId, requirementId: req.teambitionRequirementId, requirementDbId: req.id,
           title: req.title, description: req.description,
           owner: mapping ? { userId: mapping.feishuUserId, idType: mapping.feishuIdType } : null,
           sourceVersion: req.sourceVersion, pushedAt: now().toISOString(), substantiveChanged,

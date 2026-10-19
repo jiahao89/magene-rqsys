@@ -72,3 +72,29 @@ test("changed source upsert atomically snapshots, resets analysis and push, and 
   }finally{await cleanup(ctx);}
 });
 test("sync item persists orchestrator started time",async()=>{const ctx=await setup();try{const source=await ctx.repos.sources.create(config);const batch=await ctx.repos.batches.create({sourceConfigId:source.id,triggerType:"manual",actorId:null,idempotencyKey:"item-start-0001",startedAt:"2026-10-08T00:00:00Z"});const wrote=await ctx.repos.items.upsert({batchId:batch.id,requirementId:null,teambitionRequirementId:"task-start",action:"created",status:"succeeded",startedAt:"2026-10-08T00:00:05Z",completedAt:"2026-10-08T00:00:10Z"});assert.equal(wrote.startedAt,"2026-10-08T00:00:05.000Z");}finally{await cleanup(ctx);}});
+
+test("PM snapshot wiring keys on the database requirement id, never the Teambition id", async () => {
+  // 回归守卫：BasePushInput 同时携带两个标识——requirementId 是 TB 的 24 位字符串（写 Base 字段用），
+  // requirementDbId 是 requirements.id（uuid，pm_snapshots 的外键）。早期实现把 TB ID 传进
+  // pm_snapshots.requirement_id（uuid 列），PG 报 22P02，导致"实质变更后再次推送"永远失败，
+  // 且首次创建绕过快照所以测试看不出来。这里用真实仓储 + 真实列类型锁住接线。
+  const ctx = await setup();
+  try {
+    const s = await ctx.repos.sources.create(config);
+    const b = await ctx.repos.batches.create({ sourceConfigId: s.id, triggerType: "manual", actorId: null, idempotencyKey: "pm-snapshot-wiring-0001", startedAt: "2026-10-08T00:00:00Z" });
+    const r = await ctx.repos.requirements.upsertRequirement(s.id, "6a951b81648c3a16a805d619", requirementWrite(s.id, b.id, { sourceHash: "e".repeat(64), substantiveHash: "f".repeat(64), title: "Snapshot wiring" }));
+    const capturedAt = "2026-10-08T00:00:00Z";
+
+    // 正确接线：DB uuid 能写入
+    await ctx.repos.pmSnapshots.append({ requirementId: r.id, sourceVersion: 1, baseRecordId: "rec-1", pmValues: { "PM状态": "已采纳" }, capturedAt });
+    assert.equal((await ctx.repos.pmSnapshots.latest(r.id))?.baseRecordId, "rec-1");
+
+    // 缺陷形态：把 TB 的 24 位字符串 ID 写进 uuid 列会被 PostgreSQL 直接拒绝（原 bug 的症状）
+    await assert.rejects(
+      () => ctx.repos.pmSnapshots.append({ requirementId: "6a951b81648c3a16a805d619", sourceVersion: 1, baseRecordId: "rec-2", pmValues: {}, capturedAt }),
+      /invalid input syntax for type uuid|22P02/i,
+    );
+  } finally {
+    await cleanup(ctx);
+  }
+});

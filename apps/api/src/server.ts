@@ -213,7 +213,11 @@ const worker = repositories ? new PipelineJobWorker({
     ...(analysisJobHandler ? { analysis: analysisJobHandler } : {}),
     ...(basePushJobHandler ? { base_push: basePushJobHandler } : {}),
   },
-  workerId: process.env.WORKER_ID ?? "local-worker", leaseMs: 30_000,
+  workerId: process.env.WORKER_ID ?? "local-worker",
+  // 租约 120s + worker 心跳续约（每 1/3 租约时长）。此前 30s 且无心跳：
+  // 一次 314 条同步或限流中的 Base 批量就会超过租约，另一个实例可能重复认领同一作业，
+  // 而 fencing 只保护最终写入，挡不住重复的 AI 调用与 Base 写入。
+  leaseMs: Number(process.env.WORKER_LEASE_MS ?? 120_000),
 }) : undefined;
 
 const server = createServer(async (incoming, outgoing) => {

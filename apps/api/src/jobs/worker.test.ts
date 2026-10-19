@@ -171,3 +171,43 @@ test("夹具策略拒绝仍然收敛批次（原有行为不回退）", async ()
   assert.equal(payload.errorCode, "fixture_policy_denied");
   assert.equal(payload.settleSyncBatch, true);
 });
+
+test("dispatch 期间按租约 1/3 周期续约，长任务不会被重复认领", async () => {
+  // 此前 30s 租约且无心跳：314 条同步或限流 Base 批量必然超时，另一个实例可重复认领，
+  // 产生重复 AI 调用/Base 写入（fencing 只保护最终写入）。
+  const renewals: Array<{ expectedAttempt: number; leaseMs: number }> = [];
+  const jobs = {
+    async enqueue() { throw new Error("unused"); },
+    async claimNext() { return job(); },
+    async reschedule() { throw new Error("unused"); },
+    async complete() { return job({ status: "queued" }); },
+    async renewLease(_id: string, p: { expectedAttempt: number; leaseMs: number }) { renewals.push(p); return true; },
+  };
+  const slowSync = (async () => {
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    return { batchId: "batch-1", status: "succeeded", totalCount: 1, succeededCount: 1, failedCount: 0 };
+  }) as never;
+  const worker = new PipelineJobWorker({ jobs: jobs as never, sync: slowSync, workerId: "worker", leaseMs: 300 });
+  assert.equal((await worker.runOnce()).kind, "succeeded");
+  assert.ok(renewals.length >= 2, `期望至少 2 次续约，实际 ${renewals.length}`);
+  assert.equal(renewals[0]?.expectedAttempt, 1);
+  assert.equal(renewals[0]?.leaseMs, 300);
+});
+
+test("续约被拒（租约已易主）后停止续约，不覆盖他人结果", async () => {
+  let calls = 0;
+  const jobs = {
+    async enqueue() { throw new Error("unused"); },
+    async claimNext() { return job(); },
+    async reschedule() { throw new Error("unused"); },
+    async complete() { return job({ status: "queued" }); },
+    async renewLease() { calls += 1; return false; },
+  };
+  const slowSync = (async () => {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    return { batchId: "batch-1", status: "succeeded", totalCount: 1, succeededCount: 1, failedCount: 0 };
+  }) as never;
+  const worker = new PipelineJobWorker({ jobs: jobs as never, sync: slowSync, workerId: "worker", leaseMs: 300 });
+  await worker.runOnce();
+  assert.ok(calls <= 2, `拒绝后应停止续约，实际调用 ${calls} 次`);
+});

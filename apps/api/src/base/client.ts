@@ -33,7 +33,14 @@ export interface BaseFieldMap {
 
 export interface BasePushInput {
   projectId: string;
+  /** Teambition 需求 ID（24 位字符串）。写入 Base 的「需求 ID」字段，用于跨系统对账。 */
   requirementId: string;
+  /**
+   * 应用数据库中的 requirements.id（uuid）。PM 快照的外键指向它。
+   * 与 requirementId 是两个不同的标识：Base 字段要 TB ID，pm_snapshots.requirement_id 是 uuid。
+   * 早期实现把 TB ID 传给了 pm_snapshots（uuid 列），导致 PG 22P02、实质变更后的推送永远失败。
+   */
+  requirementDbId: string;
   title: string;
   description?: string | null;
   owner: { userId: string; idType: "open_id" | "user_id" | "union_id" } | null;
@@ -134,7 +141,7 @@ export class FeishuBasePushAdapter {
     if (input.substantiveChanged) {
       if (!this.snapshots) throw new Error("PM snapshot writer is unavailable");
       const pmValues = await this.client.readPmFields(existing.recordId);
-      await this.snapshots.savePmSnapshot({ requirementId: input.requirementId, sourceVersion: input.sourceVersion, baseRecordId: existing.recordId, pmValues });
+      await this.snapshots.savePmSnapshot({ requirementId: input.requirementDbId, sourceVersion: input.sourceVersion, baseRecordId: existing.recordId, pmValues });
       // PM 状态字段来自配置映射（pm 数组首项），不硬编码字段名
       const pmStatusField = this.fields.pm[0];
       if (pmStatusField) delta[pmStatusField] = this.selectValue(pmStatusField, "待处理");
