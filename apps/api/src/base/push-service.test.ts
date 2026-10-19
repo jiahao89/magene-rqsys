@@ -7,6 +7,8 @@ import { createBasePushService } from "./push-service.js";
 
 /** 上一次成功推送时快照里的旧负责人 TB ID；harness 用它区分「旧负责人映射」与「当前负责人映射」。 */
 const PREVIOUS_OWNER_TB_ID = "tb-owner-previous";
+/** 线上 RQSYS_PM_LEADER_USER_ID 的形态：32 位十六进制 user_id（不是 ou_ 开头的 open_id）。 */
+const PM_LEADER_USER_ID = "0123456789abcdef0123456789abcdef";
 
 const requirement = (overrides: Partial<RequirementRecord> = {}): RequirementRecord => ({
   id: "req-1", sourceConfigId: "source-1", teambitionRequirementId: "tb-1", teambitionUniqueId: null,
@@ -22,7 +24,7 @@ const requirement = (overrides: Partial<RequirementRecord> = {}): RequirementRec
 
 const mappingRecord = (overrides: Partial<PersonMappingRecord> = {}): PersonMappingRecord => ({
   id: "mapping-1", sourceConfigId: "source-1", teambitionUserId: "tb-owner", teambitionDisplayName: "Owner",
-  normalizedName: "owner", feishuUserId: "ou-owner", feishuIdType: "user_id", matchMethod: "manual",
+  normalizedName: "owner", feishuUserId: "ou-owner", feishuIdType: "open_id", matchMethod: "manual",
   active: true, createdBy: null, createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z", ...overrides,
 });
 
@@ -47,7 +49,7 @@ const sourceSnapshot = (overrides: Partial<SourceSnapshotRecord> = {}): SourceSn
 interface CapturedPushInput {
   projectId: string;
   substantiveChanged: boolean;
-  notification?: { eventId: string; eventType: string; recipientUserId: string | null; ownerMergeUserId: string | null };
+  notification?: { eventId: string; eventType: string; recipientUserId: string | null; recipientIdType: "open_id" | "user_id" | "union_id"; ownerMergeUserId: string | null };
 }
 
 function makeHarness(options: {
@@ -220,17 +222,20 @@ test("reconciles a Base record left by a previous push whose local record was ne
   assert.ok(h.calls.indexOf("base-record") < h.calls.indexOf("base"), `调用顺序: ${h.calls.join(",")}`);
 });
 
-// ---- 通知事件载荷（四个系统字段） ----
+// ---- 通知事件载荷（四个系统字段）与收件人规则 ----
 
-test("first push notifies the resolved owner with a deterministic first_push event", async () => {
+test("first push notifies the PM Leader, not the resolved owner, with a deterministic first_push event", async () => {
+  // 回归：早期实现是 `负责人 ?? PM Leader`，首推在已有负责人时发给了负责人。
+  // 产品最终确认：first_push 固定通知 PM Leader。
   const req = requirement({ executorUserId: "tb-owner", executorName: "Owner" });
-  const h = makeHarness({ req, mapping: mappingRecord() });
+  const h = makeHarness({ req, mapping: mappingRecord(), pmLeaderUserId: PM_LEADER_USER_ID });
   const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
   assert.equal(result.kind, "pushed");
   assert.deepEqual(h.baseInput?.notification, {
     eventType: "首次推送",
     eventId: "first_push:req-1:sv2",
-    recipientUserId: "ou-owner",
+    recipientUserId: PM_LEADER_USER_ID,
+    recipientIdType: "user_id",
     ownerMergeUserId: "ou-owner",
   });
 });
@@ -253,7 +258,27 @@ test("a substantive change notifies the current owner with substantive_update", 
     eventType: "需求内容变更",
     eventId: "substantive_update:req-1:sv2",
     recipientUserId: "ou-owner",
+    // 负责人映射是 open_id：收件人类型必须跟随映射，否则 client 无法与 user_id 的 PM Leader 分开请求。
+    recipientIdType: "open_id",
     ownerMergeUserId: "ou-owner",
+  });
+});
+
+test("a substantive change without an owner falls back to the PM Leader", async () => {
+  const h = makeHarness({
+    pmLeaderUserId: PM_LEADER_USER_ID,
+    lastSuccessful: pushRun({ sourceVersion: 1 }),
+    sourceSnapshot: sourceSnapshot({ substantiveHash: "substantive-v1" }),
+  });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.equal(h.baseInput?.substantiveChanged, true);
+  assert.deepEqual(h.baseInput?.notification, {
+    eventType: "需求内容变更",
+    eventId: "substantive_update:req-1:sv2",
+    recipientUserId: PM_LEADER_USER_ID,
+    recipientIdType: "user_id",
+    ownerMergeUserId: null,
   });
 });
 
@@ -262,6 +287,8 @@ test("an owner appearing for the first time produces owner_assigned for the new 
   const h = makeHarness({
     req,
     mapping: mappingRecord(),
+    // 负责人事件必须发给新的当前负责人，即使配置了 PM Leader 也不用它。
+    pmLeaderUserId: PM_LEADER_USER_ID,
     lastSuccessful: pushRun({ sourceVersion: 1 }),
     // 上次成功推送时 TB 无负责人：Base 负责人为空
     sourceSnapshot: sourceSnapshot({
@@ -276,6 +303,7 @@ test("an owner appearing for the first time produces owner_assigned for the new 
     eventType: "已分配负责人",
     eventId: "owner_assigned:req-1:sv2:none:ou-owner",
     recipientUserId: "ou-owner",
+    recipientIdType: "open_id",
     ownerMergeUserId: "ou-owner",
   });
 });
@@ -286,6 +314,7 @@ test("an owner A→B change produces owner_changed with the previous and new use
     req,
     mapping: mappingRecord({ feishuUserId: "ou-owner" }),
     previousMapping: mappingRecord({ id: "mapping-old", feishuUserId: "ou-previous", matchMethod: "tb_user_id" }),
+    pmLeaderUserId: PM_LEADER_USER_ID,
     lastSuccessful: pushRun({ sourceVersion: 1 }),
     sourceSnapshot: sourceSnapshot({
       substantiveHash: req.substantiveHash,
@@ -298,6 +327,7 @@ test("an owner A→B change produces owner_changed with the previous and new use
     eventType: "负责人变更",
     eventId: "owner_changed:req-1:sv2:ou-previous:ou-owner",
     recipientUserId: "ou-owner",
+    recipientIdType: "open_id",
     ownerMergeUserId: "ou-owner",
   });
 });
@@ -323,7 +353,29 @@ test("AI failure followed by success on the same source version produces ai_retr
     eventType: "AI 重试成功",
     eventId: "ai_retry_success:req-1:sv2",
     recipientUserId: "ou-owner",
+    recipientIdType: "open_id",
     ownerMergeUserId: "ou-owner",
+  });
+});
+
+test("AI retry success without an owner falls back to the PM Leader", async () => {
+  const latest = analysisRun({ analysisVersion: 2, status: "analyzed" });
+  const h = makeHarness({
+    pmLeaderUserId: PM_LEADER_USER_ID,
+    lastSuccessful: pushRun({ sourceVersion: 1 }),
+    sourceSnapshot: sourceSnapshot({ substantiveHash: "substantive-v2" }),
+    latestAnalysis: latest,
+    analysisHistory: [analysisRun({ analysisVersion: 1, status: "failed_retryable" }), latest],
+  });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.equal(h.baseInput?.substantiveChanged, false);
+  assert.deepEqual(h.baseInput?.notification, {
+    eventType: "AI 重试成功",
+    eventId: "ai_retry_success:req-1:sv2",
+    recipientUserId: PM_LEADER_USER_ID,
+    recipientIdType: "user_id",
+    ownerMergeUserId: null,
   });
 });
 
@@ -353,22 +405,35 @@ test("replaying a pushed idempotency key is silent and never touches Base again"
   assert.equal(h.baseInput, null);
 });
 
-test("falls back to the configured PM Leader when the requirement has no owner", async () => {
-  const h = makeHarness({ pmLeaderUserId: "ou-pm-leader" });
+test("first push without an owner notifies the configured PM Leader", async () => {
+  const h = makeHarness({ pmLeaderUserId: PM_LEADER_USER_ID });
   const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
   assert.equal(result.kind, "pushed");
   assert.deepEqual(h.baseInput?.notification, {
     eventType: "首次推送",
     eventId: "first_push:req-1:sv2",
-    recipientUserId: "ou-pm-leader",
+    recipientUserId: PM_LEADER_USER_ID,
+    recipientIdType: "user_id",
     ownerMergeUserId: null,
   });
+});
+
+test("first push with an owner but no PM Leader stays silent instead of falling back to the owner", async () => {
+  // 规则是 first_push → PM Leader；PM Leader 未配置时本次不写通知字段，
+  // 而不是退回负责人（那会把「新需求入场」通知发给个人，与产品规则相反）。
+  const req = requirement({ executorUserId: "tb-owner", executorName: "Owner" });
+  const h = makeHarness({ req, mapping: mappingRecord(), pmLeaderUserId: null });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.ok(h.baseInput, "业务字段仍然推送");
+  assert.equal(h.baseInput?.notification, undefined);
 });
 
 test("omits the notification payload when no recipient can be resolved", async () => {
   const h = makeHarness({ pmLeaderUserId: null });
   const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
   assert.equal(result.kind, "pushed");
+  assert.ok(h.baseInput, "业务字段仍然推送");
   assert.equal(h.baseInput?.notification, undefined);
 });
 

@@ -8,10 +8,12 @@
 //   priority 为 null 时不写该字段（不制造伪优先级，也不清空 Base 已有建议）。
 // - 被 Base 单选项拒绝的取值不伪造降级值，但也不静默丢弃：记入推送结果的 omittedFields 与审计。
 // - PM 快照仅在源版本新于上次推送时读取保存（实质变化协议）。
+// - 通知收件人（PM 最终确认）：first_push → PM Leader；负责人事件 → 新负责人；
+//   substantive_update / ai_retry_success → 当前负责人，无负责人时 PM Leader；提出人不通知。
 
 import { randomUUID } from "node:crypto";
 import type { RequirementQueryRepository, PersonMappingRepository, BasePushRunRepository, AuditEventRepository, AnalysisRunRepository, SourceSnapshotRepository } from "../application/repositories.js";
-import type { AnalysisRunRecord, PersonMappingRecord, RequirementRecord, SourceSnapshotRecord } from "../domain/persistence.js";
+import type { AnalysisRunRecord, FeishuIdType, PersonMappingRecord, RequirementRecord, SourceSnapshotRecord } from "../domain/persistence.js";
 import type { FeishuBasePushAdapter, OmittedField } from "./client.js";
 import { FeishuApiError } from "./transport.js";
 import { normalizeOwnerName } from "../owner/mapping.js";
@@ -27,7 +29,7 @@ export interface BasePushServiceDeps {
   sourceProjectId: string;
   baseFields: { projectId: string; requirementId: string; owner: string; source: Record<string, string>; ai: Record<string, string>; pm: string[] };
   actorId: string | null;
-  /** PM Leader 的飞书 user id：无解析到负责人时作为事件收件人；缺省读 RQSYS_PM_LEADER_USER_ID。 */
+  /** PM Leader 的飞书 user_id（32 位十六进制）：first_push 的固定收件人，也是其它事件无负责人时的兜底收件人；缺省读 RQSYS_PM_LEADER_USER_ID。 */
   pmLeaderUserId?: string | null;
   now?: () => Date;
 }
@@ -53,6 +55,12 @@ export interface PushNotification {
   eventTypeLabel: string;
   eventId: string;
   recipientUserId: string;
+  /**
+   * 收件人的飞书 ID 类型。由服务层显式给出，client 不再按「有 owner 就用 owner 类型」猜：
+   * 收件人是 PM Leader 时固定 user_id；是当前负责人时用该负责人映射的类型。
+   * 这样 client 才能把「负责人归并值」与「收件人」拆进两次类型一致的请求。
+   */
+  recipientIdType: FeishuIdType;
   /** 本次实际写入的负责人；无负责人时为 null（该人员字段不写）。 */
   ownerMergeUserId: string | null;
 }
@@ -198,15 +206,29 @@ export function createBasePushService(deps: BasePushServiceDeps) {
     if (!eventType) return undefined;
 
     const ownerEvent = eventType === "owner_assigned" || eventType === "owner_changed";
-    // 负责人事件只通知新负责人；其余事件通知当前负责人，无负责人时回落 PM Leader。
-    const recipientUserId = ownerEvent ? currentOwnerUserId : (currentOwnerUserId ?? pmLeaderUserId);
-    if (!recipientUserId) return undefined;
+    // 产品最终确认的收件人规则：
+    //   first_push → PM Leader（团队要知道新需求入场，即使已经解析到负责人也不发给负责人）；
+    //   负责人事件 → 新的当前负责人；
+    //   substantive_update / ai_retry_success → 当前负责人，无负责人时回落 PM Leader。
+    // 同时给出收件人的 ID 类型：负责人映射可能是 open_id，而 PM Leader 是 user_id；
+    // 一次 Base 请求只能有一个 user_id_type，服务层必须显式声明，client 不能替它猜。
+    const ownerIdType = input.mapping?.feishuIdType ?? null;
+    const ownerRecipient = currentOwnerUserId && ownerIdType ? { userId: currentOwnerUserId, idType: ownerIdType } : null;
+    const pmLeaderRecipient = pmLeaderUserId ? { userId: pmLeaderUserId, idType: "user_id" as const } : null;
+    const recipient = eventType === "first_push"
+      ? pmLeaderRecipient
+      : ownerEvent ? ownerRecipient : (ownerRecipient ?? pmLeaderRecipient);
+    if (!recipient) return undefined;
     // 事件ID 确定性：同一事件重复推送得到同一个 ID，Base 自动化据此不重复发送。
     // 负责人事件追加 from/to，区分 A→B 与空→A 等不同事件。
     const eventId = ownerEvent
       ? `${eventType}:${input.req.id}:sv${input.req.sourceVersion}:${fromUserId ?? "none"}:${currentOwnerUserId}`
       : `${eventType}:${input.req.id}:sv${input.req.sourceVersion}`;
-    return { eventType, eventTypeLabel: EVENT_TYPE_LABELS[eventType], eventId, recipientUserId, ownerMergeUserId: currentOwnerUserId };
+    return {
+      eventType, eventTypeLabel: EVENT_TYPE_LABELS[eventType], eventId,
+      recipientUserId: recipient.userId, recipientIdType: recipient.idType,
+      ownerMergeUserId: currentOwnerUserId,
+    };
   };
 
   async function pushRequirementUnlocked(requirementId: string, idempotencyKey: string): Promise<PushOutcome> {
@@ -311,11 +333,12 @@ export function createBasePushService(deps: BasePushServiceDeps) {
         aiValues: ai,
         // 静默场景（重复同步无变化、同键重放）不传 notification，即不写四个通知字段。
         ...(notification ? { notification: {
-        eventId: notification.eventId,
-        eventType: notification.eventTypeLabel,
-        recipientUserId: notification.recipientUserId,
-        ownerMergeUserId: notification.ownerMergeUserId,
-      } } : {}),
+          eventId: notification.eventId,
+          eventType: notification.eventTypeLabel,
+          recipientUserId: notification.recipientUserId,
+          recipientIdType: notification.recipientIdType,
+          ownerMergeUserId: notification.ownerMergeUserId,
+        } } : {}),
       });
     } catch (error) {
       const failure = safeBaseFailure(error);

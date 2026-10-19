@@ -38,6 +38,13 @@ export interface BaseNotificationPush {
   eventId: string;
   eventType: string;
   recipientUserId: string | null;
+  /**
+   * 收件人的 ID 类型（服务层显式给出，不由 client 猜）。
+   * 飞书 `user_id_type` 是整个请求级参数：一次请求里所有人员字段必须同类型。
+   * 负责人映射可能是 open_id 而 PM Leader 是 user_id，二者混在一次请求里会被
+   * 1254066 UserFieldConvFail 拒绝，因此适配器把通知字段拆成两次写入。
+   */
+  recipientIdType: "open_id" | "user_id" | "union_id";
   ownerMergeUserId: string | null;
 }
 
@@ -185,50 +192,61 @@ export class FeishuBasePushAdapter {
   }
 
   /**
-   * 通知四字段的写入值：事件ID/类型写字符串；两个人员字段写 `[{ id }]`，值为 null 时不写该字段。
-   * 字段名全部来自配置映射；未配置通知字段映射时返回空对象（不写通知字段）。
-   */
-  private notificationDelta(input: BasePushInput): Record<string, unknown> {
-    const fields = this.fields.notification;
-    const notification = input.notification;
-    if (!fields || !notification) return {};
-    const delta: Record<string, unknown> = {};
-    if (fields.eventId) delta[fields.eventId] = notification.eventId;
-    if (fields.eventType) delta[fields.eventType] = notification.eventType;
-    if (fields.recipient && notification.recipientUserId) delta[fields.recipient] = [{ id: notification.recipientUserId }];
-    if (fields.ownerMergeValue && notification.ownerMergeUserId) delta[fields.ownerMergeValue] = [{ id: notification.ownerMergeUserId }];
-    return delta;
-  }
-
-  private writeOptions(input: BasePushInput): BaseWriteOptions | undefined {
-    if (input.owner) return { userIdType: input.owner.idType };
-    // 无负责人但写通知人员字段时仍需显式 user_id_type；PM Leader 收件人按 user_id 处理。
-    if (input.notification && (input.notification.recipientUserId || input.notification.ownerMergeUserId)) return { userIdType: "user_id" };
-    return undefined;
-  }
-
-  /**
-   * 写 Base 行。通知字段是「附加」写入：若目标 Base 不存在这四个字段（1254045 FieldNameNotFound），
-   * 不允许把整次推送判失败——按既有 omittedFields 机制记录省略，再用不含通知字段的载荷重试一次，
-   * 业务字段照常写入。其它错误原样抛出，由推送服务走既有安全失败路径。
+   * 写 Base 行。通知字段是「附加」写入，但飞书的 `user_id_type` 是请求级参数：
+   * 一次请求里所有人员字段必须是同一类型。负责人映射可能是 open_id，而 PM Leader 收件人是
+   * user_id；把二者写进同一次请求会被 1254066 UserFieldConvFail 拒绝（上一版 1254045 重试
+   * 掩盖了这条路径）。因此有通知载荷时拆成两次写入：
+   *   1. 业务字段 + `系统负责人通知归并值`（人员字段只有负责人，用 input.owner.idType）；
+   *   2. `系统通知事件ID/类型/收件人`（收件人类型由服务层显式给出）；create 时用第一次返回的 recordId update。
+   * 静默场景（没有 notification）保持原有单次写入，不多发请求。
+   * 目标 Base 不存在通知字段（1254045 FieldNameNotFound）时按既有 omittedFields 机制记录省略、
+   * 用不含这些字段的载荷继续：业务推送不得因为通知字段缺失而失败。其它错误原样抛出。
    */
   private async writeRecord(recordId: string | null, delta: Record<string, unknown>, input: BasePushInput, omittedFields: OmittedField[]): Promise<BaseRecord> {
-    const options = this.writeOptions(input);
-    const notificationFields = this.notificationDelta(input);
-    if (Object.keys(notificationFields).length === 0) {
-      return recordId ? this.client.update(recordId, delta, options) : this.client.create(delta, options);
+    const fields = this.fields.notification;
+    const notification = input.notification;
+    // 第一次写入的人员字段只有负责人（或其归并值），请求类型固定取负责人映射的类型。
+    // 静默场景同样要带上它：否则真实环境不会按 owner 的 id 类型解释「执行人」字段。
+    const ownerOptions: BaseWriteOptions | undefined = input.owner ? { userIdType: input.owner.idType } : undefined;
+    if (!fields || !notification) {
+      return recordId ? this.client.update(recordId, delta, ownerOptions) : this.client.create(delta, ownerOptions);
     }
+    // 无 owner 时归并值不写（不能凭空造一个没有身份类型的人员值）。
+    const ownerMergeUserId = input.owner ? notification.ownerMergeUserId : null;
+    const ownerMerge = fields.ownerMergeValue && ownerMergeUserId
+      ? { field: fields.ownerMergeValue, userId: ownerMergeUserId }
+      : null;
+    let record: BaseRecord;
     try {
-      const withNotification = { ...delta, ...notificationFields };
-      return recordId ? await this.client.update(recordId, withNotification, options) : await this.client.create(withNotification, options);
+      const payload = ownerMerge ? { ...delta, [ownerMerge.field]: [{ id: ownerMerge.userId }] } : delta;
+      record = recordId ? await this.client.update(recordId, payload, ownerOptions) : await this.client.create(payload, ownerOptions);
     } catch (error) {
-      if (!(error instanceof FeishuApiError) || error.apiCode !== 1254045) throw error;
-      for (const [field, value] of Object.entries(notificationFields)) {
+      if (!ownerMerge || !isFieldNotFound(error)) throw error;
+      omittedFields.push({ field: ownerMerge.field, value: ownerMerge.userId, reason: "field_not_in_base" });
+      record = recordId ? await this.client.update(recordId, delta, ownerOptions) : await this.client.create(delta, ownerOptions);
+    }
+
+    // 第二次写入只有通知字段，人员字段只剩收件人：整个请求用它显式声明的类型。
+    const notificationDelta: Record<string, unknown> = {};
+    if (fields.eventId) notificationDelta[fields.eventId] = notification.eventId;
+    if (fields.eventType) notificationDelta[fields.eventType] = notification.eventType;
+    if (fields.recipient && notification.recipientUserId) notificationDelta[fields.recipient] = [{ id: notification.recipientUserId }];
+    if (Object.keys(notificationDelta).length === 0) return record;
+    try {
+      return await this.client.update(record.recordId, notificationDelta, { userIdType: notification.recipientIdType });
+    } catch (error) {
+      if (!isFieldNotFound(error)) throw error;
+      for (const [field, value] of Object.entries(notificationDelta)) {
         omittedFields.push({ field, value: omittedNotificationValue(value), reason: "field_not_in_base" });
       }
-      return recordId ? this.client.update(recordId, delta, options) : this.client.create(delta, options);
+      return record;
     }
   }
+}
+
+/** 飞书 1254045 FieldNameNotFound：目标 Base 缺少某个字段。 */
+function isFieldNotFound(error: unknown): boolean {
+  return error instanceof FeishuApiError && error.apiCode === 1254045;
 }
 
 /** 省略记录里只保留可读的字符串值：人员字段取 user id，其余取原文。 */
