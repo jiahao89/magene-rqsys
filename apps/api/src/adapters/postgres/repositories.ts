@@ -119,7 +119,22 @@ async search(q:{q?:string;executorName?:string;pullState?:PullState;analysisStat
 async updateAnalysisState(requirementId:string,to:AnalysisState){const{rows}=await this.pool.query("SELECT analysis_state FROM requirements WHERE id=$1",[requirementId]);if(!rows[0])throw new Error(`Requirement not found: ${requirementId}`);assertTransition("analysis",String(rows[0].analysis_state) as AnalysisState,to);await this.pool.query("UPDATE requirements SET analysis_state=$2,updated_at=now() WHERE id=$1",[requirementId,to]);}
 async setOwner(requirementId:string,feishuUserId:string|null,state:OwnerState){const{rows}=await this.pool.query("SELECT owner_state FROM requirements WHERE id=$1",[requirementId]);if(!rows[0])throw new Error(`Requirement not found: ${requirementId}`);assertTransition("owner",String(rows[0].owner_state) as OwnerState,state);await this.pool.query("UPDATE requirements SET owner_state=$2,updated_at=now() WHERE id=$1",[requirementId,state]);}
 async setBaseRecord(requirementId:string,baseRecordId:string,pushedAt:string){await this.pool.query("UPDATE requirements SET base_record_id=$2,last_pushed_at=$3,updated_at=now() WHERE id=$1",[requirementId,baseRecordId,pushedAt]);}
-async setPushState(requirementId:string,state:PushState){const{rows}=await this.pool.query("SELECT push_state FROM requirements WHERE id=$1",[requirementId]);if(!rows[0])throw new Error(`Requirement not found: ${requirementId}`);assertTransition("push",String(rows[0].push_state) as PushState,state);await this.pool.query("UPDATE requirements SET push_state=$2,updated_at=now() WHERE id=$1",[requirementId,state]);}}
+async setPushState(requirementId:string,state:PushState){const{rows}=await this.pool.query("SELECT push_state FROM requirements WHERE id=$1",[requirementId]);if(!rows[0])throw new Error(`Requirement not found: ${requirementId}`);assertTransition("push",String(rows[0].push_state) as PushState,state);await this.pool.query("UPDATE requirements SET push_state=$2,updated_at=now() WHERE id=$1",[requirementId,state]);}
+// 同一需求的推送串行化：advisory lock 必须与事务在同一连接上取得，随 COMMIT/ROLLBACK 自动释放。
+// 事务保持打开期间，外层 fn 的普通查询仍由连接池执行；第二个调用会在取锁处等待第一个事务结束。
+async withRequirementLock<T>(requirementId:string,fn:()=>Promise<T>):Promise<T>{
+  const c=await this.pool.connect();
+  try{
+    await c.query("BEGIN");
+    await c.query("SELECT pg_advisory_xact_lock(hashtext($1))",[requirementId]);
+    const result=await fn();
+    await c.query("COMMIT");
+    return result;
+  }catch(error){
+    try{await c.query("ROLLBACK");}catch{/* 连接已失效时由 release 兜底，不掩盖原始错误 */}
+    throw error;
+  }finally{c.release();}
+}}
 export { PostgresAnalysisRunRepository };
 import { PostgresAnalysisRunRepository } from "./analysis-run-repository.js";
 

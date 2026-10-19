@@ -1,3 +1,5 @@
+import { FeishuApiError } from "./transport.js";
+
 export interface BaseRequirementKey { projectId: string; requirementId: string }
 export interface BaseRecord { recordId: string; fields: Record<string, unknown> }
 
@@ -15,6 +17,30 @@ export interface BaseWriteOptions {
   userIdType?: "open_id" | "user_id" | "union_id";
 }
 
+/**
+ * 通知四字段的 Base 列名映射。飞书多维表格由自动化规则读取这四个「系统字段」发通知，
+ * 应用只负责在推送时把事件写入正确值；这里不实现任何发送逻辑。
+ * 整段未配置时回落 DEFAULT_BASE_FIELDS（见 server.ts 的 parseBaseFields）。
+ */
+export interface BaseNotificationFieldMap {
+  eventId: string;
+  eventType: string;
+  recipient: string;
+  ownerMergeValue: string;
+}
+
+/**
+ * 一次推送要写入的通知事件载荷。产品已确认不存在「一条通知发多人」场景，
+ * 因此收件人是单个 user id；不记录送达结果，也不读回送达。
+ * 两个人员字段值为 null 时不写该字段（见 FeishuBasePushAdapter.push）。
+ */
+export interface BaseNotificationPush {
+  eventId: string;
+  eventType: string;
+  recipientUserId: string | null;
+  ownerMergeUserId: string | null;
+}
+
 export interface BaseFieldMap {
   projectId: string;
   requirementId: string;
@@ -23,6 +49,7 @@ export interface BaseFieldMap {
   ai: Record<string, string>;
   pm: string[];
   metadata?: Record<string, string>;
+  notification?: BaseNotificationFieldMap;
   /// 字段名 → 该字段是否为「多选」。
   /// 单选（含 PM 状态、推送状态、AI 模块/优先级建议）在飞书 API 中必须写字符串：真实环境实测
   /// bitable v1 对单选的 PUT 会以 1254062 拒绝数组，读回时也返回字符串。
@@ -50,6 +77,11 @@ export interface BasePushInput {
   idempotencyKey: string;
   sourceValues?: Record<string, unknown>;
   aiValues?: Record<string, unknown>;
+  /**
+   * 可选的通知事件载荷：仅当本次推送命中事件且解析到唯一收件人时传入。
+   * 未传时不写四个通知系统字段（重复同步无变化、同键重放等静默场景）。
+   */
+  notification?: BaseNotificationPush;
 }
 
 export interface PmSnapshotWriter {
@@ -64,7 +96,7 @@ export interface PmSnapshotWriter {
 export interface OmittedField {
   field: string;
   value: string;
-  reason: "not_in_base_select_options" | "category_omitted_by_policy";
+  reason: "not_in_base_select_options" | "category_omitted_by_policy" | "field_not_in_base";
 }
 
 export interface BasePushResult {
@@ -134,7 +166,7 @@ export class FeishuBasePushAdapter {
     if (!existing) {
       const pmStatusField = this.fields.pm[0];
       if (pmStatusField) delta[pmStatusField] = this.selectValue(pmStatusField, "待处理");
-      const created = await this.client.create(delta, input.owner ? { userIdType: input.owner.idType } : undefined);
+      const created = await this.writeRecord(null, delta, input, omittedFields);
       return { recordId: created.recordId, created: true, omittedFields };
     }
 
@@ -148,7 +180,62 @@ export class FeishuBasePushAdapter {
     }
     // Unmapped and empty TB ownership never erases a human-assigned Base owner.
     if (input.owner === null) delete delta[this.fields.owner];
-    const updated = await this.client.update(existing.recordId, delta, input.owner ? { userIdType: input.owner.idType } : undefined);
+    const updated = await this.writeRecord(existing.recordId, delta, input, omittedFields);
     return { recordId: updated.recordId, created: false, omittedFields };
   }
+
+  /**
+   * 通知四字段的写入值：事件ID/类型写字符串；两个人员字段写 `[{ id }]`，值为 null 时不写该字段。
+   * 字段名全部来自配置映射；未配置通知字段映射时返回空对象（不写通知字段）。
+   */
+  private notificationDelta(input: BasePushInput): Record<string, unknown> {
+    const fields = this.fields.notification;
+    const notification = input.notification;
+    if (!fields || !notification) return {};
+    const delta: Record<string, unknown> = {};
+    if (fields.eventId) delta[fields.eventId] = notification.eventId;
+    if (fields.eventType) delta[fields.eventType] = notification.eventType;
+    if (fields.recipient && notification.recipientUserId) delta[fields.recipient] = [{ id: notification.recipientUserId }];
+    if (fields.ownerMergeValue && notification.ownerMergeUserId) delta[fields.ownerMergeValue] = [{ id: notification.ownerMergeUserId }];
+    return delta;
+  }
+
+  private writeOptions(input: BasePushInput): BaseWriteOptions | undefined {
+    if (input.owner) return { userIdType: input.owner.idType };
+    // 无负责人但写通知人员字段时仍需显式 user_id_type；PM Leader 收件人按 user_id 处理。
+    if (input.notification && (input.notification.recipientUserId || input.notification.ownerMergeUserId)) return { userIdType: "user_id" };
+    return undefined;
+  }
+
+  /**
+   * 写 Base 行。通知字段是「附加」写入：若目标 Base 不存在这四个字段（1254045 FieldNameNotFound），
+   * 不允许把整次推送判失败——按既有 omittedFields 机制记录省略，再用不含通知字段的载荷重试一次，
+   * 业务字段照常写入。其它错误原样抛出，由推送服务走既有安全失败路径。
+   */
+  private async writeRecord(recordId: string | null, delta: Record<string, unknown>, input: BasePushInput, omittedFields: OmittedField[]): Promise<BaseRecord> {
+    const options = this.writeOptions(input);
+    const notificationFields = this.notificationDelta(input);
+    if (Object.keys(notificationFields).length === 0) {
+      return recordId ? this.client.update(recordId, delta, options) : this.client.create(delta, options);
+    }
+    try {
+      const withNotification = { ...delta, ...notificationFields };
+      return recordId ? await this.client.update(recordId, withNotification, options) : await this.client.create(withNotification, options);
+    } catch (error) {
+      if (!(error instanceof FeishuApiError) || error.apiCode !== 1254045) throw error;
+      for (const [field, value] of Object.entries(notificationFields)) {
+        omittedFields.push({ field, value: omittedNotificationValue(value), reason: "field_not_in_base" });
+      }
+      return recordId ? this.client.update(recordId, delta, options) : this.client.create(delta, options);
+    }
+  }
+}
+
+/** 省略记录里只保留可读的字符串值：人员字段取 user id，其余取原文。 */
+function omittedNotificationValue(value: unknown): string {
+  if (Array.isArray(value)) {
+    const id = (value[0] as { id?: unknown } | undefined)?.id;
+    return typeof id === "string" ? id : "";
+  }
+  return String(value);
 }

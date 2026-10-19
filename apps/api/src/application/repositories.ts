@@ -306,4 +306,10 @@ export interface RequirementQueryRepository {
   setOwner(requirementId: string, feishuUserId: string | null, state: OwnerState): Promise<void>;
   setBaseRecord(requirementId: string, baseRecordId: string, pushedAt: string): Promise<void>;
   setPushState(requirementId: string, state: PushState): Promise<void>;
+  /**
+   * 同一需求的推送关键区串行化（可选能力）。
+   * Postgres 实现用「同一事务内的 pg_advisory_xact_lock」包住读 req → 建 run → 外部写 → 落库，
+   * 锁随事务结束自动释放；内存/测试桩直接执行 fn。
+   */
+  withRequirementLock?<T>(requirementId: string, fn: () => Promise<T>): Promise<T>;
 }

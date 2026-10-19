@@ -6,6 +6,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PostgresRepositories } from "./repositories.js";
+import { createBasePushService } from "../../base/push-service.js";
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),"../../../../../");
 async function getDatabaseUrl(){if(process.env.DATABASE_URL)return process.env.DATABASE_URL;const env=await readFile(resolve(root,".env"),"utf8").catch(()=>"");const value=env.match(/^DATABASE_URL=(.+)$/m)?.[1]?.trim();if(!value)throw new Error("PostgreSQL integration tests require DATABASE_URL in environment or repo .env");return value;}
@@ -94,6 +95,90 @@ test("PM snapshot wiring keys on the database requirement id, never the Teambiti
       () => ctx.repos.pmSnapshots.append({ requirementId: "6a951b81648c3a16a805d619", sourceVersion: 1, baseRecordId: "rec-2", pmValues: {}, capturedAt }),
       /invalid input syntax for type uuid|22P02/i,
     );
+  } finally {
+    await cleanup(ctx);
+  }
+});
+
+test("requirement advisory lock serializes the same requirement and releases on failure", async () => {
+  // 并发锁取证：同一需求的第二个关键区必须等第一个事务提交后才开始；锁随事务结束自动释放，
+  // 因此 fn 抛错（ROLLBACK）后同 id 仍可再次取得锁。
+  const ctx = await setup();
+  try {
+    const withLock = ctx.repos.requirements.withRequirementLock;
+    assert.ok(withLock, "Postgres 仓储必须实现 withRequirementLock");
+    let active = 0;
+    let maxActive = 0;
+    const events: string[] = [];
+    const section = async (label: string) => withLock.call(ctx.repos.requirements, "requirement-lock-1", async () => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      events.push(`${label}:start`);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      events.push(`${label}:end`);
+      active -= 1;
+      return label;
+    });
+    const [left, right] = await Promise.all([section("a"), section("b")]);
+    assert.deepEqual([left, right], ["a", "b"]);
+    assert.equal(maxActive, 1, `同一需求的并发关键区不得重叠: ${events.join(",")}`);
+    const firstEnd = events.findIndex((event) => event.endsWith(":end"));
+    assert.ok(firstEnd >= 1);
+    assert.ok(events.slice(firstEnd + 1).some((event) => event.endsWith(":start")), `第二个关键区必须在第一个结束后开始: ${events.join(",")}`);
+
+    await assert.rejects(() => withLock.call(ctx.repos.requirements, "requirement-lock-2", async () => { throw new Error("lock-scope failure"); }), /lock-scope failure/);
+    assert.equal(await withLock.call(ctx.repos.requirements, "requirement-lock-2", async () => "after-failure"), "after-failure");
+  } finally {
+    await cleanup(ctx);
+  }
+});
+
+test("concurrent pushes of the same requirement serialize through the advisory lock and write one Base row", async () => {
+  // 端到端取证：真实 Postgres 仓储 + 推送服务 + 有延迟的 Base 桩。两次并发推送同一需求时，
+  // 第二个必须在第一个事务提交后才能进入关键区；第一个已推送的 run 让第二个走幂等重放，
+  // 因此只产生一次 Base 写入、一行 base_record_id，不出现两个 Base 行或相互覆盖。
+  const ctx = await setup();
+  try {
+    const source = await ctx.repos.sources.create(config);
+    const batch = await ctx.repos.batches.create({ sourceConfigId: source.id, triggerType: "manual", actorId: null, idempotencyKey: "lock-e2e-0001", startedAt: "2026-10-08T00:00:00Z" });
+    const created = await ctx.repos.requirements.upsertRequirement(source.id, "task-lock", requirementWrite(source.id, batch.id, { teambitionRequirementId: "task-lock" }));
+    let baseWrites = 0;
+    let activeWrites = 0;
+    let maxActiveWrites = 0;
+    const service = createBasePushService({
+      requirements: ctx.repos.requirements,
+      people: ctx.repos.people,
+      basePushes: ctx.repos.basePushes,
+      audit: ctx.repos.audit,
+      analyses: ctx.repos.analyses,
+      sourceSnapshots: ctx.repos.sourceSnapshots,
+      base: {
+        async push() {
+          baseWrites += 1;
+          activeWrites += 1;
+          maxActiveWrites = Math.max(maxActiveWrites, activeWrites);
+          await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
+          activeWrites -= 1;
+          return { recordId: `base-rec-${baseWrites}`, created: false, omittedFields: [] };
+        },
+      } as never,
+      sourceProjectId: source.externalProjectId,
+      baseFields: { projectId: "project", requirementId: "requirement", owner: "owner", source: {}, ai: {}, pm: ["PM状态"] },
+      actorId: "operator-1",
+    });
+    const idempotencyKey = "base-push:lock-e2e:v1";
+    const [first, second] = await Promise.all([
+      service.pushRequirement(created.id, idempotencyKey),
+      service.pushRequirement(created.id, idempotencyKey),
+    ]);
+    assert.equal(first.kind, "pushed");
+    assert.equal(second.kind, "pushed");
+    assert.equal(baseWrites, 1, "同一需求不得产生第二次 Base 写入");
+    assert.equal(maxActiveWrites, 1, "两个推送关键区的 Base 写入不得重叠");
+    const reloaded = await ctx.repos.requirements.get(created.id);
+    assert.equal(reloaded?.pipeline.push, "pushed");
+    assert.equal(reloaded?.baseRecordId, "base-rec-1");
+    assert.equal((await ctx.repos.basePushes.findByIdempotencyKey(idempotencyKey))?.status, "pushed");
   } finally {
     await cleanup(ctx);
   }

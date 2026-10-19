@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { AnalysisRunRecord, BasePushRunRecord, RequirementRecord, SourceSnapshotRecord } from "../domain/persistence.js";
+import type { AnalysisRunRecord, BasePushRunRecord, PersonMappingRecord, RequirementRecord, SourceSnapshotRecord } from "../domain/persistence.js";
 import type { FeishuBasePushAdapter } from "./client.js";
 import { FeishuApiError } from "./transport.js";
 import { createBasePushService } from "./push-service.js";
+
+/** 上一次成功推送时快照里的旧负责人 TB ID；harness 用它区分「旧负责人映射」与「当前负责人映射」。 */
+const PREVIOUS_OWNER_TB_ID = "tb-owner-previous";
 
 const requirement = (overrides: Partial<RequirementRecord> = {}): RequirementRecord => ({
   id: "req-1", sourceConfigId: "source-1", teambitionRequirementId: "tb-1", teambitionUniqueId: null,
@@ -17,21 +20,75 @@ const requirement = (overrides: Partial<RequirementRecord> = {}): RequirementRec
   createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-09T00:00:00.000Z", ...overrides,
 });
 
+const mappingRecord = (overrides: Partial<PersonMappingRecord> = {}): PersonMappingRecord => ({
+  id: "mapping-1", sourceConfigId: "source-1", teambitionUserId: "tb-owner", teambitionDisplayName: "Owner",
+  normalizedName: "owner", feishuUserId: "ou-owner", feishuIdType: "user_id", matchMethod: "manual",
+  active: true, createdBy: null, createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z", ...overrides,
+});
+
+const analysisRun = (overrides: Partial<AnalysisRunRecord> = {}): AnalysisRunRecord => ({
+  id: "analysis-1", requirementId: "req-1", sourceVersion: 2, analysisVersion: 1, status: "analyzed",
+  moduleSuggestion: null, confidence: null, confidenceReason: null, priority: null, structuredResult: null,
+  provider: null, model: null, promptVersion: null, moduleDictionaryVersion: null, priorityRuleVersionId: null,
+  safeErrorCode: null, safeErrorSummary: null, startedAt: "2026-10-08T00:00:00.000Z", completedAt: "2026-10-08T00:00:01.000Z", ...overrides,
+});
+
 const pushRun = (overrides: Partial<BasePushRunRecord> = {}): BasePushRunRecord => ({
   id: "push-1", requirementId: "req-1", sourceVersion: 1, pushVersion: 1, status: "pushed",
   idempotencyKey: "push:req-1:v1", baseRecordId: "record-1", safeErrorCode: null,
   safeErrorSummary: null, startedAt: "2026-10-08T00:00:00.000Z", completedAt: "2026-10-08T00:00:01.000Z", ...overrides,
 });
 
-function makeHarness(options: { bookkeepingError?: boolean; req?: RequirementRecord; previous?: BasePushRunRecord | null; lastSuccessful?: BasePushRunRecord | null; sourceSnapshot?: SourceSnapshotRecord | null; omittedFields?: { field: string; value: string; reason: "not_in_base_select_options" | "category_omitted_by_policy" }[]; pushError?: Error } = {}) {
+const sourceSnapshot = (overrides: Partial<SourceSnapshotRecord> = {}): SourceSnapshotRecord => ({
+  id: "snapshot-1", requirementId: "req-1", sourceVersion: 1, sourceHash: "hash-v1", substantiveHash: "substantive-v1",
+  payload: {}, isSubstantiveChange: false, capturedAt: "2026-10-08T00:00:00.000Z", ...overrides,
+});
+
+interface CapturedPushInput {
+  projectId: string;
+  substantiveChanged: boolean;
+  notification?: { eventId: string; eventType: string; recipientUserId: string | null; ownerMergeUserId: string | null };
+}
+
+function makeHarness(options: {
+  bookkeepingError?: boolean;
+  req?: RequirementRecord;
+  previous?: BasePushRunRecord | null;
+  lastSuccessful?: BasePushRunRecord | null;
+  sourceSnapshot?: SourceSnapshotRecord | null;
+  omittedFields?: { field: string; value: string; reason: "not_in_base_select_options" | "category_omitted_by_policy" }[];
+  pushError?: Error;
+  mapping?: PersonMappingRecord | null;
+  previousMapping?: PersonMappingRecord | null;
+  analysisHistory?: AnalysisRunRecord[];
+  latestAnalysis?: AnalysisRunRecord | null;
+  pmLeaderUserId?: string | null;
+  withLock?: boolean;
+} = {}) {
   const auditEvents: { eventType: string; result: string; safeDetails: Record<string, unknown> }[] = [];
   const req = options.req ?? requirement();
   const calls: string[] = [];
   let existing = options.previous ?? null;
-  let baseInput: { projectId: string; substantiveChanged: boolean } | null = null;
+  let baseInput: CapturedPushInput | null = null;
   let savedBaseRecord: string | null = null;
   let savedFailure: { code: string | null; summary: string | null } | null = null;
+  let lockTail: Promise<unknown> = Promise.resolve();
+  const withRequirementLock = async <T>(_requirementId: string, fn: () => Promise<T>): Promise<T> => {
+    const previous = lockTail;
+    let release!: () => void;
+    lockTail = new Promise<void>((resolve) => { release = resolve; });
+    await previous;
+    calls.push("lock:enter");
+    try {
+      return await fn();
+    } finally {
+      calls.push("lock:exit");
+      release();
+    }
+  };
   const currentRun = pushRun({ id: "push-current", status: "running", sourceVersion: req.sourceVersion, idempotencyKey: "push:req-1:v2", baseRecordId: null });
+  const defaultAnalysis = analysisRun({ sourceVersion: req.sourceVersion });
+  const latestAnalysis = options.latestAnalysis === undefined ? defaultAnalysis : options.latestAnalysis;
   const service = createBasePushService({
     requirements: {
       get: async () => req,
@@ -41,9 +98,18 @@ function makeHarness(options: { bookkeepingError?: boolean; req?: RequirementRec
         if (options.bookkeepingError) throw new Error("bookkeeping down");
         savedBaseRecord = recordId; calls.push("base-record");
       },
+      ...(options.withLock ? { withRequirementLock } : {}),
     } as never,
-    people: { resolveActive: async () => null } as never,
-    analyses: { latest: async () => ({ status: "analyzed", analysisVersion: 1, moduleSuggestion: null, priority: null } as AnalysisRunRecord) } as never,
+    people: {
+      resolveActive: async (_sourceConfigId: string, by: { tbUserId?: string; normalizedName?: string }) => {
+        if (by.tbUserId === PREVIOUS_OWNER_TB_ID) return options.previousMapping ?? null;
+        return options.mapping ?? null;
+      },
+    } as never,
+    analyses: {
+      latest: async () => latestAnalysis,
+      listByRequirement: async () => options.analysisHistory ?? (latestAnalysis ? [latestAnalysis] : []),
+    } as never,
     basePushes: {
       findByIdempotencyKey: async () => existing,
       append: async () => { calls.push("append"); existing = currentRun; return currentRun; },
@@ -54,10 +120,12 @@ function makeHarness(options: { bookkeepingError?: boolean; req?: RequirementRec
     } as never,
     sourceSnapshots: { getAtVersion: async () => options.sourceSnapshot ?? null } as never,
     audit: { append: async (event: { eventType: string; result: string; safeDetails: Record<string, unknown> }) => { calls.push("audit"); auditEvents.push(event); } } as never,
-    base: { push: async (input: { projectId: string; substantiveChanged: boolean }) => { calls.push("base"); baseInput = input; if (options.pushError) throw options.pushError; return { recordId: "record-2", created: false, omittedFields: options.omittedFields ?? [] }; } } as unknown as FeishuBasePushAdapter,
+    base: { push: async (input: CapturedPushInput) => { calls.push("base"); baseInput = input; if (options.pushError) throw options.pushError; return { recordId: "record-2", created: false, omittedFields: options.omittedFields ?? [] }; } } as unknown as FeishuBasePushAdapter,
     sourceProjectId: "verified-source-project",
     baseFields: { projectId: "project", requirementId: "requirement", owner: "owner", source: {}, ai: {}, pm: ["PM状态"] },
-    actorId: "operator-1", now: () => new Date("2026-10-10T00:00:00.000Z"),
+    actorId: "operator-1",
+    ...(options.pmLeaderUserId === undefined ? {} : { pmLeaderUserId: options.pmLeaderUserId }),
+    now: () => new Date("2026-10-10T00:00:00.000Z"),
   });
   return { service, calls, auditEvents, get baseInput() { return baseInput; }, get savedBaseRecord() { return savedBaseRecord; }, get savedFailure() { return savedFailure; } };
 }
@@ -150,4 +218,278 @@ test("reconciles a Base record left by a previous push whose local record was ne
   assert.equal(h.baseInput?.substantiveChanged, true);
   // 补写记录发生在外部写之前
   assert.ok(h.calls.indexOf("base-record") < h.calls.indexOf("base"), `调用顺序: ${h.calls.join(",")}`);
+});
+
+// ---- 通知事件载荷（四个系统字段） ----
+
+test("first push notifies the resolved owner with a deterministic first_push event", async () => {
+  const req = requirement({ executorUserId: "tb-owner", executorName: "Owner" });
+  const h = makeHarness({ req, mapping: mappingRecord() });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.deepEqual(h.baseInput?.notification, {
+    eventType: "first_push",
+    eventId: "first_push:req-1:sv2",
+    recipientUserId: "ou-owner",
+    ownerMergeUserId: "ou-owner",
+  });
+});
+
+test("a substantive change notifies the current owner with substantive_update", async () => {
+  const req = requirement({ executorUserId: "tb-owner", executorName: "Owner" });
+  const h = makeHarness({
+    req,
+    mapping: mappingRecord(),
+    lastSuccessful: pushRun({ sourceVersion: 1 }),
+    sourceSnapshot: sourceSnapshot({
+      substantiveHash: "substantive-v1",
+      payload: { sourceExecutorId: "tb-owner", mappedFields: { executorName: "Owner" } },
+    }),
+  });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.equal(h.baseInput?.substantiveChanged, true);
+  assert.deepEqual(h.baseInput?.notification, {
+    eventType: "substantive_update",
+    eventId: "substantive_update:req-1:sv2",
+    recipientUserId: "ou-owner",
+    ownerMergeUserId: "ou-owner",
+  });
+});
+
+test("an owner appearing for the first time produces owner_assigned for the new owner", async () => {
+  const req = requirement({ executorUserId: "tb-owner", executorName: "Owner" });
+  const h = makeHarness({
+    req,
+    mapping: mappingRecord(),
+    lastSuccessful: pushRun({ sourceVersion: 1 }),
+    // 上次成功推送时 TB 无负责人：Base 负责人为空
+    sourceSnapshot: sourceSnapshot({
+      substantiveHash: req.substantiveHash,
+      payload: { sourceExecutorId: null, mappedFields: { executorName: null } },
+    }),
+  });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.equal(h.baseInput?.substantiveChanged, false);
+  assert.deepEqual(h.baseInput?.notification, {
+    eventType: "owner_assigned",
+    eventId: "owner_assigned:req-1:sv2:none:ou-owner",
+    recipientUserId: "ou-owner",
+    ownerMergeUserId: "ou-owner",
+  });
+});
+
+test("an owner A→B change produces owner_changed with the previous and new user ids in the event id", async () => {
+  const req = requirement({ executorUserId: "tb-owner", executorName: "Owner" });
+  const h = makeHarness({
+    req,
+    mapping: mappingRecord({ feishuUserId: "ou-owner" }),
+    previousMapping: mappingRecord({ id: "mapping-old", feishuUserId: "ou-previous", matchMethod: "tb_user_id" }),
+    lastSuccessful: pushRun({ sourceVersion: 1 }),
+    sourceSnapshot: sourceSnapshot({
+      substantiveHash: req.substantiveHash,
+      payload: { sourceExecutorId: PREVIOUS_OWNER_TB_ID, mappedFields: { executorName: "Previous Owner" } },
+    }),
+  });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.deepEqual(h.baseInput?.notification, {
+    eventType: "owner_changed",
+    eventId: "owner_changed:req-1:sv2:ou-previous:ou-owner",
+    recipientUserId: "ou-owner",
+    ownerMergeUserId: "ou-owner",
+  });
+});
+
+test("AI failure followed by success on the same source version produces ai_retry_success", async () => {
+  const req = requirement({ executorUserId: "tb-owner", executorName: "Owner" });
+  const latest = analysisRun({ analysisVersion: 2, status: "analyzed" });
+  const h = makeHarness({
+    req,
+    mapping: mappingRecord(),
+    lastSuccessful: pushRun({ sourceVersion: 1 }),
+    sourceSnapshot: sourceSnapshot({
+      substantiveHash: req.substantiveHash,
+      payload: { sourceExecutorId: "tb-owner", mappedFields: { executorName: "Owner" } },
+    }),
+    latestAnalysis: latest,
+    analysisHistory: [analysisRun({ analysisVersion: 1, status: "failed_retryable" }), latest],
+  });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.equal(h.baseInput?.substantiveChanged, false);
+  assert.deepEqual(h.baseInput?.notification, {
+    eventType: "ai_retry_success",
+    eventId: "ai_retry_success:req-1:sv2",
+    recipientUserId: "ou-owner",
+    ownerMergeUserId: "ou-owner",
+  });
+});
+
+test("a repeated no-change sync is silent and writes no notification fields", async () => {
+  const req = requirement({ executorUserId: "tb-owner", executorName: "Owner" });
+  const h = makeHarness({
+    req,
+    mapping: mappingRecord(),
+    lastSuccessful: pushRun({ sourceVersion: 1 }),
+    sourceSnapshot: sourceSnapshot({
+      substantiveHash: req.substantiveHash,
+      payload: { sourceExecutorId: "tb-owner", mappedFields: { executorName: "Owner" } },
+    }),
+  });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.ok(h.baseInput, "业务字段仍然推送");
+  assert.equal(h.baseInput?.notification, undefined);
+  assert.equal(Object.hasOwn(h.baseInput ?? {}, "notification"), false);
+});
+
+test("replaying a pushed idempotency key is silent and never touches Base again", async () => {
+  const h = makeHarness({ previous: pushRun({ status: "pushed" }) });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.equal(h.calls.includes("base"), false);
+  assert.equal(h.baseInput, null);
+});
+
+test("falls back to the configured PM Leader when the requirement has no owner", async () => {
+  const h = makeHarness({ pmLeaderUserId: "ou-pm-leader" });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.deepEqual(h.baseInput?.notification, {
+    eventType: "first_push",
+    eventId: "first_push:req-1:sv2",
+    recipientUserId: "ou-pm-leader",
+    ownerMergeUserId: null,
+  });
+});
+
+test("omits the notification payload when no recipient can be resolved", async () => {
+  const h = makeHarness({ pmLeaderUserId: null });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.equal(h.baseInput?.notification, undefined);
+});
+
+test("event ids are stable for the same event and distinct across events", async () => {
+  const ownedRequirement = () => requirement({ executorUserId: "tb-owner", executorName: "Owner" });
+  const ownerAssigned = () => makeHarness({
+    req: ownedRequirement(),
+    mapping: mappingRecord(),
+    lastSuccessful: pushRun({ sourceVersion: 1 }),
+    sourceSnapshot: sourceSnapshot({ substantiveHash: "substantive-v2", payload: { sourceExecutorId: null, mappedFields: { executorName: null } } }),
+  });
+  const assigned = ownerAssigned();
+  await assigned.service.pushRequirement("req-1", "push:req-1:v2");
+  const replay = ownerAssigned();
+  await replay.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(assigned.baseInput?.notification?.eventId, replay.baseInput?.notification?.eventId);
+
+  // 不同源版本 / 不同事件类型必须得到不同事件ID，规则不会把新事件当成旧事件去重。
+  const newer = makeHarness({
+    req: requirement({ executorUserId: "tb-owner", executorName: "Owner", sourceVersion: 3 }),
+    mapping: mappingRecord(),
+    lastSuccessful: pushRun({ sourceVersion: 2 }),
+    sourceSnapshot: sourceSnapshot({ sourceVersion: 2, substantiveHash: "substantive-v2", payload: { sourceExecutorId: null, mappedFields: { executorName: null } } }),
+  });
+  await newer.service.pushRequirement("req-1", "push:req-1:v3");
+  const changed = makeHarness({
+    req: ownedRequirement(),
+    mapping: mappingRecord(),
+    previousMapping: mappingRecord({ feishuUserId: "ou-previous" }),
+    lastSuccessful: pushRun({ sourceVersion: 1 }),
+    sourceSnapshot: sourceSnapshot({ substantiveHash: "substantive-v2", payload: { sourceExecutorId: PREVIOUS_OWNER_TB_ID, mappedFields: { executorName: "Previous Owner" } } }),
+  });
+  await changed.service.pushRequirement("req-1", "push:req-1:v2");
+  const ids = new Set([
+    assigned.baseInput?.notification?.eventId,
+    newer.baseInput?.notification?.eventId,
+    changed.baseInput?.notification?.eventId,
+  ]);
+  assert.equal(ids.size, 3, `不同事件必须有不同的确定性 ID: ${[...ids].join(", ")}`);
+});
+
+test("the requirement advisory lock serializes concurrent pushes and prevents a duplicate Base row", async () => {
+  const req = requirement({ pipeline: { pull: "synced", analysis: "analyzed", owner: "not_required", push: "pending" } });
+  const calls: string[] = [];
+  const runs = new Map<string, BasePushRunRecord>();
+  let baseWrites = 0;
+  let activeBaseWrites = 0;
+  let maxActiveBaseWrites = 0;
+  let lockTail: Promise<unknown> = Promise.resolve();
+  const service = createBasePushService({
+    requirements: {
+      get: async () => req,
+      setOwner: async () => { calls.push("owner"); },
+      setPushState: async (_id: string, state: RequirementRecord["pipeline"]["push"]) => { req.pipeline.push = state; calls.push(`state:${state}`); },
+      setBaseRecord: async () => { calls.push("base-record"); },
+      withRequirementLock: async <T>(_requirementId: string, fn: () => Promise<T>): Promise<T> => {
+        const previous = lockTail;
+        let release!: () => void;
+        lockTail = new Promise<void>((resolve) => { release = resolve; });
+        await previous;
+        calls.push("lock:enter");
+        try {
+          return await fn();
+        } finally {
+          calls.push("lock:exit");
+          release();
+        }
+      },
+    } as never,
+    people: { resolveActive: async () => null } as never,
+    analyses: { latest: async () => null } as never,
+    basePushes: {
+      findByIdempotencyKey: async (key: string) => runs.get(key) ?? null,
+      append: async (input: { idempotencyKey: string }) => {
+        const run = pushRun({ id: "run-lock", status: "running", idempotencyKey: input.idempotencyKey, baseRecordId: null, completedAt: null });
+        runs.set(input.idempotencyKey, run);
+        calls.push("append");
+        return run;
+      },
+      latest: async () => Array.from(runs.values()).at(-1) ?? null,
+      latestSuccessful: async () => Array.from(runs.values()).find((run) => run.status === "pushed") ?? null,
+      updateResult: async (id: string, result: { status: "pushed" | "failed"; baseRecordId?: string; completedAt: string }) => {
+        const run = Array.from(runs.values()).find((item) => item.id === id);
+        if (!run) return null;
+        const updated = { ...run, status: result.status, baseRecordId: result.baseRecordId ?? null, completedAt: result.completedAt };
+        runs.set(run.idempotencyKey, updated);
+        return updated;
+      },
+      restart: async () => null,
+    } as never,
+    sourceSnapshots: { getAtVersion: async () => null } as never,
+    audit: { append: async () => {} } as never,
+    base: {
+      push: async () => {
+        baseWrites += 1;
+        activeBaseWrites += 1;
+        maxActiveBaseWrites = Math.max(maxActiveBaseWrites, activeBaseWrites);
+        calls.push("base");
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        activeBaseWrites -= 1;
+        return { recordId: "record-2", created: false, omittedFields: [] };
+      },
+    } as unknown as FeishuBasePushAdapter,
+    sourceProjectId: "verified-source-project",
+    baseFields: { projectId: "project", requirementId: "requirement", owner: "owner", source: {}, ai: {}, pm: ["PM状态"] },
+    actorId: "operator-1", now: () => new Date("2026-10-10T00:00:00.000Z"),
+  });
+
+  const [first, second] = await Promise.all([
+    service.pushRequirement("req-1", "push:req-1:v2"),
+    service.pushRequirement("req-1", "push:req-1:v2"),
+  ]);
+
+  assert.equal(first.kind, "pushed");
+  assert.equal(second.kind, "pushed");
+  assert.equal(baseWrites, 1, "同一需求不得产生第二次 Base 写入（否则会多出一行或相互覆盖）");
+  assert.equal(maxActiveBaseWrites, 1, "两个关键区的 Base 写入不得重叠");
+  assert.equal(calls.filter((call) => call === "append").length, 1, "同一推送只能建一条 run");
+  const firstLockExit = calls.indexOf("lock:exit");
+  const secondLockEnter = calls.indexOf("lock:enter", firstLockExit);
+  assert.ok(firstLockExit >= 0 && secondLockEnter > firstLockExit, `第二个推送必须等第一个完成: ${calls.join(",")}`);
+  // 第二个推送看到第一个已推送的 run，走幂等重放（不再写 Base）。
+  assert.equal(runs.get("push:req-1:v2")?.status, "pushed");
 });

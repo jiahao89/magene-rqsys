@@ -131,6 +131,9 @@ const DEFAULT_BASE_FIELDS = {
   ai: { module: "AI模块建议", priority: "AI优先级建议", analysisVersion: "AI分析版本" } as Record<string, string>,
   pm: ["PM状态", "PM确认模块", "PM确认优先级", "处理人", "处理时间", "结构化备注"] as string[],
   metadata: { sourceVersion: "源版本", pushState: "推送状态", lastPushedAt: "最后推送时间" } as Record<string, string>,
+  // 通知由 Base 自动化规则发送；应用只写这四个「系统字段」。
+  // 用精确形状而不是 Record<string,string>，以便直接满足 BaseFieldMap.notification 的结构类型。
+  notification: { eventId: "系统通知事件ID", eventType: "系统通知类型", recipient: "系统通知收件人", ownerMergeValue: "系统负责人通知归并值" },
   selectOptions: {
     // Verified against the safe POC Base schema; override via BASE_FIELDS_JSON
     // together with Base options when the product module dictionary changes.
@@ -149,6 +152,8 @@ function parseBaseFields(raw: string | undefined): typeof DEFAULT_BASE_FIELDS {
       ai: { ...DEFAULT_BASE_FIELDS.ai, ...(parsed.ai ?? {}) },
       pm: Array.isArray(parsed.pm) ? parsed.pm : DEFAULT_BASE_FIELDS.pm,
       metadata: { ...DEFAULT_BASE_FIELDS.metadata, ...(parsed.metadata ?? {}) },
+      // 缺省回落默认值：notification 整段缺失（或部分缺失）时仍指向 POC 验证过的四个系统字段。
+      notification: { ...DEFAULT_BASE_FIELDS.notification, ...(parsed.notification ?? {}) },
       selectOptions: { ...DEFAULT_BASE_FIELDS.selectOptions, ...(parsed.selectOptions ?? {}) },
     };
   } catch {

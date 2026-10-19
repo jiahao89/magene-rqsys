@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { FeishuBasePushAdapter, type BaseClient } from "./client.js";
+import { FeishuApiError } from "./transport.js";
 
 function fakeBase(initial?: { recordId: string; fields: Record<string, unknown> }) {
   const calls: string[] = [];
@@ -123,4 +124,134 @@ test("reports no omissions when every value fits the Base options", async () => 
   });
   assert.deepEqual(result.omittedFields, []);
   assert.equal(fake.row()!.fields["AI优先级建议"], "P1");
+});
+
+// ---- 通知四字段写入 ----
+
+const notificationFields = {
+  projectId: "TB项目ID", requirementId: "TB需求ID", owner: "执行人",
+  source: { title: "标题" }, ai: {}, pm: [],
+  notification: { eventId: "系统通知事件ID", eventType: "系统通知类型", recipient: "系统通知收件人", ownerMergeValue: "系统负责人通知归并值" },
+};
+
+test("writes the four notification system fields with one recipient and the merge value", async () => {
+  const writes: { fields: Record<string, unknown>; options?: { userIdType?: "open_id" | "user_id" | "union_id" } | undefined }[] = [];
+  const client: BaseClient = {
+    async findByRequirementKey() { return null; },
+    async create(fields, options) { writes.push(options === undefined ? { fields } : { fields, options }); return { recordId: "record-new", fields }; },
+    async update() { throw new Error("unexpected update"); },
+    async readPmFields() { return {}; },
+  };
+  const adapter = new FeishuBasePushAdapter(client, notificationFields);
+  const result = await adapter.push({
+    projectId: "p", requirementId: "r", requirementDbId: "11111111-2222-4333-8444-555555555555", title: "Title",
+    owner: null, sourceVersion: 1, substantiveChanged: false, idempotencyKey: "p:r:v1",
+    notification: { eventId: "first_push:r:sv1", eventType: "first_push", recipientUserId: "ou-owner", ownerMergeUserId: "ou-owner" },
+  });
+
+  assert.equal(result.created, true);
+  assert.deepEqual(result.omittedFields, []);
+  const fields = writes[0]!.fields;
+  assert.equal(fields["系统通知事件ID"], "first_push:r:sv1");
+  assert.equal(fields["系统通知类型"], "first_push");
+  assert.deepEqual(fields["系统通知收件人"], [{ id: "ou-owner" }]);
+  assert.deepEqual(fields["系统负责人通知归并值"], [{ id: "ou-owner" }]);
+  // 无负责人但写人员字段时必须显式 user_id_type
+  assert.deepEqual(writes[0]!.options, { userIdType: "user_id" });
+});
+
+test("uses the written owner's id type for notification person fields", async () => {
+  let written: Record<string, unknown> | null = null;
+  let options: { userIdType?: string } | undefined;
+  const client: BaseClient = {
+    async findByRequirementKey() { return null; },
+    async create(fields, createOptions) { written = fields; options = createOptions; return { recordId: "record-new", fields }; },
+    async update() { throw new Error("unexpected update"); },
+    async readPmFields() { return {}; },
+  };
+  const adapter = new FeishuBasePushAdapter(client, notificationFields);
+  await adapter.push({
+    projectId: "p", requirementId: "r", requirementDbId: "11111111-2222-4333-8444-555555555555", title: "Title",
+    owner: { userId: "ou-owner", idType: "open_id" }, sourceVersion: 1, substantiveChanged: false, idempotencyKey: "p:r:v1",
+    notification: { eventId: "first_push:r:sv1", eventType: "first_push", recipientUserId: "ou-owner", ownerMergeUserId: "ou-owner" },
+  });
+  assert.deepEqual(options, { userIdType: "open_id" });
+  assert.deepEqual(written!["系统通知收件人"], [{ id: "ou-owner" }]);
+});
+
+test("writes no notification fields without a notification payload, including null person values", async () => {
+  let written: Record<string, unknown> | null = null;
+  const client: BaseClient = {
+    async findByRequirementKey() { return null; },
+    async create(fields) { written = fields; return { recordId: "record-new", fields }; },
+    async update() { throw new Error("unexpected update"); },
+    async readPmFields() { return {}; },
+  };
+  const adapter = new FeishuBasePushAdapter(client, notificationFields);
+  await adapter.push({
+    projectId: "p", requirementId: "r", requirementDbId: "11111111-2222-4333-8444-555555555555", title: "Title",
+    owner: null, sourceVersion: 1, substantiveChanged: false, idempotencyKey: "p:r:v1",
+  });
+  assert.equal(written!["系统通知事件ID"], undefined);
+
+  await adapter.push({
+    projectId: "p2", requirementId: "r2", requirementDbId: "11111111-2222-4333-8444-555555555555", title: "Title",
+    owner: null, sourceVersion: 1, substantiveChanged: false, idempotencyKey: "p2:r2:v1",
+    notification: { eventId: "first_push:r2:sv1", eventType: "first_push", recipientUserId: null, ownerMergeUserId: null },
+  });
+  // 值为 null 的人员字段不写；事件ID/类型仍然写入。
+  assert.equal(written!["系统通知事件ID"], "first_push:r2:sv1");
+  assert.equal(written!["系统通知收件人"], undefined);
+  assert.equal(written!["系统负责人通知归并值"], undefined);
+});
+
+test("a Base missing the notification fields records omissions and still writes the business fields", async () => {
+  const payloads: Record<string, unknown>[] = [];
+  let attempts = 0;
+  const client: BaseClient = {
+    async findByRequirementKey() { return null; },
+    async create(fields) {
+      attempts += 1;
+      payloads.push(fields);
+      // 模拟目标 Base 缺少通知字段：飞书返回 1254045 FieldNameNotFound，整条写入被拒绝。
+      if (attempts === 1) throw new FeishuApiError("api", "record create", undefined, 1254045);
+      return { recordId: "record-new", fields };
+    },
+    async update() { throw new Error("unexpected update"); },
+    async readPmFields() { return {}; },
+  };
+  const adapter = new FeishuBasePushAdapter(client, notificationFields);
+  const result = await adapter.push({
+    projectId: "p", requirementId: "r", requirementDbId: "11111111-2222-4333-8444-555555555555", title: "Title",
+    owner: null, sourceVersion: 1, substantiveChanged: false, idempotencyKey: "p:r:v1",
+    notification: { eventId: "first_push:r:sv1", eventType: "first_push", recipientUserId: "ou-owner", ownerMergeUserId: "ou-owner" },
+  });
+
+  assert.equal(attempts, 2, "必须用不含通知字段的载荷重试一次");
+  assert.equal(result.created, true);
+  assert.deepEqual(result.omittedFields, [
+    { field: "系统通知事件ID", value: "first_push:r:sv1", reason: "field_not_in_base" },
+    { field: "系统通知类型", value: "first_push", reason: "field_not_in_base" },
+    { field: "系统通知收件人", value: "ou-owner", reason: "field_not_in_base" },
+    { field: "系统负责人通知归并值", value: "ou-owner", reason: "field_not_in_base" },
+  ]);
+  // 业务字段仍写入成功，通知字段被省略而不是让整次推送失败。
+  assert.equal(payloads[1]!["标题"], "Title");
+  assert.equal(payloads[1]!["系统通知事件ID"], undefined);
+  assert.equal(payloads[1]!["系统通知收件人"], undefined);
+});
+
+test("propagates non-field-not-found Base failures even when a notification payload is present", async () => {
+  const client: BaseClient = {
+    async findByRequirementKey() { return null; },
+    async create() { throw new FeishuApiError("api", "record create", undefined, 1254061); },
+    async update() { throw new Error("unexpected update"); },
+    async readPmFields() { return {}; },
+  };
+  const adapter = new FeishuBasePushAdapter(client, notificationFields);
+  await assert.rejects(() => adapter.push({
+    projectId: "p", requirementId: "r", requirementDbId: "11111111-2222-4333-8444-555555555555", title: "Title",
+    owner: null, sourceVersion: 1, substantiveChanged: false, idempotencyKey: "p:r:v1",
+    notification: { eventId: "first_push:r:sv1", eventType: "first_push", recipientUserId: "ou-owner", ownerMergeUserId: "ou-owner" },
+  }), /1254061/);
 });

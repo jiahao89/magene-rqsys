@@ -11,6 +11,7 @@
 
 import { randomUUID } from "node:crypto";
 import type { RequirementQueryRepository, PersonMappingRepository, BasePushRunRepository, AuditEventRepository, AnalysisRunRepository, SourceSnapshotRepository } from "../application/repositories.js";
+import type { AnalysisRunRecord, PersonMappingRecord, RequirementRecord, SourceSnapshotRecord } from "../domain/persistence.js";
 import type { FeishuBasePushAdapter, OmittedField } from "./client.js";
 import { FeishuApiError } from "./transport.js";
 import { normalizeOwnerName } from "../owner/mapping.js";
@@ -26,7 +27,24 @@ export interface BasePushServiceDeps {
   sourceProjectId: string;
   baseFields: { projectId: string; requirementId: string; owner: string; source: Record<string, string>; ai: Record<string, string>; pm: string[] };
   actorId: string | null;
+  /** PM Leader 的飞书 user id：无解析到负责人时作为事件收件人；缺省读 RQSYS_PM_LEADER_USER_ID。 */
+  pmLeaderUserId?: string | null;
   now?: () => Date;
+}
+
+/** 4 类通知事件（负责人分配/变更同属负责人事件）。 */
+export type NotificationEventType = "first_push" | "substantive_update" | "owner_assigned" | "owner_changed" | "ai_retry_success";
+
+/**
+ * 一次推送要写入的通知系统字段载荷。
+ * 产品确认不存在「一条通知发多人」场景，因此只有单个收件人；不记录送达、不读回送达。
+ */
+export interface PushNotification {
+  eventType: NotificationEventType;
+  eventId: string;
+  recipientUserId: string;
+  /** 本次实际写入的负责人；无负责人时为 null（该人员字段不写）。 */
+  ownerMergeUserId: string | null;
 }
 
 export type PushOutcome =
@@ -58,6 +76,32 @@ function safeBaseFailure(error: unknown): { code: string; summary: string } {
   return { code: "BASE_PUSH_FAILED", summary: "Base update failed; retry is available." };
 }
 
+/**
+ * 从「上一次成功推送时」的源快照里取旧负责人身份。
+ * 快照 payload 是 allowlist JSON：sourceExecutorId 是 TB 执行人 ID，mappedFields.executorName 是获批映射的姓名。
+ * answered=false 表示快照里根本没有负责人信息（历史数据），此时不能断言「旧负责人为空」。
+ */
+interface SnapshotOwnerLookup {
+  answered: boolean;
+  lookup: { tbUserId?: string; normalizedName?: string } | null;
+}
+
+function snapshotOwnerLookup(payload: Record<string, unknown> | null | undefined): SnapshotOwnerLookup {
+  if (!payload || typeof payload !== "object") return { answered: false, lookup: null };
+  const mapped = payload.mappedFields;
+  const mappedRecord = mapped && typeof mapped === "object" ? mapped as Record<string, unknown> : null;
+  const hasExecutorIdField = "sourceExecutorId" in payload;
+  const hasExecutorNameField = Boolean(mappedRecord && "executorName" in mappedRecord);
+  if (!hasExecutorIdField && !hasExecutorNameField) return { answered: false, lookup: null };
+  const rawId = payload.sourceExecutorId;
+  const rawName = mappedRecord?.executorName;
+  const tbUserId = typeof rawId === "string" && rawId.trim() ? rawId.trim() : null;
+  const executorName = typeof rawName === "string" && rawName.trim() ? rawName.trim() : null;
+  if (tbUserId) return { answered: true, lookup: { tbUserId } };
+  if (executorName) return { answered: true, lookup: { normalizedName: normalizeOwnerName(executorName) } };
+  return { answered: true, lookup: null };
+}
+
 export function createBasePushService(deps: BasePushServiceDeps) {
   const now = deps.now ?? (() => new Date());
   // 审计 safeDetails 只保留扁平原始类型（白名单 + 禁止嵌套），因此省略信息以字符串摘要写入既有
@@ -74,137 +118,238 @@ export function createBasePushService(deps: BasePushServiceDeps) {
       occurredAt: now().toISOString(),
     });
   };
-  return {
-    async pushRequirement(requirementId: string, idempotencyKey: string): Promise<PushOutcome> {
-      const req = await deps.requirements.get(requirementId);
-      if (!req) return { kind: "not_found" };
-      if (req.pipeline.pull !== "synced") return { kind: "conflict" };
+  const pmLeaderUserId = deps.pmLeaderUserId ?? (process.env.RQSYS_PM_LEADER_USER_ID || null);
 
-      const previous = await deps.basePushes.findByIdempotencyKey(idempotencyKey);
-      if (previous?.status === "pushed") {
-        // 重放沿用既有结果；省略字段的说明来自本次审计记录，不在此处重新推断。
-        await auditPushSuccess(req.id, req.sourceVersion, false, true, []);
-        return { kind: "pushed", status: "pushed", baseRecordId: previous.baseRecordId, created: false, omittedFields: [] };
+  type PreviousPushOwner = { kind: "none" } | { kind: "known"; userId: string } | { kind: "unknown" };
+
+  // 旧负责人只能从「上一次成功推送时」的源快照推导：应用库没有持久化 Base 负责人的历史 ID，
+  // req.pipeline.owner 只是状态机（auto_mapped/manually_mapped），不记录具体人员。
+  const resolvePreviousPushOwner = async (
+    req: RequirementRecord,
+    previousSource: SourceSnapshotRecord | null,
+    hadSuccessfulPush: boolean,
+  ): Promise<PreviousPushOwner> => {
+    if (!hadSuccessfulPush) return { kind: "none" };
+    if (!previousSource) return { kind: "unknown" };
+    const snapshot = snapshotOwnerLookup(previousSource.payload);
+    if (!snapshot.answered) return { kind: "unknown" };
+    if (!snapshot.lookup) return { kind: "none" };
+    const previousMapping = await deps.people.resolveActive(req.sourceConfigId, snapshot.lookup);
+    // 旧负责人映射已不存在时得不到稳定的 fromUserId：不断言 A→B，避免发出错误事件。
+    return previousMapping ? { kind: "known", userId: previousMapping.feishuUserId } : { kind: "unknown" };
+  };
+
+  /**
+   * 计算本次推送的通知事件与唯一收件人。规则（分别计算，按固定优先级取一个）：
+   *   1. first_push：latestSuccessful 为空（首次成功推送）
+   *   2. substantive_update：实质变更且非首次
+   *   3. owner_assigned：负责人空→有值
+   *   4. owner_changed：负责人 A→B
+   *   5. ai_retry_success：同一源版本的上一次分析失败、本次成功
+   * 未命中任何事件（重复同步无变化、同键重放）时返回 undefined（不写通知字段，静默）。
+   */
+  const computeNotification = async (input: {
+    req: RequirementRecord;
+    mapping: PersonMappingRecord | null;
+    previousSource: SourceSnapshotRecord | null;
+    hadSuccessfulPush: boolean;
+    substantiveChanged: boolean;
+    latestAnalysis: AnalysisRunRecord | null;
+  }): Promise<PushNotification | undefined> => {
+    const currentOwnerUserId = input.mapping?.feishuUserId ?? null;
+    const previousOwner = await resolvePreviousPushOwner(input.req, input.previousSource, input.hadSuccessfulPush);
+
+    // AI 重试成功只在同一源版本内比较：旧源版本失败、新源版本成功不算同一次重试。
+    let aiRetrySuccess = false;
+    const latestAnalysis = input.latestAnalysis;
+    if (latestAnalysis?.status === "analyzed" && latestAnalysis.sourceVersion === input.req.sourceVersion && deps.analyses?.listByRequirement) {
+      const history = (await deps.analyses.listByRequirement(input.req.id)) ?? [];
+      const previousAnalysis = history
+        .filter((run) => run.sourceVersion === latestAnalysis.sourceVersion && run.analysisVersion < latestAnalysis.analysisVersion)
+        .sort((left, right) => right.analysisVersion - left.analysisVersion)[0] ?? null;
+      aiRetrySuccess = previousAnalysis?.status === "failed_retryable";
+    }
+
+    let eventType: NotificationEventType | null = null;
+    let fromUserId: string | null = null;
+    if (!input.hadSuccessfulPush) {
+      eventType = "first_push";
+    } else if (input.substantiveChanged) {
+      eventType = "substantive_update";
+    } else if (currentOwnerUserId) {
+      if (previousOwner.kind === "none") {
+        eventType = "owner_assigned";
+      } else if (previousOwner.kind === "known" && previousOwner.userId !== currentOwnerUserId) {
+        eventType = "owner_changed";
+        fromUserId = previousOwner.userId;
       }
+    }
+    if (!eventType && aiRetrySuccess) eventType = "ai_retry_success";
+    if (!eventType) return undefined;
 
-      const ownerLookup = req.executorUserId
-        ? { tbUserId: req.executorUserId }
-        : (req.executorName ? { normalizedName: normalizeOwnerName(req.executorName) } : {});
-      const mapping = ownerLookup.tbUserId || ownerLookup.normalizedName
-        ? await deps.people.resolveActive(req.sourceConfigId, ownerLookup)
-        : null;
+    const ownerEvent = eventType === "owner_assigned" || eventType === "owner_changed";
+    // 负责人事件只通知新负责人；其余事件通知当前负责人，无负责人时回落 PM Leader。
+    const recipientUserId = ownerEvent ? currentOwnerUserId : (currentOwnerUserId ?? pmLeaderUserId);
+    if (!recipientUserId) return undefined;
+    // 事件ID 确定性：同一事件重复推送得到同一个 ID，Base 自动化据此不重复发送。
+    // 负责人事件追加 from/to，区分 A→B 与空→A 等不同事件。
+    const eventId = ownerEvent
+      ? `${eventType}:${input.req.id}:sv${input.req.sourceVersion}:${fromUserId ?? "none"}:${currentOwnerUserId}`
+      : `${eventType}:${input.req.id}:sv${input.req.sourceVersion}`;
+    return { eventType, eventId, recipientUserId, ownerMergeUserId: currentOwnerUserId };
+  };
 
-      // 工单 14：TB 有负责人但未匹配时等待人工映射——映射前不推送、不误报已推送。
-      // 审计结果 denied（result 枚举含 denied），worker 视为终态跳过而非重试。
-      if (!mapping && (req.executorUserId || req.executorName)) {
+  async function pushRequirementUnlocked(requirementId: string, idempotencyKey: string): Promise<PushOutcome> {
+    const req = await deps.requirements.get(requirementId);
+    if (!req) return { kind: "not_found" };
+    if (req.pipeline.pull !== "synced") return { kind: "conflict" };
+
+    const previous = await deps.basePushes.findByIdempotencyKey(idempotencyKey);
+    if (previous?.status === "pushed") {
+      // 重放沿用既有结果；省略字段的说明来自本次审计记录，不在此处重新推断。
+      await auditPushSuccess(req.id, req.sourceVersion, false, true, []);
+      return { kind: "pushed", status: "pushed", baseRecordId: previous.baseRecordId, created: false, omittedFields: [] };
+    }
+
+    const ownerLookup = req.executorUserId
+      ? { tbUserId: req.executorUserId }
+      : (req.executorName ? { normalizedName: normalizeOwnerName(req.executorName) } : {});
+    const mapping = ownerLookup.tbUserId || ownerLookup.normalizedName
+      ? await deps.people.resolveActive(req.sourceConfigId, ownerLookup)
+      : null;
+
+    // 工单 14：TB 有负责人但未匹配时等待人工映射——映射前不推送、不误报已推送。
+    // 审计结果 denied（result 枚举含 denied），worker 视为终态跳过而非重试。
+    if (!mapping && (req.executorUserId || req.executorName)) {
+      await deps.audit.append({
+        id: randomUUID(), actorId: deps.actorId, eventType: "base.push", entityType: "requirement", entityId: req.id,
+        result: "denied", safeDetails: { reason: "owner_pending_mapping", sourceVersion: req.sourceVersion }, occurredAt: now().toISOString(),
+      });
+      return { kind: "conflict" };
+    }
+    // TB 无负责人：先推进 owner 状态再推送（可空负责人推送，不改写 Base 已有人工值）
+    if (!mapping && !ownerLookup.tbUserId && !ownerLookup.normalizedName && req.pipeline.owner === "pending_mapping") {
+      await deps.requirements.setOwner(req.id, null, "not_required");
+    }
+
+    const startedAt = now().toISOString();
+    const lastSuccessfulPush = await deps.basePushes.latestSuccessful(req.id);
+    const previousSource = lastSuccessfulPush
+      ? await deps.sourceSnapshots.getAtVersion(req.id, lastSuccessfulPush.sourceVersion)
+      : null;
+    // 比较实质字段 hash 而不是 sourceVersion：负责人/状态/时间等元数据更新不应重置 PM 状态。
+    // 找不到既有快照时按实质变更处理，避免在不确定时覆盖 PM 工作。
+    // 对账：上一次推送已把 Base 行写成功、但本地 base_record_id 没落地（记账失败或进程崩溃）时，
+    // 先据此补写记录，再决定要不要做实质变更处理——否则重试会把同一需求再写一遍。
+    let effectiveBaseRecordId = req.baseRecordId;
+    if (!effectiveBaseRecordId && lastSuccessfulPush?.baseRecordId) {
+      try {
+        await deps.requirements.setBaseRecord(req.id, lastSuccessfulPush.baseRecordId, startedAt);
+        effectiveBaseRecordId = lastSuccessfulPush.baseRecordId;
+      } catch {
+        // 补写失败不阻塞：本次仍按既有 Base 行处理，findByRequirementKey 会命中它而不是新建
+        effectiveBaseRecordId = lastSuccessfulPush.baseRecordId;
+      }
+    }
+    const substantiveChanged = Boolean(effectiveBaseRecordId) && (
+      !lastSuccessfulPush || !previousSource || previousSource.substantiveHash !== req.substantiveHash
+    );
+    const latestPush = previous ? null : await deps.basePushes.latest(req.id);
+    const run = previous
+      ? await deps.basePushes.restart(previous.id, startedAt)
+      : await deps.basePushes.append({
+          requirementId: req.id, sourceVersion: req.sourceVersion, pushVersion: (latestPush?.pushVersion ?? 0) + 1,
+          idempotencyKey, startedAt,
+        });
+    if (!run) {
+      const current = await deps.basePushes.findByIdempotencyKey(idempotencyKey);
+      if (current?.status === "pushed") {
+        await auditPushSuccess(req.id, req.sourceVersion, false, true, []);
+        return { kind: "pushed", status: "pushed", baseRecordId: current.baseRecordId, created: false, omittedFields: [] };
+      }
+      return { kind: "conflict" };
+    }
+
+    if (req.pipeline.push !== "running") await deps.requirements.setPushState(req.id, "running");
+    let pushedResult: { recordId: string; created: boolean; omittedFields: OmittedField[] };
+    try {
+      // 最新已分析版本映射 AI 字段：P0–P3 原样传递（不丢弃 P3）；无分析版本时不写 AI 字段
+      const latestAnalysis = await deps.analyses?.latest(req.id) ?? null;
+      const ai = latestAnalysis && latestAnalysis.status === "analyzed"
+        ? {
+            ...(latestAnalysis.moduleSuggestion ? { module: latestAnalysis.moduleSuggestion } : {}),
+            ...(latestAnalysis.priority === null ? {} : { priority: latestAnalysis.priority }),
+            analysisVersion: latestAnalysis.analysisVersion,
+          }
+        : {};
+      // 通知事件在成败判定前计算：只有 Base 写成功，四个通知字段才会真正落库。
+      const notification = await computeNotification({
+        req, mapping, previousSource,
+        hadSuccessfulPush: Boolean(lastSuccessfulPush),
+        substantiveChanged, latestAnalysis,
+      });
+      const sourceCreatedAt = req.sourceCreatedAt ? Date.parse(req.sourceCreatedAt) : Number.NaN;
+      pushedResult = await deps.base.push({
+        projectId: deps.sourceProjectId, requirementId: req.teambitionRequirementId, requirementDbId: req.id,
+        title: req.title, description: req.description,
+        owner: mapping ? { userId: mapping.feishuUserId, idType: mapping.feishuIdType } : null,
+        sourceVersion: req.sourceVersion, pushedAt: now().toISOString(), substantiveChanged,
+        idempotencyKey,
+        sourceValues: {
+          ...(Number.isFinite(sourceCreatedAt) ? { createdAt: sourceCreatedAt } : {}),
+        },
+        aiValues: ai,
+        // 静默场景（重复同步无变化、同键重放）不传 notification，即不写四个通知字段。
+        ...(notification ? { notification } : {}),
+      });
+    } catch (error) {
+      const failure = safeBaseFailure(error);
+      await deps.basePushes.updateResult(run.id, { status: "failed", safeErrorCode: failure.code, safeErrorSummary: failure.summary, completedAt: now().toISOString() });
+      await deps.requirements.setPushState(req.id, "failed");
+      await deps.audit.append({ id: randomUUID(), actorId: deps.actorId, eventType: "base.push", entityType: "requirement", entityId: req.id, result: "failed", safeDetails: { sourceVersion: req.sourceVersion, errorClass: "base_push_failed" }, occurredAt: now().toISOString() });
+      return { kind: "error" };
+    }
+    // 外部写入已成功，以下只是本地记账。记账失败不能回退成"推送失败"：
+    // Base 行已经存在，重推会在 findByRequirementKey 尚未可见时制造重复行，
+    // 同时向 PM 误报"没推上去"。留一条可诊断的审计，并让上层把作业判为成功。
+    try {
+      await deps.basePushes.updateResult(run.id, { status: "pushed", baseRecordId: pushedResult.recordId, completedAt: now().toISOString() });
+      await deps.requirements.setBaseRecord(req.id, pushedResult.recordId, now().toISOString());
+      await deps.requirements.setPushState(req.id, "pushed");
+      // 推送时解析到负责人则推进 owner 状态（已达目标状态时跳过，避免非法迁移）
+      if (mapping) {
+        const targetOwnerState = mapping.matchMethod === "manual" ? "manually_mapped" : "auto_mapped";
+        if (req.pipeline.owner !== targetOwnerState) await deps.requirements.setOwner(req.id, mapping.feishuUserId, targetOwnerState);
+      }
+    } catch (error) {
+      const failure = safeBaseFailure(error);
+      try {
         await deps.audit.append({
           id: randomUUID(), actorId: deps.actorId, eventType: "base.push", entityType: "requirement", entityId: req.id,
-          result: "denied", safeDetails: { reason: "owner_pending_mapping", sourceVersion: req.sourceVersion }, occurredAt: now().toISOString(),
+          result: "succeeded",
+          safeDetails: { bookkeeping: "failed", baseRecordId: pushedResult.recordId, code: failure.code, sourceVersion: req.sourceVersion },
+          occurredAt: now().toISOString(),
         });
-        return { kind: "conflict" };
+      } catch {
+        // 审计也失败时不再尝试：结论仍是"外部写成功、本地未记账"
       }
-      // TB 无负责人：先推进 owner 状态再推送（可空负责人推送，不改写 Base 已有人工值）
-      if (!mapping && !ownerLookup.tbUserId && !ownerLookup.normalizedName && req.pipeline.owner === "pending_mapping") {
-        await deps.requirements.setOwner(req.id, null, "not_required");
-      }
+      return { kind: "pushed_unrecorded", baseRecordId: pushedResult.recordId, detail: failure.code };
+    }
+    await auditPushSuccess(req.id, req.sourceVersion, pushedResult.created, false, pushedResult.omittedFields);
+    return { kind: "pushed", status: "pushed", baseRecordId: pushedResult.recordId, created: pushedResult.created, omittedFields: pushedResult.omittedFields };
+  }
 
-      const startedAt = now().toISOString();
-      const lastSuccessfulPush = await deps.basePushes.latestSuccessful(req.id);
-      const previousSource = lastSuccessfulPush
-        ? await deps.sourceSnapshots.getAtVersion(req.id, lastSuccessfulPush.sourceVersion)
-        : null;
-      // 比较实质字段 hash 而不是 sourceVersion：负责人/状态/时间等元数据更新不应重置 PM 状态。
-      // 找不到既有快照时按实质变更处理，避免在不确定时覆盖 PM 工作。
-      // 对账：上一次推送已把 Base 行写成功、但本地 base_record_id 没落地（记账失败或进程崩溃）时，
-      // 先据此补写记录，再决定要不要做实质变更处理——否则重试会把同一需求再写一遍。
-      let effectiveBaseRecordId = req.baseRecordId;
-      if (!effectiveBaseRecordId && lastSuccessfulPush?.baseRecordId) {
-        try {
-          await deps.requirements.setBaseRecord(req.id, lastSuccessfulPush.baseRecordId, startedAt);
-          effectiveBaseRecordId = lastSuccessfulPush.baseRecordId;
-        } catch {
-          // 补写失败不阻塞：本次仍按既有 Base 行处理，findByRequirementKey 会命中它而不是新建
-          effectiveBaseRecordId = lastSuccessfulPush.baseRecordId;
-        }
-      }
-      const substantiveChanged = Boolean(effectiveBaseRecordId) && (
-        !lastSuccessfulPush || !previousSource || previousSource.substantiveHash !== req.substantiveHash
-      );
-      const latestPush = previous ? null : await deps.basePushes.latest(req.id);
-      const run = previous
-        ? await deps.basePushes.restart(previous.id, startedAt)
-        : await deps.basePushes.append({
-            requirementId: req.id, sourceVersion: req.sourceVersion, pushVersion: (latestPush?.pushVersion ?? 0) + 1,
-            idempotencyKey, startedAt,
-          });
-      if (!run) {
-        const current = await deps.basePushes.findByIdempotencyKey(idempotencyKey);
-        if (current?.status === "pushed") {
-          await auditPushSuccess(req.id, req.sourceVersion, false, true, []);
-          return { kind: "pushed", status: "pushed", baseRecordId: current.baseRecordId, created: false, omittedFields: [] };
-        }
-        return { kind: "conflict" };
-      }
-
-      if (req.pipeline.push !== "running") await deps.requirements.setPushState(req.id, "running");
-      let pushedResult: { recordId: string; created: boolean; omittedFields: OmittedField[] };
-      try {
-        // 最新已分析版本映射 AI 字段：P0–P3 原样传递（不丢弃 P3）；无分析版本时不写 AI 字段
-        const latestAnalysis = await deps.analyses?.latest(req.id) ?? null;
-        const ai = latestAnalysis && latestAnalysis.status === "analyzed"
-          ? {
-              ...(latestAnalysis.moduleSuggestion ? { module: latestAnalysis.moduleSuggestion } : {}),
-              ...(latestAnalysis.priority === null ? {} : { priority: latestAnalysis.priority }),
-              analysisVersion: latestAnalysis.analysisVersion,
-            }
-          : {};
-        const sourceCreatedAt = req.sourceCreatedAt ? Date.parse(req.sourceCreatedAt) : Number.NaN;
-        pushedResult = await deps.base.push({
-          projectId: deps.sourceProjectId, requirementId: req.teambitionRequirementId, requirementDbId: req.id,
-          title: req.title, description: req.description,
-          owner: mapping ? { userId: mapping.feishuUserId, idType: mapping.feishuIdType } : null,
-          sourceVersion: req.sourceVersion, pushedAt: now().toISOString(), substantiveChanged,
-          idempotencyKey,
-          sourceValues: {
-            ...(Number.isFinite(sourceCreatedAt) ? { createdAt: sourceCreatedAt } : {}),
-          },
-          aiValues: ai,
-        });
-      } catch (error) {
-        const failure = safeBaseFailure(error);
-        await deps.basePushes.updateResult(run.id, { status: "failed", safeErrorCode: failure.code, safeErrorSummary: failure.summary, completedAt: now().toISOString() });
-        await deps.requirements.setPushState(req.id, "failed");
-        await deps.audit.append({ id: randomUUID(), actorId: deps.actorId, eventType: "base.push", entityType: "requirement", entityId: req.id, result: "failed", safeDetails: { sourceVersion: req.sourceVersion, errorClass: "base_push_failed" }, occurredAt: now().toISOString() });
-        return { kind: "error" };
-      }
-      // 外部写入已成功，以下只是本地记账。记账失败不能回退成"推送失败"：
-      // Base 行已经存在，重推会在 findByRequirementKey 尚未可见时制造重复行，
-      // 同时向 PM 误报"没推上去"。留一条可诊断的审计，并让上层把作业判为成功。
-      try {
-        await deps.basePushes.updateResult(run.id, { status: "pushed", baseRecordId: pushedResult.recordId, completedAt: now().toISOString() });
-        await deps.requirements.setBaseRecord(req.id, pushedResult.recordId, now().toISOString());
-        await deps.requirements.setPushState(req.id, "pushed");
-        // 推送时解析到负责人则推进 owner 状态（已达目标状态时跳过，避免非法迁移）
-        if (mapping) {
-          const targetOwnerState = mapping.matchMethod === "manual" ? "manually_mapped" : "auto_mapped";
-          if (req.pipeline.owner !== targetOwnerState) await deps.requirements.setOwner(req.id, mapping.feishuUserId, targetOwnerState);
-        }
-      } catch (error) {
-        const failure = safeBaseFailure(error);
-        try {
-          await deps.audit.append({
-            id: randomUUID(), actorId: deps.actorId, eventType: "base.push", entityType: "requirement", entityId: req.id,
-            result: "succeeded",
-            safeDetails: { bookkeeping: "failed", baseRecordId: pushedResult.recordId, code: failure.code, sourceVersion: req.sourceVersion },
-            occurredAt: now().toISOString(),
-          });
-        } catch {
-          // 审计也失败时不再尝试：结论仍是"外部写成功、本地未记账"
-        }
-        return { kind: "pushed_unrecorded", baseRecordId: pushedResult.recordId, detail: failure.code };
-      }
-      await auditPushSuccess(req.id, req.sourceVersion, pushedResult.created, false, pushedResult.omittedFields);
-      return { kind: "pushed", status: "pushed", baseRecordId: pushedResult.recordId, created: pushedResult.created, omittedFields: pushedResult.omittedFields };
+  return {
+    /**
+     * 同一需求的并发推送用 repository 提供的 withRequirementLock 串行化：
+     * Postgres 实现走「同一事务 + pg_advisory_xact_lock」，锁覆盖读 req → 建 run → 外部写 → 落库；
+     * 内存/测试桩没有该能力时直接执行。没有锁实现的仓储保持原行为。
+     */
+    async pushRequirement(requirementId: string, idempotencyKey: string): Promise<PushOutcome> {
+      const run = () => pushRequirementUnlocked(requirementId, idempotencyKey);
+      return deps.requirements.withRequirementLock
+        ? deps.requirements.withRequirementLock(requirementId, run)
+        : run();
     },
   };
 }
