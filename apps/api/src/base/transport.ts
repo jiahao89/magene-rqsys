@@ -18,6 +18,8 @@ export interface FeishuBitableConfig {
   keyFields: { projectId: string; requirementId: string };
   baseUrl?: string;
   fetch?: FetchLike;
+  /** 单次 Base 请求超时（毫秒）。默认 15s；设为 0 关闭。 */
+  timeoutMs?: number;
 }
 
 interface FeishuEnvelope {
@@ -70,18 +72,29 @@ export class FeishuBitableClient implements BaseClient {
   private readonly baseUrl: string;
   private readonly fetcher: FetchLike;
 
+  private readonly timeoutMs: number;
+
   constructor(private readonly config: FeishuBitableConfig) {
     this.baseUrl = (config.baseUrl ?? "https://open.feishu.cn").replace(/\/+$/, "");
     this.fetcher = config.fetch ?? globalThis.fetch;
+    // 没有超时的话，一条挂死的连接会阻塞整个串行 Base 队列（RateLimitedBaseClient 串行化），
+    // 所有推送一起卡住直到租约过期重试。TB / DeepSeek / 搜索适配器都有超时，Base 此前没有。
+    this.timeoutMs = config.timeoutMs ?? 15_000;
+  }
+
+  /** 给请求附加超时信号；调用方已自带 signal 时不覆盖。 */
+  private withTimeout(init: RequestInit): RequestInit {
+    if (this.timeoutMs <= 0 || init.signal !== undefined || init.signal !== null) return init;
+    return { ...init, signal: AbortSignal.timeout(this.timeoutMs) };
   }
 
   private async tenantToken(): Promise<string> {
     if (this.cachedToken && Date.now() < this.cachedToken.expiresAtMs) return this.cachedToken.value;
-    const res = await this.fetcher(`${this.baseUrl}/open-apis/auth/v3/tenant_access_token/internal`, {
+    const res = await this.fetcher(`${this.baseUrl}/open-apis/auth/v3/tenant_access_token/internal`, this.withTimeout({
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ app_id: this.config.appId, app_secret: this.config.appSecret }),
-    });
+    }));
     if (!res.ok) throw await feishuHttpFailure(res, "token endpoint");
     const payload = (await res.json()) as FeishuEnvelope;
     if (payload.code !== 0) throw new FeishuApiError("api", "token request", undefined, payload.code);
@@ -94,7 +107,7 @@ export class FeishuBitableClient implements BaseClient {
   private async authed(url: string, init: RequestInit): Promise<Response> {
     const token = await this.tenantToken();
     const headers = { ...(init.headers ?? {}), authorization: `Bearer ${token}`, "content-type": "application/json" };
-    return this.fetcher(url, { ...init, headers });
+    return this.fetcher(url, this.withTimeout({ ...init, headers }));
   }
 
   private assertOk(payload: Pick<FeishuEnvelope, "code">, action: FeishuAction): void {

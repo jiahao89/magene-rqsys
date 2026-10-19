@@ -204,6 +204,10 @@ const basePushJobHandler: ((job: { payload: Record<string, unknown> }) => Promis
     : basePushIdempotencyKey(requirementId, requirement.sourceVersion, latestAnalysis?.analysisVersion ?? 0);
   const outcome = await service.pushRequirement(requirementId, idempotencyKey);
   if (outcome.kind === "error") throw new Error("Base push failed; retry is available.");
+  // Base 行已写成功、仅本地记账失败：作业按成功处理，绝不重推外部（会重复写 Base）。
+  if (outcome.kind === "pushed_unrecorded") {
+    process.stderr.write(`base push wrote record ${outcome.baseRecordId} but bookkeeping failed: ${outcome.detail}\n`);
+  }
   // conflict：pull 未同步或等待人工映射——等待不是失败，人工映射持久化后会重新入队
 } : undefined;
 
@@ -238,7 +242,13 @@ const server = createServer(async (incoming, outgoing) => {
     outgoing.statusCode = response.status;
     response.headers.forEach((value, key) => outgoing.setHeader(key, value));
     outgoing.end(Buffer.from(await response.arrayBuffer()));
-  } catch {
+  } catch (error) {
+    // 未捕获异常此前直接变成裸 500、服务端零痕迹：没有路由、没有 actor、没有错误类，
+    // 线上排障只能靠复现。这里只记录脱敏字段（路由 + 错误类名 + 结构化状态码），不写消息原文。
+    const route = `${incoming.method ?? "GET"} ${String(incoming.url ?? "/").split("?")[0]}`;
+    const kind = error instanceof Error ? error.name : typeof error;
+    const status = (error as { statusCode?: number } | null)?.statusCode;
+    process.stderr.write(`unhandled request error ${route} kind=${kind}${typeof status === "number" ? ` status=${status}` : ""}\n`);
     outgoing.statusCode = 500;
     outgoing.setHeader("content-type", "application/json; charset=utf-8");
     outgoing.end(JSON.stringify(errorBody("INTERNAL")));
@@ -267,7 +277,14 @@ if (worker && repositories && workerPollMs > 0) {
       } catch (error) {
         process.stderr.write(`batch reaper failed: ${String(error)}\n`);
       }
-      await createDueSyncJobs({ sources: repositories.sources, batches: repositories.batches, jobs: repositories.jobs, now, ...(fixtureSourceId ? { fixtureSourceId } : {}) });
+      const outcomes = await createDueSyncJobs({ sources: repositories.sources, batches: repositories.batches, jobs: repositories.jobs, now, ...(fixtureSourceId ? { fixtureSourceId } : {}) });
+      // 每个来源的失败原因必须落地：此前 error 字段被算出来又丢掉，来源静默不同步，
+      // 批次/审计/UI 都看不到任何痕迹。
+      for (const outcome of outcomes) {
+        if (outcome.error) {
+          process.stderr.write(`scheduled sync failed for source ${outcome.sourceConfigId}: ${outcome.error}\n`);
+        }
+      }
       await worker.runOnce();
     })().catch((error) => process.stderr.write(`worker tick failed: ${String(error)}\n`));
   }, workerPollMs);

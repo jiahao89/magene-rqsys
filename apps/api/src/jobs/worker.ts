@@ -2,7 +2,8 @@ import { FixturePolicyError } from "../sync/test-fixture.js";
 import type { PipelineJobRecord } from "../domain/persistence.js";
 import type { PipelineJobRepository } from "../application/repositories.js";
 import type { SyncJobRunner } from "../sync/service.js";
-import { computeBackoffMs } from "../retry/policy.js";
+import { computeBackoffMs, isRetryable } from "../retry/policy.js";
+import { classifyJobError } from "./classify-error.js";
 
 // jobType → 重试策略阶段映射（复用 retry/policy.ts 的阶段退避）
 const STAGE_FOR_JOB_TYPE = { sync: "pull", analysis: "analysis", base_push: "push" } as const;
@@ -71,13 +72,19 @@ export class PipelineJobWorker {
       stopHeartbeat();
       // 重试策略：有剩余尝试则按阶段退避重排（保留先前成功结果）；超限或永久错误进入终态
       const stage = STAGE_FOR_JOB_TYPE[job.jobType];
+      // 错误分类：认证失败、4xx、飞书字段/权限契约错误（1254xxx）等永久性错误直接终态。
+      // 此前只看尝试次数，这类错误会被白白重试 4–5 次，最后报 "Max attempts reached"，
+      // 把"配置错了"伪装成"偶发失败"。
+      const errorClass = classifyJobError(error);
+      const permanent = stage !== undefined && !isRetryable(stage, errorClass);
       const terminal =
         error instanceof UnsupportedJobTypeError ||
         error instanceof FixturePolicyError ||
+        permanent ||
         job.attemptCount >= job.maxAttempts ||
         stage === undefined;
       if (terminal) {
-        const code = error instanceof FixturePolicyError ? "fixture_policy_denied" : error instanceof UnsupportedJobTypeError ? "unsupported_job_type" : "max_attempts_reached";
+        const code = error instanceof FixturePolicyError ? "fixture_policy_denied" : error instanceof UnsupportedJobTypeError ? "unsupported_job_type" : permanent ? `permanent_${errorClass}` : "max_attempts_reached";
         const recorded = await this.options.jobs.complete(job.id, {
           expectedAttempt: job.attemptCount,
           status: "failed", errorCode: code,
@@ -89,14 +96,14 @@ export class PipelineJobWorker {
           ...(job.jobType === "sync" ? { settleSyncBatch: true } : {}),
           errorSummary: code === "fixture_policy_denied" ? `Synthetic acceptance policy denied (${error instanceof FixturePolicyError ? error.reason : "unspecified"}); restore a safe configuration before retrying.` : code === "unsupported_job_type"
             ? "No handler is registered for this job type."
-            : "Max attempts reached; manual retry is available.",
+            : permanent ? `Permanent failure (${errorClass}); configuration must be corrected before retry.` : "Max attempts reached; manual retry is available.",
           now: this.now().toISOString(),
         });
         // 结果被新 worker 拒绝（fencing）：新认领者接管，本 worker 放弃
         if (!recorded) return { kind: "failed", jobId: job.id };
         return { kind: "failed", jobId: job.id };
       }
-      const backoffMs = computeBackoffMs({ stage, attempt: job.attemptCount + 1 });
+      const backoffMs = computeBackoffMs({ stage, attempt: job.attemptCount + 1, errorClass });
       // 安全摘要：错误详情不含密钥或 provider 原始响应
       await this.options.jobs.reschedule(job.id, {
         expectedAttempt: job.attemptCount,

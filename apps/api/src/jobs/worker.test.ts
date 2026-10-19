@@ -5,6 +5,8 @@ import type { PipelineJobRepository } from "../application/repositories.js";
 import type { SyncJobRunner } from "../sync/service.js";
 import { PipelineJobWorker } from "./worker.js";
 import { assertFixtureWorkAllowed, FixturePolicyError } from "../sync/test-fixture.js";
+import { FeishuApiError } from "../base/transport.js";
+import { AiProviderError } from "../analysis/provider.js";
 
 const NOW = "2026-10-08T00:00:00.000Z";
 function job(overrides: Partial<PipelineJobRecord> = {}): PipelineJobRecord {
@@ -210,4 +212,40 @@ test("续约被拒（租约已易主）后停止续约，不覆盖他人结果",
   const worker = new PipelineJobWorker({ jobs: jobs as never, sync: slowSync, workerId: "worker", leaseMs: 300 });
   await worker.runOnce();
   assert.ok(calls <= 2, `拒绝后应停止续约，实际调用 ${calls} 次`);
+});
+
+test("永久性错误直接终态，不白白重试到 Max attempts", async () => {
+  // 回归：此前终态判定只看尝试次数，于是飞书字段契约错误（1254061）与认证失败会被
+  // 重试 4–5 次、每次白打一次外部 API，最后报 "Max attempts reached"，掩盖真实原因。
+  const cases: Array<{ name: string; error: Error; expectCode: string }> = [
+    { name: "飞书字段类型不符", error: new FeishuApiError("api", "record create", undefined, 1254061), expectCode: "permanent_validation" },
+    { name: "飞书权限不足", error: new FeishuApiError("api", "record create", undefined, 1254303), expectCode: "permanent_validation" },
+    { name: "飞书 401", error: new FeishuApiError("http", "token request", 401), expectCode: "permanent_auth" },
+    { name: "AI 认证失败", error: new AiProviderError("auth_error", "bad key"), expectCode: "permanent_auth" },
+    { name: "AI 请求不合法", error: new AiProviderError("request_error", "bad payload"), expectCode: "permanent_validation" },
+  ];
+  for (const c of cases) {
+    const h = harness(job({ attemptCount: 1, maxAttempts: 5 }), { handlerError: c.error });
+    const worker = new PipelineJobWorker({ jobs: h.jobs, sync: h.sync, workerId: "worker", leaseMs: 30_000, now: () => new Date(NOW) });
+    assert.deepEqual(await worker.runOnce(), { kind: "failed", jobId: "job-1" }, c.name);
+    const calls = h.calls.map((call) => (call as unknown[])[0]);
+    assert.equal(calls.includes("reschedule"), false, `${c.name}: 不应重排`);
+    const payload = (h.calls.at(-1) as unknown[])[2] as Record<string, unknown>;
+    assert.equal(payload.status, "failed", c.name);
+    assert.equal(payload.errorCode, c.expectCode, c.name);
+  }
+});
+
+test("可重试错误仍然按退避重排（分类不误伤）", async () => {
+  const h = harness(job({ attemptCount: 1, maxAttempts: 5 }), { handlerError: new Error("socket hang up") });
+  const worker = new PipelineJobWorker({ jobs: h.jobs, sync: h.sync, workerId: "worker", leaseMs: 30_000, now: () => new Date(NOW) });
+  await worker.runOnce();
+  const kinds = h.calls.map((call) => (call as unknown[])[0]);
+  assert.ok(kinds.includes("reschedule"));
+
+  const limited = harness(job({ attemptCount: 1, maxAttempts: 5 }), { handlerError: new AiProviderError("rate_limited", "429") });
+  const w2 = new PipelineJobWorker({ jobs: limited.jobs, sync: limited.sync, workerId: "worker", leaseMs: 30_000, now: () => new Date(NOW) });
+  await w2.runOnce();
+  const reschedule = limited.calls.find((call) => (call as unknown[])[0] === "reschedule") as unknown[];
+  assert.ok((reschedule[2] as { backoffMs: number }).backoffMs > 0);
 });

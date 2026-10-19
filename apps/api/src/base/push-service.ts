@@ -31,6 +31,8 @@ export interface BasePushServiceDeps {
 
 export type PushOutcome =
   | { kind: "pushed"; status: string; baseRecordId: string | null; created: boolean; omittedFields: OmittedField[] }
+  // Base 行已写成功，但本地记账失败。绝不能当成外部写失败重推（会重复写 Base 并误报状态）。
+  | { kind: "pushed_unrecorded"; baseRecordId: string; detail: string }
   | { kind: "not_found" }
   | { kind: "conflict" } // pull 未同步，或 TB 负责人未匹配等待人工映射
   | { kind: "error" }; // 推送失败（safe error 已记录，可重试）
@@ -113,7 +115,19 @@ export function createBasePushService(deps: BasePushServiceDeps) {
         : null;
       // 比较实质字段 hash 而不是 sourceVersion：负责人/状态/时间等元数据更新不应重置 PM 状态。
       // 找不到既有快照时按实质变更处理，避免在不确定时覆盖 PM 工作。
-      const substantiveChanged = Boolean(req.baseRecordId) && (
+      // 对账：上一次推送已把 Base 行写成功、但本地 base_record_id 没落地（记账失败或进程崩溃）时，
+      // 先据此补写记录，再决定要不要做实质变更处理——否则重试会把同一需求再写一遍。
+      let effectiveBaseRecordId = req.baseRecordId;
+      if (!effectiveBaseRecordId && lastSuccessfulPush?.baseRecordId) {
+        try {
+          await deps.requirements.setBaseRecord(req.id, lastSuccessfulPush.baseRecordId, startedAt);
+          effectiveBaseRecordId = lastSuccessfulPush.baseRecordId;
+        } catch {
+          // 补写失败不阻塞：本次仍按既有 Base 行处理，findByRequirementKey 会命中它而不是新建
+          effectiveBaseRecordId = lastSuccessfulPush.baseRecordId;
+        }
+      }
+      const substantiveChanged = Boolean(effectiveBaseRecordId) && (
         !lastSuccessfulPush || !previousSource || previousSource.substantiveHash !== req.substantiveHash
       );
       const latestPush = previous ? null : await deps.basePushes.latest(req.id);
@@ -156,6 +170,17 @@ export function createBasePushService(deps: BasePushServiceDeps) {
           },
           aiValues: ai,
         });
+      } catch (error) {
+        const failure = safeBaseFailure(error);
+        await deps.basePushes.updateResult(run.id, { status: "failed", safeErrorCode: failure.code, safeErrorSummary: failure.summary, completedAt: now().toISOString() });
+        await deps.requirements.setPushState(req.id, "failed");
+        await deps.audit.append({ id: randomUUID(), actorId: deps.actorId, eventType: "base.push", entityType: "requirement", entityId: req.id, result: "failed", safeDetails: { sourceVersion: req.sourceVersion, errorClass: "base_push_failed" }, occurredAt: now().toISOString() });
+        return { kind: "error" };
+      }
+      // 外部写入已成功，以下只是本地记账。记账失败不能回退成"推送失败"：
+      // Base 行已经存在，重推会在 findByRequirementKey 尚未可见时制造重复行，
+      // 同时向 PM 误报"没推上去"。留一条可诊断的审计，并让上层把作业判为成功。
+      try {
         await deps.basePushes.updateResult(run.id, { status: "pushed", baseRecordId: pushedResult.recordId, completedAt: now().toISOString() });
         await deps.requirements.setBaseRecord(req.id, pushedResult.recordId, now().toISOString());
         await deps.requirements.setPushState(req.id, "pushed");
@@ -166,10 +191,17 @@ export function createBasePushService(deps: BasePushServiceDeps) {
         }
       } catch (error) {
         const failure = safeBaseFailure(error);
-        await deps.basePushes.updateResult(run.id, { status: "failed", safeErrorCode: failure.code, safeErrorSummary: failure.summary, completedAt: now().toISOString() });
-        await deps.requirements.setPushState(req.id, "failed");
-        await deps.audit.append({ id: randomUUID(), actorId: deps.actorId, eventType: "base.push", entityType: "requirement", entityId: req.id, result: "failed", safeDetails: { sourceVersion: req.sourceVersion, errorClass: "base_push_failed" }, occurredAt: now().toISOString() });
-        return { kind: "error" };
+        try {
+          await deps.audit.append({
+            id: randomUUID(), actorId: deps.actorId, eventType: "base.push", entityType: "requirement", entityId: req.id,
+            result: "succeeded",
+            safeDetails: { bookkeeping: "failed", baseRecordId: pushedResult.recordId, code: failure.code, sourceVersion: req.sourceVersion },
+            occurredAt: now().toISOString(),
+          });
+        } catch {
+          // 审计也失败时不再尝试：结论仍是"外部写成功、本地未记账"
+        }
+        return { kind: "pushed_unrecorded", baseRecordId: pushedResult.recordId, detail: failure.code };
       }
       await auditPushSuccess(req.id, req.sourceVersion, pushedResult.created, false, pushedResult.omittedFields);
       return { kind: "pushed", status: "pushed", baseRecordId: pushedResult.recordId, created: pushedResult.created, omittedFields: pushedResult.omittedFields };

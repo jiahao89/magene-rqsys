@@ -23,7 +23,7 @@ const pushRun = (overrides: Partial<BasePushRunRecord> = {}): BasePushRunRecord 
   safeErrorSummary: null, startedAt: "2026-10-08T00:00:00.000Z", completedAt: "2026-10-08T00:00:01.000Z", ...overrides,
 });
 
-function makeHarness(options: { req?: RequirementRecord; previous?: BasePushRunRecord | null; lastSuccessful?: BasePushRunRecord | null; sourceSnapshot?: SourceSnapshotRecord | null; omittedFields?: { field: string; value: string; reason: "not_in_base_select_options" | "category_omitted_by_policy" }[]; pushError?: Error } = {}) {
+function makeHarness(options: { bookkeepingError?: boolean; req?: RequirementRecord; previous?: BasePushRunRecord | null; lastSuccessful?: BasePushRunRecord | null; sourceSnapshot?: SourceSnapshotRecord | null; omittedFields?: { field: string; value: string; reason: "not_in_base_select_options" | "category_omitted_by_policy" }[]; pushError?: Error } = {}) {
   const auditEvents: { eventType: string; result: string; safeDetails: Record<string, unknown> }[] = [];
   const req = options.req ?? requirement();
   const calls: string[] = [];
@@ -37,7 +37,10 @@ function makeHarness(options: { req?: RequirementRecord; previous?: BasePushRunR
       get: async () => req,
       setOwner: async () => { calls.push("owner"); },
       setPushState: async (_id: string, state: RequirementRecord["pipeline"]["push"]) => { calls.push(`state:${state}`); req.pipeline.push = state; },
-      setBaseRecord: async (_id: string, recordId: string) => { savedBaseRecord = recordId; calls.push("base-record"); },
+      setBaseRecord: async (_id: string, recordId: string) => {
+        if (options.bookkeepingError) throw new Error("bookkeeping down");
+        savedBaseRecord = recordId; calls.push("base-record");
+      },
     } as never,
     people: { resolveActive: async () => null } as never,
     analyses: { latest: async () => ({ status: "analyzed", analysisVersion: 1, moduleSuggestion: null, priority: null } as AnalysisRunRecord) } as never,
@@ -118,4 +121,33 @@ test("classifies Feishu failures from structured fields rather than Error.messag
   assert.equal(result.kind, "error");
   assert.equal(h.savedFailure?.code, "FEISHU_RECORD_UPDATE_CODE_1254043");
   assert.equal(h.savedFailure?.summary, "Feishu record update failed (code 1254043); retry is available.");
+});
+
+test("a bookkeeping failure after a successful Base write is not reported as a push failure", async () => {
+  // 回归：Base 行写成功后本地落库失败，早期实现把整次推送记成 failed 并让 worker 重试。
+  // Base 行已经存在，重试会在 findByRequirementKey 尚未可见时制造重复行，
+  // 同时向 PM 误报"没推上去"。正确结论是 pushed_unrecorded（外部已成功、本地未记账）。
+  const h = makeHarness({ bookkeepingError: true });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed_unrecorded");
+  assert.equal((result as { baseRecordId: string }).baseRecordId, "record-2");
+  assert.ok(h.calls.includes("base"), "外部写必须已发生");
+  assert.equal(h.calls.includes("state:failed"), false, "不得把推送状态标记为失败");
+});
+
+test("reconciles a Base record left by a previous push whose local record was never written", async () => {
+  // 上一次：Base 写成功 + 记账失败 → base_record_id 为空但 base_push_runs 已记成功。
+  // 再次推送时必须先据此补写记录，按"已有行"处理，而不是当新建。
+  const req = requirement({ baseRecordId: null, pipeline: { pull: "synced", analysis: "analyzed", owner: "not_required", push: "pending" } });
+  const h = makeHarness({
+    req,
+    lastSuccessful: pushRun({ sourceVersion: 1, pushVersion: 1, baseRecordId: "record-prev" }),
+    sourceSnapshot: { id: "snapshot-1", requirementId: req.id, sourceVersion: 1, sourceHash: "hash-v1", substantiveHash: "substantive-v1", payload: {} } as never,
+  });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  // 关键：base_record_id 为空但上一次推送已成功 → 必须按"实质变更"处理（而不是当新建）
+  assert.equal(h.baseInput?.substantiveChanged, true);
+  // 补写记录发生在外部写之前
+  assert.ok(h.calls.indexOf("base-record") < h.calls.indexOf("base"), `调用顺序: ${h.calls.join(",")}`);
 });

@@ -38,9 +38,12 @@ export class SyncOrchestrator {
     let cursor:string|null=null;let all:TeambitionTaskRecord[]=[];const seen=new Set<string>();const clock=this.options.now??(()=>new Date());
     try {
       while(true){const page=await this.source.listRequirements(input.config,cursor);for(const record of page.items){if(!record.id)continue;if(seen.has(record.id))continue;seen.add(record.id);all.push(record);}if(!page.hasMore)break;if(!page.nextCursor||page.nextCursor===cursor)throw new Error("Teambition pagination cursor did not advance");cursor=page.nextCursor;}
-    } catch {
+    } catch (error) {
+      // 此前这里把原因整个丢掉，只写一句固定文案：5 次重试无法区分"网关 key 过期"与"偶发抖动"，
+      // 目标环境排障只能靠猜。现在落一个**脱敏的结构化代码**（不写 provider 原文、不含凭据）。
+      const code = classifyPullFailure(error);
       const result:SyncResult={batchId:input.batchId,status:"failed",totalCount:0,succeededCount:0,failedCount:0};
-      await this.persistence.completeBatch(input.batchId,{...result,errorSummary:"Teambition task list could not be fetched.",completedAt:clock().toISOString()});
+      await this.persistence.completeBatch(input.batchId,{...result,errorSummary:`Teambition task list could not be fetched (${code}).`,completedAt:clock().toISOString()});
       return result;
     }
     // 单项重试：只处理指定需求（按源需求 ID 过滤）
@@ -61,4 +64,23 @@ export class SyncOrchestrator {
     const result:SyncResult={batchId:input.batchId,status:failedCount===0?"succeeded":succeededCount===0?"failed":"partial_failure",totalCount:all.length,succeededCount,failedCount};
     await this.persistence.completeBatch(input.batchId,{...result,errorSummary:failedCount?`${failedCount} item(s) failed; inspect item results.`:null,completedAt:clock().toISOString()});return result;
   }
+}
+
+/**
+ * 拉取失败的脱敏分类。只读取结构化字段（HTTP 状态、错误类型），不解析 message 文本，
+ * 不写入任何凭据或 provider 原文——用于区分"配置/认证错误"与"可重试的抖动"。
+ */
+function classifyPullFailure(error: unknown): string {
+  const withStatus = error as { statusCode?: number | null; status?: number | null } | null;
+  const status = withStatus?.statusCode ?? withStatus?.status ?? null;
+  if (typeof status === "number") {
+    if (status === 401 || status === 403) return `TB_HTTP_${status}_AUTH`;
+    if (status === 404) return "TB_HTTP_404_NOT_FOUND";
+    if (status === 429) return "TB_HTTP_429_RATE_LIMITED";
+    if (status >= 500) return `TB_HTTP_${status}_UPSTREAM`;
+    return `TB_HTTP_${status}`;
+  }
+  if (error instanceof SyntaxError) return "TB_INVALID_JSON";
+  if (error instanceof Error && /pagination cursor did not advance/.test(error.message)) return "TB_PAGINATION_STALLED";
+  return "TB_UNKNOWN";
 }
