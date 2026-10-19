@@ -71,6 +71,10 @@ const ALLOWED_DETAIL_KEYS: readonly string[] = [
   "analysisVersion",
   "priorAnalysisVersion",
   "analysisStatus",
+  // 分析阶段自动恢复用：来源标记（scheduler）与状态回退的起止状态
+  "source",
+  "from",
+  "to",
   "entryCount",
   "created",
   "replay",

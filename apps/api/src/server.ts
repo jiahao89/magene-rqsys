@@ -13,6 +13,7 @@ import { AnalysisRepositoryAdapter } from "./analysis/repository-adapter.js";
 import { buildPriorityRule } from "./analysis/priority-rule.js";
 import { createDueSyncJobs } from "./scheduler/due-jobs.js";
 import { reapOrphanedBatches } from "./scheduler/reap.js";
+import { recoverAnalysisPipeline } from "./scheduler/analysis-recovery.js";
 import { FeishuBasePushAdapter } from "./base/client.js";
 import { FeishuBitableClient } from "./base/transport.js";
 import { RateLimitedBaseClient } from "./base/rate-limit.js";
@@ -289,6 +290,25 @@ if (worker && repositories && workerPollMs > 0) {
         if (outcome.error) {
           process.stderr.write(`scheduled sync failed for source ${outcome.sourceConfigId}: ${outcome.error}\n`);
         }
+      }
+      // 分析阶段自动恢复：先收敛 running 崩溃残留（回退 failed_retryable），再补排可重试失败；
+      // 本轮入队的重试作业会被随后的 worker 直接消费。恢复失败不阻断本轮调度。
+      try {
+        const recovery = await recoverAnalysisPipeline({
+          requirements: repositories.requirements, analyses: repositories.analyses,
+          jobs: repositories.jobs, audit: repositories.audit, now,
+        });
+        const retried = recovery.retried.filter((row) => row.action === "enqueued");
+        const reverted = recovery.recovered.filter((row) => row.action === "reverted");
+        const exhausted = recovery.retried.filter((row) => row.action === "exhausted" && row.reason === "retry_budget_exhausted");
+        if (retried.length > 0) process.stdout.write(`auto-retried ${retried.length} failed analysis(es)\n`);
+        if (reverted.length > 0) {
+          process.stdout.write(`recovered ${reverted.length} stranded analysis(es): ${reverted.map((row) => `${row.requirementId}(${row.reason})`).join(", ")}\n`);
+        }
+        if (exhausted.length > 0) process.stderr.write(`gave up auto-retrying ${exhausted.length} analysis(es): retry budget exhausted\n`);
+        for (const error of recovery.errors) process.stderr.write(`analysis recovery item failed: ${error}\n`);
+      } catch (error) {
+        process.stderr.write(`analysis recovery failed: ${String(error)}\n`);
       }
       await worker.runOnce();
     })().catch((error) => process.stderr.write(`worker tick failed: ${String(error)}\n`));
