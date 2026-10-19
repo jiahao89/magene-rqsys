@@ -20,6 +20,7 @@ export interface BaseWriteOptions {
 /**
  * 通知四字段的 Base 列名映射。飞书多维表格由自动化规则读取这四个「系统字段」发通知，
  * 应用只负责在推送时把事件写入正确值；这里不实现任何发送逻辑。
+ * requirementLink 是可选的第五个字段：给 PM 点击的需求深链，每次推送都写，不属于通知事件。
  * 整段未配置时回落 DEFAULT_BASE_FIELDS（见 server.ts 的 parseBaseFields）。
  */
 export interface BaseNotificationFieldMap {
@@ -27,6 +28,8 @@ export interface BaseNotificationFieldMap {
   eventType: string;
   recipient: string;
   ownerMergeValue: string;
+  /** 需求深链文本字段；目标 Base 尚未建该字段时可省略。 */
+  requirementLink?: string;
 }
 
 /**
@@ -89,6 +92,12 @@ export interface BasePushInput {
    * 未传时不写四个通知系统字段（重复同步无变化、同键重放等静默场景）。
    */
   notification?: BaseNotificationPush;
+  /**
+   * 稳定的 Web 需求深链（`<工作台地址>?requirement=<requirements.id>`）。
+   * 独立于 notification：每次推送都写，首推静默时也要写——它是给 PM 点击的入口，不是通知事件。
+   * 目标 Base 无对应字段（1254045）时记入 omittedFields，不阻断推送。
+   */
+  requirementLink?: string;
 }
 
 export interface PmSnapshotWriter {
@@ -170,6 +179,10 @@ export class FeishuBasePushAdapter {
       if (!Number.isFinite(timestamp)) throw new Error("Invalid Base push timestamp");
       delta[metadata.lastPushedAt] = timestamp;
     }
+    // 需求深链是纯文本业务字段：与通知是否静默无关，每次都进第一次写入的 delta。
+    // 不涉及 user_id_type；目标 Base 缺该字段时在 writeRecord 里按 1254045 记录省略后重试。
+    const requirementLinkField = this.fields.notification?.requirementLink;
+    if (requirementLinkField && input.requirementLink) delta[requirementLinkField] = input.requirementLink;
     if (!existing) {
       const pmStatusField = this.fields.pm[0];
       if (pmStatusField) delta[pmStatusField] = this.selectValue(pmStatusField, "待处理");
@@ -196,11 +209,13 @@ export class FeishuBasePushAdapter {
    * 一次请求里所有人员字段必须是同一类型。负责人映射可能是 open_id，而 PM Leader 收件人是
    * user_id；把二者写进同一次请求会被 1254066 UserFieldConvFail 拒绝（上一版 1254045 重试
    * 掩盖了这条路径）。因此有通知载荷时拆成两次写入：
-   *   1. 业务字段 + `系统负责人通知归并值`（人员字段只有负责人，用 input.owner.idType）；
+   *   1. 业务字段 + 需求深链 + `系统负责人通知归并值`（人员字段只有负责人，用 input.owner.idType）；
    *   2. `系统通知事件ID/类型/收件人`（收件人类型由服务层显式给出）；create 时用第一次返回的 recordId update。
-   * 静默场景（没有 notification）保持原有单次写入，不多发请求。
-   * 目标 Base 不存在通知字段（1254045 FieldNameNotFound）时按既有 omittedFields 机制记录省略、
-   * 用不含这些字段的载荷继续：业务推送不得因为通知字段缺失而失败。其它错误原样抛出。
+   * 静默场景（没有 notification）只写第一次，不多发请求——但需求深链仍会写（它不属于通知事件）。
+   * 目标 Base 缺少某个可选字段（需求链接 / 负责人归并值 / 三个通知字段）时飞书返回 1254045
+   * FieldNameNotFound：第一次写入按「先单独去掉链接、再单独去掉归并值、最后都去掉」的顺序重试，
+   * 把实际去掉的字段记入 omittedFields 后继续；第二次写入同理。
+   * 业务推送不得因为可选字段缺失而失败。其它错误原样抛出。
    */
   private async writeRecord(recordId: string | null, delta: Record<string, unknown>, input: BasePushInput, omittedFields: OmittedField[]): Promise<BaseRecord> {
     const fields = this.fields.notification;
@@ -208,23 +223,34 @@ export class FeishuBasePushAdapter {
     // 第一次写入的人员字段只有负责人（或其归并值），请求类型固定取负责人映射的类型。
     // 静默场景同样要带上它：否则真实环境不会按 owner 的 id 类型解释「执行人」字段。
     const ownerOptions: BaseWriteOptions | undefined = input.owner ? { userIdType: input.owner.idType } : undefined;
-    if (!fields || !notification) {
-      return recordId ? this.client.update(recordId, delta, ownerOptions) : this.client.create(delta, ownerOptions);
-    }
-    // 无 owner 时归并值不写（不能凭空造一个没有身份类型的人员值）。
-    const ownerMergeUserId = input.owner ? notification.ownerMergeUserId : null;
-    const ownerMerge = fields.ownerMergeValue && ownerMergeUserId
+    // 无 owner 或静默场景时不写归并值（不能凭空造一个没有身份类型的人员值）。
+    const ownerMergeUserId = fields && notification && input.owner ? notification.ownerMergeUserId : null;
+    const ownerMerge = fields?.ownerMergeValue && ownerMergeUserId
       ? { field: fields.ownerMergeValue, userId: ownerMergeUserId }
       : null;
-    let record: BaseRecord;
-    try {
-      const payload = ownerMerge ? { ...delta, [ownerMerge.field]: [{ id: ownerMerge.userId }] } : delta;
-      record = recordId ? await this.client.update(recordId, payload, ownerOptions) : await this.client.create(payload, ownerOptions);
-    } catch (error) {
-      if (!ownerMerge || !isFieldNotFound(error)) throw error;
-      omittedFields.push({ field: ownerMerge.field, value: ownerMerge.userId, reason: "field_not_in_base" });
-      record = recordId ? await this.client.update(recordId, delta, ownerOptions) : await this.client.create(delta, ownerOptions);
+    const requirementLinkField = fields?.requirementLink;
+    const requirementLink = requirementLinkField && input.requirementLink && Object.hasOwn(delta, requirementLinkField)
+      ? input.requirementLink
+      : null;
+
+    let record: BaseRecord | null = null;
+    const attempts = businessWriteAttempts(Boolean(ownerMerge), requirementLink !== null);
+    for (const [index, attempt] of attempts.entries()) {
+      try {
+        const payload = businessWritePayload(delta, requirementLinkField, ownerMerge, attempt);
+        record = recordId ? await this.client.update(recordId, payload, ownerOptions) : await this.client.create(payload, ownerOptions);
+      } catch (error) {
+        // 只有「字段不存在」允许去掉可选字段重试；最后一次尝试失败时原样抛出。
+        if (!isFieldNotFound(error) || index === attempts.length - 1) throw error;
+        continue;
+      }
+      if (ownerMerge && !attempt.ownerMerge) omittedFields.push({ field: ownerMerge.field, value: ownerMerge.userId, reason: "field_not_in_base" });
+      if (requirementLink && requirementLinkField && !attempt.requirementLink) omittedFields.push({ field: requirementLinkField, value: requirementLink, reason: "field_not_in_base" });
+      break;
     }
+    // 每次尝试要么成功并置 record，要么抛出；这里只用于让类型收窄。
+    if (!record) throw new Error("Base business write did not complete");
+    if (!fields || !notification) return record;
 
     // 第二次写入只有通知字段，人员字段只剩收件人：整个请求用它显式声明的类型。
     const notificationDelta: Record<string, unknown> = {};
@@ -242,6 +268,39 @@ export class FeishuBasePushAdapter {
       return record;
     }
   }
+}
+
+interface BusinessWriteAttempt { ownerMerge: boolean; requirementLink: boolean }
+
+/**
+ * 第一次业务写入的尝试顺序（只在 1254045 时推进）：
+ * 全量 → 去掉链接保留归并值 → 去掉归并值保留链接 → 都去掉。
+ * 先单独试两个可选字段，能区分到底缺哪一个，避免误删目标 Base 仍然存在的系统字段。
+ */
+function businessWriteAttempts(hasOwnerMerge: boolean, hasRequirementLink: boolean): BusinessWriteAttempt[] {
+  if (hasOwnerMerge && hasRequirementLink) {
+    return [
+      { ownerMerge: true, requirementLink: true },
+      { ownerMerge: true, requirementLink: false },
+      { ownerMerge: false, requirementLink: true },
+      { ownerMerge: false, requirementLink: false },
+    ];
+  }
+  if (hasOwnerMerge) return [{ ownerMerge: true, requirementLink: false }, { ownerMerge: false, requirementLink: false }];
+  if (hasRequirementLink) return [{ ownerMerge: false, requirementLink: true }, { ownerMerge: false, requirementLink: false }];
+  return [{ ownerMerge: false, requirementLink: false }];
+}
+
+function businessWritePayload(
+  delta: Record<string, unknown>,
+  requirementLinkField: string | undefined,
+  ownerMerge: { field: string; userId: string } | null,
+  attempt: BusinessWriteAttempt,
+): Record<string, unknown> {
+  const payload = { ...delta };
+  if (requirementLinkField && !attempt.requirementLink) delete payload[requirementLinkField];
+  if (ownerMerge && attempt.ownerMerge) payload[ownerMerge.field] = [{ id: ownerMerge.userId }];
+  return payload;
 }
 
 /** 飞书 1254045 FieldNameNotFound：目标 Base 缺少某个字段。 */

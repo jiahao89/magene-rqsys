@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Activity, ArrowDownToLine, ArrowRight, Blocks, Check, ChevronDown, CircleAlert, CircleHelp, Clock3, Command, Database, FileClock, FolderSync, Gauge, GitBranch, Layers3, ListChecks, LoaderCircle, Moon, Play, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Sun, Users, X } from "lucide-react";
 import { ApiError, createPriorityRuleDraft, getHealth, getOverviewMetrics, listDictionaryVersions, listPriorityRules, listSources, publishPriorityRule, runSync, type DictionaryVersion, type OverviewMetrics, type PriorityRuleVersion, type PublishStatus, type SourceConfig, type SyncExecutionMode } from "./api";
 import { AuditPanel, BatchesPanel, MappingsPanel, ModulesPanel, PanelErrorBoundary, PeoplePanel, RequirementsPanel, SourcesPanel } from "./panels";
+import { readRequirementDeepLink } from "./deep-link";
 import { stateLabel } from "./state-labels";
 import { checkScheduleHealth, describeCountdown, formatInZone, nextRunAt, type WeeklySchedule } from "./schedule";
 
@@ -67,7 +68,10 @@ export function SchedulerHealthPanel({ schedule, now, loadState, onConfigure }: 
 }
 
 function App() {
-  const [page, setPage] = useState<Page>("Overview");
+  // 通知按钮深链只在启动时读取一次：`?requirement=<requirements.id>`。
+  // 缺失/无效时保持默认总览页；命中时直接进入需求池并打开该需求详情。
+  const [deepLinkRequirementId] = useState(() => readRequirementDeepLink(window.location.search));
+  const [page, setPage] = useState<Page>(deepLinkRequirementId ? "Requirements" : "Overview");
   const [theme, setTheme] = useState<Theme>(readStoredTheme);
   const [health, setHealth] = useState<LoadState>("loading");
   const [sources, setSources] = useState<SourceConfig[]>([]);
@@ -179,7 +183,7 @@ function App() {
             <footer className="page-footer"><span>RQ-Sys MVP <span className="footer-dot">·</span> 本地开发工作区</span><span><ShieldCheck size={14} />状态由 API 返回；不展示飞书 PM 处理状态</span></footer>
           </>}
 
-          {page !== "Overview" && <section className="secondary-page"><div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" />WORKSPACE</div><h1>{pageTitles[page]}</h1><p>{pageDescription(page)}</p></div>{page === "Batches" && <div className="heading-actions"><button className="button button-secondary" title="只导入 Teambition 源数据；不触发 AI、负责人匹配、Base 推送或通知" onClick={() => void handleRunSync("source_only")} disabled={busy || health !== "ready"}>仅同步源数据</button><button className="button button-primary" onClick={() => void handleRunSync()} disabled={busy || health !== "ready"}><Play size={15} fill="currentColor" />{busy ? "提交中…" : "立即同步"}</button></div>}</div><SecondaryContent page={page} sources={sources} batches={batches} requirements={shownRequirements} loadState={health} onNavigate={setPage} onRefresh={() => void loadData()} /></section>}
+          {page !== "Overview" && <section className="secondary-page"><div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" />WORKSPACE</div><h1>{pageTitles[page]}</h1><p>{pageDescription(page)}</p></div>{page === "Batches" && <div className="heading-actions"><button className="button button-secondary" title="只导入 Teambition 源数据；不触发 AI、负责人匹配、Base 推送或通知" onClick={() => void handleRunSync("source_only")} disabled={busy || health !== "ready"}>仅同步源数据</button><button className="button button-primary" onClick={() => void handleRunSync()} disabled={busy || health !== "ready"}><Play size={15} fill="currentColor" />{busy ? "提交中…" : "立即同步"}</button></div>}</div><SecondaryContent page={page} sources={sources} batches={batches} requirements={shownRequirements} loadState={health} deepLinkRequirementId={deepLinkRequirementId} onNavigate={setPage} onRefresh={() => void loadData()} /></section>}
           </PanelErrorBoundary>
         </div>
       </main>
@@ -192,8 +196,8 @@ function RequirementsTable({ rows, loading }: { rows: Requirement[]; loading: bo
   return <div className="table-scroll"><table><thead><tr><th>需求</th><th>版本</th><th>拉取</th><th>AI 分析</th><th>负责人</th><th>Base 推送</th></tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td><div className="requirement-title"><span className="req-id">REQ-{row.sourceRequirementId}</span><strong>{row.title}</strong></div></td><td><span className="version-label">v{row.sourceVersion}</span></td><td><StagePill stage="pull" value={row.pipeline.pull} /></td><td><StagePill stage="analysis" value={row.pipeline.analysis} /></td><td><StagePill stage="owner" value={row.pipeline.owner} /></td><td><StagePill stage="push" value={row.pipeline.push} /></td></tr>)}</tbody></table></div>;
 }
 
-function SecondaryContent({ page, sources, batches, requirements, loadState, onNavigate, onRefresh }: { page: Page; sources: SourceConfig[]; batches: Batch[]; requirements: Requirement[]; loadState: LoadState; onNavigate: (page: Page) => void; onRefresh: () => void }) {
-  if (page === "Requirements") return <RequirementsPanel onRefresh={onRefresh} />;
+function SecondaryContent({ page, sources, batches, requirements, loadState, deepLinkRequirementId, onNavigate, onRefresh }: { page: Page; sources: SourceConfig[]; batches: Batch[]; requirements: Requirement[]; loadState: LoadState; deepLinkRequirementId: string | null; onNavigate: (page: Page) => void; onRefresh: () => void }) {
+  if (page === "Requirements") return <RequirementsPanel onRefresh={onRefresh} initialRequirementId={deepLinkRequirementId} />;
   if (page === "Batches") return <BatchesPanel onRefresh={onRefresh} />;
   if (page === "Sources") return <SourcesPanel sources={sources} loadState={loadState} onRefresh={onRefresh} />;
   if (page === "Modules") return <ModulesPanel />;

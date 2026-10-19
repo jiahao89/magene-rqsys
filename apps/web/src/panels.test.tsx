@@ -355,6 +355,20 @@ describe("RequirementsPanel (ticket 17)", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/requirements?q=%E6%8A%A5%E8%A1%A8&executorName=%E6%AF%95%E6%A2%93%E6%B5%A9&limit=25", expect.anything()));
     expect(await screen.findByRole("button", { name: "加载更多" })).toBeInTheDocument();
   });
+
+  it("opens the requirement referenced by a notification deep link on first mount", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/requirements/req-1") return jsonOk({ ...row, analysis: null, analyses: [] });
+      return jsonOk({ items: [row], nextCursor: null });
+    });
+
+    render(<RequirementsPanel onRefresh={() => undefined} initialRequirementId="req-1" />);
+
+    // 复用既有「选中需求」详情路径：URL 参数命中时无需再点「查看」。
+    expect(await screen.findByText(/需要报表（REQ-tb-1/)).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("/api/requirements/req-1", expect.anything());
+  });
 });
 
 describe("团队字典维护", () => {

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import App from "./App";
 
@@ -8,6 +8,11 @@ beforeEach(() => {
   cleanup();
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
+});
+
+afterEach(() => {
+  // 深链测试会改写地址栏：恢复默认路径，避免影响其它用例。
+  window.history.replaceState(null, "", "/");
 });
 
 describe("RQ-Sys local workbench", () => {
@@ -145,5 +150,34 @@ describe("RQ-Sys local workbench", () => {
     expect(await screen.findByText("地图")).toBeInTheDocument();
     expect(screen.getAllByText("盛永帮").length).toBeGreaterThanOrEqual(1);
     expect(fetchMock).toHaveBeenCalledWith("/api/modules", expect.anything());
+  });
+
+  it("opens the requirement detail from a ?requirement= notification deep link", async () => {
+    window.history.replaceState(null, "", "/?requirement=req-1");
+    const row = { id: "req-1", sourceRequirementId: "tb-1", title: "需要报表", sourceVersion: 2, pipeline: { pull: "synced", analysis: "analyzed", owner: "auto_mapped", push: "pushed" } };
+    fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/sources" || path.startsWith("/api/batches")) return Response.json({ items: [] });
+      if (path === "/api/requirements/req-1") return Response.json({ ...row, analysis: null, analyses: [] });
+      if (path.startsWith("/api/requirements")) return Response.json({ items: [row], nextCursor: null });
+      return Response.json({ items: [] });
+    });
+
+    render(<App />);
+
+    // 深链进入需求池并直接展开该需求，不需要用户再点「查看」。
+    expect(await screen.findByRole("heading", { name: "需求池" })).toBeInTheDocument();
+    expect(await screen.findByText(/需要报表（REQ-tb-1/)).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("/api/requirements/req-1", expect.anything());
+  });
+
+  it("keeps the default overview when the deep-link parameter is missing or empty", async () => {
+    window.history.replaceState(null, "", "/?requirement=");
+    fetchMock.mockImplementation(async () => Response.json({ items: [] }));
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "工作流总览" })).toBeInTheDocument();
   });
 });

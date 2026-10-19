@@ -131,10 +131,12 @@ test("reports no omissions when every value fits the Base options", async () => 
 const notificationFields = {
   projectId: "TB项目ID", requirementId: "TB需求ID", owner: "执行人",
   source: { title: "标题" }, ai: {}, pm: [],
-  notification: { eventId: "系统通知事件ID", eventType: "系统通知类型", recipient: "系统通知收件人", ownerMergeValue: "系统负责人通知归并值" },
+  notification: { eventId: "系统通知事件ID", eventType: "系统通知类型", recipient: "系统通知收件人", ownerMergeValue: "系统负责人通知归并值", requirementLink: "系统需求链接" },
 };
 
 const REQUIREMENT_DB_ID = "11111111-2222-4333-8444-555555555555";
+/** 通知按钮指向的稳定深链；测试只关心它是否被原样写入业务字段。 */
+const REQUIREMENT_LINK = `https://workbench.example/app?requirement=${REQUIREMENT_DB_ID}`;
 /** 线上 RQSYS_PM_LEADER_USER_ID 的形态：32 位十六进制 user_id（不是 ou_ 开头的 open_id）。 */
 const PM_LEADER_USER_ID = "0123456789abcdef0123456789abcdef";
 
@@ -172,6 +174,7 @@ test("splits the owner merge value and the recipient into two requests when thei
   const adapter = new FeishuBasePushAdapter(fake.client, notificationFields);
   const result = await adapter.push({
     projectId: "p", requirementId: "r", requirementDbId: REQUIREMENT_DB_ID, title: "Title",
+    requirementLink: REQUIREMENT_LINK,
     owner: { userId: "ou-owner", idType: "open_id" }, sourceVersion: 1, substantiveChanged: false, idempotencyKey: "p:r:v1",
     notification: {
       eventId: "first_push:r:sv1", eventType: "first_push",
@@ -184,11 +187,12 @@ test("splits the owner merge value and the recipient into two requests when thei
   assert.equal(fake.writes.length, 2, "负责人(open_id)与收件人(user_id)不能出现在同一次请求里");
   const first = fake.writes[0]!;
   const second = fake.writes[1]!;
-  // 第一次：业务字段 + 负责人归并值，请求类型是负责人映射的类型。
+  // 第一次：业务字段 + 负责人归并值 + 需求深链，请求类型是负责人映射的类型。
   assert.equal(first.op, "create");
   assert.deepEqual(first.options, { userIdType: "open_id" });
   assert.deepEqual(first.fields["执行人"], [{ id: "ou-owner" }]);
   assert.deepEqual(first.fields["系统负责人通知归并值"], [{ id: "ou-owner" }]);
+  assert.equal(first.fields["系统需求链接"], REQUIREMENT_LINK);
   assert.equal(first.fields["系统通知事件ID"], undefined);
   assert.equal(first.fields["系统通知收件人"], undefined);
   // 第二次：三个纯通知字段，请求类型是服务层声明的收件人类型。
@@ -341,6 +345,102 @@ test("a Base missing only the owner merge field records that omission and still 
     { field: "系统负责人通知归并值", value: "ou-owner", reason: "field_not_in_base" },
   ]);
   assert.equal(result.recordId, "record-new");
+});
+
+test("writes the requirement deep link for a silent push and records a missing link field instead of failing", async () => {
+  const created: Record<string, unknown>[] = [];
+  let creates = 0;
+  const client: BaseClient = {
+    async findByRequirementKey() { return null; },
+    async create(fields) {
+      creates += 1;
+      // 模拟目标 Base 缺少「系统需求链接」：第一次写入 1254045，去掉该字段后应成功。
+      if (creates === 1) throw new FeishuApiError("api", "record create", undefined, 1254045);
+      created.push(fields);
+      return { recordId: "record-new", fields };
+    },
+    async update(_recordId, fields) { return { recordId: "record-new", fields }; },
+    async readPmFields() { return {}; },
+  };
+  const adapter = new FeishuBasePushAdapter(client, notificationFields);
+  const result = await adapter.push({
+    projectId: "p", requirementId: "r", requirementDbId: REQUIREMENT_DB_ID, title: "Title",
+    // 静默推送（没有 notification）也要写深链：它是给 PM 点击的入口，不是通知事件。
+    requirementLink: REQUIREMENT_LINK, owner: null, sourceVersion: 1, substantiveChanged: false, idempotencyKey: "p:r:v1",
+  });
+  assert.equal(creates, 2, "缺字段时只去掉需求链接重试，不得让业务推送失败");
+  assert.equal(created[0]!["系统需求链接"], undefined);
+  // 业务字段仍然写入成功。
+  assert.equal(created[0]!["标题"], "Title");
+  assert.deepEqual(result.omittedFields, [
+    { field: "系统需求链接", value: REQUIREMENT_LINK, reason: "field_not_in_base" },
+  ]);
+  assert.equal(result.recordId, "record-new");
+});
+
+test("keeps the owner merge value when only the requirement link field is missing", async () => {
+  const created: Record<string, unknown>[] = [];
+  let creates = 0;
+  const client: BaseClient = {
+    async findByRequirementKey() { return null; },
+    async create(fields) {
+      creates += 1;
+      if (creates === 1) throw new FeishuApiError("api", "record create", undefined, 1254045);
+      created.push(fields);
+      return { recordId: "record-new", fields };
+    },
+    async update(_recordId, fields) { return { recordId: "record-new", fields }; },
+    async readPmFields() { return {}; },
+  };
+  const adapter = new FeishuBasePushAdapter(client, notificationFields);
+  const result = await adapter.push({
+    projectId: "p", requirementId: "r", requirementDbId: REQUIREMENT_DB_ID, title: "Title",
+    requirementLink: REQUIREMENT_LINK,
+    owner: { userId: "ou-owner", idType: "open_id" }, sourceVersion: 1, substantiveChanged: false, idempotencyKey: "p:r:v1",
+    notification: {
+      eventId: "owner_assigned:r:sv1:none:ou-owner", eventType: "owner_assigned",
+      recipientUserId: "ou-owner", recipientIdType: "open_id", ownerMergeUserId: "ou-owner",
+    },
+  });
+  assert.equal(creates, 2, "先单独去掉链接；归并值必须保留");
+  assert.deepEqual(created[0]!["系统负责人通知归并值"], [{ id: "ou-owner" }]);
+  assert.equal(created[0]!["系统需求链接"], undefined);
+  assert.deepEqual(result.omittedFields, [
+    { field: "系统需求链接", value: REQUIREMENT_LINK, reason: "field_not_in_base" },
+  ]);
+});
+
+test("keeps the requirement link when only the owner merge field is missing", async () => {
+  const created: Record<string, unknown>[] = [];
+  let creates = 0;
+  const client: BaseClient = {
+    async findByRequirementKey() { return null; },
+    async create(fields) {
+      creates += 1;
+      // 全量失败 → 去掉链接仍失败 → 去掉归并值保留链接成功。
+      if (creates <= 2) throw new FeishuApiError("api", "record create", undefined, 1254045);
+      created.push(fields);
+      return { recordId: "record-new", fields };
+    },
+    async update(_recordId, fields) { return { recordId: "record-new", fields }; },
+    async readPmFields() { return {}; },
+  };
+  const adapter = new FeishuBasePushAdapter(client, notificationFields);
+  const result = await adapter.push({
+    projectId: "p", requirementId: "r", requirementDbId: REQUIREMENT_DB_ID, title: "Title",
+    requirementLink: REQUIREMENT_LINK,
+    owner: { userId: "ou-owner", idType: "open_id" }, sourceVersion: 2, substantiveChanged: false, idempotencyKey: "p:r:v2",
+    notification: {
+      eventId: "substantive_update:r:sv2", eventType: "substantive_update",
+      recipientUserId: "ou-owner", recipientIdType: "open_id", ownerMergeUserId: "ou-owner",
+    },
+  });
+  assert.equal(creates, 3, "单个字段试过之后才同时去掉两个可选字段");
+  assert.equal(created[0]!["系统需求链接"], REQUIREMENT_LINK, "仍存在的链接字段不能被误删");
+  assert.equal(created[0]!["系统负责人通知归并值"], undefined);
+  assert.deepEqual(result.omittedFields, [
+    { field: "系统负责人通知归并值", value: "ou-owner", reason: "field_not_in_base" },
+  ]);
 });
 
 test("propagates a first-request failure that is not FieldNameNotFound", async () => {

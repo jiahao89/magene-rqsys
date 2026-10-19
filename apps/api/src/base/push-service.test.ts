@@ -49,6 +49,7 @@ const sourceSnapshot = (overrides: Partial<SourceSnapshotRecord> = {}): SourceSn
 interface CapturedPushInput {
   projectId: string;
   substantiveChanged: boolean;
+  requirementLink?: string;
   notification?: { eventId: string; eventType: string; recipientUserId: string | null; recipientIdType: "open_id" | "user_id" | "union_id"; ownerMergeUserId: string | null };
 }
 
@@ -65,6 +66,7 @@ function makeHarness(options: {
   analysisHistory?: AnalysisRunRecord[];
   latestAnalysis?: AnalysisRunRecord | null;
   pmLeaderUserId?: string | null;
+  webBaseUrl?: string;
   withLock?: boolean;
 } = {}) {
   const auditEvents: { eventType: string; result: string; safeDetails: Record<string, unknown> }[] = [];
@@ -127,6 +129,7 @@ function makeHarness(options: {
     baseFields: { projectId: "project", requirementId: "requirement", owner: "owner", source: {}, ai: {}, pm: ["PM状态"] },
     actorId: "operator-1",
     ...(options.pmLeaderUserId === undefined ? {} : { pmLeaderUserId: options.pmLeaderUserId }),
+    ...(options.webBaseUrl === undefined ? {} : { webBaseUrl: options.webBaseUrl }),
     now: () => new Date("2026-10-10T00:00:00.000Z"),
   });
   return { service, calls, auditEvents, get baseInput() { return baseInput; }, get savedBaseRecord() { return savedBaseRecord; }, get savedFailure() { return savedFailure; } };
@@ -233,6 +236,44 @@ test("first push stays silent so a bulk backfill cannot flood the PM Leader", as
   assert.equal(result.kind, "pushed");
   assert.equal(h.baseInput?.notification, undefined);
   assert.ok(h.calls.includes("base"));
+});
+
+test("writes the stable web requirement deep link on every push, including a silent first push", async () => {
+  const h = makeHarness({ webBaseUrl: "https://workbench.example/app" });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  // 首推静默（不写通知字段）仍然要写深链：它是给 PM 点击的入口，不是通知事件。
+  assert.equal(h.baseInput?.notification, undefined);
+  // 深链用应用库的 requirements.id（不是 TB ID），与 Web 深链参数一致。
+  assert.equal(h.baseInput?.requirementLink, "https://workbench.example/app?requirement=req-1");
+});
+
+test("defaults the requirement deep link to the production workbench", async () => {
+  const previous = process.env.RQSYS_WEB_BASE_URL;
+  delete process.env.RQSYS_WEB_BASE_URL;
+  try {
+    const h = makeHarness();
+    const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+    assert.equal(result.kind, "pushed");
+    assert.equal(h.baseInput?.requirementLink, "https://ecn8egz1lhkq.feishu.link/app/app_17fqkjwyx1u?requirement=req-1");
+  } finally {
+    if (previous === undefined) delete process.env.RQSYS_WEB_BASE_URL;
+    else process.env.RQSYS_WEB_BASE_URL = previous;
+  }
+});
+
+test("reads the deep-link base from RQSYS_WEB_BASE_URL and trims a trailing slash", async () => {
+  const previous = process.env.RQSYS_WEB_BASE_URL;
+  process.env.RQSYS_WEB_BASE_URL = "https://workbench.example/app/";
+  try {
+    const h = makeHarness();
+    const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+    assert.equal(result.kind, "pushed");
+    assert.equal(h.baseInput?.requirementLink, "https://workbench.example/app?requirement=req-1");
+  } finally {
+    if (previous === undefined) delete process.env.RQSYS_WEB_BASE_URL;
+    else process.env.RQSYS_WEB_BASE_URL = previous;
+  }
 });
 
 test("a substantive change notifies the current owner with substantive_update", async () => {

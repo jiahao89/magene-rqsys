@@ -370,7 +370,7 @@ interface AnalysisStructured {
   recommendations?: Partial<Record<"user" | "market" | "business" | "technology", AnalysisRecommendation>>;
 }
 
-export function RequirementsPanel({ onRefresh }: { onRefresh: () => void }) {
+export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefresh: () => void; initialRequirementId?: string | null }) {
   const [rows, setRows] = useState<RequirementSummary[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -407,7 +407,7 @@ export function RequirementsPanel({ onRefresh }: { onRefresh: () => void }) {
     void listTeamPeople().then(setPeople).catch((cause: unknown) => setPeopleError(errorText(cause)));
   }, [load]);
 
-  const open = async (id: string) => {
+  const open = useCallback(async (id: string) => {
     const version = ++detailRequestVersion.current;
     setSelected(null); setDetailError(null); setNotice(null);
     try {
@@ -416,7 +416,14 @@ export function RequirementsPanel({ onRefresh }: { onRefresh: () => void }) {
     } catch (cause) {
       if (version === detailRequestVersion.current) setDetailError(errorText(cause));
     }
-  };
+  }, []);
+  // 通知深链：只在首次挂载时按 URL 的 requirement 参数打开详情，之后仍由「查看」按钮驱动。
+  const deepLinkOpened = useRef(false);
+  useEffect(() => {
+    if (!initialRequirementId || deepLinkOpened.current) return;
+    deepLinkOpened.current = true;
+    void open(initialRequirementId);
+  }, [initialRequirementId, open]);
   const runAction = async (action: () => Promise<string>, detailId: string) => {
     setBusy(true); setNotice(null);
     try { const message = await action(); onRefresh(); await open(detailId); setNotice(message); }

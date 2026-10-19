@@ -31,6 +31,8 @@ export interface BasePushServiceDeps {
   actorId: string | null;
   /** PM Leader 的飞书 user_id（32 位十六进制）：first_push 的固定收件人，也是其它事件无负责人时的兜底收件人；缺省读 RQSYS_PM_LEADER_USER_ID。 */
   pmLeaderUserId?: string | null;
+  /** Web 工作台基地址（需求深链的 base）；缺省读 RQSYS_WEB_BASE_URL，再缺省用正式工作台地址。 */
+  webBaseUrl?: string | null;
   now?: () => Date;
 }
 
@@ -120,6 +122,19 @@ function snapshotOwnerLookup(payload: Record<string, unknown> | null | undefined
   return { answered: true, lookup: null };
 }
 
+/** 正式 Web 工作台地址：通知按钮需求深链的默认 base。 */
+const DEFAULT_WEB_BASE_URL = "https://ecn8egz1lhkq.feishu.link/app/app_17fqkjwyx1u";
+
+/**
+ * 需求深链：`<工作台 base>?requirement=<requirements.id>`。
+ * 每次推送都写这个字段（不受通知静默影响）——它是给 PM 点击的稳定入口，不是通知事件；
+ * 目标 Base 缺该字段时由 client 的 omittedFields 记录省略，不影响推送成功。
+ */
+function requirementDeepLink(baseUrl: string, requirementDbId: string): string {
+  const base = (baseUrl.trim() || DEFAULT_WEB_BASE_URL).replace(/\/+$/, "");
+  return `${base}?requirement=${encodeURIComponent(requirementDbId)}`;
+}
+
 export function createBasePushService(deps: BasePushServiceDeps) {
   const now = deps.now ?? (() => new Date());
   // 审计 safeDetails 只保留扁平原始类型（白名单 + 禁止嵌套），因此省略信息以字符串摘要写入既有
@@ -137,6 +152,7 @@ export function createBasePushService(deps: BasePushServiceDeps) {
     });
   };
   const pmLeaderUserId = deps.pmLeaderUserId ?? (process.env.RQSYS_PM_LEADER_USER_ID || null);
+  const webBaseUrl = deps.webBaseUrl ?? process.env.RQSYS_WEB_BASE_URL ?? DEFAULT_WEB_BASE_URL;
 
   type PreviousPushOwner = { kind: "none" } | { kind: "known"; userId: string } | { kind: "unknown" };
 
@@ -326,6 +342,8 @@ export function createBasePushService(deps: BasePushServiceDeps) {
       const sourceCreatedAt = req.sourceCreatedAt ? Date.parse(req.sourceCreatedAt) : Number.NaN;
       pushedResult = await deps.base.push({
         projectId: deps.sourceProjectId, requirementId: req.teambitionRequirementId, requirementDbId: req.id,
+        // 每次推送都写深链（含首推静默）：PM 从通知按钮点进来能直接打开该需求详情。
+        requirementLink: requirementDeepLink(webBaseUrl, req.id),
         title: req.title, description: req.description,
         owner: mapping ? { userId: mapping.feishuUserId, idType: mapping.feishuIdType } : null,
         sourceVersion: req.sourceVersion, pushedAt: now().toISOString(), substantiveChanged,
