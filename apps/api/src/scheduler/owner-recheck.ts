@@ -34,7 +34,7 @@ import { normalizeOwnerName } from "../owner/mapping.js";
 import { basePushIdempotencyKey } from "../jobs/idempotency.js";
 
 /** 单轮扫描上限：避免一次 tick 把 254 条候选全量入队。 */
-export const OWNER_RECHECK_SCAN_LIMIT = 25;
+export const OWNER_RECHECK_SCAN_LIMIT = 100;
 /** 调度重新入队审计事件；与正常推送链路（analysis.terminal / base.push）区分。 */
 export const OWNER_RECHECK_AUDIT_EVENT = "base.push.recheck_queued";
 

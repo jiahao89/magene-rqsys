@@ -218,8 +218,8 @@ test("单条需求的异常只进 errors，后续需求继续入队", async () =
   assert.deepEqual(h.state.events.map((row) => row.entityId), ["req-2"]);
 });
 
-test("limit 默认 25 且可覆盖，单轮不会全量入队", async () => {
-  assert.equal(OWNER_RECHECK_SCAN_LIMIT, 25);
+test("limit 默认 100 且可覆盖，单轮不会全量入队", async () => {
+  assert.equal(OWNER_RECHECK_SCAN_LIMIT, 100);
   const candidates = Array.from({ length: 30 }, (_, index) =>
     requirement({
       id: `req-${index + 1}`,
@@ -230,9 +230,10 @@ test("limit 默认 25 且可覆盖，单轮不会全量入队", async () => {
   const h = harness({ candidates, mappings: { "tb-user-1": mapping() } });
 
   const defaultRun = await h.run();
-  assert.equal(h.state.searchQueries[0]?.limit, 25);
-  assert.equal(defaultRun.scanned, 25);
-  assert.equal(defaultRun.enqueued, 25);
+  // 查询上限是 100，但本轮只有 30 条候选，因此实际处理 30 条（不会凭空放大）
+  assert.equal(h.state.searchQueries[0]?.limit, 100);
+  assert.equal(defaultRun.scanned, 30);
+  assert.equal(defaultRun.enqueued, 30);
 
   const limitedRun = await h.run({ limit: 5 });
   assert.equal(h.state.searchQueries[1]?.limit, 5);
