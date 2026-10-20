@@ -218,11 +218,18 @@ describe("RequirementsPanel (ticket 17)", () => {
 
     render(<RequirementsPanel onRefresh={() => undefined} />);
     fireEvent.click(await screen.findByRole("button", { name: "查看" }));
-    expect(await screen.findByText(/负责人 manually_mapped · 推送 failed/)).toBeInTheDocument();
+    const status = within(await screen.findByRole("group", { name: "处理状态" }));
+    expect(status.getByText("已手动匹配")).toBeInTheDocument();
+    expect(status.getByText("推送失败")).toBeInTheDocument();
+    // 原始枚举保留在 title 上，方便排查与文案对不上的状态。
+    expect(status.getByTitle("manually_mapped")).toBeInTheDocument();
+    expect(status.getByTitle("failed")).toBeInTheDocument();
+    // 已匹配的需求也能替换负责人：入口常驻，不再只在 owner === pending_mapping 时出现。
+    fireEvent.click(screen.getByRole("button", { name: "分配 / 变更负责人" }));
     fireEvent.change(screen.getByLabelText("搜索飞书用户"), { target: { value: "Alex" } });
     fireEvent.click(screen.getByRole("button", { name: "搜索" }));
     fireEvent.click(await screen.findByRole("option", { name: /Alex Chen/ }));
-    fireEvent.click(screen.getByRole("button", { name: "更新负责人并重试推送" }));
+    fireEvent.click(screen.getByRole("button", { name: "变更负责人并入队推送" }));
 
     expect(await screen.findByText(/推送已排队/)).toBeInTheDocument();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/requirements/req-1/owner", expect.objectContaining({
@@ -242,10 +249,13 @@ describe("RequirementsPanel (ticket 17)", () => {
     });
     render(<RequirementsPanel onRefresh={() => undefined} />);
     fireEvent.click(await screen.findByRole("button", { name: "查看" }));
-    expect(await screen.findByText(/拉取 synced · AI 分析 pending/)).toBeInTheDocument();
+    expect(within(await screen.findByRole("group", { name: "处理状态" })).getByText("待分析")).toBeInTheDocument();
     completed = true;
     fireEvent.click(screen.getByRole("button", { name: "刷新" }));
-    expect(await screen.findByText(/拉取 synced · AI 分析 analyzed · 负责人 auto_mapped · 推送 pushed/)).toBeInTheDocument();
+    await waitFor(() => expect(within(screen.getByRole("group", { name: "处理状态" })).getByText("已分析")).toBeInTheDocument());
+    const refreshed = within(screen.getByRole("group", { name: "处理状态" }));
+    expect(refreshed.getByText("已自动匹配")).toBeInTheDocument();
+    expect(refreshed.getByText("已推送")).toBeInTheDocument();
   });
 
   it("keeps the latest selected requirement when an older refresh finishes late", async () => {
@@ -304,6 +314,10 @@ describe("RequirementsPanel (ticket 17)", () => {
     fireEvent.click(await screen.findByRole("button", { name: "查看" }));
 
     expect(await screen.findByText("支持报表导出")).toBeInTheDocument();
+    // 结构化建议与证据/推断分成两块，长文本不再挤在同一个两列表格里。
+    expect(screen.getByText("结构化建议（U/M/S/C）")).toBeInTheDocument();
+    expect(screen.getByText("证据与推断")).toBeInTheDocument();
+    expect(screen.getByText("原文证据")).toBeInTheDocument();
     expect(screen.getByText(/【AI 推断】可能需要定时导出/)).toBeInTheDocument();
     expect(screen.getByText("目标用户")).toBeInTheDocument();
     expect(screen.getByText("价值待确认")).toBeInTheDocument();
@@ -354,6 +368,64 @@ describe("RequirementsPanel (ticket 17)", () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/requirements?q=%E6%8A%A5%E8%A1%A8&executorName=%E6%AF%95%E6%A2%93%E6%B5%A9&limit=25", expect.anything()));
     expect(await screen.findByRole("button", { name: "加载更多" })).toBeInTheDocument();
+  });
+
+  it("keeps a persistent action bar on a fully processed requirement instead of hiding every action", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path.startsWith("/api/requirements/req-1")) return jsonOk({ ...row, analysis: null, analyses: [] });
+      if (path === "/api/people") return jsonOk({ items: [] });
+      return jsonOk({ items: [row], nextCursor: null });
+    });
+
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    fireEvent.click(await screen.findByRole("button", { name: "查看" }));
+    const actions = within(await screen.findByRole("group", { name: "需求操作" }));
+
+    // 分配/变更负责人始终可用：这是已推送需求仍需要的主动操作。
+    expect(actions.getByRole("button", { name: "分配 / 变更负责人" })).toBeEnabled();
+    // 不可用的重试不隐藏，而是置灰并在 title 里说明原因。
+    const retryAnalysis = actions.getByRole("button", { name: "重试 AI 分析" });
+    expect(retryAnalysis).toBeDisabled();
+    expect(retryAnalysis).toHaveAttribute("title", "AI 分析已完成，无需重试。");
+    const retryPush = actions.getByRole("button", { name: "重试 Base 推送" });
+    expect(retryPush).toBeDisabled();
+    expect(retryPush.getAttribute("title")).toContain("无需重试");
+    // 没有可重试项时也要给出明确的下一步说明，而不是留白。
+    expect(actions.getByText(/已推送完成/)).toBeInTheDocument();
+    // 详情不再直接展示英文原始枚举。
+    expect(screen.queryByText(/拉取 synced/)).not.toBeInTheDocument();
+  });
+
+  it("groups the toolbar with visible labels, keeps the date range collapsed, and clears filters", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path.startsWith("/api/requirements")) return jsonOk({ items: [row], nextCursor: null });
+      if (path === "/api/people") return jsonOk({ items: [{ name: "毕梓浩" }] });
+      return jsonOk({});
+    });
+
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await screen.findByText("需要报表");
+
+    expect(screen.getByRole("group", { name: "搜索" })).toBeInTheDocument();
+    const filterGroup = within(screen.getByRole("group", { name: "筛选" }));
+    const batchGroup = within(screen.getByRole("group", { name: "批次与时间" }));
+    expect(filterGroup.getByText("负责人")).toBeInTheDocument();
+    expect(filterGroup.getByText("同步状态")).toBeInTheDocument();
+    expect(filterGroup.getByText("负责人状态")).toBeInTheDocument();
+    expect(filterGroup.getByText("分析状态")).toBeInTheDocument();
+    expect(filterGroup.getByText("推送状态")).toBeInTheDocument();
+    expect(batchGroup.getByText("批次 ID")).toBeInTheDocument();
+    // 日期范围默认收起在「更多筛选」里。
+    const moreFilters = batchGroup.getByText(/更多筛选/).closest("details");
+    expect(moreFilters).not.toHaveAttribute("open");
+
+    fireEvent.change(screen.getByLabelText("TB负责人筛选"), { target: { value: "毕梓浩" } });
+    expect(screen.getByText("1 个筛选生效")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
+    expect(screen.queryByText(/个筛选生效/)).not.toBeInTheDocument();
+    expect((screen.getByLabelText("TB负责人筛选") as HTMLSelectElement).value).toBe("");
   });
 
   it("opens the requirement referenced by a notification deep link on first mount", async () => {

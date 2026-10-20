@@ -357,6 +357,26 @@ const analysisStateOptions = [["", "全部分析状态"], ["analyzed", "已分�
 const pullStateOptions = [["", "全部同步状态"], ["pending", "等待同步"], ["running", "同步中"], ["synced", "已同步"], ["failed", "同步失败"]] as const;
 const pushStateOptions = [["", "全部推送状态"], ["pending", "等待推送"], ["running", "推送中"], ["pushed", "已推送"], ["failed", "推送失败"]] as const;
 
+// 服务端筛选条件：抽出类型与空值对象，供「初始加载 / 清除筛选 / 应用筛选」复用同一份契约。
+interface RequirementFilters {
+  q: string; executorName: string; pullState: string; ownerState: string; analysisState: string; pushState: string; batchId: string; since: string; until: string;
+}
+
+const emptyRequirementFilters: RequirementFilters = {
+  q: "", executorName: "", pullState: "", ownerState: "", analysisState: "", pushState: "", batchId: "", since: "", until: "",
+};
+
+// 详情/列表徽标按阶段取值：同一个原始枚举（pending/running/failed）在不同阶段含义不同，
+// 因此不能用一张全局表；原始值保留在 title 上，便于排查。
+type PipelineStage = "pull" | "analysis" | "owner" | "push";
+
+const pipelineLabels: Record<PipelineStage, Record<string, string>> = {
+  pull: { synced: "已同步", pending: "待同步", running: "同步中", failed: "同步失败" },
+  analysis: { analyzed: "已分析", running: "分析中", failed_retryable: "可重试", failed: "分析失败", pending: "待分析" },
+  owner: { manually_mapped: "已手动匹配", auto_mapped: "已自动匹配", pending_mapping: "待匹配负责人", not_required: "无需负责人" },
+  push: { pushed: "已推送", pending: "待推送", running: "推送中", failed: "推送失败" },
+};
+
 interface AnalysisRecommendation {
   recommendation?: unknown;
   rationale?: unknown;
@@ -392,7 +412,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(async (filter: { q: string; executorName: string; ownerState: string; analysisState: string; pullState: string; pushState: string; batchId: string; since: string; until: string }, nextCursor: string | null) => {
+  const load = useCallback(async (filter: RequirementFilters, nextCursor: string | null) => {
     setLoadState("loading"); setLoadError(null);
     try {
       const page = await listRequirements({ q: filter.q || undefined, executorName: filter.executorName || undefined, ownerState: filter.ownerState || undefined, analysisState: filter.analysisState || undefined, pullState: filter.pullState || undefined, pushState: filter.pushState || undefined, batchId: filter.batchId || undefined, since: filter.since ? new Date(filter.since).toISOString() : undefined, until: filter.until ? new Date(filter.until).toISOString() : undefined, limit: 25, ...(nextCursor ? { cursor: nextCursor } : {}) });
@@ -401,9 +421,11 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
       setLoadState("ready");
     } catch (cause) { setLoadError(errorText(cause)); setLoadState("error"); }
   }, []);
-  const filters = { q: query.trim(), executorName, ownerState, analysisState, pullState, pushState, batchId: batchId.trim(), since, until };
+  const filters: RequirementFilters = { q: query.trim(), executorName, ownerState, analysisState, pullState, pushState, batchId: batchId.trim(), since, until };
+  const activeFilterCount = Object.values(filters).filter(Boolean).length;
+  const dateFilterCount = [since, until].filter(Boolean).length;
   useEffect(() => {
-    void load({ q: "", executorName: "", ownerState: "", analysisState: "", pullState: "", pushState: "", batchId: "", since: "", until: "" }, null);
+    void load(emptyRequirementFilters, null);
     void listTeamPeople().then(setPeople).catch((cause: unknown) => setPeopleError(errorText(cause)));
   }, [load]);
 
@@ -424,28 +446,54 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
     deepLinkOpened.current = true;
     void open(initialRequirementId);
   }, [initialRequirementId, open]);
-  const runAction = async (action: () => Promise<string>, detailId: string) => {
+  const runAction = async (action: () => Promise<string>, detailId: string): Promise<boolean> => {
     setBusy(true); setNotice(null);
-    try { const message = await action(); onRefresh(); await open(detailId); setNotice(message); }
-    catch (cause) { setNotice(errorText(cause)); }
+    try { const message = await action(); onRefresh(); await open(detailId); setNotice(message); return true; }
+    catch (cause) { setNotice(errorText(cause)); return false; }
     finally { setBusy(false); }
+  };
+  // 清除筛选后立即回到无筛选的第一页，避免残留旧条件与旧游标。
+  const clearFilters = () => {
+    setQuery(""); setExecutorName(""); setPullState(""); setOwnerState(""); setAnalysisState(""); setPushState(""); setBatchId(""); setSince(""); setUntil("");
+    void load(emptyRequirementFilters, null);
   };
   const structured: AnalysisStructured = (selected?.analysis ?? {}) as AnalysisStructured;
 
   return <section className="panel requirements-panel">
-    <div className="panel-heading"><div><h2>需求处理记录</h2><p>四阶段状态、批次和最近同步时间均由服务端筛选。</p></div><div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-      <HeroInput aria-label="搜索需求标题" placeholder="搜索需求标题…" value={query} onChange={(e) => setQuery(e.target.value)} />
-      <select aria-label="TB负责人筛选" value={executorName} onChange={(e) => setExecutorName(e.target.value)}><option value="">全部 TB 负责人</option>{people.map((person) => <option key={person.name} value={person.name}>{person.name}</option>)}</select>
-      <select aria-label="同步状态筛选" value={pullState} onChange={(e) => setPullState(e.target.value)}>{pullStateOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
-      <select aria-label="负责人筛选" value={ownerState} onChange={(e) => setOwnerState(e.target.value)}>{ownerStateOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
-      <select aria-label="分析状态筛选" value={analysisState} onChange={(e) => setAnalysisState(e.target.value)}>{analysisStateOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
-      <select aria-label="推送状态筛选" value={pushState} onChange={(e) => setPushState(e.target.value)}>{pushStateOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
-      <HeroInput aria-label="批次 ID 筛选" placeholder="批次 ID" value={batchId} onChange={(e) => setBatchId(e.target.value)} />
-      <label className="field"><span>最近同步始于</span><HeroInput type="datetime-local" aria-label="最近同步开始时间" value={since} onChange={(e) => setSince(e.target.value)} /></label>
-      <label className="field"><span>最近同步止于</span><HeroInput type="datetime-local" aria-label="最近同步结束时间" value={until} onChange={(e) => setUntil(e.target.value)} /></label>
-      <HeroButton className="button button-secondary button-small" onPress={() => void load(filters, null)}>筛选</HeroButton>
-      <HeroButton className="button button-secondary button-small" onPress={() => { onRefresh(); void load(filters, null); if (selected) void open(selected.id); }}><RefreshCw size={14} />刷新</HeroButton>
-    </div></div>
+    <div className="panel-heading"><div><h2>需求处理记录</h2><p>四阶段状态、批次和最近同步时间均由服务端筛选。</p></div></div>
+    <div className="requirements-toolbar">
+      <div className="toolbar-groups">
+        <div className="toolbar-group" role="group" aria-label="搜索">
+          <span className="toolbar-group-title">搜索</span>
+          <label className="field toolbar-field"><span>需求标题</span><HeroInput aria-label="搜索需求标题" placeholder="搜索需求标题…" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void load(filters, null); }} /></label>
+        </div>
+        <div className="toolbar-group" role="group" aria-label="筛选">
+          <span className="toolbar-group-title">筛选</span>
+          <label className="field toolbar-field"><span>负责人</span><select aria-label="TB负责人筛选" value={executorName} onChange={(e) => setExecutorName(e.target.value)}><option value="">全部 TB 负责人</option>{people.map((person) => <option key={person.name} value={person.name}>{person.name}</option>)}</select></label>
+          <label className="field toolbar-field"><span>同步状态</span><select aria-label="同步状态筛选" value={pullState} onChange={(e) => setPullState(e.target.value)}>{pullStateOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+          <label className="field toolbar-field"><span>负责人状态</span><select aria-label="负责人筛选" value={ownerState} onChange={(e) => setOwnerState(e.target.value)}>{ownerStateOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+          <label className="field toolbar-field"><span>分析状态</span><select aria-label="分析状态筛选" value={analysisState} onChange={(e) => setAnalysisState(e.target.value)}>{analysisStateOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+          <label className="field toolbar-field"><span>推送状态</span><select aria-label="推送状态筛选" value={pushState} onChange={(e) => setPushState(e.target.value)}>{pushStateOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        </div>
+        <div className="toolbar-group" role="group" aria-label="批次与时间">
+          <span className="toolbar-group-title">批次与时间</span>
+          <label className="field toolbar-field"><span>批次 ID</span><HeroInput aria-label="批次 ID 筛选" placeholder="批次 ID" value={batchId} onChange={(e) => setBatchId(e.target.value)} /></label>
+          <details className="toolbar-more">
+            <summary>更多筛选{dateFilterCount > 0 ? `（已设置 ${dateFilterCount} 项）` : ""}</summary>
+            <div className="toolbar-more-body">
+              <label className="field toolbar-field"><span>最近同步始于</span><HeroInput type="datetime-local" aria-label="最近同步开始时间" value={since} onChange={(e) => setSince(e.target.value)} /></label>
+              <label className="field toolbar-field"><span>最近同步止于</span><HeroInput type="datetime-local" aria-label="最近同步结束时间" value={until} onChange={(e) => setUntil(e.target.value)} /></label>
+            </div>
+          </details>
+        </div>
+      </div>
+      <div className="toolbar-actions">
+        {activeFilterCount > 0 && <span className="toolbar-active-count" role="status">{activeFilterCount} 个筛选生效</span>}
+        <HeroButton className="button button-primary button-small" onPress={() => void load(filters, null)}>筛选</HeroButton>
+        <HeroButton className="button button-secondary button-small" onPress={() => { onRefresh(); void load(filters, null); if (selected) void open(selected.id); }}><RefreshCw size={14} />刷新</HeroButton>
+        {activeFilterCount > 0 && <HeroButton className="link-button" onPress={clearFilters}>清除筛选</HeroButton>}
+      </div>
+    </div>
     <StateBanner loadError={loadError ?? detailError ?? peopleError} notice={notice} onCloseNotice={() => setNotice(null)} />
     {selected && <RequirementDetailCard selected={selected} structured={structured} busy={busy} onClose={() => { detailRequestVersion.current += 1; setSelected(null); }} onAct={runAction} />}
     <RequirementsTable rows={rows} loading={loadState === "loading"} onOpen={(row) => void open(row.id)} />
@@ -477,8 +525,12 @@ function BaseRecordReference({ recordId }: { recordId: string | null }) {
 
 function RequirementDetailCard({ selected, structured, busy, onClose, onAct }: {
   selected: RequirementDetail; structured: AnalysisStructured; busy: boolean; onClose: () => void;
-  onAct: (action: () => Promise<string>, detailId: string) => Promise<void>;
+  onAct: (action: () => Promise<string>, detailId: string) => Promise<boolean>;
 }) {
+  // 负责人编辑区收进常驻操作条：任何状态都能新建或替换负责人，不再只在 pending_mapping 时出现。
+  const [ownerPickerOpen, setOwnerPickerOpen] = useState(false);
+  const ownerEditorId = useId();
+  useEffect(() => { setOwnerPickerOpen(false); }, [selected.id]);
   const evidence = Array.isArray(structured.evidence) ? structured.evidence.filter((x): x is string => typeof x === "string") : [];
   const facts = Array.isArray(structured.facts) ? structured.facts as { text?: string; evidence?: string }[] : [];
   const inferences = Array.isArray(structured.inferences) ? structured.inferences as { text?: string }[] : [];
@@ -490,15 +542,71 @@ function RequirementDetailCard({ selected, structured, busy, onClose, onAct }: {
     ["S · 商业", structured.recommendations?.business],
     ["C · 技术", structured.recommendations?.technology],
   ] as const;
-  return <div className="config-source" style={{ flexDirection: "column", alignItems: "stretch" }}>
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><strong>{selected.title}（REQ-{selected.sourceRequirementId} · v{selected.sourceVersion}）</strong><HeroButton className="button button-secondary button-small" onPress={onClose}>收起</HeroButton></div>
-    <span>拉取 {selected.pipeline.pull} · AI 分析 {selected.pipeline.analysis} · 负责人 {selected.pipeline.owner} · 推送 {selected.pipeline.push}</span>
+  const factsText = facts.map((fact) => typeof fact.text === "string" ? fact.text : "").filter(Boolean).join("；") || "—";
+  const inferencesText = inferences.map((inference) => typeof inference.text === "string" ? `【AI 推断】${inference.text}` : "").filter(Boolean).join("；") || "—";
+  const missingText = missingInputs.join("；") || "—";
+  const blindSpotText = blindSpots.join("；") || "—";
+  // 操作可用性只取决于流水线状态；不可用时保留按钮并说明原因，避免「入口消失 = 不知道能做什么」。
+  const analysisRetryable = ["failed_retryable", "pending"].includes(selected.pipeline.analysis);
+  const pushRetryable = selected.pipeline.push === "failed";
+  const ownerMapped = ["auto_mapped", "manually_mapped"].includes(selected.pipeline.owner);
+  const ownerSaveLabel = selected.pipeline.owner === "pending_mapping" ? "保存负责人并入队推送" : ownerMapped ? "变更负责人并入队推送" : "分配负责人并入队推送";
+  const analysisDisabledReason = selected.pipeline.analysis === "running"
+    ? "AI 分析正在进行中，完成后可查看结果。"
+    : selected.pipeline.analysis === "analyzed"
+      ? "AI 分析已完成，无需重试。"
+      : selected.pipeline.analysis === "failed"
+        ? "该需求的分析失败不可自动重试，请检查源数据或联系管理员。"
+        : "当前状态不可重试 AI 分析。";
+  const pushDisabledReason = selected.pipeline.push === "pushed"
+    ? "Base 推送已完成，无需重试；PM 在飞书多维表格继续处理。"
+    : selected.pipeline.push === "running"
+      ? "Base 推送进行中，完成后状态会自动刷新。"
+      : selected.pipeline.push === "pending"
+        ? "Base 推送排队中，完成后状态会自动刷新。"
+        : "当前状态不可重试 Base 推送。";
+  // 没有可重试项时也要给出一句明确的下一步说明，而不是留白。
+  const guidance = [
+    selected.pipeline.push === "pushed" ? "该需求已推送完成，PM 在飞书多维表格继续处理；如需换人可在此变更负责人。" : "",
+    pushRetryable ? (ownerMapped ? "Base 推送失败：可重试推送，也可变更负责人后重新排队。" : "Base 推送失败：请先分配负责人，再重试推送。") : "",
+    analysisRetryable ? "AI 分析未完成，可在此重试分析。" : "",
+    selected.pipeline.analysis === "failed" ? "AI 分析失败且不可自动重试；失败摘要见下方分析版本记录。" : "",
+  ].filter(Boolean).join(" ") || "当前没有待重试的失败项；如需换人可在此变更负责人。";
+  return <div className="config-source requirement-detail">
+    <div className="detail-head"><strong>{selected.title}（REQ-{selected.sourceRequirementId} · v{selected.sourceVersion}）</strong><HeroButton className="button button-secondary button-small" onPress={onClose}>收起</HeroButton></div>
+    <div className="detail-status-row" role="group" aria-label="处理状态">
+      {([
+        ["拉取", "pull", selected.pipeline.pull],
+        ["AI 分析", "analysis", selected.pipeline.analysis],
+        ["负责人", "owner", selected.pipeline.owner],
+        ["推送", "push", selected.pipeline.push],
+      ] as const).map(([label, stage, state]) => <span className="detail-status" key={stage}><span className="detail-status-label">{label}</span>{stageLabel(stage, state)}</span>)}
+    </div>
+    <div className="detail-actionbar" role="group" aria-label="需求操作">
+      <div className="detail-actionbar-actions">
+        <button className="button button-primary button-small" aria-expanded={ownerPickerOpen} aria-controls={ownerEditorId} onClick={() => setOwnerPickerOpen((open) => !open)} disabled={busy} title="搜索飞书用户并设为负责人；保存后会覆盖当前负责人并重新排队推送">分配 / 变更负责人</button>
+        <button className="button button-secondary button-small" onClick={() => void onAct(async () => { await retryAnalysis(selected.id); return "AI 分析重试已入队"; }, selected.id)} disabled={busy || !analysisRetryable} title={analysisRetryable ? "重新提交 AI 分析" : analysisDisabledReason}>重试 AI 分析</button>
+        <button className="button button-secondary button-small" onClick={() => void onAct(async () => { const result = await pushRequirement(selected.id); return result.status === "queued" ? "Base 推送重试已入队" : `推送状态：${result.status}`; }, selected.id)} disabled={busy || !pushRetryable} title={pushRetryable ? "重新提交 Base 推送" : pushDisabledReason}>重试 Base 推送</button>
+      </div>
+      <p className="detail-actionbar-hint">{guidance}</p>
+      {ownerPickerOpen && <div className="detail-owner-editor" id={ownerEditorId}>
+        <p className="detail-actionbar-hint">搜索并选择飞书用户；保存后会覆盖当前负责人并重新排队 Base 推送。</p>
+        <FeishuUserPicker key={selected.id} disabled={busy} saveLabel={ownerSaveLabel} onMap={async (user) => {
+          const ok = await onAct(async () => {
+            const result = await setOwner(selected.id, { feishuUserId: user.openId, feishuIdType: "open_id" });
+            return `${user.name} 负责人已${ownerMapped ? "变更" : "分配"}（${pipelineLabel("owner", result.ownerState)}），推送已排队`;
+          }, selected.id);
+          if (ok) setOwnerPickerOpen(false);
+        }} />
+      </div>}
+    </div>
     <BaseRecordReference recordId={selected.baseRecordId} />
-    <div className="table-scroll"><table><thead><tr><th>AI 建议</th><th>内容</th></tr></thead><tbody>
+    <p className="detail-note">推送成功不代表飞书 PM 通知已送达；PM 处理状态与通知送达以飞书多维表格为准。</p>
+    <h3 className="detail-section-title">结构化建议（U/M/S/C）</h3>
+    <div className="table-scroll"><table className="detail-suggestion-table"><thead><tr><th>项目</th><th>内容</th></tr></thead><tbody>
       <tr><td>模块建议</td><td>{typeof structured.module === "string" ? structured.module : "—"}</td></tr>
       <tr><td>优先级建议</td><td>{typeof structured.priority === "string" ? structured.priority : "空（未发布有效校准规则时保持为空）"}</td></tr>
       <tr><td>置信度</td><td>{typeof structured.confidence === "string" ? structured.confidence : "—"}{typeof structured.confidence_reason === "string" ? ` · ${structured.confidence_reason}` : ""}</td></tr>
-      <tr><td>原文证据</td><td>{evidence.length ? evidence.join("；") : "—"}</td></tr>
       {dimensionRecommendations.map(([label, result]) => {
         const recommendationEvidence = Array.isArray(result?.evidence) ? result.evidence.filter((item): item is string => typeof item === "string") : [];
         return <tr key={label}><td>{label}</td><td>
@@ -508,32 +616,41 @@ function RequirementDetailCard({ selected, structured, busy, onClose, onAct }: {
           {result?.missing_evidence === true && <div>证据不足：需要补充信息</div>}
         </td></tr>;
       })}
-      <tr><td>事实（来自源文本）</td><td>{facts.length ? facts.map((f) => typeof f.text === "string" ? f.text : "").filter(Boolean).join("；") || "—" : "—"}</td></tr>
-      <tr><td>AI 推断（非事实）</td><td>{inferences.length ? inferences.map((i) => typeof i.text === "string" ? `【AI 推断】${i.text}` : "").filter(Boolean).join("；") || "—" : "—"}</td></tr>
-      <tr><td>缺失信息</td><td>{missingInputs.length ? missingInputs.join("；") || "—" : "—"}</td></tr>
-      <tr><td>分析盲点</td><td>{blindSpots.length ? blindSpots.join("；") || "—" : "—"}</td></tr>
-      <tr><td>源快照版本</td><td>v{selected.sourceVersion}（只读，来自 Teambition 快照）</td></tr>
     </tbody></table></div>
+    <h3 className="detail-section-title">证据与推断</h3>
+    <dl className="evidence-grid">
+      <div className="evidence-card"><dt>原文证据</dt><dd>{evidence.length ? evidence.join("；") : "—"}</dd></div>
+      <div className="evidence-card"><dt>事实（来自源文本）</dt><dd>{factsText}</dd></div>
+      <div className="evidence-card"><dt>AI 推断（非事实）</dt><dd>{inferencesText}</dd></div>
+      <div className="evidence-card"><dt>缺失信息</dt><dd>{missingText}</dd></div>
+      <div className="evidence-card"><dt>分析盲点</dt><dd>{blindSpotText}</dd></div>
+      <div className="evidence-card"><dt>源快照版本</dt><dd>v{selected.sourceVersion}（只读，来自 Teambition 快照）</dd></div>
+    </dl>
     <details className="source-snapshot"><summary>查看源快照内容（allowlist 字段，只读）</summary><pre className="source-snapshot-pre">{JSON.stringify(selected.source, null, 2)}</pre></details>
-    {selected.analyses.length > 0 && <div className="table-scroll"><table><thead><tr><th>分析版本</th><th>状态</th><th>模块</th><th>优先级</th><th>开始时间</th><th>失败摘要</th></tr></thead><tbody>{[...selected.analyses].reverse().map((version: AnalysisVersionSummary) => <tr key={version.analysisVersion}><td className="mono-cell">v{version.analysisVersion}</td><td>{stageLabel(version.status)}</td><td>{version.moduleSuggestion ?? "—"}</td><td>{version.priority ?? "空"}</td><td>{timeLabel(version.startedAt)}</td><td>{version.safeErrorSummary ?? "—"}</td></tr>)}</tbody></table></div>}
-    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-      {["failed_retryable", "pending"].includes(selected.pipeline.analysis) && <HeroButton className="button button-secondary button-small" onPress={() => void onAct(async () => { await retryAnalysis(selected.id); return "AI 分析重试已入队"; }, selected.id)} isDisabled={busy}>重试 AI 分析</HeroButton>}
-      {selected.pipeline.owner === "pending_mapping" && <FeishuUserPicker disabled={busy} onMap={(user) => onAct(async () => { const result = await setOwner(selected.id, { feishuUserId: user.openId, feishuIdType: "open_id" }); return `${user.name} 映射已保存（${result.ownerState}），推送已排队`; }, selected.id)} />}
-      {selected.pipeline.push === "failed" && ["auto_mapped", "manually_mapped"].includes(selected.pipeline.owner) && <FeishuUserPicker disabled={busy} saveLabel="更新负责人并重试推送" onMap={(user) => onAct(async () => { const result = await setOwner(selected.id, { feishuUserId: user.openId, feishuIdType: "open_id" }); return `${user.name} 负责人映射已更新（${result.ownerState}），推送已排队`; }, selected.id)} />}
-      {selected.pipeline.push === "failed" && <HeroButton className="button button-secondary button-small" onPress={() => void onAct(async () => { const result = await pushRequirement(selected.id); return result.status === "queued" ? "Base 推送重试已入队" : `推送状态：${result.status}`; }, selected.id)} isDisabled={busy}>重试 Base 推送</HeroButton>}
-      <span style={{ fontSize: 9, color: "#818b9a" }}>推送成功不代表飞书 PM 通知已送达。</span>
-    </div>
+    {selected.analyses.length > 0 && <div className="table-scroll"><table><thead><tr><th>分析版本</th><th>状态</th><th>模块</th><th>优先级</th><th>开始时间</th><th>失败摘要</th></tr></thead><tbody>{[...selected.analyses].reverse().map((version: AnalysisVersionSummary) => <tr key={version.analysisVersion}><td className="mono-cell">v{version.analysisVersion}</td><td>{stageLabel("analysis", version.status)}</td><td>{version.moduleSuggestion ?? "—"}</td><td>{version.priority ?? "空"}</td><td>{timeLabel(version.startedAt)}</td><td>{version.safeErrorSummary ?? "—"}</td></tr>)}</tbody></table></div>}
   </div>;
 }
 
 function RequirementsTable({ rows, loading, onOpen }: { rows: RequirementSummary[]; loading: boolean; onOpen: (row: RequirementSummary) => void }) {
   if (!rows.length) return <div className="table-empty"><strong>{loading ? "正在载入需求…" : "没有匹配的需求"}</strong><span>{loading ? "正在从本地 API 读取需求状态。" : "数据仅在 API 返回后显示，不使用演示数据。"}</span></div>;
-  return <div className="table-scroll"><table><thead><tr><th>需求</th><th>版本</th><th>拉取</th><th>AI 分析</th><th>负责人</th><th>Base 推送</th><th>详情</th></tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td><div className="requirement-title"><span className="req-id">REQ-{row.sourceRequirementId}</span><strong>{row.title}</strong></div></td><td><span className="version-label">v{row.sourceVersion}</span></td><td>{stageLabel(row.pipeline.pull)}</td><td>{stageLabel(row.pipeline.analysis)}</td><td>{stageLabel(row.pipeline.owner)}</td><td>{stageLabel(row.pipeline.push)}</td><td><HeroButton className="button button-secondary button-small" onPress={() => onOpen(row)}>查看</HeroButton></td></tr>)}</tbody></table></div>;
+  return <div className="table-scroll"><table><thead><tr><th>需求</th><th>版本</th><th>拉取</th><th>AI 分析</th><th>负责人</th><th>Base 推送</th><th>详情</th></tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td><div className="requirement-title"><span className="req-id">REQ-{row.sourceRequirementId}</span><strong>{row.title}</strong></div></td><td><span className="version-label">v{row.sourceVersion}</span></td><td>{stageLabel("pull", row.pipeline.pull)}</td><td>{stageLabel("analysis", row.pipeline.analysis)}</td><td>{stageLabel("owner", row.pipeline.owner)}</td><td>{stageLabel("push", row.pipeline.push)}</td><td><HeroButton className="button button-secondary button-small" onPress={() => onOpen(row)}>查看</HeroButton></td></tr>)}</tbody></table></div>;
 }
 
-function stageLabel(state: string) {
-  const tone = state === "failed" || state === "failed_retryable" ? "status-danger" : state === "running" ? "status-live" : "status-muted";
-  return <span className={`status-chip ${tone}`}><span />{stateLabel(state)}</span>;
+function pipelineLabel(stage: PipelineStage, state: string): string {
+  return pipelineLabels[stage][state] ?? stateLabel(state);
+}
+
+function pipelineTone(state: string): string {
+  if (state === "failed") return "status-danger";
+  if (state === "failed_retryable" || state === "pending_mapping") return "status-warning";
+  if (state === "running") return "status-info";
+  if (["synced", "analyzed", "pushed", "manually_mapped", "auto_mapped", "not_required"].includes(state)) return "status-live";
+  return "status-muted";
+}
+
+// 中文文案 + 颜色分级；原始值留在 title 上，方便排查对不上文案的状态。
+function stageLabel(stage: PipelineStage, state: string) {
+  return <span className={`status-chip ${pipelineTone(state)}`} title={state}><span />{pipelineLabel(stage, state)}</span>;
 }
 
 // 审计结果列独立渲染（result 枚举 succeeded/failed/denied），不复用流水线阶段标签
