@@ -14,7 +14,8 @@
     "db:migrate": "npm --workspace @rq-sys/api run db:migrate",
     "test": "npm --workspace @rq-sys/api run test && npm --workspace @rq-sys/web run test",
     "check:alignment": "node scripts/check-repo-alignment.mjs",
-    "check:contract": "node scripts/contract-matrix.mjs"
+    "check:contract": "node scripts/contract-matrix.mjs",
+    "rqsys:maintenance": "node scripts/rqsys-maintenance.mjs"
   },
   "engines": {
     "node": ">=22"
