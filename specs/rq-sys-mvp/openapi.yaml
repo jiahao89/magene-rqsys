@@ -708,8 +708,16 @@ components:
       properties:
         id: { type: string, format: uuid }
         sourceRequirementId: { type: string }
+        # RQ-Sys 展示用连续编号（RQ-000001）；迁移未执行时为 null。
+        platformRequirementId: { type: string, nullable: true }
         title: { type: string }
+        description: { type: string, nullable: true }
         sourceVersion: { type: integer }
+        updatedAt: { type: string, format: date-time }
+        sourceUrl: { type: string, nullable: true }
+        lastPushedAt: { type: string, format: date-time, nullable: true }
+        # 仅详情接口返回（列表不逐行解析映射，恒为 null）。
+        ownerName: { type: string, nullable: true }
         pipeline:
           type: object
           properties:

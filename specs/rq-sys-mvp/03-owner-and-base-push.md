@@ -30,7 +30,10 @@ Miaoda searches internal members through its browser platform SDK. A selected Mi
 
 ## Base write and field protection
 
-- Upsert by project ID + TB requirement ID; do not create a second row for the same key.
+- The application database keeps its source identity `(project ID, TB requirement ID)`. The current Base contains one configured TB project, so Base lookup/upsert uses `TB需求ID` alone; never use the RQ-Sys display ID for matching.
+- `需求平台ID` is an immutable, sequential RQ-Sys display value (`RQ-000001`, `RQ-000002`, …) stored in the application database and mirrored to Base. Existing rows receive values in stable `first_seen_at, id` order; later new requirements receive the next number.
+- The Base column `TB项目ID` is not required for this single-project upsert. `TB需求ID` stays the source identifier. `TB地址` may contain only a verified source URL; the selected Teambition response has no confirmed task-detail URL, so the app must leave it empty rather than construct a URL.
+- In the configured grid view, keep `需求平台ID` first and place `TB地址` immediately after `TB需求ID`.
 - Initialize the configured PM status to 待处理 only when creating a new Base record; do not rely on a table default or initialize an existing record during a non-substantive upsert.
 - Keep source facts, AI suggestions, owner, PM confirmations/status, and push metadata in distinct field groups.
 - The sync service writes only source-owned fields. The analysis service writes only AI-owned fields. Human PM fields are never overwritten by either.

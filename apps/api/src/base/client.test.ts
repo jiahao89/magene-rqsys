@@ -7,7 +7,7 @@ function fakeBase(initial?: { recordId: string; fields: Record<string, unknown> 
   const calls: string[] = [];
   let row = initial ?? null;
   const client: BaseClient = {
-    async findByRequirementKey(key) { calls.push("find"); return row && row.fields["TB项目ID"] === key.projectId && row.fields["TB需求ID"] === key.requirementId ? row : null; },
+    async findByRequirementKey(key) { calls.push("find"); return row && row.fields["TB需求ID"] === key.requirementId ? row : null; },
     async create(fields) { calls.push("create"); row = { recordId: "record-new", fields: { ...fields } }; return row; },
     async update(recordId, fields) { calls.push("update"); assert.equal(recordId, row?.recordId); row = { recordId, fields: { ...row!.fields, ...fields } }; return row; },
     async readPmFields(recordId) { calls.push("snapshot"); assert.equal(recordId, row?.recordId); return { "PM状态": row!.fields["PM状态"] ?? null, "PM确认模块": row!.fields["PM确认模块"] ?? null, "PM确认优先级": row!.fields["PM确认优先级"] ?? null, "处理人": row!.fields["处理人"] ?? null, "处理时间": row!.fields["处理时间"] ?? null, "结构化备注": row!.fields["结构化备注"] ?? null }; },
@@ -15,7 +15,7 @@ function fakeBase(initial?: { recordId: string; fields: Record<string, unknown> 
   return { client, calls, row: () => row };
 }
 
-test("creates/upserts on the project + requirement key, permits empty owner, and filters fields", async () => {
+test("creates/upserts on the Teambition requirement ID, permits empty owner, and filters fields", async () => {
   const fake = fakeBase();
   const adapter = new FeishuBasePushAdapter(fake.client, { projectId: "TB项目ID", requirementId: "TB需求ID", owner: "执行人", source: { title: "标题", description: "需求说明" }, ai: { module: "AI模块建议" }, pm: ["PM状态", "PM确认模块", "PM确认优先级", "处理人", "处理时间", "结构化备注"] });
   const result = await adapter.push({ projectId: "p", requirementId: "r", requirementDbId: "11111111-2222-4333-8444-555555555555", title: "Title", description: "Desc", owner: null, sourceVersion: 1, substantiveChanged: false, idempotencyKey: "p:r:v1" });
@@ -45,17 +45,19 @@ test("serializes Base selects and text metadata, while an unavailable module opt
   const fake = fakeBase();
   const adapter = new FeishuBasePushAdapter(fake.client, {
     projectId: "TB项目ID", requirementId: "TB需求ID", owner: "执行人",
-    source: { title: "标题" }, ai: { module: "AI模块建议", priority: "AI优先级建议", analysisVersion: "AI分析版本" },
+    platformRequirementId: "需求平台ID", source: { title: "标题" }, ai: { module: "AI模块建议", priority: "AI优先级建议", analysisVersion: "AI分析版本" },
     pm: [], metadata: { sourceVersion: "源版本", pushState: "推送状态", lastPushedAt: "最后推送时间" },
     selectOptions: { module: ["其他"], priority: ["P0", "P1", "P2"] },
   });
   await adapter.push({
     projectId: "p", requirementId: "r", requirementDbId: "11111111-2222-4333-8444-555555555555", title: "Title", owner: null, sourceVersion: 3,
     pushedAt: "2026-10-11T01:00:00.000Z", substantiveChanged: false, idempotencyKey: "p:r:v3",
-    aiValues: { module: "无法识别", priority: "P2", analysisVersion: 4 },
+    platformRequirementId: "RQ-000003", aiValues: { module: "无法识别", priority: "P2", analysisVersion: 4 },
   });
   const fields = fake.row()!.fields;
   assert.equal(fields["AI优先级建议"], "P2");
+  assert.equal(fields["需求平台ID"], "RQ-000003");
+  assert.equal(fields["TB项目ID"], undefined);
   assert.equal(fields["AI分析版本"], "4");
   assert.equal(fields["AI模块建议"], undefined);
   assert.equal(fields["源版本"], "3");

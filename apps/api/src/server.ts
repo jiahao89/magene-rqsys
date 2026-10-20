@@ -126,10 +126,10 @@ const analysisJobHandler: ((job: { payload: Record<string, unknown> }) => Promis
 
 // ---- Feishu Base 推送装配：env 凭证齐全时构建真实 transport（工单 00/W7 目标环境验证）----
 const DEFAULT_BASE_FIELDS = {
-  projectId: "TB项目ID", requirementId: "TB需求ID", owner: "执行人",
+  requirementId: "TB需求ID", platformRequirementId: "需求平台ID", owner: "执行人",
   // The selected TB project's custom-field type/binding is unverified. Only map
   // standard fields whose semantics and the Base column type are verified.
-  source: { title: "标题", createdAt: "TB创建时间" } as Record<string, string>,
+  source: { title: "标题", createdAt: "TB创建时间", sourceUrl: "TB地址" } as Record<string, string>,
   ai: { module: "AI模块建议", priority: "AI优先级建议", analysisVersion: "AI分析版本" } as Record<string, string>,
   pm: ["PM状态", "PM确认模块", "PM确认优先级", "处理人", "处理时间", "结构化备注"] as string[],
   metadata: { sourceVersion: "源版本", pushState: "推送状态", lastPushedAt: "最后推送时间" } as Record<string, string>,
@@ -147,11 +147,13 @@ function parseBaseFields(raw: string | undefined): typeof DEFAULT_BASE_FIELDS {
   if (!raw) return DEFAULT_BASE_FIELDS;
   try {
     const parsed = JSON.parse(raw) as Partial<typeof DEFAULT_BASE_FIELDS>;
+    const source = { ...DEFAULT_BASE_FIELDS.source, ...(parsed.source ?? {}) };
+    if (source.sourceUrl === "TB链接") source.sourceUrl = "TB地址";
     return {
-      projectId: parsed.projectId ?? DEFAULT_BASE_FIELDS.projectId,
       requirementId: parsed.requirementId ?? DEFAULT_BASE_FIELDS.requirementId,
+      platformRequirementId: parsed.platformRequirementId ?? DEFAULT_BASE_FIELDS.platformRequirementId,
       owner: parsed.owner ?? DEFAULT_BASE_FIELDS.owner,
-      source: { ...DEFAULT_BASE_FIELDS.source, ...(parsed.source ?? {}) },
+      source,
       ai: { ...DEFAULT_BASE_FIELDS.ai, ...(parsed.ai ?? {}) },
       pm: Array.isArray(parsed.pm) ? parsed.pm : DEFAULT_BASE_FIELDS.pm,
       metadata: { ...DEFAULT_BASE_FIELDS.metadata, ...(parsed.metadata ?? {}) },
@@ -171,7 +173,7 @@ const baseClient = process.env.FEISHU_APP_ID && process.env.FEISHU_APP_SECRET &&
   ? new RateLimitedBaseClient(new FeishuBitableClient({
       appId: process.env.FEISHU_APP_ID, appSecret: process.env.FEISHU_APP_SECRET,
       appToken: process.env.BASE_APP_TOKEN, tableId: process.env.BASE_TABLE_ID,
-      keyFields: { projectId: baseFields.projectId, requirementId: baseFields.requirementId },
+      keyFields: { requirementId: baseFields.requirementId },
     }), {
       // 全量同步逐条写 Base（311 条 ≈ 数百次连续调用）。默认 100ms ≈ 10 次/秒，
       // 用 BASE_MIN_INTERVAL_MS 覆盖；设为 0 可关闭（仅保留串行化）。

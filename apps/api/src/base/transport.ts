@@ -14,8 +14,8 @@ export interface FeishuBitableConfig {
   appSecret: string;
   appToken: string;
   tableId: string;
-  // 复合键字段名（Base schema 专属，来自字段映射配置）
-  keyFields: { projectId: string; requirementId: string };
+  // Teambition ID is unique within the single configured source project and is the Base upsert key.
+  keyFields: { requirementId: string; projectId?: string };
   baseUrl?: string;
   fetch?: FetchLike;
   /** 单次 Base 请求超时（毫秒）。默认 15s；设为 0 关闭。 */
@@ -155,10 +155,10 @@ export class FeishuBitableClient implements BaseClient {
     // Use the public Bitable v1 records endpoint. base/v3 is a web-client route:
     // it can work under a user session but returns access denied with the app token.
     // Formula strings use exact equality and JSON string escaping for source IDs.
-    const filter = `and(CurrentValue.[${this.config.keyFields.projectId}] = ${JSON.stringify(key.projectId)}, CurrentValue.[${this.config.keyFields.requirementId}] = ${JSON.stringify(key.requirementId)})`;
+    const filter = `CurrentValue.[${this.config.keyFields.requirementId}] = ${JSON.stringify(key.requirementId)}`;
     const query = new URLSearchParams({
       filter,
-      field_names: JSON.stringify([this.config.keyFields.projectId, this.config.keyFields.requirementId]),
+      field_names: JSON.stringify([this.config.keyFields.requirementId]),
       page_size: "2",
     });
     const res = await this.authed(

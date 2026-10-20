@@ -115,7 +115,7 @@ test("tenant token 请求并缓存至过期前", async () => {
   assert.equal(tokenRequests.length, 1);
 });
 
-test("findByRequirementKey 使用 Bitable v1 精确复合键过滤并只读取键字段", async () => {
+test("findByRequirementKey 使用 Bitable v1 按 TB 需求 ID 精确过滤", async () => {
   const calls: string[] = [];
   const client = new FeishuBitableClient({
     ...CONFIG,
@@ -123,22 +123,22 @@ test("findByRequirementKey 使用 Bitable v1 精确复合键过滤并只读取�
       if (path.includes("/tenant_access_token")) return { body: { code: 0, tenant_access_token: "t-1", expire: 3600 } };
       if (path.includes("/bitable/v1/apps/app-token/tables/tbl-1/records?")) {
         const url = new URL(`https://x${path}`);
-        assert.equal(url.searchParams.get("filter"), 'and(CurrentValue.[TB项目ID] = "p1", CurrentValue.[TB需求ID] = "r1")');
-        assert.deepEqual(JSON.parse(url.searchParams.get("field_names") ?? "[]"), ["TB项目ID", "TB需求ID"]);
+        assert.equal(url.searchParams.get("filter"), 'CurrentValue.[TB需求ID] = "r1"');
+        assert.deepEqual(JSON.parse(url.searchParams.get("field_names") ?? "[]"), ["TB需求ID"]);
         assert.equal(url.searchParams.get("page_size"), "2");
-        return { body: { code: 0, data: { items: [{ record_id: "rec-1", fields: { TB项目ID: "p1", TB需求ID: "r1" } }] } } };
+        return { body: { code: 0, data: { items: [{ record_id: "rec-1", fields: { TB需求ID: "r1" } }] } } };
       }
       return { body: { code: 0 } };
     }, calls),
   });
   const found = await client.findByRequirementKey({ projectId: "p1", requirementId: "r1" });
   assert.equal(found?.recordId, "rec-1");
-  assert.deepEqual(found?.fields, { TB项目ID: "p1", TB需求ID: "r1" });
+  assert.deepEqual(found?.fields, { TB需求ID: "r1" });
   assert.ok(calls.some((c) => c.startsWith("GET /open-apis/bitable/v1/apps/app-token/tables/tbl-1/records?")));
   assert.equal(calls.some((c) => c.startsWith("GET /open-apis/base/v3/")), false);
 });
 
-test("复合键无命中返回 null", async () => {
+test("TB 需求 ID 无命中返回 null", async () => {
   const client = new FeishuBitableClient({
     ...CONFIG,
     fetch: fakeFetch((path) => {
@@ -150,7 +150,7 @@ test("复合键无命中返回 null", async () => {
   assert.equal(await client.findByRequirementKey({ projectId: "p", requirementId: "none" }), null);
 });
 
-test("重复复合键拒绝任意选择记录", async () => {
+test("重复 TB 需求 ID 拒绝任意选择记录", async () => {
   const client = new FeishuBitableClient({
     ...CONFIG,
     fetch: fakeFetch((path) => {

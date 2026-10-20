@@ -70,6 +70,8 @@ export interface SyncBatchRecord {
 // source_url 与 attachment_refs 在当前 Teambition 接口上未验证，保持可空、不推断。
 export interface RequirementRecord {
   id: string;
+  /** RQ-Sys stable display ID, e.g. RQ-000001; distinct from the Teambition source ID. */
+  platformRequirementId: string;
   sourceConfigId: string;
   teambitionRequirementId: string;
   teambitionUniqueId: number | null; // 仅展示用，不参与去重

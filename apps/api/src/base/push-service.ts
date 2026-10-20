@@ -27,7 +27,7 @@ export interface BasePushServiceDeps {
   sourceSnapshots: SourceSnapshotRepository;
   base: FeishuBasePushAdapter;
   sourceProjectId: string;
-  baseFields: { projectId: string; requirementId: string; owner: string; source: Record<string, string>; ai: Record<string, string>; pm: string[] };
+  baseFields: { projectId?: string; requirementId: string; platformRequirementId?: string; owner: string; source: Record<string, string>; ai: Record<string, string>; pm: string[] };
   actorId: string | null;
   /** PM Leader 的飞书 user_id（32 位十六进制）：first_push 的固定收件人，也是其它事件无负责人时的兜底收件人；缺省读 RQSYS_PM_LEADER_USER_ID。 */
   pmLeaderUserId?: string | null;
@@ -341,7 +341,7 @@ export function createBasePushService(deps: BasePushServiceDeps) {
       });
       const sourceCreatedAt = req.sourceCreatedAt ? Date.parse(req.sourceCreatedAt) : Number.NaN;
       pushedResult = await deps.base.push({
-        projectId: deps.sourceProjectId, requirementId: req.teambitionRequirementId, requirementDbId: req.id,
+        projectId: deps.sourceProjectId, requirementId: req.teambitionRequirementId, platformRequirementId: req.platformRequirementId, requirementDbId: req.id,
         // 每次推送都写深链（含首推静默）：PM 从通知按钮点进来能直接打开该需求详情。
         requirementLink: requirementDeepLink(webBaseUrl, req.id),
         title: req.title, description: req.description,

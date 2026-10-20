@@ -1,6 +1,6 @@
 import { FeishuApiError } from "./transport.js";
 
-export interface BaseRequirementKey { projectId: string; requirementId: string }
+export interface BaseRequirementKey { requirementId: string; /** Legacy callers may still provide this; Base lookup ignores it. */ projectId?: string }
 export interface BaseRecord { recordId: string; fields: Record<string, unknown> }
 
 // External Base access is isolated behind this transport interface.
@@ -52,8 +52,10 @@ export interface BaseNotificationPush {
 }
 
 export interface BaseFieldMap {
-  projectId: string;
+  /** Legacy configuration property retained for compatibility; no longer required by the Base schema. */
+  projectId?: string;
   requirementId: string;
+  platformRequirementId?: string;
   owner: string;
   source: Record<string, string>;
   ai: Record<string, string>;
@@ -72,6 +74,8 @@ export interface BasePushInput {
   projectId: string;
   /** Teambition 需求 ID（24 位字符串）。写入 Base 的「需求 ID」字段，用于跨系统对账。 */
   requirementId: string;
+  /** RQ-Sys display ID (for example RQ-000001), stored separately from the Teambition ID. */
+  platformRequirementId?: string;
   /**
    * 应用数据库中的 requirements.id（uuid）。PM 快照的外键指向它。
    * 与 requirementId 是两个不同的标识：Base 字段要 TB ID，pm_snapshots.requirement_id 是 uuid。
@@ -134,13 +138,16 @@ export class FeishuBasePushAdapter {
 
   async push(input: BasePushInput): Promise<BasePushResult> {
     const omittedFields: OmittedField[] = [];
-    const key = { projectId: input.projectId, requirementId: input.requirementId };
+    const key = { requirementId: input.requirementId };
     const existing = await this.client.findByRequirementKey(key);
     const delta: Record<string, unknown> = {
-      [this.fields.projectId]: input.projectId,
       [this.fields.requirementId]: input.requirementId,
       [this.fields.owner]: input.owner ? [{ id: input.owner.userId }] : null,
     };
+    if (this.fields.platformRequirementId) {
+      if (!input.platformRequirementId) throw new Error("RQ-Sys platform requirement ID is missing");
+      delta[this.fields.platformRequirementId] = input.platformRequirementId;
+    }
     const sourceValues = { title: input.title, ...(input.description === undefined ? {} : { description: input.description }), ...input.sourceValues };
     for (const [name, value] of Object.entries(sourceValues)) {
       const field = this.fields.source[name];

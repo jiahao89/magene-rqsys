@@ -1,4 +1,5 @@
 import type { Pool } from "pg";
+import { normalizeOwnerName } from "../owner/mapping.js";
 import { SourceProjectResolutionError, type FeishuUserDirectory, type FeishuUserSelectionResolver, type IdentityProvider, type TeambitionSourceProjectResolver } from "../application/ports.js";
 import { normalizeScheduleTime } from "../domain/workflow.js";
 import type { AuditEventRepository, AnalysisRunRepository, PipelineJobRepository, SourceConfigRepository, SyncBatchRepository, SyncItemRepository, PersonMappingRepository, RequirementQueryRepository, BasePushRunRepository, ModuleDictionaryRepository, PriorityRuleRepository, SourceSnapshotRepository, TeamDirectoryRepository } from "../application/repositories.js";
@@ -46,8 +47,26 @@ function sourceDto(source: SourceConfigRecord) {
 function batchDto(batch: SyncBatchRecord) {
   return { id: batch.id, status: batch.status, triggerType: batch.triggerType, actorId: batch.actorId, totalCount: batch.totalCount, succeededCount: batch.succeededCount, failedCount: batch.failedCount, startedAt: batch.startedAt, completedAt: batch.completedAt, errorSummary: batch.errorSummary };
 }
-function requirementDto(req: RequirementRecord, analysis: Record<string, unknown> | null = null, analyses: unknown[] = []) {
-  return { id: req.id, sourceRequirementId: req.teambitionRequirementId, title: req.title, sourceVersion: req.sourceVersion, pipeline: { pull: req.pipeline.pull, analysis: req.pipeline.analysis, owner: req.pipeline.owner, push: req.pipeline.push }, source: req.sourcePayload, analysis, baseRecordId: req.baseRecordId, analyses };
+function requirementDto(req: RequirementRecord, analysis: Record<string, unknown> | null = null, analyses: unknown[] = [], ownerName: string | null = null) {
+  // 展示字段：详情页 L1 需要标题/描述/负责人/更新时间；只加不改，避免破坏既有调用方。
+  // ownerName 仅在详情接口注入（列表逐行查映射会 N+1），解析不到时为 null。
+  return {
+    id: req.id,
+    sourceRequirementId: req.teambitionRequirementId,
+    platformRequirementId: req.platformRequirementId ?? null,
+    title: req.title,
+    description: req.description,
+    sourceVersion: req.sourceVersion,
+    updatedAt: req.updatedAt,
+    sourceUrl: req.sourceUrl,
+    lastPushedAt: req.lastPushedAt,
+    ownerName,
+    pipeline: { pull: req.pipeline.pull, analysis: req.pipeline.analysis, owner: req.pipeline.owner, push: req.pipeline.push },
+    source: req.sourcePayload,
+    analysis,
+    baseRecordId: req.baseRecordId,
+    analyses,
+  };
 }
 // 历史分析版本摘要（Spec 02「prior versions as permitted」）：不含 structuredResult 正文，只留可追溯元数据；
 // confidence 从存储枚举（high/medium/low，DDL CHECK）转回展示层中文，与详情 structuredResult 口径一致
@@ -347,7 +366,15 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const req = await repositories.requirements.get(decodeURIComponent(requirementMatch[1]!)); if (!req) return jsonError("NOT_FOUND");
     const latest = await repositories.analyses?.latest(req.id) ?? null;
     const history = await repositories.analyses?.listByRequirement(req.id) ?? [];
-    return json(requirementDto(req, latest && latest.status === "analyzed" ? latest.structuredResult : null, history.map(analysisVersionDto)));
+    // 负责人姓名：详情单条解析一次，解析不到返回 null；前端会退回只显示映射状态。
+    let ownerName: string | null = null;
+    if (req.executorUserId || req.executorName) {
+      try {
+        const mapping = await repositories.people?.resolveActive(req.sourceConfigId, req.executorUserId ? { tbUserId: req.executorUserId } : { normalizedName: normalizeOwnerName(req.executorName!) });
+        ownerName = mapping?.teambitionDisplayName ?? null;
+      } catch { /* 姓名是展示增强，解析失败不影响详情返回 */ }
+    }
+    return json(requirementDto(req, latest && latest.status === "analyzed" ? latest.structuredResult : null, history.map(analysisVersionDto), ownerName));
   }
   const itemRetryMatch = url.pathname.match(/^\/api\/items\/([^/]+)\/retry$/);
   if (method === "POST" && itemRetryMatch) {

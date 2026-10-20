@@ -31,7 +31,7 @@ The MVP provides a traceable requirement record and a narrow Base collaboration 
 | Team roster | Application database | Product-group member names used by the requirement-pool executor filter and module ownership; not an import allowlist |
 | Sync batch | Application database | Trigger type, actor, start/end, status, counts, error summary |
 | Sync item | Application database | Batch, source requirement key, action, stage, error code/detail, Base record ID |
-| Requirement map | Application database | Project ID + requirement ID, Base record ID, source snapshot/hash/version, independent pipeline states |
+| Requirement map | Application database | Project ID + TB requirement ID, immutable RQ-Sys display ID, Base record ID, source snapshot/hash/version, independent pipeline states |
 | Analysis result | Application database | Requirement key, attempt/version, state, structured payload, model/prompt/dictionary/rule versions, timestamps |
 | Person map | Application database | Optional TB user ID, TB display name, Feishu user identity, match method, active state |
 | PM current values | Feishu Base | PM status, confirmed module/priority, handler, handled time, structured note |
@@ -39,7 +39,7 @@ The MVP provides a traceable requirement record and a narrow Base collaboration 
 | Pipeline history / audit | Application database | Actor, object, transition/action, timestamp, result and safe error details |
 | Module dictionary / rule configuration | Application database | Versioned controlled modules and published priority rules |
 
-The current requirement identifier in the MVP is the Teambition requirement ID scoped by project ID. If the actual Teambition object cannot provide a stable ID, implementation must stop at the integration POC and return with a product decision; do not invent a title-based key.
+The source identity in the MVP remains the Teambition requirement ID scoped by project ID. Separately, RQ-Sys assigns a continuous display ID (`RQ-000001`, `RQ-000002`, …) when a requirement first enters the application database. The display ID is immutable, mirrored to Base, and never used for source deduplication. If the actual Teambition object cannot provide a stable ID, implementation must stop at the integration POC and return with a product decision; do not invent a title-based key.
 
 ## Field ownership
 

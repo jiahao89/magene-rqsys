@@ -11,7 +11,7 @@ const PREVIOUS_OWNER_TB_ID = "tb-owner-previous";
 const PM_LEADER_USER_ID = "0123456789abcdef0123456789abcdef";
 
 const requirement = (overrides: Partial<RequirementRecord> = {}): RequirementRecord => ({
-  id: "req-1", sourceConfigId: "source-1", teambitionRequirementId: "tb-1", teambitionUniqueId: null,
+  id: "req-1", platformRequirementId: "RQ-000001", sourceConfigId: "source-1", teambitionRequirementId: "tb-1", teambitionUniqueId: null,
   title: "Need", description: "Description", scope: null, acceptanceCriteria: null,
   proposerUserId: null, proposerName: null, executorUserId: null, executorName: null,
   sourceStatusId: null, sourceCreatedAt: null, sourceUpdatedAt: null, sourceUrl: null,
@@ -48,6 +48,7 @@ const sourceSnapshot = (overrides: Partial<SourceSnapshotRecord> = {}): SourceSn
 
 interface CapturedPushInput {
   projectId: string;
+  platformRequirementId: string;
   substantiveChanged: boolean;
   requirementLink?: string;
   notification?: { eventId: string; eventType: string; recipientUserId: string | null; recipientIdType: "open_id" | "user_id" | "union_id"; ownerMergeUserId: string | null };
@@ -161,6 +162,7 @@ test("uses the configured Teambition source project ID as the Base project key",
   const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
   assert.equal(result.kind, "pushed");
   assert.equal(h.baseInput?.projectId, "verified-source-project");
+  assert.equal(h.baseInput?.platformRequirementId, "RQ-000001");
 });
 
 test("records a rejected select value in the push audit instead of hiding it", async () => {

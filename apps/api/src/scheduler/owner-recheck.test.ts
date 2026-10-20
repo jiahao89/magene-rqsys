@@ -21,7 +21,7 @@ type EnqueueCall = { jobType: string; dedupeKey: string; payload: Record<string,
 
 function requirement(overrides: Partial<RequirementRecord> = {}): RequirementRecord {
   return {
-    id: "req-1", sourceConfigId: "src-1", teambitionRequirementId: "tb-req-1", teambitionUniqueId: 1,
+    id: "req-1", platformRequirementId: "RQ-000001", sourceConfigId: "src-1", teambitionRequirementId: "tb-req-1", teambitionUniqueId: 1,
     title: "需求", description: null, scope: null, acceptanceCriteria: null,
     proposerUserId: null, proposerName: null, executorUserId: "tb-user-1", executorName: "张三",
     sourceStatusId: null, sourceCreatedAt: null, sourceUpdatedAt: null, sourceUrl: null,
