@@ -126,7 +126,10 @@ async withRequirementLock<T>(requirementId:string,fn:()=>Promise<T>):Promise<T>{
   const c=await this.pool.connect();
   try{
     await c.query("BEGIN");
-    await c.query("SELECT pg_advisory_xact_lock(hashtext($1))",[requirementId]);
+    // pg_advisory_xact_lock 返回 void 列；妙搭的池包装层会对结果做 JSON 解析，
+    // 遇到无值的 void 列会抛 "Unexpected end of JSON input"，导致取锁失败、推送直接报错。
+    // 显式转成 text 让列有确定值（空串），既保持阻塞语义也不会被解析器噎住。
+    await c.query("SELECT pg_advisory_xact_lock(hashtext($1))::text AS locked",[requirementId]);
     const result=await fn();
     await c.query("COMMIT");
     return result;
