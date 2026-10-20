@@ -1,5 +1,5 @@
 // 工单 16/17 面板测试：数据全部来自 mock API；覆盖正向、权限拒绝与详情/重试交互。
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { BatchesPanel, MappingsPanel, ModulesPanel, PeoplePanel, RequirementsPanel, SourcesPanel } from "./panels";
 import type { SourceConfig } from "./api";
@@ -7,8 +7,14 @@ import type { SourceConfig } from "./api";
 const fetchMock = vi.fn<typeof fetch>();
 beforeEach(() => {
   cleanup();
+  window.history.replaceState(null, "", "/");
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
+});
+
+afterEach(() => {
+  // 需求池会把手动筛选/详情写进 URL；恢复默认路径，避免污染其它用例。
+  window.history.replaceState(null, "", "/");
 });
 
 const source: SourceConfig = { id: "source-1", projectName: "需求收集与管理", enabled: true, schedule: { enabled: false, weekday: null, time: null, timezone: null } };
@@ -204,27 +210,326 @@ describe("MappingsPanel (ticket 17)", () => {
 });
 
 describe("RequirementsPanel (ticket 17)", () => {
-  const row = { id: "req-1", sourceRequirementId: "tb-1", title: "需要报表", sourceVersion: 2, pipeline: { pull: "synced", analysis: "analyzed", owner: "auto_mapped", push: "pushed" } };
+  const row = {
+    id: "req-1",
+    sourceRequirementId: "tb-1",
+    title: "需要报表",
+    sourceVersion: 2,
+    pipeline: { pull: "synced", analysis: "analyzed", owner: "auto_mapped", push: "pushed" },
+    ownerName: "Ada",
+    updatedAt: "2026-10-09T00:00:00.000Z",
+    source: { created: "2026-10-08T00:00:00.000Z", description: "支持报表导出" },
+  };
+
+  function jsonOk(body: unknown, status = 200): Response {
+    return Response.json(body, { status });
+  }
+
+  function detail(overrides: Record<string, unknown> = {}) {
+    return { ...row, analysis: null, analyses: [], ...overrides };
+  }
+
+  function mockPanel(options: { rows?: unknown[]; detailBody?: unknown; people?: { name: string }[]; onDetail?: (path: string) => Response } = {}) {
+    const rows = options.rows ?? [row];
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/people") return jsonOk({ items: options.people ?? [] });
+      if (path.startsWith("/api/requirements/")) {
+        return options.onDetail ? options.onDetail(path) : jsonOk(options.detailBody ?? detail());
+      }
+      return jsonOk({ items: rows, nextCursor: null });
+    });
+  }
+
+  async function openFirstRow(title = "需要报表") {
+    fireEvent.click(await screen.findByText(title));
+    return screen.findByRole("heading", { name: title });
+  }
+
+  it("scans a fixed row layout and opens a page-level detail instead of an inline card", async () => {
+    mockPanel();
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+
+    const title = await screen.findByText("需要报表");
+    expect(title).toHaveAttribute("title", "需要报表");
+    const listRow = title.closest("tr");
+    if (!listRow) throw new Error("Requirement row was not rendered");
+    expect(within(listRow).getByText("Ada")).toBeInTheDocument();
+    // 四阶段中文徽标；英文原值放在 title 上，便于排查。
+    expect(within(listRow).getByTitle("同步：已同步（synced）")).toBeInTheDocument();
+    expect(within(listRow).getByTitle("AI 分析：已分析（analyzed）")).toBeInTheDocument();
+    expect(within(listRow).getByTitle("负责人：已自动匹配（auto_mapped）")).toBeInTheDocument();
+    expect(within(listRow).getByTitle("推送：已推送（pushed）")).toBeInTheDocument();
+    expect(within(listRow).getByText(/\d{4}/)).toBeInTheDocument();
+    // 行内没有「查看」等操作按钮；整行本身就是进入详情的入口。
+    expect(within(listRow).queryByRole("button")).not.toBeInTheDocument();
+
+    await openFirstRow();
+
+    // 列表页被详情页替换；L1/L2/L3 与来源标注同时出现。
+    expect(screen.queryByText("需求列表")).not.toBeInTheDocument();
+    expect(screen.getByText("需求信息")).toBeInTheDocument();
+    expect(screen.getByText("来自 Teambition")).toBeInTheDocument();
+    expect(screen.getByText("AI 分析与建议")).toBeInTheDocument();
+    expect(screen.getByText("AI 生成 · 可被推翻")).toBeInTheDocument();
+    expect(screen.getByText("处理与推送")).toBeInTheDocument();
+    expect(screen.getByText("系统状态")).toBeInTheDocument();
+    expect(screen.getByText("查看依据与历史")).toBeInTheDocument();
+    // TB 原始字段同时使用「TB」小徽标与分区来源标注。
+    expect(screen.getAllByText("TB").length).toBeGreaterThanOrEqual(8);
+
+    fireEvent.click(screen.getByRole("button", { name: /返回需求池/ }));
+    expect(await screen.findByText("需要报表")).toBeInTheDocument();
+  });
+
+  it("puts requirements waiting for human handling first, then sorts each group by update time", async () => {
+    const rows = [
+      { ...row, id: "req-pushed-old", title: "已推送旧", updatedAt: "2026-10-01T00:00:00.000Z" },
+      { ...row, id: "req-pending", title: "待推送需求", pipeline: { ...row.pipeline, push: "pending" } },
+      { ...row, id: "req-failed", title: "推送失败需求", pipeline: { ...row.pipeline, push: "failed" } },
+      { ...row, id: "req-unassigned", title: "待分配需求", pipeline: { ...row.pipeline, owner: "pending_mapping" } },
+      { ...row, id: "req-pushed-new", title: "已推送新", updatedAt: "2026-10-05T00:00:00.000Z" },
+    ];
+    mockPanel({ rows });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await screen.findByText("待分配需求");
+
+    const order = screen.getAllByRole("row")
+      .map((item) => item.getAttribute("aria-label"))
+      .filter((label): label is string => Boolean(label?.startsWith("打开需求：")));
+    expect(order).toEqual([
+      "打开需求：待分配需求",
+      "打开需求：推送失败需求",
+      "打开需求：待推送需求",
+      "打开需求：已推送新",
+      "打开需求：已推送旧",
+    ]);
+    const pendingRow = screen.getByText("待分配需求").closest("tr");
+    if (!pendingRow) throw new Error("Pending-owner row was not rendered");
+    expect(within(pendingRow).getByText("待分配").closest(".req-owner")).toHaveClass("is-unassigned");
+  });
+
+  it("preserves loaded pages and filters when returning from the detail page", async () => {
+    const second = { ...row, id: "req-2", sourceRequirementId: "tb-2", title: "第二页需求" };
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/people") return jsonOk({ items: [] });
+      if (path.startsWith("/api/requirements/")) return jsonOk(detail());
+      if (path.includes("cursor=cursor-1")) return jsonOk({ items: [second], nextCursor: null });
+      return jsonOk({ items: [row], nextCursor: "cursor-1" });
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await screen.findByText("需要报表");
+    fireEvent.click(screen.getByRole("button", { name: "加载更多" }));
+    expect(await screen.findByText("第二页需求")).toBeInTheDocument();
+
+    await openFirstRow();
+    fireEvent.click(screen.getByRole("button", { name: /返回需求池/ }));
+
+    // 回到列表时第一页 + 已加载的第二页都还在，不需要重新请求。
+    expect(await screen.findByText("需要报表")).toBeInTheDocument();
+    expect(screen.getByText("第二页需求")).toBeInTheDocument();
+    expect(window.location.search).toBe("");
+  });
+
+  it("writes filters into the URL, restores them after remount, and clears them", async () => {
+    mockPanel({ rows: [row], people: [{ name: "毕梓浩" }] });
+    const view = render(<RequirementsPanel onRefresh={() => undefined} />);
+    await screen.findByText("需要报表");
+
+    fireEvent.change(screen.getByLabelText("搜索需求标题"), { target: { value: "报表" } });
+    fireEvent.change(screen.getByLabelText("TB负责人筛选"), { target: { value: "毕梓浩" } });
+    fireEvent.change(screen.getByLabelText("同步状态筛选"), { target: { value: "synced" } });
+    fireEvent.click(screen.getByRole("button", { name: "筛选" }));
+
+    await waitFor(() => expect(new URLSearchParams(window.location.search).get("title")).toBe("报表"));
+    const params = new URLSearchParams(window.location.search);
+    expect(params.get("owner")).toBe("毕梓浩");
+    expect(params.get("pull")).toBe("synced");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("q=%E6%8A%A5%E8%A1%A8"), expect.anything()));
+
+    view.unmount();
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    expect(((await screen.findByLabelText("搜索需求标题")) as HTMLInputElement).value).toBe("报表");
+    expect((screen.getByLabelText("TB负责人筛选") as HTMLSelectElement).value).toBe("毕梓浩");
+    expect((screen.getByLabelText("同步状态筛选") as HTMLSelectElement).value).toBe("synced");
+
+    // 从筛选后的列表进入详情：URL 同时带筛选与 requirement，可刷新/分享直达。
+    await openFirstRow();
+    expect(new URLSearchParams(window.location.search).get("requirement")).toBe("req-1");
+    expect(new URLSearchParams(window.location.search).get("title")).toBe("报表");
+    fireEvent.click(screen.getByRole("button", { name: /返回需求池/ }));
+    expect(new URLSearchParams(window.location.search).get("requirement")).toBeNull();
+    expect(new URLSearchParams(window.location.search).get("title")).toBe("报表");
+
+    fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
+    await waitFor(() => expect(window.location.search).toBe(""));
+    expect((screen.getByLabelText("搜索需求标题") as HTMLInputElement).value).toBe("");
+  });
+
+  it("opens the detail page with the owner picker from a pending-owner row action", async () => {
+    const pending = { ...row, pipeline: { ...row.pipeline, owner: "pending_mapping", push: "pending" } };
+    mockPanel({ rows: [pending], detailBody: detail({ pipeline: pending.pipeline, ownerName: null }) });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "分配" }));
+
+    expect(await screen.findByRole("heading", { name: "需要报表" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "分配 / 变更负责人" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByLabelText("搜索飞书用户")).toBeVisible();
+    expect(window.location.search).toContain("requirement=req-1");
+  });
+
+  it("shows AI advice as cards and keeps evidence/inference/history in the folded audit area", async () => {
+    mockPanel({
+      detailBody: detail({
+        analysis: {
+          module: "报表分析", priority: "P1", confidence: "中", confidence_reason: "标题提到报表",
+          evidence: ["支持报表导出"], facts: [{ text: "需要月度报表" }],
+          recommendations: {
+            user: { recommendation: "改善用户效率", rationale: "减少重复操作", evidence: ["减少操作步骤"] },
+            market: { recommendation: "市场信号不足", rationale: "没有市场数据", evidence: [], missing_evidence: true },
+            business: { recommendation: "降低服务成本", rationale: "减少人工处理", evidence: ["减少人工处理"] },
+            technology: { recommendation: "可行性待评估", rationale: "缺少技术约束信息", evidence: [], missing_evidence: true },
+          },
+          inferences: [{ text: "可能需要定时导出" }], missing_inputs: ["目标用户"], blind_spots: ["价值待确认"],
+        },
+        analyses: [
+          { analysisVersion: 1, status: "failed_retryable", moduleSuggestion: null, confidence: null, priority: null, startedAt: "2026-10-09T00:00:00.000Z", completedAt: "2026-10-09T00:00:05.000Z", safeErrorSummary: "AI provider request timed out." },
+          { analysisVersion: 2, status: "analyzed", moduleSuggestion: "报表分析", confidence: "中", priority: "P1", startedAt: "2026-10-09T00:01:00.000Z", completedAt: "2026-10-09T00:01:03.000Z", safeErrorSummary: null },
+        ],
+      }),
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await openFirstRow();
+
+    // L2 卡片：维度/结论/理由，证据不足显式标红。
+    expect(screen.getByText("模块建议")).toBeInTheDocument();
+    expect(screen.getByText("优先级建议")).toBeInTheDocument();
+    expect(screen.getByText("置信度")).toBeInTheDocument();
+    expect(screen.getByText("U · 用户")).toBeInTheDocument();
+    expect(screen.getByText("改善用户效率")).toBeInTheDocument();
+    expect(screen.getByText(/理由：减少重复操作/)).toBeInTheDocument();
+    expect(screen.getByText(/证据：减少操作步骤/)).toBeInTheDocument();
+    expect(screen.getAllByText("需要补充信息")).toHaveLength(2);
+    expect(screen.getByText("C · 技术")).toBeInTheDocument();
+
+    // L3 默认收起；展开后显示证据、推断、盲点、快照与分析版本历史。
+    const trigger = screen.getByText("查看依据与历史");
+    fireEvent.click(trigger);
+    expect(await screen.findByText("原文证据")).toBeVisible();
+    expect(screen.getByText(/【AI 推断】可能需要定时导出/)).toBeInTheDocument();
+    expect(screen.getByText("目标用户")).toBeInTheDocument();
+    expect(screen.getByText("价值待确认")).toBeInTheDocument();
+    expect(screen.getByText(/AI provider request timed out\./)).toBeInTheDocument();
+    expect(screen.getByText("源快照（只读 JSON）")).toBeInTheDocument();
+  });
+
+  it("shows 尚未分析 with an analysis trigger when no AI result exists", async () => {
+    mockPanel({ detailBody: detail({ pipeline: { ...row.pipeline, analysis: "pending", push: "pending" } }) });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await openFirstRow();
+
+    expect(screen.getByText("尚未分析")).toBeInTheDocument();
+    expect(screen.queryByText("模块建议")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "触发 AI 分析" }));
+    expect(await screen.findByText("AI 分析重试已入队")).toBeInTheDocument();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/analysis/req-1/retry", expect.objectContaining({ method: "POST" })));
+  });
+
+  it("exposes the Base record as a copyable reference without claiming PM state is readable", async () => {
+    mockPanel({ detailBody: detail({ baseRecordId: "recvxwGs5Js0PA" }) });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await openFirstRow();
+
+    expect((await screen.findAllByText("recvxwGs5Js0PA")).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByRole("button", { name: "复制记录 ID" })).toBeInTheDocument();
+    expect(screen.getByText(/请在飞书 Base 中查看/)).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Base/ })).not.toBeInTheDocument();
+  });
+
+  it("keeps the owner action available and explains disabled retries with titles", async () => {
+    mockPanel();
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await openFirstRow();
+    const actions = within(await screen.findByRole("group", { name: "需求操作" }));
+
+    expect(actions.getByRole("button", { name: "分配 / 变更负责人" })).toBeEnabled();
+    const retryAnalysis = actions.getByRole("button", { name: "重试 AI 分析" });
+    expect(retryAnalysis).toBeDisabled();
+    expect(retryAnalysis).toHaveAttribute("title", "AI 分析已完成，无需重试。");
+    const retryPush = actions.getByRole("button", { name: "重试 Base 推送" });
+    expect(retryPush).toBeDisabled();
+    expect(retryPush.getAttribute("title")).toContain("无需重试");
+    expect(actions.getByRole("button", { name: "刷新" })).toBeInTheDocument();
+    expect(screen.getByText(/已推送完成/)).toBeInTheDocument();
+    expect(screen.queryByText(/拉取 synced/)).not.toBeInTheDocument();
+  });
+
+  it("refreshes the detail after background analysis and push finish", async () => {
+    let completed = false;
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/requirements/req-1") return jsonOk({
+        ...row,
+        pipeline: completed ? row.pipeline : { ...row.pipeline, analysis: "pending", push: "pending" },
+        analysis: null, analyses: [],
+      });
+      return jsonOk({ items: [row], nextCursor: null });
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await openFirstRow();
+    expect(within(await screen.findByRole("group", { name: "处理状态" })).getByText("待分析")).toBeInTheDocument();
+    completed = true;
+    fireEvent.click(screen.getByRole("button", { name: "刷新" }));
+    await waitFor(() => expect(within(screen.getByRole("group", { name: "处理状态" })).getByText("已分析")).toBeInTheDocument());
+    const refreshed = within(screen.getByRole("group", { name: "处理状态" }));
+    expect(refreshed.getByText("已自动匹配")).toBeInTheDocument();
+    expect(refreshed.getByText("已推送")).toBeInTheDocument();
+  });
+
+  it("returns to the list with filters intact when an older detail refresh finishes late", async () => {
+    let refreshA: ((response: Response) => void) | undefined;
+    let firstA = true;
+    const rowB = { ...row, id: "req-2", sourceRequirementId: "tb-2", title: "另一个需求" };
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/requirements/req-1") {
+        if (firstA) { firstA = false; return jsonOk(detail()); }
+        return new Promise<Response>((resolve) => { refreshA = resolve; });
+      }
+      if (path === "/api/requirements/req-2") return jsonOk(detail(rowB));
+      return jsonOk({ items: [row, rowB], nextCursor: null });
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await openFirstRow();
+    // 先留下一个未完成的详情刷新请求，再返回列表打开另一条需求。
+    fireEvent.click(screen.getByRole("button", { name: "刷新" }));
+    await waitFor(() => expect(refreshA).toBeTypeOf("function"));
+    fireEvent.click(screen.getByRole("button", { name: /返回需求池/ }));
+    expect(await screen.findByText("另一个需求")).toBeInTheDocument();
+    await openFirstRow("另一个需求");
+    await act(async () => { refreshA?.(jsonOk(detail())); });
+    expect(screen.getByRole("heading", { name: "另一个需求" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "需要报表" })).not.toBeInTheDocument();
+  });
 
   it("lets an operator refresh a mapped owner after a failed Base push", async () => {
     const failedRow = { ...row, pipeline: { ...row.pipeline, owner: "manually_mapped", push: "failed" } };
     fetchMock.mockImplementation(async (input, init) => {
       const path = typeof input === "string" ? input : new Request(input).url;
-      if (path === "/api/requirements/req-1") return jsonOk({ ...failedRow, analysis: null, analyses: [] });
+      if (path === "/api/requirements/req-1") return jsonOk(detail({ pipeline: failedRow.pipeline }));
       if (path === "/api/feishu/users?q=Alex") return jsonOk({ items: [{ openId: "ou-alex-new", name: "Alex Chen" }] });
       if (path === "/api/requirements/req-1/owner" && init?.method === "PUT") return jsonOk({ requirementId: "req-1", ownerState: "manually_mapped", status: "queued" });
       return jsonOk({ items: [failedRow], nextCursor: null });
     });
-
     render(<RequirementsPanel onRefresh={() => undefined} />);
-    fireEvent.click(await screen.findByRole("button", { name: "查看" }));
+    await openFirstRow();
     const status = within(await screen.findByRole("group", { name: "处理状态" }));
     expect(status.getByText("已手动匹配")).toBeInTheDocument();
     expect(status.getByText("推送失败")).toBeInTheDocument();
-    // 原始枚举保留在 title 上，方便排查与文案对不上的状态。
-    expect(status.getByTitle("manually_mapped")).toBeInTheDocument();
-    expect(status.getByTitle("failed")).toBeInTheDocument();
-    // 已匹配的需求也能替换负责人：入口常驻，不再只在 owner === pending_mapping 时出现。
+    expect(status.getByTitle("负责人：已手动匹配（manually_mapped）")).toBeInTheDocument();
+    expect(status.getByTitle("推送：推送失败（failed）")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "分配 / 变更负责人" }));
     fireEvent.change(screen.getByLabelText("搜索飞书用户"), { target: { value: "Alex" } });
     fireEvent.click(screen.getByRole("button", { name: "搜索" }));
@@ -237,129 +542,34 @@ describe("RequirementsPanel (ticket 17)", () => {
     })));
   });
 
-  it("refreshes an expanded requirement after background analysis and push finish", async () => {
-    let completed = false;
-    fetchMock.mockImplementation(async (input) => {
-      const path = typeof input === "string" ? input : new Request(input).url;
-      if (path === "/api/requirements/req-1") return jsonOk({ ...row,
-        pipeline: completed ? row.pipeline : { ...row.pipeline, analysis: "pending", push: "pending" },
-        analysis: null, analyses: [],
-      });
-      return jsonOk({ items: [row], nextCursor: null });
-    });
-    render(<RequirementsPanel onRefresh={() => undefined} />);
-    fireEvent.click(await screen.findByRole("button", { name: "查看" }));
-    expect(within(await screen.findByRole("group", { name: "处理状态" })).getByText("待分析")).toBeInTheDocument();
-    completed = true;
-    fireEvent.click(screen.getByRole("button", { name: "刷新" }));
-    await waitFor(() => expect(within(screen.getByRole("group", { name: "处理状态" })).getByText("已分析")).toBeInTheDocument());
-    const refreshed = within(screen.getByRole("group", { name: "处理状态" }));
-    expect(refreshed.getByText("已自动匹配")).toBeInTheDocument();
-    expect(refreshed.getByText("已推送")).toBeInTheDocument();
+  it("opens the requirement referenced by a notification deep link on first mount", async () => {
+    mockPanel({ detailBody: detail() });
+    render(<RequirementsPanel onRefresh={() => undefined} initialRequirementId="req-1" />);
+
+    expect(await screen.findByRole("heading", { name: "需要报表" })).toBeInTheDocument();
+    expect(screen.getByText("REQ-tb-1 · v2")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("/api/requirements/req-1", expect.anything());
   });
 
-  it("keeps the latest selected requirement when an older refresh finishes late", async () => {
-    let refreshA: ((response: Response) => void) | undefined;
-    let firstA = true;
-    const rowB = { ...row, id: "req-2", sourceRequirementId: "tb-2", title: "另一个需求" };
-    const detail = (item: typeof row) => ({ ...item, analysis: null, analyses: [] });
-    fetchMock.mockImplementation(async (input) => {
-      const path = typeof input === "string" ? input : new Request(input).url;
-      if (path === "/api/requirements/req-1") {
-        if (firstA) { firstA = false; return jsonOk(detail(row)); }
-        return new Promise<Response>((resolve) => { refreshA = resolve; });
-      }
-      if (path === "/api/requirements/req-2") return jsonOk(detail(rowB));
-      return jsonOk({ items: [row, rowB], nextCursor: null });
-    });
+  it("restores filters when a deep link enters the detail page and returns to the list", async () => {
+    window.history.replaceState(null, "", "/?requirement=req-1&title=%E6%8A%A5%E8%A1%A8");
+    mockPanel({ detailBody: detail() });
     render(<RequirementsPanel onRefresh={() => undefined} />);
-    fireEvent.click(within(await screen.findByRole("row", { name: /需要报表/ })).getByRole("button", { name: "查看" }));
-    expect(await screen.findByText(/需要报表（REQ-tb-1/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "刷新" }));
-    await waitFor(() => expect(refreshA).toBeTypeOf("function"));
-    fireEvent.click(within(await screen.findByRole("row", { name: /另一个需求/ })).getByRole("button", { name: "查看" }));
-    expect(await screen.findByText(/另一个需求（REQ-tb-2/)).toBeInTheDocument();
-    await act(async () => { refreshA?.(jsonOk(detail(row))); });
-    expect(screen.getByText(/另一个需求（REQ-tb-2/)).toBeInTheDocument();
-    expect(screen.queryByText(/需要报表（REQ-tb-1/)).not.toBeInTheDocument();
-  });
 
-  it("shows AI evidence, facts vs inference separation, and the analysis version history in detail", async () => {
-    fetchMock.mockImplementation(async (input) => {
-      const path = typeof input === "string" ? input : new Request(input).url;
-      if (path.startsWith("/api/requirements/req-1")) {
-        return jsonOk({
-          ...row,
-          analysis: {
-            module: "报表分析", priority: "P1", confidence: "中", confidence_reason: "标题提到报表",
-            evidence: ["支持报表导出"], facts: [{ text: "需要月度报表", evidence: "支持报表导出" }],
-            recommendations: {
-              user: { recommendation: "改善用户效率", rationale: "减少重复操作", evidence: ["减少操作步骤"] },
-              market: { recommendation: "市场信号不足", rationale: "没有市场数据", evidence: [], missing_evidence: true },
-              business: { recommendation: "降低服务成本", rationale: "减少人工处理", evidence: ["减少人工处理"] },
-              technology: { recommendation: "可行性待评估", rationale: "缺少技术约束信息", evidence: [], missing_evidence: true },
-            },
-            inferences: [{ text: "可能需要定时导出", ai_inference: true }], missing_inputs: ["目标用户"], blind_spots: ["价值待确认"],
-          },
-          analyses: [
-            { analysisVersion: 1, status: "failed_retryable", moduleSuggestion: null, confidence: null, priority: null, startedAt: "2026-10-09T00:00:00.000Z", completedAt: "2026-10-09T00:00:05.000Z", safeErrorSummary: "AI provider request timed out." },
-            { analysisVersion: 2, status: "analyzed", moduleSuggestion: "报表分析", confidence: "中", priority: "P1", startedAt: "2026-10-09T00:01:00.000Z", completedAt: "2026-10-09T00:01:03.000Z", safeErrorSummary: null },
-          ],
-        });
-      }
-      return jsonOk({ items: [row], nextCursor: null });
-    });
-
-    render(<RequirementsPanel onRefresh={() => undefined} />);
-    fireEvent.click(await screen.findByRole("button", { name: "查看" }));
-
-    expect(await screen.findByText("支持报表导出")).toBeInTheDocument();
-    // 结构化建议与证据/推断分成两块，长文本不再挤在同一个两列表格里。
-    expect(screen.getByText("结构化建议（U/M/S/C）")).toBeInTheDocument();
-    expect(screen.getByText("证据与推断")).toBeInTheDocument();
-    expect(screen.getByText("原文证据")).toBeInTheDocument();
-    expect(screen.getByText(/【AI 推断】可能需要定时导出/)).toBeInTheDocument();
-    expect(screen.getByText("目标用户")).toBeInTheDocument();
-    expect(screen.getByText("价值待确认")).toBeInTheDocument();
-    expect(screen.getByText(/AI provider request timed out\./)).toBeInTheDocument();
-    expect(screen.getByText(/事实（来自源文本）/)).toBeInTheDocument();
-    expect(screen.getByText("U · 用户")).toBeInTheDocument();
-    expect(screen.getByText("改善用户效率")).toBeInTheDocument();
-    expect(screen.getByText(/理由：减少重复操作/)).toBeInTheDocument();
-    expect(screen.getByText(/证据：减少操作步骤/)).toBeInTheDocument();
-    expect(screen.getByText("M · 市场")).toBeInTheDocument();
-    expect(screen.getAllByText(/证据不足/)).toHaveLength(2);
-    expect(screen.getByText("S · 商业")).toBeInTheDocument();
-    expect(screen.getByText("C · 技术")).toBeInTheDocument();
-  });
-
-  it("exposes the Base record as a copyable reference without claiming PM state is readable", async () => {
-    fetchMock.mockImplementation(async (input) => {
-      const path = typeof input === "string" ? input : new Request(input).url;
-      if (path.startsWith("/api/requirements/req-1")) {
-        return jsonOk({ ...row, baseRecordId: "recvxwGs5Js0PA", analysis: null, analyses: [] });
-      }
-      return jsonOk({ items: [row], nextCursor: null });
-    });
-
-    render(<RequirementsPanel onRefresh={() => undefined} />);
-    fireEvent.click(await screen.findByRole("button", { name: "查看" }));
-
-    expect(await screen.findByText("recvxwGs5Js0PA")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "复制记录 ID" })).toBeInTheDocument();
-    // Base 链接需要凭据，工作台拿不到：必须说明去哪看 PM 状态，而不是暗示已读回。
-    expect(screen.getByText(/请在飞书 Base 中查看/)).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /Base/ })).not.toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "需要报表" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /返回需求池/ }));
+    expect(((await screen.findByLabelText("搜索需求标题")) as HTMLInputElement).value).toBe("报表");
+    expect(window.location.search).toBe("?title=%E6%8A%A5%E8%A1%A8");
   });
 
   it("passes server-side search and filters to the requirements API", async () => {
+    mockPanel({ rows: [row], people: [{ name: "毕梓浩" }] });
     fetchMock.mockImplementation(async (input) => {
       const path = typeof input === "string" ? input : new Request(input).url;
-      if (path.startsWith("/api/requirements")) return jsonOk({ items: [row], nextCursor: "cursor-1" });
       if (path === "/api/people") return jsonOk({ items: [{ name: "毕梓浩" }] });
+      if (path.startsWith("/api/requirements")) return jsonOk({ items: [row], nextCursor: "cursor-1" });
       return jsonOk({});
     });
-
     render(<RequirementsPanel onRefresh={() => undefined} />);
     await screen.findByText("需要报表");
     fireEvent.change(screen.getByLabelText("搜索需求标题"), { target: { value: "报表" } });
@@ -370,41 +580,8 @@ describe("RequirementsPanel (ticket 17)", () => {
     expect(await screen.findByRole("button", { name: "加载更多" })).toBeInTheDocument();
   });
 
-  it("keeps a persistent action bar on a fully processed requirement instead of hiding every action", async () => {
-    fetchMock.mockImplementation(async (input) => {
-      const path = typeof input === "string" ? input : new Request(input).url;
-      if (path.startsWith("/api/requirements/req-1")) return jsonOk({ ...row, analysis: null, analyses: [] });
-      if (path === "/api/people") return jsonOk({ items: [] });
-      return jsonOk({ items: [row], nextCursor: null });
-    });
-
-    render(<RequirementsPanel onRefresh={() => undefined} />);
-    fireEvent.click(await screen.findByRole("button", { name: "查看" }));
-    const actions = within(await screen.findByRole("group", { name: "需求操作" }));
-
-    // 分配/变更负责人始终可用：这是已推送需求仍需要的主动操作。
-    expect(actions.getByRole("button", { name: "分配 / 变更负责人" })).toBeEnabled();
-    // 不可用的重试不隐藏，而是置灰并在 title 里说明原因。
-    const retryAnalysis = actions.getByRole("button", { name: "重试 AI 分析" });
-    expect(retryAnalysis).toBeDisabled();
-    expect(retryAnalysis).toHaveAttribute("title", "AI 分析已完成，无需重试。");
-    const retryPush = actions.getByRole("button", { name: "重试 Base 推送" });
-    expect(retryPush).toBeDisabled();
-    expect(retryPush.getAttribute("title")).toContain("无需重试");
-    // 没有可重试项时也要给出明确的下一步说明，而不是留白。
-    expect(actions.getByText(/已推送完成/)).toBeInTheDocument();
-    // 详情不再直接展示英文原始枚举。
-    expect(screen.queryByText(/拉取 synced/)).not.toBeInTheDocument();
-  });
-
   it("groups the toolbar with visible labels, keeps the date range collapsed, and clears filters", async () => {
-    fetchMock.mockImplementation(async (input) => {
-      const path = typeof input === "string" ? input : new Request(input).url;
-      if (path.startsWith("/api/requirements")) return jsonOk({ items: [row], nextCursor: null });
-      if (path === "/api/people") return jsonOk({ items: [{ name: "毕梓浩" }] });
-      return jsonOk({});
-    });
-
+    mockPanel({ rows: [row], people: [{ name: "毕梓浩" }] });
     render(<RequirementsPanel onRefresh={() => undefined} />);
     await screen.findByText("需要报表");
 
@@ -417,7 +594,6 @@ describe("RequirementsPanel (ticket 17)", () => {
     expect(filterGroup.getByText("分析状态")).toBeInTheDocument();
     expect(filterGroup.getByText("推送状态")).toBeInTheDocument();
     expect(batchGroup.getByText("批次 ID")).toBeInTheDocument();
-    // 日期范围默认收起在「更多筛选」里。
     const moreFilters = batchGroup.getByText(/更多筛选/).closest("details");
     expect(moreFilters).not.toHaveAttribute("open");
 
@@ -426,20 +602,6 @@ describe("RequirementsPanel (ticket 17)", () => {
     fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
     expect(screen.queryByText(/个筛选生效/)).not.toBeInTheDocument();
     expect((screen.getByLabelText("TB负责人筛选") as HTMLSelectElement).value).toBe("");
-  });
-
-  it("opens the requirement referenced by a notification deep link on first mount", async () => {
-    fetchMock.mockImplementation(async (input) => {
-      const path = typeof input === "string" ? input : new Request(input).url;
-      if (path === "/api/requirements/req-1") return jsonOk({ ...row, analysis: null, analyses: [] });
-      return jsonOk({ items: [row], nextCursor: null });
-    });
-
-    render(<RequirementsPanel onRefresh={() => undefined} initialRequirementId="req-1" />);
-
-    // 复用既有「选中需求」详情路径：URL 参数命中时无需再点「查看」。
-    expect(await screen.findByText(/需要报表（REQ-tb-1/)).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledWith("/api/requirements/req-1", expect.anything());
   });
 });
 

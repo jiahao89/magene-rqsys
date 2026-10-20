@@ -166,9 +166,10 @@ describe("RQ-Sys local workbench", () => {
 
     render(<App />);
 
-    // 深链进入需求池并直接展开该需求，不需要用户再点「查看」。
+    // 深链进入需求池并直接打开详情页，不需要用户再点列表行。
     expect(await screen.findByRole("heading", { name: "需求池" })).toBeInTheDocument();
-    expect(await screen.findByText(/需要报表（REQ-tb-1/)).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "需要报表" })).toBeInTheDocument();
+    expect(screen.getByText("REQ-tb-1 · v2")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith("/api/requirements/req-1", expect.anything());
   });
 

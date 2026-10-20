@@ -2,10 +2,13 @@
 // 权限拒绝、空数据、加载中、局部失败和 API 不可用都显示可恢复状态。
 // 需求池/批次/审计面板自治加载，支持服务端筛选与游标分页。
 import { useCallback, useEffect, useId, useRef, useState, Component, type KeyboardEvent, type ReactNode } from "react";
-import { AlertDialog as HeroAlertDialog, Button as HeroButton, Input as HeroInput, TextArea as HeroTextArea } from "@heroui/react";
-import { RefreshCw, X } from "lucide-react";
+import { Accordion as HeroAccordion, AlertDialog as HeroAlertDialog, Button as HeroButton, Card as HeroCard, Chip as HeroChip, Input as HeroInput, TextArea as HeroTextArea } from "@heroui/react";
+import { ArrowLeft, RefreshCw, X } from "lucide-react";
 import { stateLabel } from "./state-labels";
 import { checkScheduleHealth } from "./schedule";
+import { readRequirementDeepLink } from "./deep-link";
+import { emptyRequirementListFilters, readRequirementListFilters, requirementPoolUrl, type RequirementListFilters } from "./requirements-url";
+import { formatDateTime, requirementOwnerView, requirementSourceFacts, requirementTime, sortRequirementsForAttention } from "./requirement-view";
 import {
   ApiError, addTeamPerson, createSource, deleteTeamPerson, getBatch, getFunctionModules, getRequirement, listAudit, listBatches, listMappings, listRequirements, listTeamPeople, pushRequirement,
   renameTeamPerson, saveFunctionModules,
@@ -350,21 +353,12 @@ function stateChip(status: string) {
   return <span className={`status-chip ${tone}`}><span />{stateLabel(status)}</span>;
 }
 
-// ---------- 工单 17：需求池（服务端搜索/筛选/游标分页 + 详情证据 + 分阶段重试） ----------
+// ---------- 工单 17 / design.md 第 8–10 章：需求池列表 + 独立详情页 ----------
 
 const ownerStateOptions = [["", "全部负责人状态"], ["pending_mapping", "待匹配"], ["auto_mapped", "已匹配"], ["manually_mapped", "手动匹配"], ["not_required", "无需匹配"]] as const;
 const analysisStateOptions = [["", "全部分析状态"], ["analyzed", "已分析"], ["failed_retryable", "待重试"], ["pending", "等待中"], ["running", "进行中"]] as const;
 const pullStateOptions = [["", "全部同步状态"], ["pending", "等待同步"], ["running", "同步中"], ["synced", "已同步"], ["failed", "同步失败"]] as const;
 const pushStateOptions = [["", "全部推送状态"], ["pending", "等待推送"], ["running", "推送中"], ["pushed", "已推送"], ["failed", "推送失败"]] as const;
-
-// 服务端筛选条件：抽出类型与空值对象，供「初始加载 / 清除筛选 / 应用筛选」复用同一份契约。
-interface RequirementFilters {
-  q: string; executorName: string; pullState: string; ownerState: string; analysisState: string; pushState: string; batchId: string; since: string; until: string;
-}
-
-const emptyRequirementFilters: RequirementFilters = {
-  q: "", executorName: "", pullState: "", ownerState: "", analysisState: "", pushState: "", batchId: "", since: "", until: "",
-};
 
 // 详情/列表徽标按阶段取值：同一个原始枚举（pending/running/failed）在不同阶段含义不同，
 // 因此不能用一张全局表；原始值保留在 title 上，便于排查。
@@ -376,6 +370,8 @@ const pipelineLabels: Record<PipelineStage, Record<string, string>> = {
   owner: { manually_mapped: "已手动匹配", auto_mapped: "已自动匹配", pending_mapping: "待匹配负责人", not_required: "无需负责人" },
   push: { pushed: "已推送", pending: "待推送", running: "推送中", failed: "推送失败" },
 };
+
+const pipelineStageNames: Record<PipelineStage, string> = { pull: "同步", analysis: "AI 分析", owner: "负责人", push: "推送" };
 
 interface AnalysisRecommendation {
   recommendation?: unknown;
@@ -390,82 +386,256 @@ interface AnalysisStructured {
   recommendations?: Partial<Record<"user" | "market" | "business" | "technology", AnalysisRecommendation>>;
 }
 
+function analysisText(value: unknown): string | null {
+  return typeof value === "string" && value.trim() !== "" ? value : null;
+}
+
+function analysisStrings(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim() !== "") : [];
+}
+
+function pipelineLabel(stage: PipelineStage, state: string): string {
+  return pipelineLabels[stage][state] ?? stateLabel(state);
+}
+
+function pipelineChipColor(state: string): "success" | "warning" | "danger" | "default" | "accent" {
+  if (state === "failed") return "danger";
+  if (state === "failed_retryable" || state === "pending_mapping") return "warning";
+  if (state === "running") return "accent";
+  if (["synced", "analyzed", "pushed", "manually_mapped", "auto_mapped", "not_required"].includes(state)) return "success";
+  return "default";
+}
+
+// 中文文案 + 语义色；原始枚举留在 title 上，符合 design.md 10.3。
+function StageBadge({ stage, state }: { stage: PipelineStage; state: string }) {
+  return <HeroChip
+    className="req-badge"
+    color={pipelineChipColor(state)}
+    variant="soft"
+    size="sm"
+    title={`${pipelineStageNames[stage]}：${pipelineLabel(stage, state)}（${state}）`}
+  >{pipelineLabel(stage, state)}</HeroChip>;
+}
+
+function TbFieldLabel({ children }: { children: ReactNode }) {
+  return <span className="req-field-label"><span className="tb-badge" title="来自 Teambition 的原始字段">TB</span>{children}</span>;
+}
+
+function OwnerBadge({ owner }: { owner: ReturnType<typeof requirementOwnerView> }) {
+  return <span className={`req-owner${owner.unassigned ? " is-unassigned" : ""}${owner.notRequired ? " is-not-required" : ""}`} title={owner.title}>
+    <span className="req-avatar" aria-hidden="true">{owner.initial}</span>
+    <span>{owner.label}</span>
+  </span>;
+}
+
+function SourceValue({ value, href, emptyHint = "Teambition 未提供该字段" }: { value: string | null; href?: boolean; emptyHint?: string }) {
+  if (!value) return <span className="req-empty-value" title={emptyHint}>—</span>;
+  if (href) return <a className="req-source-link" href={value} target="_blank" rel="noreferrer">{value}</a>;
+  return <span>{value}</span>;
+}
+
+function TextList({ items, prefix }: { items: string[]; prefix?: string }) {
+  if (!items.length) return <span className="req-empty-value">—</span>;
+  return <ul className="req-evidence-list">{items.map((item, index) => <li key={`${index}-${item}`}>{prefix ?? ""}{item}</li>)}</ul>;
+}
+
+function requirementListQuery(filter: RequirementListFilters) {
+  const toIso = (value: string): string | undefined => {
+    if (!value) return undefined;
+    const time = new Date(value);
+    return Number.isNaN(time.getTime()) ? undefined : time.toISOString();
+  };
+  return {
+    q: filter.title || undefined,
+    executorName: filter.owner || undefined,
+    pullState: filter.pull || undefined,
+    analysisState: filter.analysis || undefined,
+    ownerState: filter.ownerState || undefined,
+    pushState: filter.push || undefined,
+    batchId: filter.batchId || undefined,
+    since: toIso(filter.from),
+    until: toIso(filter.to),
+  };
+}
+
 export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefresh: () => void; initialRequirementId?: string | null }) {
+  const [initialFilters] = useState(() => readRequirementListFilters(window.location.search));
+  const [initialDetailId] = useState(() => readRequirementDeepLink(window.location.search) ?? initialRequirementId?.trim() ?? null);
   const [rows, setRows] = useState<RequirementSummary[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
-  const [executorName, setExecutorName] = useState("");
+  const [query, setQuery] = useState(initialFilters.title);
+  const [executorName, setExecutorName] = useState(initialFilters.owner);
   const [people, setPeople] = useState<TeamPerson[]>([]);
   const [peopleError, setPeopleError] = useState<string | null>(null);
-  const [ownerState, setOwnerState] = useState("");
-  const [analysisState, setAnalysisState] = useState("");
-  const [pullState, setPullState] = useState("");
-  const [pushState, setPushState] = useState("");
-  const [batchId, setBatchId] = useState("");
-  const [since, setSince] = useState("");
-  const [until, setUntil] = useState("");
+  const [ownerState, setOwnerState] = useState(initialFilters.ownerState);
+  const [analysisState, setAnalysisState] = useState(initialFilters.analysis);
+  const [pullState, setPullState] = useState(initialFilters.pull);
+  const [pushState, setPushState] = useState(initialFilters.push);
+  const [batchId, setBatchId] = useState(initialFilters.batchId);
+  const [since, setSince] = useState(initialFilters.from);
+  const [until, setUntil] = useState(initialFilters.to);
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [detailId, setDetailId] = useState<string | null>(initialDetailId);
   const [selected, setSelected] = useState<RequirementDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(Boolean(initialDetailId));
   const detailRequestVersion = useRef(0);
+  // 列表滚动位置：进入详情时记下，返回列表后恢复（design.md 8.1）。
+  const listScrollTop = useRef(0);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [autoOpenOwnerPicker, setAutoOpenOwnerPicker] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(async (filter: RequirementFilters, nextCursor: string | null) => {
+  const filters: RequirementListFilters = { title: query.trim(), owner: executorName, pull: pullState, analysis: analysisState, ownerState, push: pushState, batchId: batchId.trim(), from: since, to: until };
+  // 已生效筛选：列表行/详情 URL 与刷新必须以「点过筛选」的条件为准，
+  // 不能把用户尚未应用的草稿输入写进 URL。
+  const appliedFiltersRef = useRef(initialFilters);
+  const activeFilterCount = Object.values(filters).filter(Boolean).length;
+  const dateFilterCount = [since, until].filter(Boolean).length;
+
+  const load = useCallback(async (filter: RequirementListFilters, nextCursor: string | null) => {
+    appliedFiltersRef.current = filter;
     setLoadState("loading"); setLoadError(null);
     try {
-      const page = await listRequirements({ q: filter.q || undefined, executorName: filter.executorName || undefined, ownerState: filter.ownerState || undefined, analysisState: filter.analysisState || undefined, pullState: filter.pullState || undefined, pushState: filter.pushState || undefined, batchId: filter.batchId || undefined, since: filter.since ? new Date(filter.since).toISOString() : undefined, until: filter.until ? new Date(filter.until).toISOString() : undefined, limit: 25, ...(nextCursor ? { cursor: nextCursor } : {}) });
+      const page = await listRequirements({ ...requirementListQuery(filter), limit: 25, ...(nextCursor ? { cursor: nextCursor } : {}) });
       setRows((prev) => nextCursor ? [...prev, ...page.items] : page.items);
       setCursor(page.nextCursor);
       setLoadState("ready");
     } catch (cause) { setLoadError(errorText(cause)); setLoadState("error"); }
   }, []);
-  const filters: RequirementFilters = { q: query.trim(), executorName, ownerState, analysisState, pullState, pushState, batchId: batchId.trim(), since, until };
-  const activeFilterCount = Object.values(filters).filter(Boolean).length;
-  const dateFilterCount = [since, until].filter(Boolean).length;
-  useEffect(() => {
-    void load(emptyRequirementFilters, null);
-    void listTeamPeople().then(setPeople).catch((cause: unknown) => setPeopleError(errorText(cause)));
-  }, [load]);
 
-  const open = useCallback(async (id: string) => {
+  useEffect(() => {
+    void load(initialFilters, null);
+    void listTeamPeople().then(setPeople).catch((cause: unknown) => setPeopleError(errorText(cause)));
+  }, [load, initialFilters]);
+
+  const open = useCallback(async (id: string, options?: { push?: boolean; openOwnerPicker?: boolean }) => {
+    if (options?.push) {
+      listScrollTop.current = window.scrollY || document.documentElement.scrollTop || 0;
+      window.history.pushState(null, "", requirementPoolUrl(window.location.pathname || "/", appliedFiltersRef.current, id));
+    }
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+    setDetailId(id); setSelected(null); setDetailLoading(true); setDetailError(null); setNotice(null);
+    setAutoOpenOwnerPicker(Boolean(options?.openOwnerPicker));
     const version = ++detailRequestVersion.current;
-    setSelected(null); setDetailError(null); setNotice(null);
     try {
       const detail = await getRequirement(id);
-      if (version === detailRequestVersion.current) setSelected(detail);
+      if (version === detailRequestVersion.current) {
+        setSelected(detail);
+        // 用最新详情同步当前列表行，操作后返回列表无需重新加载、也不会丢分页。
+        setRows((prev) => prev.map((row) => row.id === detail.id ? {
+          ...row,
+          title: detail.title,
+          pipeline: detail.pipeline,
+          ...(detail.source === undefined ? {} : { source: detail.source }),
+          ...(detail.ownerName === undefined ? {} : { ownerName: detail.ownerName }),
+          ...(detail.updatedAt === undefined ? {} : { updatedAt: detail.updatedAt }),
+        } : row));
+        setDetailLoading(false);
+      }
     } catch (cause) {
-      if (version === detailRequestVersion.current) setDetailError(errorText(cause));
+      if (version === detailRequestVersion.current) { setDetailError(errorText(cause)); setDetailLoading(false); }
     }
   }, []);
-  // 通知深链：只在首次挂载时按 URL 的 requirement 参数打开详情，之后仍由「查看」按钮驱动。
+
+  // 通知深链/分享链接：URL 的 requirement 是唯一入口；只在首次挂载时自动打开。
   const deepLinkOpened = useRef(false);
   useEffect(() => {
-    if (!initialRequirementId || deepLinkOpened.current) return;
+    if (!initialDetailId || deepLinkOpened.current) return;
     deepLinkOpened.current = true;
-    void open(initialRequirementId);
-  }, [initialRequirementId, open]);
-  const runAction = async (action: () => Promise<string>, detailId: string): Promise<boolean> => {
+    void open(initialDetailId);
+  }, [initialDetailId, open]);
+
+  // 返回列表时恢复进入详情前的滚动位置；详情页本身从顶部开始阅读。
+  useEffect(() => {
+    if (detailId !== null || listScrollTop.current === 0) return;
+    const top = listScrollTop.current;
+    listScrollTop.current = 0;
+    document.documentElement.scrollTop = top;
+    document.body.scrollTop = top;
+  }, [detailId]);
+
+  // 浏览器前进/后退：详情页跟着 URL 走，列表状态留在组件 state 里。
+  useEffect(() => {
+    const onPopState = () => {
+      const next = readRequirementDeepLink(window.location.search);
+      if (next) { void open(next); return; }
+      detailRequestVersion.current += 1;
+      setDetailId(null); setSelected(null); setDetailError(null); setDetailLoading(false); setAutoOpenOwnerPicker(false);
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [open]);
+
+  const runAction = async (action: () => Promise<string>, detailKey: string): Promise<boolean> => {
     setBusy(true); setNotice(null);
-    try { const message = await action(); onRefresh(); await open(detailId); setNotice(message); return true; }
-    catch (cause) { setNotice(errorText(cause)); return false; }
+    try {
+      const message = await action();
+      onRefresh();
+      await open(detailKey);
+      setNotice(message);
+      return true;
+    } catch (cause) { setNotice(errorText(cause)); return false; }
     finally { setBusy(false); }
   };
+
+  // 返回列表：用 replaceState 立刻把 URL 恢复为「筛选 + 无 requirement」，
+  // 刷新/分享列表地址都不会再落回详情；已加载的 rows/cursor 仍在 state 中。
+  const closeDetail = () => {
+    detailRequestVersion.current += 1;
+    setDetailId(null); setSelected(null); setDetailError(null); setDetailLoading(false); setAutoOpenOwnerPicker(false);
+    window.history.replaceState(null, "", requirementPoolUrl(window.location.pathname || "/", appliedFiltersRef.current, null));
+  };
+
+  const applyFilters = () => {
+    window.history.replaceState(null, "", requirementPoolUrl(window.location.pathname || "/", filters, null));
+    void load(filters, null);
+  };
+
   // 清除筛选后立即回到无筛选的第一页，避免残留旧条件与旧游标。
   const clearFilters = () => {
+    const cleared = { ...emptyRequirementListFilters };
     setQuery(""); setExecutorName(""); setPullState(""); setOwnerState(""); setAnalysisState(""); setPushState(""); setBatchId(""); setSince(""); setUntil("");
-    void load(emptyRequirementFilters, null);
+    window.history.replaceState(null, "", requirementPoolUrl(window.location.pathname || "/", cleared, null));
+    void load(cleared, null);
   };
-  const structured: AnalysisStructured = (selected?.analysis ?? {}) as AnalysisStructured;
+
+  const refresh = () => {
+    onRefresh();
+    void load(appliedFiltersRef.current, null);
+    if (detailId) void open(detailId);
+  };
+
+  const sortedRows = sortRequirementsForAttention(rows);
+
+  if (detailId) {
+    return <section className="panel requirements-panel">
+      <RequirementDetailPage
+        detail={selected}
+        detailId={detailId}
+        loading={detailLoading}
+        error={detailError}
+        notice={notice}
+        busy={busy}
+        autoOpenOwnerPicker={autoOpenOwnerPicker}
+        onCloseNotice={() => setNotice(null)}
+        onBack={closeDetail}
+        onRefresh={refresh}
+        onAct={runAction}
+      />
+    </section>;
+  }
 
   return <section className="panel requirements-panel">
-    <div className="panel-heading"><div><h2>需求处理记录</h2><p>四阶段状态、批次和最近同步时间均由服务端筛选。</p></div></div>
+    <div className="panel-heading"><div><h2>需求列表</h2><p>扫描与筛选；点击任意行进入详情页，行内不承载阅读与操作。</p></div></div>
+    <p className="req-list-hint">默认按「待人工处理」优先排序：待分配负责人 › 推送失败 › 待推送 › 已推送，同组按更新时间倒序。</p>
     <div className="requirements-toolbar">
       <div className="toolbar-groups">
         <div className="toolbar-group" role="group" aria-label="搜索">
           <span className="toolbar-group-title">搜索</span>
-          <label className="field toolbar-field"><span>需求标题</span><HeroInput aria-label="搜索需求标题" placeholder="搜索需求标题…" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void load(filters, null); }} /></label>
+          <label className="field toolbar-field"><span>需求标题</span><HeroInput aria-label="搜索需求标题" placeholder="搜索需求标题…" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(event) => { if (event.key === "Enter") applyFilters(); }} /></label>
         </div>
         <div className="toolbar-group" role="group" aria-label="筛选">
           <span className="toolbar-group-title">筛选</span>
@@ -489,15 +659,14 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
       </div>
       <div className="toolbar-actions">
         {activeFilterCount > 0 && <span className="toolbar-active-count" role="status">{activeFilterCount} 个筛选生效</span>}
-        <HeroButton className="button button-primary button-small" onPress={() => void load(filters, null)}>筛选</HeroButton>
-        <HeroButton className="button button-secondary button-small" onPress={() => { onRefresh(); void load(filters, null); if (selected) void open(selected.id); }}><RefreshCw size={14} />刷新</HeroButton>
+        <HeroButton className="button button-primary button-small" onPress={applyFilters}>筛选</HeroButton>
+        <HeroButton className="button button-secondary button-small" onPress={refresh}><RefreshCw size={14} />刷新</HeroButton>
         {activeFilterCount > 0 && <HeroButton className="link-button" onPress={clearFilters}>清除筛选</HeroButton>}
       </div>
     </div>
-    <StateBanner loadError={loadError ?? detailError ?? peopleError} notice={notice} onCloseNotice={() => setNotice(null)} />
-    {selected && <RequirementDetailCard selected={selected} structured={structured} busy={busy} onClose={() => { detailRequestVersion.current += 1; setSelected(null); }} onAct={runAction} />}
-    <RequirementsTable rows={rows} loading={loadState === "loading"} onOpen={(row) => void open(row.id)} />
-    {cursor && <div className="rules-form"><HeroButton className="button button-secondary button-small" onPress={() => void load(filters, cursor)} isDisabled={loadState === "loading"}>加载更多</HeroButton></div>}
+    <StateBanner loadError={loadError ?? peopleError} notice={notice} onCloseNotice={() => setNotice(null)} />
+    <RequirementsTable rows={sortedRows} loading={loadState === "loading"} onOpen={(row) => void open(row.id, { push: true })} onAssign={(row) => void open(row.id, { push: true, openOwnerPicker: true })} />
+    {cursor && <div className="rules-form"><HeroButton className="button button-secondary button-small" onPress={() => void load(appliedFiltersRef.current, cursor)} isDisabled={loadState === "loading"}>加载更多</HeroButton></div>}
   </section>;
 }
 
@@ -516,141 +685,273 @@ function BaseRecordReference({ recordId }: { recordId: string | null }) {
     } catch { setCopied(false); }
   };
   return <span className="base-ref">
-    <span className="micro-label">Base 记录</span>
     <code className="base-ref-id">{recordId}</code>
     <button className="link-button" onClick={() => void copy()}>{copied ? "已复制" : "复制记录 ID"}</button>
     <span className="base-ref-hint">PM 处理状态与通知送达请在飞书 Base 中查看；本工作台不读取这些字段。</span>
   </span>;
 }
 
-function RequirementDetailCard({ selected, structured, busy, onClose, onAct }: {
-  selected: RequirementDetail; structured: AnalysisStructured; busy: boolean; onClose: () => void;
+function RequirementDetailPage({ detail, detailId, loading, error, notice, busy, autoOpenOwnerPicker, onCloseNotice, onBack, onRefresh, onAct }: {
+  detail: RequirementDetail | null;
+  detailId: string;
+  loading: boolean;
+  error: string | null;
+  notice: string | null;
+  busy: boolean;
+  autoOpenOwnerPicker: boolean;
+  onCloseNotice: () => void;
+  onBack: () => void;
+  onRefresh: () => void;
   onAct: (action: () => Promise<string>, detailId: string) => Promise<boolean>;
 }) {
-  // 负责人编辑区收进常驻操作条：任何状态都能新建或替换负责人，不再只在 pending_mapping 时出现。
-  const [ownerPickerOpen, setOwnerPickerOpen] = useState(false);
+  const [ownerPickerOpen, setOwnerPickerOpen] = useState(autoOpenOwnerPicker);
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const ownerEditorId = useId();
-  useEffect(() => { setOwnerPickerOpen(false); }, [selected.id]);
-  const evidence = Array.isArray(structured.evidence) ? structured.evidence.filter((x): x is string => typeof x === "string") : [];
-  const facts = Array.isArray(structured.facts) ? structured.facts as { text?: string; evidence?: string }[] : [];
-  const inferences = Array.isArray(structured.inferences) ? structured.inferences as { text?: string }[] : [];
-  const missingInputs = Array.isArray(structured.missing_inputs) ? structured.missing_inputs.filter((x): x is string => typeof x === "string") : [];
-  const blindSpots = Array.isArray(structured.blind_spots) ? structured.blind_spots.filter((x): x is string => typeof x === "string") : [];
+  useEffect(() => { setOwnerPickerOpen(autoOpenOwnerPicker); }, [detail?.id, autoOpenOwnerPicker]);
+  useEffect(() => { setDescriptionExpanded(false); }, [detail?.id]);
+
+  if (!detail) {
+    return <div className="req-detail-page">
+      <header className="req-detail-summary">
+        <div className="req-summary-top">
+          <HeroButton className="button button-secondary button-small" onPress={onBack}><ArrowLeft size={14} />返回需求池</HeroButton>
+          <div className="req-summary-copy">
+            <h2 className="req-summary-title">{loading ? "正在载入需求详情…" : "无法载入需求详情"}</h2>
+            <span className="req-summary-id">REQ {detailId.slice(0, 8)}</span>
+          </div>
+        </div>
+      </header>
+      <StateBanner loadError={error} notice={notice} onCloseNotice={onCloseNotice} />
+      {!loading && <div className="rules-form"><HeroButton className="button button-secondary button-small" onPress={onRefresh}><RefreshCw size={14} />重试载入</HeroButton></div>}
+    </div>;
+  }
+
+  const structured: AnalysisStructured = (detail.analysis ?? {}) as AnalysisStructured;
+  const facts = requirementSourceFacts(detail);
+  const owner = requirementOwnerView(detail);
+  const evidence = analysisStrings(structured.evidence);
+  const factItems = Array.isArray(structured.facts)
+    ? (structured.facts as { text?: unknown }[]).map((fact) => analysisText(fact.text)).filter((text): text is string => text !== null)
+    : [];
+  const inferenceItems = Array.isArray(structured.inferences)
+    ? (structured.inferences as { text?: unknown }[]).map((inference) => analysisText(inference.text)).filter((text): text is string => text !== null)
+    : [];
+  const missingInputs = analysisStrings(structured.missing_inputs);
+  const blindSpots = analysisStrings(structured.blind_spots);
   const dimensionRecommendations = [
     ["U · 用户", structured.recommendations?.user],
     ["M · 市场", structured.recommendations?.market],
     ["S · 商业", structured.recommendations?.business],
     ["C · 技术", structured.recommendations?.technology],
   ] as const;
-  const factsText = facts.map((fact) => typeof fact.text === "string" ? fact.text : "").filter(Boolean).join("；") || "—";
-  const inferencesText = inferences.map((inference) => typeof inference.text === "string" ? `【AI 推断】${inference.text}` : "").filter(Boolean).join("；") || "—";
-  const missingText = missingInputs.join("；") || "—";
-  const blindSpotText = blindSpots.join("；") || "—";
+  interface AdviceCard { label: string; conclusion: string; rationale?: string | null; evidence?: string[]; missing?: boolean }
+  const adviceCards: AdviceCard[] = [
+    { label: "模块建议", conclusion: analysisText(structured.module) ?? "—" },
+    { label: "优先级建议", conclusion: analysisText(structured.priority) ?? "空（未发布有效校准规则时保持为空）" },
+    { label: "置信度", conclusion: analysisText(structured.confidence) ?? "—", rationale: analysisText(structured.confidence_reason) },
+    ...dimensionRecommendations.map(([label, result]) => ({
+      label,
+      conclusion: analysisText(result?.recommendation) ?? "—",
+      rationale: analysisText(result?.rationale),
+      evidence: analysisStrings(result?.evidence),
+      missing: result?.missing_evidence === true,
+    })),
+  ];
+
   // 操作可用性只取决于流水线状态；不可用时保留按钮并说明原因，避免「入口消失 = 不知道能做什么」。
-  const analysisRetryable = ["failed_retryable", "pending"].includes(selected.pipeline.analysis);
-  const pushRetryable = selected.pipeline.push === "failed";
-  const ownerMapped = ["auto_mapped", "manually_mapped"].includes(selected.pipeline.owner);
-  const ownerSaveLabel = selected.pipeline.owner === "pending_mapping" ? "保存负责人并入队推送" : ownerMapped ? "变更负责人并入队推送" : "分配负责人并入队推送";
-  const analysisDisabledReason = selected.pipeline.analysis === "running"
+  const analysisRetryable = ["failed_retryable", "pending"].includes(detail.pipeline.analysis);
+  const pushRetryable = detail.pipeline.push === "failed";
+  const ownerMapped = ["auto_mapped", "manually_mapped"].includes(detail.pipeline.owner);
+  const ownerSaveLabel = detail.pipeline.owner === "pending_mapping" ? "保存负责人并入队推送" : ownerMapped ? "变更负责人并入队推送" : "分配负责人并入队推送";
+  const analysisDisabledReason = detail.pipeline.analysis === "running"
     ? "AI 分析正在进行中，完成后可查看结果。"
-    : selected.pipeline.analysis === "analyzed"
+    : detail.pipeline.analysis === "analyzed"
       ? "AI 分析已完成，无需重试。"
-      : selected.pipeline.analysis === "failed"
+      : detail.pipeline.analysis === "failed"
         ? "该需求的分析失败不可自动重试，请检查源数据或联系管理员。"
         : "当前状态不可重试 AI 分析。";
-  const pushDisabledReason = selected.pipeline.push === "pushed"
+  const pushDisabledReason = detail.pipeline.push === "pushed"
     ? "Base 推送已完成，无需重试；PM 在飞书多维表格继续处理。"
-    : selected.pipeline.push === "running"
+    : detail.pipeline.push === "running"
       ? "Base 推送进行中，完成后状态会自动刷新。"
-      : selected.pipeline.push === "pending"
+      : detail.pipeline.push === "pending"
         ? "Base 推送排队中，完成后状态会自动刷新。"
         : "当前状态不可重试 Base 推送。";
   // 没有可重试项时也要给出一句明确的下一步说明，而不是留白。
   const guidance = [
-    selected.pipeline.push === "pushed" ? "该需求已推送完成，PM 在飞书多维表格继续处理；如需换人可在此变更负责人。" : "",
+    detail.pipeline.push === "pushed" ? "该需求已推送完成，PM 在飞书多维表格继续处理；如需换人可在此变更负责人。" : "",
     pushRetryable ? (ownerMapped ? "Base 推送失败：可重试推送，也可变更负责人后重新排队。" : "Base 推送失败：请先分配负责人，再重试推送。") : "",
     analysisRetryable ? "AI 分析未完成，可在此重试分析。" : "",
-    selected.pipeline.analysis === "failed" ? "AI 分析失败且不可自动重试；失败摘要见下方分析版本记录。" : "",
+    detail.pipeline.analysis === "failed" ? "AI 分析失败且不可自动重试；失败摘要见「查看依据与历史」中的分析版本记录。" : "",
   ].filter(Boolean).join(" ") || "当前没有待重试的失败项；如需换人可在此变更负责人。";
-  return <div className="config-source requirement-detail">
-    <div className="detail-head"><strong>{selected.title}（REQ-{selected.sourceRequirementId} · v{selected.sourceVersion}）</strong><HeroButton className="button button-secondary button-small" onPress={onClose}>收起</HeroButton></div>
-    <div className="detail-status-row" role="group" aria-label="处理状态">
-      {([
-        ["拉取", "pull", selected.pipeline.pull],
-        ["AI 分析", "analysis", selected.pipeline.analysis],
-        ["负责人", "owner", selected.pipeline.owner],
-        ["推送", "push", selected.pipeline.push],
-      ] as const).map(([label, stage, state]) => <span className="detail-status" key={stage}><span className="detail-status-label">{label}</span>{stageLabel(stage, state)}</span>)}
-    </div>
-    <div className="detail-actionbar" role="group" aria-label="需求操作">
-      <div className="detail-actionbar-actions">
-        <button className="button button-primary button-small" aria-expanded={ownerPickerOpen} aria-controls={ownerEditorId} onClick={() => setOwnerPickerOpen((open) => !open)} disabled={busy} title="搜索飞书用户并设为负责人；保存后会覆盖当前负责人并重新排队推送">分配 / 变更负责人</button>
-        <button className="button button-secondary button-small" onClick={() => void onAct(async () => { await retryAnalysis(selected.id); return "AI 分析重试已入队"; }, selected.id)} disabled={busy || !analysisRetryable} title={analysisRetryable ? "重新提交 AI 分析" : analysisDisabledReason}>重试 AI 分析</button>
-        <button className="button button-secondary button-small" onClick={() => void onAct(async () => { const result = await pushRequirement(selected.id); return result.status === "queued" ? "Base 推送重试已入队" : `推送状态：${result.status}`; }, selected.id)} disabled={busy || !pushRetryable} title={pushRetryable ? "重新提交 Base 推送" : pushDisabledReason}>重试 Base 推送</button>
+
+  const createdAt = formatDateTime(facts.createdAt);
+  const updatedAt = formatDateTime(facts.updatedAt);
+  const analysisVersions = [...detail.analyses].reverse();
+  const failedAnalysis = analysisVersions.find((version) => version.safeErrorSummary !== null);
+  const failureText = detail.pipeline.push === "failed"
+    ? (failedAnalysis?.safeErrorSummary ? `Base 推送失败；最近一次分析失败摘要：${failedAnalysis.safeErrorSummary}` : "Base 推送失败（接口未返回失败原因）。")
+    : detail.pipeline.analysis === "failed" || detail.pipeline.analysis === "failed_retryable"
+      ? failedAnalysis?.safeErrorSummary ?? "AI 分析失败（接口未返回失败摘要）。"
+      : null;
+  const pushTime = formatDateTime(detail.lastPushedAt ?? null);
+  const stages: Array<[PipelineStage, string]> = [["pull", detail.pipeline.pull], ["analysis", detail.pipeline.analysis], ["owner", detail.pipeline.owner], ["push", detail.pipeline.push]];
+
+  return <div className="req-detail-page">
+    <header className="req-detail-summary">
+      <div className="req-summary-top">
+        <HeroButton className="button button-secondary button-small" onPress={onBack}><ArrowLeft size={14} />返回需求池</HeroButton>
+        <div className="req-summary-copy">
+          <h2 className="req-summary-title">{detail.title}</h2>
+          <span className="req-summary-id">REQ-{detail.sourceRequirementId} · v{detail.sourceVersion}</span>
+        </div>
+      </div>
+      <div className="req-summary-meta">
+        <span className="req-owner-line"><span className="req-meta-label">负责人</span><OwnerBadge owner={owner} /></span>
+        <div className="req-stage-row" role="group" aria-label="处理状态">{stages.map(([stage, state]) => <StageBadge key={stage} stage={stage} state={state} />)}</div>
+        <div className="req-summary-actions" role="group" aria-label="需求操作">
+          <HeroButton className="button button-primary button-small" aria-expanded={ownerPickerOpen} aria-controls={ownerEditorId} onPress={() => setOwnerPickerOpen((open) => !open)} isDisabled={busy}>分配 / 变更负责人</HeroButton>
+          <button className="button button-secondary button-small" onClick={() => void onAct(async () => { await retryAnalysis(detail.id); return "AI 分析重试已入队"; }, detail.id)} disabled={busy || !analysisRetryable} title={analysisRetryable ? "重新提交 AI 分析" : analysisDisabledReason}>重试 AI 分析</button>
+          <button className="button button-secondary button-small" onClick={() => void onAct(async () => { const result = await pushRequirement(detail.id); return result.status === "queued" ? "Base 推送重试已入队" : `推送状态：${result.status}`; }, detail.id)} disabled={busy || !pushRetryable} title={pushRetryable ? "重新提交 Base 推送" : pushDisabledReason}>重试 Base 推送</button>
+          <HeroButton className="button button-secondary button-small" onPress={onRefresh} isDisabled={busy}><RefreshCw size={14} />刷新</HeroButton>
+        </div>
       </div>
       <p className="detail-actionbar-hint">{guidance}</p>
       {ownerPickerOpen && <div className="detail-owner-editor" id={ownerEditorId}>
         <p className="detail-actionbar-hint">搜索并选择飞书用户；保存后会覆盖当前负责人并重新排队 Base 推送。</p>
-        <FeishuUserPicker key={selected.id} disabled={busy} saveLabel={ownerSaveLabel} onMap={async (user) => {
+        <FeishuUserPicker key={detail.id} disabled={busy} saveLabel={ownerSaveLabel} onMap={async (user) => {
           const ok = await onAct(async () => {
-            const result = await setOwner(selected.id, { feishuUserId: user.openId, feishuIdType: "open_id" });
+            const result = await setOwner(detail.id, { feishuUserId: user.openId, feishuIdType: "open_id" });
             return `${user.name} 负责人已${ownerMapped ? "变更" : "分配"}（${pipelineLabel("owner", result.ownerState)}），推送已排队`;
-          }, selected.id);
+          }, detail.id);
           if (ok) setOwnerPickerOpen(false);
         }} />
       </div>}
-    </div>
-    <BaseRecordReference recordId={selected.baseRecordId} />
-    <p className="detail-note">推送成功不代表飞书 PM 通知已送达；PM 处理状态与通知送达以飞书多维表格为准。</p>
-    <h3 className="detail-section-title">结构化建议（U/M/S/C）</h3>
-    <div className="table-scroll"><table className="detail-suggestion-table"><thead><tr><th>项目</th><th>内容</th></tr></thead><tbody>
-      <tr><td>模块建议</td><td>{typeof structured.module === "string" ? structured.module : "—"}</td></tr>
-      <tr><td>优先级建议</td><td>{typeof structured.priority === "string" ? structured.priority : "空（未发布有效校准规则时保持为空）"}</td></tr>
-      <tr><td>置信度</td><td>{typeof structured.confidence === "string" ? structured.confidence : "—"}{typeof structured.confidence_reason === "string" ? ` · ${structured.confidence_reason}` : ""}</td></tr>
-      {dimensionRecommendations.map(([label, result]) => {
-        const recommendationEvidence = Array.isArray(result?.evidence) ? result.evidence.filter((item): item is string => typeof item === "string") : [];
-        return <tr key={label}><td>{label}</td><td>
-          <strong>{typeof result?.recommendation === "string" ? result.recommendation : "—"}</strong>
-          {typeof result?.rationale === "string" && <div>理由：{result.rationale}</div>}
-          {recommendationEvidence.length > 0 && <div>证据：{recommendationEvidence.join("；")}</div>}
-          {result?.missing_evidence === true && <div>证据不足：需要补充信息</div>}
-        </td></tr>;
-      })}
-    </tbody></table></div>
-    <h3 className="detail-section-title">证据与推断</h3>
-    <dl className="evidence-grid">
-      <div className="evidence-card"><dt>原文证据</dt><dd>{evidence.length ? evidence.join("；") : "—"}</dd></div>
-      <div className="evidence-card"><dt>事实（来自源文本）</dt><dd>{factsText}</dd></div>
-      <div className="evidence-card"><dt>AI 推断（非事实）</dt><dd>{inferencesText}</dd></div>
-      <div className="evidence-card"><dt>缺失信息</dt><dd>{missingText}</dd></div>
-      <div className="evidence-card"><dt>分析盲点</dt><dd>{blindSpotText}</dd></div>
-      <div className="evidence-card"><dt>源快照版本</dt><dd>v{selected.sourceVersion}（只读，来自 Teambition 快照）</dd></div>
-    </dl>
-    <details className="source-snapshot"><summary>查看源快照内容（allowlist 字段，只读）</summary><pre className="source-snapshot-pre">{JSON.stringify(selected.source, null, 2)}</pre></details>
-    {selected.analyses.length > 0 && <div className="table-scroll"><table><thead><tr><th>分析版本</th><th>状态</th><th>模块</th><th>优先级</th><th>开始时间</th><th>失败摘要</th></tr></thead><tbody>{[...selected.analyses].reverse().map((version: AnalysisVersionSummary) => <tr key={version.analysisVersion}><td className="mono-cell">v{version.analysisVersion}</td><td>{stageLabel("analysis", version.status)}</td><td>{version.moduleSuggestion ?? "—"}</td><td>{version.priority ?? "空"}</td><td>{timeLabel(version.startedAt)}</td><td>{version.safeErrorSummary ?? "—"}</td></tr>)}</tbody></table></div>}
+    </header>
+
+    <StateBanner loadError={error} notice={notice} onCloseNotice={onCloseNotice} />
+
+    <section className="req-section" aria-labelledby="req-l1-heading">
+      <div className="req-section-head"><h3 id="req-l1-heading">需求信息</h3><span className="req-source-note">来自 Teambition</span></div>
+      <div className="req-field">
+        <TbFieldLabel>标题</TbFieldLabel>
+        <p className="req-l1-title">{detail.title}</p>
+      </div>
+      <div className="req-field req-description-field">
+        <TbFieldLabel>描述</TbFieldLabel>
+        {facts.description ? <>
+          <p className={`req-description${descriptionExpanded ? " is-expanded" : ""}`}>{facts.description}</p>
+          {facts.description.length > 140 && <HeroButton className="link-button" onPress={() => setDescriptionExpanded((expanded) => !expanded)}>{descriptionExpanded ? "收起描述" : "展开全部"}</HeroButton>}
+        </> : <span className="req-empty-value" title="Teambition 未提供该字段">—</span>}
+      </div>
+      <div className="req-l1-meta">
+        <div className="req-owner-block">
+          <span className="req-meta-label">负责人</span>
+          <OwnerBadge owner={owner} />
+          <HeroButton className="link-button" onPress={() => setOwnerPickerOpen(true)}>{owner.unassigned ? "分配负责人" : "变更"}</HeroButton>
+        </div>
+        <div className="req-stage-block">
+          <span className="req-meta-label">四阶段状态</span>
+          <div className="req-stage-row">{stages.map(([stage, state]) => <StageBadge key={stage} stage={stage} state={state} />)}</div>
+        </div>
+        <dl className="req-source-grid">
+          <div><dt><TbFieldLabel>提出人</TbFieldLabel></dt><dd><SourceValue value={facts.proposerName} /></dd></div>
+          <div><dt><TbFieldLabel>执行人</TbFieldLabel></dt><dd><SourceValue value={facts.executorName} /></dd></div>
+          <div><dt><TbFieldLabel>状态</TbFieldLabel></dt><dd><SourceValue value={facts.tbStatus} emptyHint="Teambition 未提供该字段；工作台不推断状态名称" /></dd></div>
+          <div><dt><TbFieldLabel>链接</TbFieldLabel></dt><dd><SourceValue value={facts.tbUrl} href emptyHint="Teambition 未提供该字段" /></dd></div>
+          <div><dt><TbFieldLabel>创建时间</TbFieldLabel></dt><dd><SourceValue value={createdAt ?? facts.createdAt} emptyHint="Teambition 未提供该字段" /></dd></div>
+          <div><dt><TbFieldLabel>更新时间</TbFieldLabel></dt><dd><SourceValue value={updatedAt ?? facts.updatedAt} emptyHint="Teambition 未提供该字段" /></dd></div>
+        </dl>
+      </div>
+    </section>
+
+    <section className="req-section" aria-labelledby="req-l2-heading">
+      <div className="req-section-head"><h3 id="req-l2-heading">AI 分析与建议</h3><span className="req-source-note">AI 生成 · 可被推翻</span></div>
+      {!detail.analysis
+        ? <div className="req-empty-state">
+          <strong>尚未分析</strong>
+          <span>{detail.pipeline.analysis === "running" ? "AI 分析正在进行中；完成后刷新查看结果。" : "该需求还没有可用的 AI 分析结果。"}</span>
+          <button className="button button-secondary button-small" onClick={() => void onAct(async () => { await retryAnalysis(detail.id); return "AI 分析重试已入队"; }, detail.id)} disabled={busy || !analysisRetryable} title={analysisRetryable ? "提交 AI 分析" : analysisDisabledReason}>触发 AI 分析</button>
+        </div>
+        : <div className="advice-grid">{adviceCards.map((card) => <HeroCard key={card.label} className="advice-card">
+          <HeroCard.Content>
+            <span className="advice-label">{card.label}</span>
+            <strong className="advice-conclusion">{card.conclusion}</strong>
+            {card.rationale && <p className="advice-rationale">理由：{card.rationale}</p>}
+            {card.evidence && card.evidence.length > 0 && <p className="advice-evidence">证据：{card.evidence.join("；")}</p>}
+            {card.missing && <span className="advice-missing">需要补充信息</span>}
+          </HeroCard.Content>
+        </HeroCard>)}</div>}
+    </section>
+
+    <section className="req-section" aria-labelledby="req-status-heading">
+      <div className="req-section-head"><h3 id="req-status-heading">处理与推送</h3><span className="req-source-note">系统状态</span></div>
+      <dl className="req-system-grid">
+        <div><dt>四阶段状态</dt><dd><div className="req-stage-row">{stages.map(([stage, state]) => <StageBadge key={stage} stage={stage} state={state} />)}</div></dd></div>
+        <div><dt>负责人映射方式</dt><dd>{pipelineLabel("owner", detail.pipeline.owner)}</dd></div>
+        <div><dt>Base 记录</dt><dd><BaseRecordReference recordId={detail.baseRecordId} /></dd></div>
+        <div><dt>推送时间</dt><dd>{pushTime ?? <span className="req-empty-value" title="接口未返回推送时间">—</span>}</dd></div>
+        <div><dt>最近一次失败</dt><dd>{failureText ?? <span className="req-empty-value" title="没有最近失败记录">—</span>}</dd></div>
+      </dl>
+      <p className="detail-note">推送成功不代表飞书 PM 通知已送达；PM 处理状态与通知送达以飞书多维表格为准。</p>
+    </section>
+
+    <section className="req-section req-audit-section">
+      <HeroAccordion className="req-audit">
+        <HeroAccordion.Item id="requirement-audit">
+          <HeroAccordion.Heading><HeroAccordion.Trigger className="req-audit-trigger">查看依据与历史<HeroAccordion.Indicator /></HeroAccordion.Trigger></HeroAccordion.Heading>
+          <HeroAccordion.Panel><HeroAccordion.Body>
+            <dl className="evidence-grid">
+              <div className="evidence-card"><dt>原文证据</dt><dd><TextList items={evidence} /></dd></div>
+              <div className="evidence-card"><dt>事实（来自源文本）</dt><dd><TextList items={factItems} /></dd></div>
+              <div className="evidence-card"><dt>AI 推断（非事实）</dt><dd><TextList items={inferenceItems} prefix="【AI 推断】" /></dd></div>
+              <div className="evidence-card"><dt>缺失信息</dt><dd><TextList items={missingInputs} /></dd></div>
+              <div className="evidence-card"><dt>分析盲点</dt><dd><TextList items={blindSpots} /></dd></div>
+              <div className="evidence-card"><dt>Base 记录号</dt><dd>{detail.baseRecordId ? <code className="base-ref-id">{detail.baseRecordId}</code> : <span className="req-empty-value">尚未写入飞书 Base</span>}</dd></div>
+            </dl>
+            <div className="req-source-snapshot">
+              <span className="req-audit-label">源快照（只读 JSON）</span>
+              <pre className="source-snapshot-pre">{JSON.stringify(detail.source ?? {}, null, 2)}</pre>
+            </div>
+            <h4 className="req-audit-title">分析版本历史</h4>
+            {analysisVersions.length
+              ? <div className="table-scroll"><table><thead><tr><th>分析版本</th><th>状态</th><th>模块</th><th>优先级</th><th>开始时间</th><th>失败摘要</th></tr></thead><tbody>{analysisVersions.map((version: AnalysisVersionSummary) => <tr key={version.analysisVersion}><td className="mono-cell">v{version.analysisVersion}</td><td><StageBadge stage="analysis" state={version.status} /></td><td>{version.moduleSuggestion ?? "—"}</td><td>{version.priority ?? "空"}</td><td>{timeLabel(version.startedAt)}</td><td>{version.safeErrorSummary ?? "—"}</td></tr>)}</tbody></table></div>
+              : <p className="req-empty-value">尚无分析版本历史</p>}
+          </HeroAccordion.Body></HeroAccordion.Panel>
+        </HeroAccordion.Item>
+      </HeroAccordion>
+    </section>
   </div>;
 }
 
-function RequirementsTable({ rows, loading, onOpen }: { rows: RequirementSummary[]; loading: boolean; onOpen: (row: RequirementSummary) => void }) {
+function isRowActionTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && Boolean(target.closest("button, a, input, select, textarea"));
+}
+
+function RequirementsTable({ rows, loading, onOpen, onAssign }: { rows: RequirementSummary[]; loading: boolean; onOpen: (row: RequirementSummary) => void; onAssign: (row: RequirementSummary) => void }) {
   if (!rows.length) return <div className="table-empty"><strong>{loading ? "正在载入需求…" : "没有匹配的需求"}</strong><span>{loading ? "正在从本地 API 读取需求状态。" : "数据仅在 API 返回后显示，不使用演示数据。"}</span></div>;
-  return <div className="table-scroll"><table><thead><tr><th>需求</th><th>版本</th><th>拉取</th><th>AI 分析</th><th>负责人</th><th>Base 推送</th><th>详情</th></tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td><div className="requirement-title"><span className="req-id">REQ-{row.sourceRequirementId}</span><strong>{row.title}</strong></div></td><td><span className="version-label">v{row.sourceVersion}</span></td><td>{stageLabel("pull", row.pipeline.pull)}</td><td>{stageLabel("analysis", row.pipeline.analysis)}</td><td>{stageLabel("owner", row.pipeline.owner)}</td><td>{stageLabel("push", row.pipeline.push)}</td><td><HeroButton className="button button-secondary button-small" onPress={() => onOpen(row)}>查看</HeroButton></td></tr>)}</tbody></table></div>;
-}
-
-function pipelineLabel(stage: PipelineStage, state: string): string {
-  return pipelineLabels[stage][state] ?? stateLabel(state);
-}
-
-function pipelineTone(state: string): string {
-  if (state === "failed") return "status-danger";
-  if (state === "failed_retryable" || state === "pending_mapping") return "status-warning";
-  if (state === "running") return "status-info";
-  if (["synced", "analyzed", "pushed", "manually_mapped", "auto_mapped", "not_required"].includes(state)) return "status-live";
-  return "status-muted";
-}
-
-// 中文文案 + 颜色分级；原始值留在 title 上，方便排查对不上文案的状态。
-function stageLabel(stage: PipelineStage, state: string) {
-  return <span className={`status-chip ${pipelineTone(state)}`} title={state}><span />{pipelineLabel(stage, state)}</span>;
+  return <div className="table-scroll"><table className="req-list">
+    <thead><tr><th>需求标题</th><th>负责人</th><th>处理状态</th><th>更新时间</th><th><span className="sr-only">操作</span></th></tr></thead>
+    <tbody>{rows.map((row) => {
+      const owner = requirementOwnerView(row);
+      const time = requirementTime(row);
+      const timeText = formatDateTime(time.value);
+      return <tr
+        key={row.id}
+        className={`req-row${owner.unassigned ? " is-pending-owner" : ""}`}
+        tabIndex={0}
+        aria-label={`打开需求：${row.title}`}
+        onClick={(event) => { if (!isRowActionTarget(event.target)) onOpen(row); }}
+        onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && !isRowActionTarget(event.target)) { event.preventDefault(); onOpen(row); } }}
+      >
+        <td><span className="req-row-title" title={row.title}>{row.title}</span></td>
+        <td><OwnerBadge owner={owner} /></td>
+        <td><div className="req-row-stages">{[["pull", row.pipeline.pull], ["analysis", row.pipeline.analysis], ["owner", row.pipeline.owner], ["push", row.pipeline.push]].map(([stage, state]) => <StageBadge key={stage} stage={stage as PipelineStage} state={state} />)}</div></td>
+        <td className="req-row-time" title={timeText ? (time.fallbackToCreated ? "接口未返回更新时间，显示 Teambition 创建时间" : time.value ?? undefined) : "接口未返回更新时间"}>{timeText ?? <span className="req-empty-value">—</span>}</td>
+        <td className="req-row-action">{owner.unassigned && <HeroButton className="button button-secondary button-small" onPress={() => onAssign(row)}>分配</HeroButton>}</td>
+      </tr>;
+    })}</tbody>
+  </table></div>;
 }
 
 // 审计结果列独立渲染（result 枚举 succeeded/failed/denied），不复用流水线阶段标签

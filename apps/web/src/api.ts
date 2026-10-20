@@ -247,12 +247,21 @@ export interface AuditEvent {
   occurredAt: string;
 }
 
+export type RequirementOwnerState = "pending_mapping" | "auto_mapped" | "manually_mapped" | "not_required";
+
+/**
+ * 列表 DTO 实际包含 `source`（Teambition allowlist 快照）；`ownerName`/`updatedAt`
+ * 是可选展示字段，只有服务端未来下发时才使用。缺失时由 UI 显示「—」。
+ */
 export interface RequirementSummary {
   id: string;
   sourceRequirementId: string;
   title: string;
   sourceVersion: number;
-  pipeline: { pull: string; analysis: string; owner: string; push: string };
+  pipeline: { pull: string; analysis: string; owner: RequirementOwnerState; push: string };
+  source?: Record<string, unknown>;
+  ownerName?: string | null;
+  updatedAt?: string | null;
 }
 
 export interface AnalysisVersionSummary {
@@ -271,11 +280,14 @@ export interface RequirementDetail {
   sourceRequirementId: string;
   title: string;
   sourceVersion: number;
-  pipeline: { pull: string; analysis: string; owner: string; push: string };
+  pipeline: { pull: string; analysis: string; owner: RequirementOwnerState; push: string };
   source: Record<string, unknown>;
   analysis: Record<string, unknown> | null;
   analyses: AnalysisVersionSummary[];
   baseRecordId: string | null;
+  ownerName?: string | null;
+  updatedAt?: string | null;
+  lastPushedAt?: string | null;
 }
 
 export interface BatchSummary {
