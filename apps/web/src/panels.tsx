@@ -973,7 +973,13 @@ function RequirementsTable({ rows, loading, onOpen, onAssign }: { rows: Requirem
         onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && !isRowActionTarget(event.target)) { event.preventDefault(); onOpen(row); } }}
       >
         <td><span className="req-row-title" title={row.title}>{row.title}</span></td>
-        <td><OwnerBadge owner={owner} /></td>
+        <td>
+          <button type="button" className="owner-cell-button" title={owner.unassigned ? "分配负责人" : "变更负责人"}
+            onClick={(event) => { event.stopPropagation(); onAssign(row); }}>
+            <OwnerBadge owner={owner} />
+            <span className="owner-cell-edit">{owner.unassigned ? "分配" : "变更"}</span>
+          </button>
+        </td>
         <td><div className="req-row-stages">{[["pull", row.pipeline.pull], ["analysis", row.pipeline.analysis], ["owner", row.pipeline.owner], ["push", row.pipeline.push]].map(([stage, state]) => <StageBadge key={stage} stage={stage as PipelineStage} state={state} />)}</div></td>
         <td className="req-row-time" title={timeText ? (time.fallbackToCreated ? "接口未返回更新时间，显示 Teambition 创建时间" : time.value ?? undefined) : "接口未返回更新时间"}>{timeText ?? <span className="req-empty-value">—</span>}</td>
         <td className="req-row-action">{owner.unassigned && <HeroButton className="button button-secondary button-small" onPress={() => onAssign(row)}>分配</HeroButton>}</td>

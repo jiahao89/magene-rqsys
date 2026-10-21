@@ -261,8 +261,11 @@ describe("RequirementsPanel (ticket 17)", () => {
     expect(within(listRow).getByTitle("负责人：已自动匹配（auto_mapped）")).toBeInTheDocument();
     expect(within(listRow).getByTitle("推送：已推送（pushed）")).toBeInTheDocument();
     expect(within(listRow).getByText(/\d{4}/)).toBeInTheDocument();
-    // 行内没有「查看」等操作按钮；整行本身就是进入详情的入口。
-    expect(within(listRow).queryByRole("button")).not.toBeInTheDocument();
+    // 行内唯一的交互是负责人单元格：点击直接进入分配，不必先进详情。
+    const ownerButton = within(listRow).getByRole("button", { name: /Ada/ });
+    expect(ownerButton).toHaveAttribute("title", "变更负责人");
+    // 除负责人外不再有其他行内操作按钮；整行本身仍是进入详情的入口。
+    expect(within(listRow).getAllByRole("button")).toHaveLength(1);
 
     await openFirstRow();
 
