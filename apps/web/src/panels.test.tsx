@@ -566,9 +566,12 @@ describe("RequirementsPanel (ticket 17)", () => {
     expect(within(moreFilters as HTMLElement).getByLabelText("批次 ID 筛选")).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("TB负责人筛选"), { target: { value: "毕梓浩" } });
-    expect(screen.getByText("1 个筛选生效")).toBeInTheDocument();
+    // 草稿未提交时不显示"已生效"，点「筛选」后才出现
+    expect(screen.queryByText(/个筛选已生效/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "筛选" }));
+    expect(await screen.findByText("1 个筛选已生效")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
-    expect(screen.queryByText(/个筛选生效/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/个筛选已生效/)).not.toBeInTheDocument();
     expect((screen.getByLabelText("TB负责人筛选") as HTMLSelectElement).value).toBe("");
   });
 });
@@ -647,10 +650,11 @@ describe("团队字典维护", () => {
 
     const mapRow = screen.getByText("地图").closest("tr");
     if (!mapRow) throw new Error("Module row was not rendered");
+    // 行内编辑：该行的名称与负责人单元格变成输入控件，保存也在行内
     fireEvent.click(within(mapRow).getByRole("button", { name: "编辑" }));
-    fireEvent.change(screen.getByLabelText("功能模块名称"), { target: { value: "导航" } });
-    fireEvent.change(screen.getByLabelText("模块责任人员"), { target: { value: "贾浩" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+    fireEvent.change(screen.getByLabelText("编辑功能模块名称"), { target: { value: "导航" } });
+    fireEvent.change(screen.getByLabelText("编辑模块责任人员"), { target: { value: "贾浩" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
     expect(await screen.findByText("导航")).toBeInTheDocument();
 
     const voiceRow = screen.getByText("语音提醒").closest("tr");

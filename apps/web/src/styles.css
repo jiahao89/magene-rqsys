@@ -1073,3 +1073,19 @@ html[data-theme="dark"] .nav-item.is-active::before { background: var(--rq-accen
   outline: none; box-shadow: 0 0 0 3px rgba(59,130,246,.12);
 }
 .module-row.is-editing td button { margin-right: 4px; }
+
+
+/* ---------- 隔离旧 Home.css 的全局规则 ----------
+   pages/Home/Home.css 是早期页面的样式，未做作用域隔离，其中的
+   @media(max-width:760px) 含有 .nav-item{display:none} 与 .sidebar{width:66px}，
+   会把工作台的侧边导航一起隐藏/压窄。这里用更高优先级把工作台需要的形态抢回来，
+   不影响 Home 页面本身（它的元素都在 .shell 下）。 */
+@media (max-width: 760px) {
+  .app-shell .sidebar { width: 246px; }
+  .app-shell .sidebar .nav-item {
+    display: flex; justify-content: flex-start; font-size: 13px;
+  }
+  .app-shell .sidebar .nav-item .nav-group-label { display: block; }
+  .app-shell .sidebar .brand-name,
+  .app-shell .sidebar .nav-label { display: initial; font-size: inherit; }
+}

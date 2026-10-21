@@ -164,6 +164,15 @@ export function SourcesPanel({ sources, loadState, onRefresh }: { sources: Sourc
   const [loadError, setLoadError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
+  // 冷加载时 sources 还是空数组，useState 初始化只会拿到默认值；等数据到达后必须再同步一次，
+  // 否则页面写着「已启用」，开关却是关的，直接保存会把同步和周计划一起关掉。
+  const loadedKey = existing ? `${existing.id}|${existing.enabled}|${existing.projectName}|${existing.schedule.enabled}|${existing.schedule.weekday}|${existing.schedule.time}` : "";
+  useEffect(() => {
+    if (!existing) return;
+    setDraft({ projectName: existing.projectName, enabled: existing.enabled, schedule: { ...existing.schedule } });
+    // 仅在服务端配置实际变化时重同步，避免覆盖用户正在编辑的草稿。
+  }, [loadedKey]);
+
   const set = <K extends keyof SourceConfigUpdate>(key: K, value: SourceConfigUpdate[K]) => setDraft((prev) => ({ ...prev, [key]: value }));
 
   const save = async () => {
@@ -190,7 +199,7 @@ export function SourcesPanel({ sources, loadState, onRefresh }: { sources: Sourc
       <label className="field"><span>时区</span><HeroInput aria-label="时区" placeholder="Asia/Shanghai" value={draft.schedule.timezone ?? ""} onChange={(e) => set("schedule", { ...draft.schedule, timezone: e.target.value === "" ? null : e.target.value })} /></label>
       <label className="rules-threshold"><span>启用周计划</span><input type="checkbox" aria-label="启用周计划" checked={draft.schedule.enabled} onChange={(e) => set("schedule", { ...draft.schedule, enabled: e.target.checked })} /></label>
     </div>
-    <div className="rules-form"><HeroButton className="button button-primary button-small" onPress={() => void save()} isDisabled={busy}>{existing ? "保存更新" : "创建来源"}</HeroButton></div>
+    <div className="rules-form"><HeroButton className="button button-primary button-small" onPress={() => void save()} isDisabled={busy || loadState === "loading"}>{existing ? "保存更新" : "创建来源"}</HeroButton></div>
     {loadState === "ready" && <ConnectionSelfCheck existing={existing} draft={draft} />}
     {loadState === "error" && <div className="table-empty"><strong>无法读取来源配置</strong><span>请检查 API 连接后重试。</span></div>}
     {!existing && loadState === "ready" && <div className="table-empty"><strong>尚未配置数据源</strong><span>填写项目名称并创建后，可手动同步；周计划启用后按设定执行。</span></div>}
@@ -284,7 +293,7 @@ export function ModulesPanel() {
   return <section className="panel requirements-panel">
     <div className="panel-heading"><div><h2>功能模块</h2><p>AI 仅从已发布的模块名称中选择；无法匹配时输出“无法识别”。每次保存生成一个新字典版本，且至少保留一个模块。</p></div><HeroButton className="button button-secondary button-small" onPress={() => void load()} isDisabled={busy}><RefreshCw size={14} />刷新</HeroButton></div>
     <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
-    <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}><label className="field" style={{ flex: 1 }}><span>功能模块</span><HeroInput aria-label="功能模块名称" value={name} onChange={(event) => setName(event.target.value)} /></label><label className="field"><span>人员</span><select aria-label="模块责任人员" value={personName} onChange={(event) => setPersonName(event.target.value)}><option value="">未分配</option>{people.map((person) => <option key={person.name} value={person.name}>{person.name}</option>)}</select></label><HeroButton className="button button-primary button-small" onPress={submit} isDisabled={busy}>{editing ? "保存修改" : "新增模块"}</HeroButton>{editing && <HeroButton className="button button-secondary button-small" onPress={() => { setEditing(null); setName(""); setPersonName(""); }} isDisabled={busy}>取消</HeroButton>}</div>
+    <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}><label className="field" style={{ flex: 1 }}><span>功能模块</span><HeroInput aria-label="功能模块名称" value={name} onChange={(event) => setName(event.target.value)} /></label><label className="field"><span>人员</span><select aria-label="模块责任人员" value={personName} onChange={(event) => setPersonName(event.target.value)}><option value="">未分配</option>{people.map((person) => <option key={person.name} value={person.name}>{person.name}</option>)}</select></label><HeroButton className="button button-primary button-small" onPress={submit} isDisabled={busy}>新增模块</HeroButton></div>
     {items.length ? <div className="table-scroll"><table><thead><tr><th>功能模块</th><th>人员</th><th>操作</th></tr></thead><tbody>{items.map((item) => editing === item.name
       ? <tr key={item.name} className="module-row is-editing">
           <td><input className="inline-input" aria-label="编辑功能模块名称" value={name} onChange={(event) => setName(event.target.value)} autoFocus /></td>
@@ -516,6 +525,9 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
   // 不能把用户尚未应用的草稿输入写进 URL。
   const appliedFiltersRef = useRef(initialFilters);
   const activeFilterCount = Object.values(filters).filter(Boolean).length;
+  // 已生效 = 上一次真正发给服务端的条件；草稿输入不算，否则还没点筛选就显示"已生效"。
+  // 已生效 = 上一次真正发给服务端的条件；草稿输入不算，否则还没点筛选就显示"已生效"。
+  const [appliedFilterCount, setAppliedFilterCount] = useState(0);
   const dateFilterCount = [since, until].filter(Boolean).length;
 
   const load = useCallback(async (filter: RequirementListFilters, nextCursor: string | null) => {
@@ -614,12 +626,14 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
   };
 
   const applyFilters = () => {
+    setAppliedFilterCount(activeFilterCount);
     window.history.replaceState(null, "", requirementPoolUrl(window.location.pathname || "/", filters, null, window.location.hash));
     void load(filters, null);
   };
 
   // 清除筛选后立即回到无筛选的第一页，避免残留旧条件与旧游标。
   const clearFilters = () => {
+    setAppliedFilterCount(0);
     const cleared = { ...emptyRequirementListFilters };
     setQuery(""); setExecutorName(""); setPullState(""); setOwnerState(""); setAnalysisState(""); setPushState(""); setBatchId(""); setSince(""); setUntil("");
     window.history.replaceState(null, "", requirementPoolUrl(window.location.pathname || "/", cleared, null, window.location.hash));
@@ -700,7 +714,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
         </details>
       </div>
       <div className="toolbar-actions">
-        {activeFilterCount > 0 && <span className="toolbar-active-count" role="status">{activeFilterCount} 个筛选生效</span>}
+        {appliedFilterCount > 0 && <span className="toolbar-active-count" role="status">{appliedFilterCount} 个筛选已生效</span>}
         {activeFilterCount > 0 && <button className="link-button" onClick={clearFilters}>清除筛选</button>}
         <button className="button button-secondary button-small" onClick={refresh}><RefreshCw size={14} />刷新</button>
         <button className="button button-primary button-small" onClick={applyFilters}>筛选</button>
@@ -714,8 +728,8 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
     </p>
     <StateBanner loadError={loadError ?? peopleError} notice={notice} onCloseNotice={() => setNotice(null)} />
     <div className="list-summary" role="status">
-      <span className="list-summary-count">共 {sortedRows.length} 条{cursor ? "，可继续载入" : ""}{activeFilterCount > 0 ? `（已应用 ${activeFilterCount} 个筛选）` : ""}</span>
-      <span className="list-summary-sort">排序：待分配 → 推送失败 → 待推送 → 已推送；同组按更新时间倒序</span>
+      <span className="list-summary-count">已加载 {sortedRows.length} 条{cursor ? "，还有更多" : ""}{activeFilterCount > 0 ? `（已应用 ${activeFilterCount} 个筛选）` : ""}</span>
+      <span className="list-summary-sort">排序仅作用于已加载的记录：待分配 → 推送失败 → 待推送 → 已推送</span>
     </div>
     <RequirementsTable rows={sortedRows} loading={loadState === "loading"} onOpen={(row) => void open(row.id, { push: true })} onAssign={(row) => void open(row.id, { push: true, openOwnerPicker: true })} />
     {cursor && <div className="rules-form"><HeroButton className="button button-secondary button-small" onPress={() => void load(appliedFiltersRef.current, cursor)} isDisabled={loadState === "loading"}>加载更多</HeroButton></div>}
@@ -855,7 +869,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
         <HeroButton className="button button-secondary button-small" onPress={onBack}><ArrowLeft size={14} />返回需求池</HeroButton>
         <div className="req-summary-copy">
           <h2 className="req-summary-title">{detail.title}</h2>
-          <span className="req-summary-id">REQ-{detail.sourceRequirementId} · v{detail.sourceVersion}</span>
+          <span className="req-summary-id">{detail.platformRequirementId ?? `REQ-${detail.sourceRequirementId.slice(0, 8)}`} · v{detail.sourceVersion}</span>
         </div>
       </div>
       <div className="req-summary-meta">

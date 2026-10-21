@@ -104,6 +104,9 @@ function App() {
     setDeepLinkRequirementId(readRequirementDeepLink(new URL(nextUrl, window.location.origin).search));
     const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
     if (nextUrl !== currentUrl) window.history.pushState(null, "", nextUrl);
+    // 已在需求池时点侧栏「需求池」：URL 已无 requirement，但面板内部还停在详情，
+    // 广播一次 popstate 让面板按 URL 收起详情回到列表。
+    if (nextPage === "Requirements" && !requirementFilters) window.dispatchEvent(new PopStateEvent("popstate"));
   }, []);
 
   const pageHref = (target: Page) => workbenchUrl(window.location.pathname, window.location.search, target);

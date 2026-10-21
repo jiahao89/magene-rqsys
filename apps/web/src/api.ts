@@ -276,6 +276,8 @@ export interface AnalysisVersionSummary {
 }
 
 export interface RequirementDetail {
+  /** RQ-Sys 展示编号，例如 RQ-000123。 */
+  platformRequirementId?: string | null;
   /** 由需求 ID 推导的 Teambition 任务地址（原始 payload 通常不含该字段）。 */
   sourceUrl?: string | null;
   id: string;
