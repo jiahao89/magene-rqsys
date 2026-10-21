@@ -245,10 +245,6 @@ export function ModulesPanel() {
   const nameInputRef = useRef<HTMLInputElement>(null);
   const beginEdit = (item: FunctionModuleEntry) => {
     setEditing(item.name); setName(item.name); setPersonName(item.personName ?? "");
-    window.requestAnimationFrame(() => {
-      formRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-      nameInputRef.current?.focus();
-    });
   };
 
   const load = useCallback(async () => {
@@ -270,6 +266,12 @@ export function ModulesPanel() {
       if (cause instanceof ApiError && cause.status === 409) void load();
     } finally { setBusy(false); }
   };
+  const submitEdit = () => {
+    const clean = name.trim();
+    if (!clean) { setLoadError("请填写功能模块名称。"); return; }
+    if (items.some((candidate) => candidate.name.toLocaleLowerCase() === clean.toLocaleLowerCase() && candidate.name !== editing)) { setLoadError("功能模块名称不能重复。"); return; }
+    void save(items.map((candidate) => candidate.name === editing ? { name: clean, personName: personName || null } : candidate));
+  };
   const submit = () => {
     const clean = name.trim();
     if (!clean) { setLoadError("请填写功能模块名称。"); return; }
@@ -283,7 +285,17 @@ export function ModulesPanel() {
     <div className="panel-heading"><div><h2>功能模块</h2><p>AI 仅从已发布的模块名称中选择；无法匹配时输出“无法识别”。每次保存生成一个新字典版本，且至少保留一个模块。</p></div><HeroButton className="button button-secondary button-small" onPress={() => void load()} isDisabled={busy}><RefreshCw size={14} />刷新</HeroButton></div>
     <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
     <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}><label className="field" style={{ flex: 1 }}><span>功能模块</span><HeroInput aria-label="功能模块名称" value={name} onChange={(event) => setName(event.target.value)} /></label><label className="field"><span>人员</span><select aria-label="模块责任人员" value={personName} onChange={(event) => setPersonName(event.target.value)}><option value="">未分配</option>{people.map((person) => <option key={person.name} value={person.name}>{person.name}</option>)}</select></label><HeroButton className="button button-primary button-small" onPress={submit} isDisabled={busy}>{editing ? "保存修改" : "新增模块"}</HeroButton>{editing && <HeroButton className="button button-secondary button-small" onPress={() => { setEditing(null); setName(""); setPersonName(""); }} isDisabled={busy}>取消</HeroButton>}</div>
-    {items.length ? <div className="table-scroll"><table><thead><tr><th>功能模块</th><th>人员</th><th>操作</th></tr></thead><tbody>{items.map((item) => <tr key={item.name}><td>{item.name}</td><td>{item.personName ?? "未分配"}</td><td><HeroButton className="button button-secondary button-small" onPress={() => beginEdit(item)} isDisabled={busy}>编辑</HeroButton> <DeleteConfirmation disabled={busy || items.length === 1} description={`删除功能模块“${item.name}”？`} onConfirm={() => void save(items.filter((candidate) => candidate.name !== item.name))} /></td></tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadError ? "模块字典读取失败" : "暂无功能模块"}</strong><span>{loadError ? "检查 API 连接后刷新。" : "新增模块后，AI 分析会使用最新的已发布字典。"}</span></div>}
+    {items.length ? <div className="table-scroll"><table><thead><tr><th>功能模块</th><th>人员</th><th>操作</th></tr></thead><tbody>{items.map((item) => editing === item.name
+      ? <tr key={item.name} className="module-row is-editing">
+          <td><input className="inline-input" aria-label="编辑功能模块名称" value={name} onChange={(event) => setName(event.target.value)} autoFocus /></td>
+          <td><select className="inline-input" aria-label="编辑模块责任人员" value={personName} onChange={(event) => setPersonName(event.target.value)}><option value="">未分配</option>{people.map((person) => <option key={person.name} value={person.name}>{person.name}</option>)}</select></td>
+          <td><HeroButton className="button button-primary button-small" onPress={submitEdit} isDisabled={busy}>保存</HeroButton> <HeroButton className="button button-secondary button-small" onPress={() => { setEditing(null); setName(""); setPersonName(""); }} isDisabled={busy}>取消</HeroButton></td>
+        </tr>
+      : <tr key={item.name} className="module-row">
+          <td>{item.name}</td>
+          <td>{item.personName ?? "未分配"}</td>
+          <td><HeroButton className="button button-secondary button-small" onPress={() => beginEdit(item)} isDisabled={busy}>编辑</HeroButton> <DeleteConfirmation disabled={busy || items.length === 1} description={`删除功能模块“${item.name}”？`} onConfirm={() => void save(items.filter((candidate) => candidate.name !== item.name))} /></td>
+        </tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadError ? "模块字典读取失败" : "暂无功能模块"}</strong><span>{loadError ? "检查 API 连接后刷新。" : "新增模块后，AI 分析会使用最新的已发布字典。"}</span></div>}
   </section>;
 }
 

@@ -1063,3 +1063,13 @@ html[data-theme="dark"] .nav-item.is-active::before { background: var(--rq-accen
   font-size: 12px; font-weight: 600; color: #1d4ed8;
   background: #eef4ff; border: 1px solid #d5e3ff;
 }
+
+/* ---------- 功能模块：行内编辑 ---------- */
+.module-row.is-editing { background: #f5f9ff; }
+.module-row.is-editing td { padding-top: 7px; padding-bottom: 7px; }
+.inline-input {
+  width: 100%; min-width: 140px; height: 32px; padding: 0 10px; font-size: 13px;
+  border: 1px solid #3b82f6; border-radius: 7px; background: #fff; color: var(--rq-text, #1f2329);
+  outline: none; box-shadow: 0 0 0 3px rgba(59,130,246,.12);
+}
+.module-row.is-editing td button { margin-right: 4px; }
