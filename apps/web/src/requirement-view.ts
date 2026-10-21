@@ -255,7 +255,7 @@ export interface RequirementSourceFacts {
 }
 
 /** L1「需求信息」的 Teambition 原始字段。缺失值保持 null，由 UI 显示「—」。 */
-export function requirementSourceFacts(requirement: Pick<RequirementDetail, "source">): RequirementSourceFacts {
+export function requirementSourceFacts(requirement: Pick<RequirementDetail, "source" | "sourceUrl">): RequirementSourceFacts {
   const source = asRecord(requirement.source) ?? {};
   const raw = rawSource(requirement.source);
   const mapped = mappedFields(requirement.source);
@@ -271,7 +271,8 @@ export function requirementSourceFacts(requirement: Pick<RequirementDetail, "sou
       raw.taskflow_status_id,
       source.sourceStatusId,
     ),
-    tbUrl: firstText(source.sourceUrl, source.source_url, source.url),
+    // 接口在顶层给出由任务 ID 推导的 TB 地址；原始 payload 里通常没有该字段。
+    tbUrl: firstText(requirement.sourceUrl, source.sourceUrl, source.source_url, source.url),
     createdAt: firstText(source.createdAt, source.sourceCreatedAt, raw.created),
     updatedAt: firstText(source.updatedAt, source.sourceUpdatedAt, raw.updated),
   };
