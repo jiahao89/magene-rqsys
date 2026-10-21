@@ -206,7 +206,12 @@ export function createBasePushService(deps: BasePushServiceDeps) {
 
     let eventType: NotificationEventType | null = null;
     let fromUserId: string | null = null;
-    if (!input.hadSuccessfulPush) {
+    // 首次推送默认静默，避免批量回填刷屏；但如果负责人是人工分配的，
+    // 那是一次明确的人工动作，被分配的人必须收到通知，否则他不知道要做这件事。
+    const manuallyAssigned = Boolean(currentOwnerUserId) && input.mapping?.matchMethod === "manual";
+    if (!input.hadSuccessfulPush && manuallyAssigned) {
+      eventType = "owner_assigned";
+    } else if (!input.hadSuccessfulPush) {
       eventType = "first_push";
     } else if (input.substantiveChanged) {
       eventType = "substantive_update";

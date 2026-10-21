@@ -233,11 +233,22 @@ test("first push stays silent so a bulk backfill cannot flood the PM Leader", as
   // 产品最终确认：首次推送静默。151 条需求一起推时，逐条通知会把"分配后通知负责人"淹没；
   // Base 表格本身就是 PM Leader 的工作台。首推仍要写业务字段，只是不写通知字段。
   const req = requirement({ executorUserId: "tb-owner", executorName: "Owner" });
-  const h = makeHarness({ req, mapping: mappingRecord(), pmLeaderUserId: PM_LEADER_USER_ID });
+  // 批量回填走自动匹配；人工分配属于另一次明确动作，另有用例覆盖。
+  const h = makeHarness({ req, mapping: mappingRecord({ matchMethod: "tb_user_id" }), pmLeaderUserId: PM_LEADER_USER_ID });
   const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
   assert.equal(result.kind, "pushed");
   assert.equal(h.baseInput?.notification, undefined);
   assert.ok(h.calls.includes("base"));
+});
+
+test("first push notifies the owner when a person was assigned by hand", async () => {
+  // 人工分配是明确的人类意图：被分配的人必须收到通知，否则不知道有这件事要做。
+  const req = requirement({ executorUserId: "tb-owner", executorName: "Owner" });
+  const h = makeHarness({ req, mapping: mappingRecord({ matchMethod: "manual" }), pmLeaderUserId: PM_LEADER_USER_ID });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.equal(h.baseInput?.notification?.eventType, "已分配负责人");
+  assert.equal(h.baseInput?.notification?.recipientUserId, "ou-owner");
 });
 
 test("writes the stable web requirement deep link on every push, including a silent first push", async () => {
@@ -454,7 +465,7 @@ test("first push with an owner but no PM Leader stays silent instead of falling 
   // 规则是 first_push → PM Leader；PM Leader 未配置时本次不写通知字段，
   // 而不是退回负责人（那会把「新需求入场」通知发给个人，与产品规则相反）。
   const req = requirement({ executorUserId: "tb-owner", executorName: "Owner" });
-  const h = makeHarness({ req, mapping: mappingRecord(), pmLeaderUserId: null });
+  const h = makeHarness({ req, mapping: mappingRecord({ matchMethod: "tb_user_id" }), pmLeaderUserId: null });
   const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
   assert.equal(result.kind, "pushed");
   assert.ok(h.baseInput, "业务字段仍然推送");
