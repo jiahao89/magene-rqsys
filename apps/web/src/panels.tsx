@@ -682,6 +682,12 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
         <button className="button button-primary button-small" onClick={applyFilters}>筛选</button>
       </div>
     </div>
+    <p className="status-hint">
+      <strong>三个状态分别是什么意思：</strong>
+      <span><em>同步状态</em> — 是否已从 Teambition 拉到最新原文（已同步/待同步/同步失败）</span>
+      <span><em>AI 分析状态</em> — 是否已生成模块与优先级建议（已分析/待分析/可重试/失败）</span>
+      <span><em>推送状态</em> — 是否已写入飞书多维表格（已推送/待推送/推送失败）。三者互不影响，分析失败不会阻止推送。</span>
+    </p>
     <StateBanner loadError={loadError ?? peopleError} notice={notice} onCloseNotice={() => setNotice(null)} />
     <div className="list-summary" role="status">
       <span className="list-summary-count">共 {sortedRows.length} 条{cursor ? "，可继续载入" : ""}{activeFilterCount > 0 ? `（已应用 ${activeFilterCount} 个筛选）` : ""}</span>
@@ -1088,10 +1094,30 @@ export function GuidePanel() {
     { name: "通知", from: "Base 自动化", desc: "Base 发现通知事件变化后，按规则发给负责人。", who: "Base 自动化" },
   ];
   const states = [
-    ["拉取", "已同步 / 待同步 / 同步中 / 同步失败"],
-    ["AI 分析", "已分析 / 待分析 / 分析中 / 可重试 / 失败"],
-    ["负责人", "已手动匹配 / 已自动匹配 / 待匹配 / 无需负责人"],
-    ["推送", "已推送 / 待推送 / 推送中 / 推送失败"],
+    {
+      name: "同步状态（拉取）",
+      values: "已同步 · 待同步 · 同步中 · 同步失败",
+      when: "定时同步或手动触发时，从 Teambition 拉取需求原文。原文没变就不会产生新版本。",
+      stuck: "失败多半是 TB 凭据或网络问题，检查「数据源配置」后重试同步。",
+    },
+    {
+      name: "AI 分析状态",
+      values: "已分析 · 待分析 · 分析中 · 可重试 · 失败",
+      when: "同步完成且有新版本时自动触发，也可在详情页手动重试。它只产出建议，不改变需求原文。",
+      stuck: "「可重试」表示这次失败但还能再试；系统会自行重试最多 3 次。分析失败不影响推送。",
+    },
+    {
+      name: "负责人状态",
+      values: "已手动匹配 · 已自动匹配 · 待匹配负责人 · 无需负责人",
+      when: "把 TB 执行人对应到飞书账号。你能在详情页手动指定，系统也会按已保存的映射自动匹配。",
+      stuck: "「待匹配负责人」说明这个 TB 执行人还没有飞书映射。此时需求仍能推送，Base 里负责人留空。",
+    },
+    {
+      name: "推送状态",
+      values: "已推送 · 待推送 · 推送中 · 推送失败",
+      when: "把 PM 字段和系统字段写进飞书多维表格。同一版本的同一诉求重复推送不会重复写。",
+      stuck: "失败多数是 Base 字段缺失或类型不符，详情页可点「重试 Base 推送」，并显示最近的失败原因。",
+    },
   ];
   const notices = [
     ["首次推送", "不发", "避免批量回填时刷屏"],
@@ -1126,13 +1152,16 @@ export function GuidePanel() {
         <thead><tr><th>阶段</th><th>数据归属</th><th>做什么</th><th>谁触发</th></tr></thead>
         <tbody>{stages.map((s) => <tr key={s.name}><td><strong>{s.name}</strong></td><td>{s.from}</td><td>{s.desc}</td><td>{s.who}</td></tr>)}</tbody>
       </table></div>
-      <p className="guide-note">四个处理状态互相独立：分析失败不影响推送，负责人空缺也不阻断推送。</p>
+      <p className="guide-note">四个状态互相独立，各自推进：分析失败不影响推送，负责人空缺也不阻断推送。判断一条需求卡在哪，看它停在哪一列变红或变琥珀。</p>
     </div>
 
     <div className="guide-section">
       <h3>三、状态怎么读</h3>
-      <div className="guide-state-grid">{states.map(([stage, values]) => <div className="guide-state-card" key={stage}>
-        <strong>{stage}</strong><span>{values}</span>
+      <div className="guide-state-list">{states.map((stage) => <div className="guide-state-card" key={stage.name}>
+        <strong>{stage.name}</strong>
+        <span className="guide-state-values">{stage.values}</span>
+        <span><em>什么时候变：</em>{stage.when}</span>
+        <span><em>卡住了怎么办：</em>{stage.stuck}</span>
       </div>)}</div>
       <p className="guide-note">页面上的状态一律显示中文；把鼠标停上去能看到原始值，便于排查。</p>
     </div>
