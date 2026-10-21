@@ -1089,3 +1089,30 @@ html[data-theme="dark"] .nav-item.is-active::before { background: var(--rq-accen
   .app-shell .sidebar .brand-name,
   .app-shell .sidebar .nav-label { display: initial; font-size: inherit; }
 }
+
+/* ---------- 移动端溢出与吸顶高度（P2-5） ---------- */
+html, body, #root, .app-shell { max-width: 100%; overflow-x: hidden; }
+.main-area, .content-area { min-width: 0; max-width: 100%; }
+.panel, .req-detail-page { min-width: 0; max-width: 100%; }
+.table-scroll { max-width: 100%; overflow-x: auto; }
+.req-list { min-width: 0; }
+@media (max-width: 860px) {
+  /* 手机端不再固定列宽，避免整页被撑到 700px 以上 */
+  .req-list { min-width: 0; table-layout: auto; }
+  .req-list th:nth-child(n), .req-list td { width: auto; }
+  /* 长标题详情：吸顶摘要收窄，标题最多两行 */
+  .req-detail-summary { position: static; max-height: none; padding: 12px 14px; }
+  .req-summary-title {
+    font-size: 15px; line-height: 1.4;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .req-summary-meta { gap: 6px; }
+  .req-summary-actions { flex-wrap: wrap; }
+}
+
+/* ---------- 规则版本表（P2-6） ---------- */
+.rules-table { table-layout: fixed; width: 100%; }
+.rules-table td, .rules-table th { overflow: hidden; text-overflow: ellipsis; }
+.rules-module-count { white-space: nowrap; }
+.rules-module-detail { display: none; }
+.rules-module-detail[open] { display: block; }

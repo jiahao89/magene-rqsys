@@ -359,7 +359,13 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const parsed = RequirementListQuerySchema.safeParse(query); if (!parsed.success) return jsonError("VALIDATION_FAILED");
     const cursor = decodeRequirementCursor(parsed.data.cursor);
     const page = await repositories.requirements.search({ ...(parsed.data.q === undefined ? {} : { q: parsed.data.q }), ...(parsed.data.executorName === undefined ? {} : { executorName: parsed.data.executorName }), ...(parsed.data.pullState === undefined ? {} : { pullState: parsed.data.pullState }), ...(parsed.data.analysisState === undefined ? {} : { analysisState: parsed.data.analysisState }), ...(parsed.data.ownerState === undefined ? {} : { ownerState: parsed.data.ownerState }), ...(parsed.data.pushState === undefined ? {} : { pushState: parsed.data.pushState }), ...(parsed.data.batchId === undefined ? {} : { batchId: parsed.data.batchId }), ...(parsed.data.since === undefined ? {} : { since: parsed.data.since }), ...(parsed.data.until === undefined ? {} : { until: parsed.data.until }), limit: parsed.data.limit, ...(cursor === undefined ? {} : { cursor }) });
-    return json({ items: page.items.map(requirementSearchDto), nextCursor: page.nextCursor });
+    // 列表一次取回全部有效映射再按 TB 用户查名，避免逐行查询。
+    const mappings = repositories.people ? await repositories.people.listActive(page.items[0]?.sourceConfigId ?? "") : [];
+    const nameByTbUser = new Map(mappings.filter((m) => m.teambitionUserId && m.teambitionDisplayName).map((m) => [m.teambitionUserId as string, m.teambitionDisplayName as string]));
+    return json({
+      items: page.items.map((item) => ({ ...requirementSearchDto(item), ownerName: item.executorUserId ? nameByTbUser.get(item.executorUserId) ?? null : null })),
+      nextCursor: page.nextCursor,
+    });
   }
   const requirementMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)$/);
   if (method === "GET" && requirementMatch) {

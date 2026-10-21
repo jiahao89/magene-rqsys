@@ -887,7 +887,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
         <p className="detail-actionbar-hint">从人员名单中选择负责人；保存后会覆盖当前负责人并重新排队 Base 推送。</p>
         <FeishuUserPicker key={detail.id} disabled={busy} saveLabel={ownerSaveLabel} onMap={async (user) => {
           const ok = await onAct(async () => {
-            const result = await setOwner(detail.id, { feishuUserId: user.feishuUserId, feishuIdType: user.feishuIdType });
+            const result = await setOwner(detail.id, { feishuUserId: user.feishuUserId, feishuIdType: user.feishuIdType, tbDisplayName: user.name });
             return `${user.name} 负责人已${ownerMapped ? "变更" : "分配"}（${pipelineLabel("owner", result.ownerState)}），推送已排队`;
           }, detail.id);
           if (ok) setOwnerPickerOpen(false);
@@ -1059,7 +1059,7 @@ export function MappingsPanel({ onRefresh }: { onRefresh: () => void }) {
     if (!targetId) return;
     setBusy(true); setNotice(null);
     try {
-      const result = await setOwner(targetId, { feishuUserId: user.feishuUserId, feishuIdType: user.feishuIdType });
+      const result = await setOwner(targetId, { feishuUserId: user.feishuUserId, feishuIdType: user.feishuIdType, tbDisplayName: user.name });
       setNotice(`${user.name} 映射已持久化（${result.ownerState}），Base 推送已入队。`);
       setTargetId(null);
       onRefresh(); await load();

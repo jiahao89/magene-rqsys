@@ -171,7 +171,7 @@ describe("MappingsPanel (ticket 17)", () => {
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
 
     expect(await screen.findByText(/映射已持久化（manually_mapped），Base 推送已入队/)).toBeInTheDocument();
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/requirements/req-1/owner", expect.objectContaining({ method: "PUT", body: JSON.stringify({ feishuUserId: "ou-user", feishuIdType: "open_id" }) })));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/requirements/req-1/owner", expect.objectContaining({ method: "PUT", body: JSON.stringify({ feishuUserId: "ou-user", feishuIdType: "open_id", tbDisplayName: "Ada" }) })));
   });
 
 });
@@ -506,7 +506,7 @@ describe("RequirementsPanel (ticket 17)", () => {
 
     expect(await screen.findByText(/推送已排队/)).toBeInTheDocument();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/requirements/req-1/owner", expect.objectContaining({
-      method: "PUT", body: JSON.stringify({ feishuUserId: "ou-alex-new", feishuIdType: "open_id" }),
+      method: "PUT", body: JSON.stringify({ feishuUserId: "ou-alex-new", feishuIdType: "open_id", tbDisplayName: "Alex Chen" }),
     })));
   });
 
