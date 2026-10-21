@@ -83,11 +83,12 @@ function FeishuUserPicker({ disabled, onMap, saveLabel = "保存负责人并入�
         if (cancelled) return;
         const seen = new Map<string, FeishuUserSelection>();
         for (const row of rows) {
-          if (!row.feishuUserId || seen.has(row.feishuUserId)) continue;
+          // 只有带姓名的映射才能在下拉里显示；否则会变成一串飞书 ID，无法辨认。
+          if (!row.feishuUserId || !row.teambitionDisplayName || seen.has(row.feishuUserId)) continue;
           seen.set(row.feishuUserId, {
             feishuUserId: row.feishuUserId,
             feishuIdType: row.feishuIdType,
-            name: row.teambitionDisplayName ?? row.feishuUserId,
+            name: row.teambitionDisplayName,
           });
         }
         setPeople([...seen.values()].sort((a, b) => a.name.localeCompare(b.name, "zh-Hans-CN")));
