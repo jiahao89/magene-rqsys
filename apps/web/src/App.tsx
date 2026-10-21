@@ -1,14 +1,16 @@
-import { useCallback, useEffect, useState } from "react";
-import { Activity, ArrowDownToLine, ArrowRight, Blocks, Check, ChevronDown, CircleAlert, CircleHelp, Clock3, Command, Database, FileClock, FolderSync, Gauge, GitBranch, Layers3, ListChecks, LoaderCircle, Moon, Play, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Sun, Users, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { Activity, ArrowDownToLine, ArrowRight, Blocks, Check, ChevronDown, CircleAlert, CircleHelp, Clock3, Database, FileClock, FolderSync, Gauge, GitBranch, Layers3, ListChecks, LoaderCircle, Menu, Moon, Play, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Sun, Users, X } from "lucide-react";
 import { ApiError, createPriorityRuleDraft, getHealth, getOverviewMetrics, listDictionaryVersions, listPriorityRules, listSources, publishPriorityRule, runSync, type DictionaryVersion, type OverviewMetrics, type PriorityRuleVersion, type PublishStatus, type SourceConfig, type SyncExecutionMode } from "./api";
 import { AuditPanel, BatchesPanel, MappingsPanel, ModulesPanel, PanelErrorBoundary, PeoplePanel, RequirementsPanel, SourcesPanel, GuidePanel } from "./panels";
 import { readRequirementDeepLink } from "./deep-link";
+import { readWorkbenchPage, workbenchUrl, type WorkbenchPage } from "./workbench-routing";
+import type { RequirementListFilters } from "./requirements-url";
 import { stateLabel } from "./state-labels";
 import { checkScheduleHealth, describeCountdown, formatInZone, nextRunAt, type WeeklySchedule } from "./schedule";
 
 type Batch = { id: string; status: string; totalCount: number; succeededCount: number; failedCount: number; startedAt?: string; completedAt?: string; errorSummary?: string };
 type Requirement = { id: string; sourceRequirementId: string; title: string; sourceVersion: number; pipeline: { pull: string; analysis: string; owner: string; push: string }; analysis?: { module?: string; confidence?: string } | null };
-type Page = "Overview" | "Requirements" | "Batches" | "Sources" | "Mappings" | "Modules" | "People" | "Rules" | "Audit" | "Guide";
+type Page = WorkbenchPage;
 type LoadState = "loading" | "ready" | "error";
 type Theme = "light" | "dark";
 
@@ -76,8 +78,12 @@ export function SchedulerHealthPanel({ schedule, now, loadState, onConfigure }: 
 function App() {
   // 通知按钮深链只在启动时读取一次：`?requirement=<requirements.id>`。
   // 缺失/无效时保持默认总览页；命中时直接进入需求池并打开该需求详情。
-  const [deepLinkRequirementId] = useState(() => readRequirementDeepLink(window.location.search));
-  const [page, setPage] = useState<Page>(deepLinkRequirementId ? "Requirements" : "Overview");
+  const [deepLinkRequirementId, setDeepLinkRequirementId] = useState(() => readRequirementDeepLink(window.location.search));
+  const [page, setPageState] = useState<Page>(() => readWorkbenchPage(window.location.hash, window.location.search));
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [isMobileViewport, setIsMobileViewport] = useState(() => typeof window.matchMedia === "function" && window.matchMedia("(max-width: 860px)").matches);
+  const sidebarRef = useRef<HTMLElement>(null);
+  const mobileMenuButtonRef = useRef<HTMLButtonElement>(null);
   const [theme, setTheme] = useState<Theme>(readStoredTheme);
   const [health, setHealth] = useState<LoadState>("loading");
   const [sources, setSources] = useState<SourceConfig[]>([]);
@@ -90,6 +96,71 @@ function App() {
   const [query, setQuery] = useState("");
   // 计划预测基于「本次数据读取完成的时刻」，避免渲染期间读取挂钟导致结果不稳定。
   const [loadedAt, setLoadedAt] = useState(() => new Date());
+
+  const setPage = useCallback((nextPage: Page, requirementFilters?: Partial<RequirementListFilters>) => {
+    setPageState(nextPage);
+    setMobileNavOpen(false);
+    const nextUrl = workbenchUrl(window.location.pathname, window.location.search, nextPage, requirementFilters);
+    setDeepLinkRequirementId(readRequirementDeepLink(new URL(nextUrl, window.location.origin).search));
+    const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (nextUrl !== currentUrl) window.history.pushState(null, "", nextUrl);
+  }, []);
+
+  const pageHref = (target: Page) => workbenchUrl(window.location.pathname, window.location.search, target);
+  const navigateLink = (event: ReactMouseEvent<HTMLAnchorElement>, target: Page) => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    setPage(target);
+  };
+
+  useEffect(() => {
+    const onPopState = () => {
+      setPageState(readWorkbenchPage(window.location.hash, window.location.search));
+      setDeepLinkRequirementId(readRequirementDeepLink(window.location.search));
+      setMobileNavOpen(false);
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia("(max-width: 860px)");
+    const onViewportChange = (event: MediaQueryListEvent) => {
+      setIsMobileViewport(event.matches);
+      if (!event.matches) setMobileNavOpen(false);
+    };
+    media.addEventListener("change", onViewportChange);
+    return () => media.removeEventListener("change", onViewportChange);
+  }, []);
+
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const firstItem = sidebarRef.current?.querySelector<HTMLElement>(".nav-item");
+    firstItem?.focus();
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setMobileNavOpen(false); };
+    const closeOnResize = () => { if (window.innerWidth > 860) setMobileNavOpen(false); };
+    window.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("resize", closeOnResize);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("resize", closeOnResize);
+      if (window.innerWidth <= 860) mobileMenuButtonRef.current?.focus();
+    };
+  }, [mobileNavOpen]);
+
+  const handleSidebarKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (!mobileNavOpen || event.key !== "Tab") return;
+    const focusable = sidebarRef.current?.querySelectorAll<HTMLElement>("a[href], button:not(:disabled)");
+    if (!focusable?.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+  };
 
   const loadData = useCallback(async () => {
     setHealth("loading"); setError(null);
@@ -140,34 +211,39 @@ function App() {
   const latestBatch = batches[0];
   const counts = { pull: metrics?.pullSynced ?? 0, analysis: metrics?.analysisAnalyzed ?? 0, owner: metrics?.ownerResolved ?? 0, push: metrics?.pushPushed ?? 0, failed: metrics?.failed ?? 0 };
   const total = metrics?.total ?? 0;
-  const completeStages = [counts.pull, counts.analysis, counts.owner, counts.push];
+  const todoItems = [
+    { key: "unassigned", label: "待分配负责人", value: metrics ? Math.max(0, total - counts.owner) : null, hint: "没有对应飞书账号，分配后会自动推送并通知", tone: "warn", filters: { ownerState: "pending_mapping" } },
+    { key: "failed", label: "推送失败", value: metrics ? counts.failed : null, hint: "可在需求详情页查看原因并重试", tone: metrics && counts.failed > 0 ? "danger" : "ok", filters: { push: "failed" } },
+    { key: "pending", label: "待推送", value: metrics ? Math.max(0, total - counts.push) : null, hint: "等待推送到多维表格", tone: "info", filters: { push: "pending" } },
+  ] as const;
 
   return (
     <div className="app-shell">
-      <aside className="sidebar">
-        <a className="brand" href="#overview" onClick={() => setPage("Overview")}><span className="brand-mark"><Layers3 size={19} strokeWidth={2.2} /></span><span className="brand-name">rq<span>·</span>sys</span><span className="brand-edition">WORKSPACE</span></a>
+      <a className="skip-link" href="#main-content">跳到主要内容</a>
+      {mobileNavOpen && <button className="sidebar-backdrop" aria-label="关闭主导航" onClick={() => setMobileNavOpen(false)} />}
+      <aside ref={sidebarRef} id="main-navigation" className={`sidebar ${mobileNavOpen ? "is-mobile-open" : ""}`} aria-label="主导航" aria-hidden={isMobileViewport && !mobileNavOpen || undefined} aria-modal={mobileNavOpen || undefined} inert={isMobileViewport && !mobileNavOpen || undefined} role={mobileNavOpen ? "dialog" : undefined} onKeyDown={handleSidebarKeyDown}>
+        <a className="brand" href={pageHref("Overview")} onClick={(event) => navigateLink(event, "Overview")}><span className="brand-mark"><Layers3 size={19} strokeWidth={2.2} /></span><span className="brand-name">rq<span>·</span>sys</span><span className="brand-edition">WORKSPACE</span></a>
         <div className="workspace-switch"><span className="workspace-avatar">R</span><span className="workspace-copy"><strong>需求运营组</strong><small>本地工作区</small></span><ChevronDown size={14} className="muted-icon" /></div>
         <div className="nav-label">WORKSPACE</div>
         <nav className="main-nav" aria-label="主导航">{navigationGroups.map((group) => <div className="nav-group" key={group.title}>
           <div className="nav-group-label">{group.title}</div>
-          {group.items.map(({ label, icon: Icon }) => <button key={label} className={`nav-item ${page === label ? "is-active" : ""}`} onClick={() => setPage(label)} aria-current={page === label ? "page" : undefined}>
-            <Icon size={16} />{pageTitles[label]}
-          </button>)}
+          {group.items.map(({ label, icon: Icon }) => <a key={label} href={pageHref(label)} className={`nav-item ${page === label ? "is-active" : ""}`} onClick={(event) => navigateLink(event, label)} aria-current={page === label ? "page" : undefined}>
+            <Icon size={16} /><span className="nav-item-label">{pageTitles[label]}</span>
+          </a>)}
         </div>)}</nav>
         <div className="sidebar-spacer" />
-        <div className="side-help" role="button" tabIndex={0} onClick={() => setPage("Guide")}
-          onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setPage("Guide"); } }}>
-          <div className="help-icon"><CircleHelp size={17} /></div>
-          <div><strong>需要帮助？</strong><span>查看使用指南</span></div><ArrowRight size={15} /></div>
-        <div className="user-profile"><div className="user-avatar">R</div><div className="user-copy"><strong>已登录用户</strong><span>租户内可用 · 无应用角色</span></div><button className="icon-button profile-menu" aria-label="账户菜单"><Settings2 size={17} /></button></div>
+        <a className="side-help" href={pageHref("Guide")} onClick={(event) => navigateLink(event, "Guide")}>
+          <span className="help-icon"><CircleHelp size={17} /></span>
+          <span className="side-help-copy"><strong>需要帮助？</strong><span>查看使用指南</span></span><ArrowRight size={15} /></a>
+        <div className="user-profile"><div className="user-avatar">R</div><div className="user-copy"><strong>已登录用户</strong><span>租户内可用 · 无应用角色</span></div></div>
       </aside>
 
-      <main className="main-area">
-        <header className="topbar"><div className="breadcrumbs"><span>工作区</span><span className="crumb-sep">/</span><strong>{pageTitles[page]}</strong></div><div className="topbar-actions"><span className={`connection-state ${health}`}><span className="connection-dot" />{health === "ready" ? "API 已连接" : health === "loading" ? "正在检查 API" : "API 未连接"}</span><span className="topbar-divider" /><button className="icon-button" aria-label={theme === "dark" ? "切换浅色主题" : "切换深色主题"} aria-pressed={theme === "dark"} onClick={() => setTheme((current) => current === "dark" ? "light" : "dark")}><>{theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}</></button><button className="icon-button" aria-label="帮助"><CircleHelp size={17} /></button><button className="icon-button" aria-label="活动记录"><Activity size={17} /></button><div className="top-avatar">R</div></div></header>
+      <main id="main-content" className="main-area" tabIndex={-1} inert={mobileNavOpen || undefined}>
+        <header className="topbar"><div className="breadcrumbs"><button ref={mobileMenuButtonRef} className="icon-button mobile-menu-button" aria-label="打开主导航" aria-expanded={mobileNavOpen} aria-controls="main-navigation" onClick={() => setMobileNavOpen(true)}><Menu size={18} /></button><span>工作区</span><span className="crumb-sep">/</span><strong>{pageTitles[page]}</strong></div><div className="topbar-actions"><span className={`connection-state ${health}`}><span className="connection-dot" />{health === "ready" ? "API 已连接" : health === "loading" ? "正在检查 API" : "API 未连接"}</span><span className="topbar-divider" /><button className="icon-button" aria-label={theme === "dark" ? "切换浅色主题" : "切换深色主题"} aria-pressed={theme === "dark"} onClick={() => setTheme((current) => current === "dark" ? "light" : "dark")}><>{theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}</></button><a className="icon-button" aria-label="帮助" href={pageHref("Guide")} onClick={(event) => navigateLink(event, "Guide")}><CircleHelp size={17} /></a><a className="icon-button" aria-label="活动记录" href={pageHref("Audit")} onClick={(event) => navigateLink(event, "Audit")}><Activity size={17} /></a><div className="top-avatar" aria-label="已登录用户">R</div></div></header>
 
         <div className="content-area">
           <PanelErrorBoundary>
-          {error && <div className="alert-banner" role="alert"><CircleAlert size={18} /><div><strong>服务暂不可用</strong><span>{error}</span></div><button className="button button-secondary button-small" onClick={() => void loadData()}><RefreshCw size={14} />重试连接</button></div>}
+          {error && page === "Overview" && <div className="alert-banner" role="alert"><CircleAlert size={18} /><div><strong>服务暂不可用</strong><span>{error}</span></div><button className="button button-secondary button-small" onClick={() => void loadData()}><RefreshCw size={14} />重试连接</button></div>}
           {notice && <div className="notice-banner" role="status"><Check size={16} /><span>{notice}</span><button className="icon-button" aria-label="关闭提示" onClick={() => setNotice(null)}><X size={15} /></button></div>}
           {page === "Overview" && <>
             <section className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" />SYNC WORKBENCH</div><h1>工作流总览</h1><p>查看需求同步进度、分析状态与推送健康度。</p></div><div className="heading-actions"><button className="button button-secondary" onClick={() => void loadData()} disabled={health === "loading"}><RefreshCw size={15} className={health === "loading" ? "spin" : ""} />刷新</button><button className="button button-secondary" title="只导入 Teambition 源数据；不触发 AI、负责人匹配、Base 推送或通知" onClick={() => void handleRunSync("source_only")} disabled={busy || health !== "ready"}>仅同步源数据</button><button className="button button-primary" onClick={() => void handleRunSync()} disabled={busy || health !== "ready"}><Play size={15} fill="currentColor" />{busy ? "提交中…" : "立即同步"}</button></div></section>
@@ -178,13 +254,9 @@ function App() {
             <section className="panel todo-panel">
               <div className="panel-heading"><div><h2>今天要处理什么</h2><p>按优先级排列，点击直接跳到对应需求。</p></div></div>
               <div className="todo-grid">
-                {[
-                  { key: "unassigned", label: "待分配负责人", value: Math.max(0, total - counts.owner), hint: "没有对应飞书账号，分配后会自动推送并通知", tone: "warn", page: "Requirements" as Page },
-                  { key: "failed", label: "推送失败", value: counts.failed, hint: "多数是 Base 字段问题，可在详情页重试", tone: counts.failed > 0 ? "danger" : "ok", page: "Requirements" as Page },
-                  { key: "pending", label: "待推送", value: Math.max(0, total - counts.push), hint: "已排队或等待同步，无需人工干预", tone: "info", page: "Requirements" as Page },
-                ].map((item) => (
-                  <button key={item.key} className={`todo-card is-${item.tone}`} onClick={() => setPage(item.page)}>
-                    <span className="todo-value">{item.value}</span>
+                {todoItems.map((item) => (
+                  <button key={item.key} className={`todo-card is-${item.tone}`} disabled={item.value === null} onClick={() => setPage("Requirements", item.filters)}>
+                    <span className="todo-value">{item.value ?? "—"}</span>
                     <span className="todo-label">{item.label}</span>
                     <span className="todo-hint">{item.hint}</span>
                   </button>
@@ -192,15 +264,9 @@ function App() {
               </div>
             </section>
 
-            <div className="metric-grid">{[
-                { label: "已拉取需求", value: counts.pull, total, icon: ArrowDownToLine, color: "blue", delta: "Teambition → RQ-Sys" },
-                { label: "AI 分析完成", value: counts.analysis, total, icon: Sparkles, color: "violet", delta: "建议结果可独立重试" },
-                { label: "负责人已匹配", value: counts.owner, total, icon: Users, color: "amber", delta: "未分配需求仍可推送" },
-                { label: "成功推送", value: counts.push, total, icon: Check, color: "green", delta: "Feishu Base" },
-              ].map(({ label, value, total: denominator, icon: Icon, color, delta }) => <article className="metric-card" key={label}><div className="metric-top"><span className={`metric-icon ${color}`}><Icon size={17} /></span><span className="metric-context">{metrics ? "全量需求数据" : "全量统计暂不可用"}</span></div><div className="metric-value-row"><strong>{metrics ? value : "—"}</strong><span className="metric-total">/ {metrics ? denominator : "—"}</span></div><div className="metric-label">{label}</div><div className="metric-foot"><span>{delta}</span><span className="metric-trend"><ArrowRight size={13} /></span></div></article>)}</div>
             </section>
 
-            <div className="overview-grid"><section className="panel pipeline-panel"><div className="panel-heading"><div><h2>处理阶段</h2><p>需求处理状态一览</p></div><button className="icon-button" aria-label="阶段说明"><CircleHelp size={16} /></button></div><div className="pipeline-overview">{[
+            <div className="overview-grid"><section className="panel pipeline-panel"><div className="panel-heading"><div><h2>处理阶段</h2><p>需求处理状态一览</p></div><span className="pipeline-help" aria-label="阶段说明" title="拉取、AI 分析、负责人匹配和 Base 推送分别记录状态；AI 分析失败不会阻止推送。"><CircleHelp size={16} /></span></div><div className="pipeline-overview">{[
               { name: "拉取", detail: "从 Teambition 获取需求", value: counts.pull, color: "blue", icon: ArrowDownToLine },
               { name: "AI 分析", detail: "生成模块与维度建议", value: counts.analysis, color: "violet", icon: Sparkles },
               { name: "负责人匹配", detail: "关联 Feishu 用户", value: counts.owner, color: "amber", icon: Users },
@@ -211,7 +277,7 @@ function App() {
 
             <SchedulerHealthPanel schedule={sources[0]?.schedule} now={loadedAt} loadState={health} onConfigure={() => setPage("Sources")} />
 
-            <section className="panel requirements-panel"><div className="panel-heading requirements-heading"><div><h2>最近处理的需求</h2><p>每个阶段状态分别展示，分析失败不会隐藏已推送结果</p></div><div className="table-actions"><label className="search-box"><Search size={15} /><input aria-label="搜索需求" placeholder="搜索需求名称…" value={query} onChange={(event) => setQuery(event.target.value)} /><kbd>⌘ K</kbd></label><button className="button button-secondary button-small" onClick={() => setPage("Requirements")}>查看全部</button></div></div><RequirementsTable rows={shownRequirements.slice(0, 5)} loading={health === "loading"} /></section>
+            <section className="panel requirements-panel"><div className="panel-heading requirements-heading"><div><h2>最近处理的需求</h2><p>每个阶段状态分别展示，分析失败不会隐藏已推送结果</p></div><div className="table-actions"><label className="search-box"><Search size={15} /><input aria-label="搜索需求" placeholder="搜索需求名称…" value={query} onChange={(event) => setQuery(event.target.value)} /></label><button className="button button-secondary button-small" onClick={() => setPage("Requirements")}>查看全部</button></div></div><RequirementsTable rows={shownRequirements.slice(0, 5)} loading={health === "loading"} /></section>
             <footer className="page-footer"><span>RQ-Sys MVP <span className="footer-dot">·</span> 本地开发工作区</span><span><ShieldCheck size={14} />状态由 API 返回；不展示飞书 PM 处理状态</span></footer>
           </>}
 

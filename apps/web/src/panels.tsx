@@ -515,7 +515,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
   const open = useCallback(async (id: string, options?: { push?: boolean; openOwnerPicker?: boolean }) => {
     if (options?.push) {
       listScrollTop.current = window.scrollY || document.documentElement.scrollTop || 0;
-      window.history.pushState(null, "", requirementPoolUrl(window.location.pathname || "/", appliedFiltersRef.current, id));
+      window.history.pushState(null, "", requirementPoolUrl(window.location.pathname || "/", appliedFiltersRef.current, id, window.location.hash));
     }
     document.documentElement.scrollTop = 0;
     document.body.scrollTop = 0;
@@ -588,11 +588,11 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
   const closeDetail = () => {
     detailRequestVersion.current += 1;
     setDetailId(null); setSelected(null); setDetailError(null); setDetailLoading(false); setAutoOpenOwnerPicker(false);
-    window.history.replaceState(null, "", requirementPoolUrl(window.location.pathname || "/", appliedFiltersRef.current, null));
+    window.history.replaceState(null, "", requirementPoolUrl(window.location.pathname || "/", appliedFiltersRef.current, null, window.location.hash));
   };
 
   const applyFilters = () => {
-    window.history.replaceState(null, "", requirementPoolUrl(window.location.pathname || "/", filters, null));
+    window.history.replaceState(null, "", requirementPoolUrl(window.location.pathname || "/", filters, null, window.location.hash));
     void load(filters, null);
   };
 
@@ -600,7 +600,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
   const clearFilters = () => {
     const cleared = { ...emptyRequirementListFilters };
     setQuery(""); setExecutorName(""); setPullState(""); setOwnerState(""); setAnalysisState(""); setPushState(""); setBatchId(""); setSince(""); setUntil("");
-    window.history.replaceState(null, "", requirementPoolUrl(window.location.pathname || "/", cleared, null));
+    window.history.replaceState(null, "", requirementPoolUrl(window.location.pathname || "/", cleared, null, window.location.hash));
     void load(cleared, null);
   };
 

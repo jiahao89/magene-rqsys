@@ -87,6 +87,8 @@ export function requirementPoolUrl(
   pathname: string,
   filters: RequirementListFilters,
   requirementId?: string | null,
+  hash = "",
 ): string {
-  return `${pathname || "/"}${buildRequirementPoolSearch(filters, requirementId)}`;
+  const suffix = hash ? (hash.startsWith("#") ? hash : `#${hash}`) : "";
+  return `${pathname || "/"}${buildRequirementPoolSearch(filters, requirementId)}${suffix}`;
 }

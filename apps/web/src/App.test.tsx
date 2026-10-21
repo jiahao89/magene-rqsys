@@ -29,8 +29,8 @@ describe("RQ-Sys local workbench", () => {
 
     render(<App />);
 
-    expect(await screen.findAllByText("/ 311")).toHaveLength(4);
-    expect(screen.getAllByText("全量需求数据")).toHaveLength(4);
+    expect(await screen.findByText("311 / 311")).toBeInTheDocument();
+    expect(screen.getByText("状态来自全量需求聚合 API")).toBeInTheDocument();
   });
 
   it("shows a recoverable service error instead of claiming the API is configured", async () => {
@@ -88,7 +88,7 @@ describe("RQ-Sys local workbench", () => {
     });
 
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: "数据源配置" }));
+    fireEvent.click(await screen.findByRole("link", { name: "数据源配置" }));
     fireEvent.change(await screen.findByLabelText("项目名称"), { target: { value: "产品需求池" } });
     fireEvent.click(screen.getByRole("button", { name: "创建来源" }));
 
@@ -144,7 +144,7 @@ describe("RQ-Sys local workbench", () => {
     });
 
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: "功能模块" }));
+    fireEvent.click(await screen.findByRole("link", { name: "功能模块" }));
 
     expect(await screen.findAllByRole("heading", { name: "功能模块" })).toHaveLength(2);
     expect(await screen.findByText("地图")).toBeInTheDocument();
@@ -180,5 +180,87 @@ describe("RQ-Sys local workbench", () => {
     render(<App />);
 
     expect(await screen.findByRole("heading", { name: "工作流总览" })).toBeInTheDocument();
+  });
+
+  it("stores the selected workbench page in the URL", async () => {
+    fetchMock.mockImplementation(async () => Response.json({ items: [] }));
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("link", { name: "需求池" }));
+
+    expect(window.location.hash).toBe("#requirements");
+    expect(await screen.findByRole("heading", { name: "需求池" })).toBeInTheDocument();
+  });
+
+  it("opens a functional help page from the topbar", async () => {
+    fetchMock.mockImplementation(async () => Response.json({ items: [] }));
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("link", { name: "帮助" }));
+
+    expect(window.location.hash).toBe("#guide");
+    expect(await screen.findByRole("heading", { level: 1, name: "使用指南" })).toBeInTheDocument();
+  });
+
+  it("opens the responsive navigation as a dialog and closes it after selection", async () => {
+    fetchMock.mockImplementation(async () => Response.json({ items: [] }));
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "打开主导航" }));
+    expect(screen.getByRole("dialog", { name: "主导航" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("link", { name: "人员" }));
+
+    expect(window.location.hash).toBe("#people");
+    expect(screen.queryByRole("dialog", { name: "主导航" })).not.toBeInTheDocument();
+  });
+
+  it("opens the requirement pool with the matching owner filter from its dashboard todo", async () => {
+    fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/sources") return Response.json({ items: [] });
+      if (path.startsWith("/api/batches")) return Response.json({ items: [] });
+      if (path === "/api/overview/metrics") return Response.json({ counts: { total: 12, pullSynced: 12, analysisAnalyzed: 8, ownerResolved: 9, pushPushed: 6, failed: 2 } });
+      return Response.json({ items: [], nextCursor: null });
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /待分配负责人/ }));
+
+    expect(window.location.hash).toBe("#requirements");
+    expect(new URLSearchParams(window.location.search).get("ownerState")).toBe("pending_mapping");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("ownerState=pending_mapping"), expect.anything()));
+  });
+
+  it("opens the failed push filter from its dashboard todo", async () => {
+    fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/sources") return Response.json({ items: [] });
+      if (path.startsWith("/api/batches")) return Response.json({ items: [] });
+      if (path === "/api/overview/metrics") return Response.json({ counts: { total: 12, pullSynced: 12, analysisAnalyzed: 8, ownerResolved: 9, pushPushed: 6, failed: 2 } });
+      return Response.json({ items: [], nextCursor: null });
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /推送失败/ }));
+
+    expect(window.location.hash).toBe("#requirements");
+    expect(new URLSearchParams(window.location.search).get("push")).toBe("failed");
+  });
+
+  it("does not present unavailable dashboard counts as zero", async () => {
+    fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/overview/metrics") return Response.json({ error: { code: "UNAVAILABLE", message: "temporarily unavailable" } }, { status: 503 });
+      return Response.json({ items: [], nextCursor: null });
+    });
+
+    render(<App />);
+
+    const unassignedTodo = await screen.findByRole("button", { name: /待分配负责人/ });
+    expect(unassignedTodo.querySelector(".todo-value")).toHaveTextContent("—");
+    expect(unassignedTodo).toBeDisabled();
   });
 });
