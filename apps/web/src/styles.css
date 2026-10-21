@@ -1022,3 +1022,36 @@ html[data-theme="dark"] .nav-item.is-active::before { background: var(--rq-accen
 }
 .owner-cell-button:hover .owner-cell-edit, .owner-cell-button:focus-visible .owner-cell-edit { opacity: 1; }
 .req-row-flag { font-size: 11px; color: #b8730a; }
+
+/* ---------- 详情页：把负责人提到最显眼的位置 ---------- */
+.req-detail-summary { gap: 12px; }
+.req-summary-title { font-size: 19px; line-height: 1.35; font-weight: 650; }
+.req-summary-id { font-size: 11.5px; color: var(--rq-text-tertiary, #9aa3b0); }
+
+/* 摘要元信息改为纵向三段：负责人 → 状态 → 操作 */
+.req-summary-meta { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+
+/* 负责人：独立一行、加大、带按钮 */
+.req-owner-line {
+  display: inline-flex; align-items: center; gap: 10px;
+  font-size: 15px; font-weight: 600; color: var(--rq-text, #1f2329);
+}
+.req-owner-line .req-meta-label { font-size: 11.5px; font-weight: 600; color: var(--rq-text-tertiary, #9aa3b0); }
+.req-owner-line .req-owner { font-size: 14px; }
+.req-owner-line .req-avatar { width: 26px; height: 26px; font-size: 12px; }
+
+/* 四阶段状态降级为次要信息 */
+.req-stage-row { gap: 5px; }
+.req-stage-row .badge, .req-stage-row .status-badge { font-size: 11px; padding: 1px 7px; opacity: .85; }
+
+/* 操作按钮单独一行，与负责人对齐 */
+.req-summary-actions { gap: 8px; }
+
+/* 无失败项时那句提示不占据首屏 */
+.detail-actionbar-hint { font-size: 12px; color: var(--rq-text-tertiary, #9aa3b0); margin: 2px 0 0; }
+.detail-actionbar-hint:empty { display: none; }
+
+@media (max-width: 860px) {
+  .req-summary-title { font-size: 17px; }
+  .req-owner-line { font-size: 14px; }
+}

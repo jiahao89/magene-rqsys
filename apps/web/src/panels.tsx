@@ -875,15 +875,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
         </> : <span className="req-empty-value" title="Teambition 未提供该字段">—</span>}
       </div>
       <div className="req-l1-meta">
-        <div className="req-owner-block">
-          <span className="req-meta-label">负责人</span>
-          <OwnerBadge owner={owner} />
-          <HeroButton className="link-button" onPress={() => setOwnerPickerOpen(true)}>{owner.unassigned ? "分配负责人" : "变更"}</HeroButton>
-        </div>
-        <div className="req-stage-block">
-          <span className="req-meta-label">四阶段状态</span>
-          <div className="req-stage-row">{stages.map(([stage, state]) => <StageBadge key={stage} stage={stage} state={state} />)}</div>
-        </div>
+        {/* 负责人与四阶段状态已在顶部摘要栏常驻，这里不再重复，避免稀释重点。 */}
         <dl className="req-source-grid">
           <div><dt><TbFieldLabel>提出人</TbFieldLabel></dt><dd><SourceValue value={facts.proposerName} /></dd></div>
           <div><dt><TbFieldLabel>执行人</TbFieldLabel></dt><dd><SourceValue value={facts.executorName} /></dd></div>
