@@ -35,6 +35,10 @@ export function workbenchUrl(
     url.search = buildRequirementPoolSearch({ ...emptyRequirementListFilters, ...requirementFilters });
   } else if (page !== "Requirements") {
     url.searchParams.delete("requirement");
+  } else {
+    // 从详情页点左侧「需求池」应当回到列表：不清掉 requirement 参数，
+    // readRequirementDeepLink 会再次把它当成深链并重新打开详情。
+    url.searchParams.delete("requirement");
   }
   return `${url.pathname}${url.search}${url.hash}`;
 }
