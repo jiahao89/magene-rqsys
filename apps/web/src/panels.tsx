@@ -13,7 +13,7 @@ import {
   ApiError, addTeamPerson, createSource, deleteTeamPerson, getBatch, getFunctionModules, getRequirement, listAudit, listBatches, listMappings, listRequirements, listTeamPeople, pushRequirement,
   renameTeamPerson, saveFunctionModules,
   retryAnalysis, retrySyncItem, searchFeishuUsers, setOwner, updateSource,
-  type AnalysisVersionSummary, type AuditEvent, type BatchDetail, type BatchSummary, type PersonMapping,
+  type AnalysisVersionSummary, type AuditEvent, type BatchDetail, type BatchSummary, type PersonMapping, type FeishuUserSelection,
   type FeishuUserCandidate, type FunctionModuleEntry, type RequirementDetail, type RequirementSummary, type SourceConfig, type SourceConfigUpdate, type TeamPerson,
 } from "./api";
 
@@ -63,59 +63,60 @@ function scheduleLabel(schedule: SourceConfig["schedule"]): string {
   return `${weekday} ${schedule.time ?? "时间未设置"} ${schedule.timezone ?? ""}`.trim();
 }
 
-function FeishuUserPicker({ disabled, onMap, saveLabel = "保存映射并入队推送" }: {
+function FeishuUserPicker({ disabled, onMap, saveLabel = "保存负责人并入队推送" }: {
   disabled: boolean;
-  onMap: (user: FeishuUserCandidate) => Promise<void>;
+  onMap: (user: FeishuUserSelection) => Promise<void>;
   saveLabel?: string;
 }) {
-  const [query, setQuery] = useState("");
-  const [candidates, setCandidates] = useState<FeishuUserCandidate[]>([]);
-  const [selected, setSelected] = useState<FeishuUserCandidate | null>(null);
-  const [searching, setSearching] = useState(false);
-  const [searchError, setSearchError] = useState<string | null>(null);
-  const [activeIndex, setActiveIndex] = useState(0);
-  const searchVersion = useRef(0);
-  const listboxId = useId();
+  // 名单来自「负责人映射」维护的人员，不再每次输入姓名搜索飞书通讯录：
+  // 分配负责人是高频动作，从固定名单里选比等搜索结果快。
+  const [people, setPeople] = useState<FeishuUserSelection[]>([]);
+  const [selectedId, setSelectedId] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
-  const search = async () => {
-    if (query.trim().length < 2) { setSearchError("请输入至少 2 个字符搜索飞书用户。"); return; }
-    const version = ++searchVersion.current;
-    setSearching(true); setSearchError(null); setSelected(null); setCandidates([]); setActiveIndex(0);
-    try {
-      const results = await searchFeishuUsers(query);
-      if (version === searchVersion.current) setCandidates(results);
-    } catch (cause) {
-      if (version === searchVersion.current) setSearchError(errorText(cause));
-    } finally {
-      if (version === searchVersion.current) setSearching(false);
-    }
-  };
+  useEffect(() => {
+    let cancelled = false;
+    void listMappings()
+      .then((rows) => {
+        if (cancelled) return;
+        const seen = new Map<string, FeishuUserSelection>();
+        for (const row of rows) {
+          if (!row.feishuUserId || seen.has(row.feishuUserId)) continue;
+          seen.set(row.feishuUserId, {
+            feishuUserId: row.feishuUserId,
+            feishuIdType: row.feishuIdType,
+            name: row.teambitionDisplayName ?? row.feishuUserId,
+          });
+        }
+        setPeople([...seen.values()].sort((a, b) => a.name.localeCompare(b.name, "zh-Hans-CN")));
+      })
+      .catch((cause) => { if (!cancelled) setLoadError(cause instanceof ApiError ? errorText(cause) : "无法读取人员名单，请刷新后重试。"); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
 
-  const handleListboxKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (candidates.length === 0) return;
-    if (event.key === "ArrowDown") { event.preventDefault(); setActiveIndex((index) => (index + 1) % candidates.length); }
-    else if (event.key === "ArrowUp") { event.preventDefault(); setActiveIndex((index) => (index + candidates.length - 1) % candidates.length); }
-    else if (event.key === "Home") { event.preventDefault(); setActiveIndex(0); }
-    else if (event.key === "End") { event.preventDefault(); setActiveIndex(candidates.length - 1); }
-    else if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault(); setSelected(candidates[activeIndex]);
-    }
+  const selected = people.find((person) => person.feishuUserId === selectedId) ?? null;
+  const save = async () => {
+    if (!selected) return;
+    setSaving(true);
+    try { await onMap(selected); } finally { setSaving(false); }
   };
 
   return <div className="feishu-user-picker">
-    <div className="feishu-user-search"><HeroInput aria-label="搜索飞书用户" placeholder="输入姓名搜索飞书用户" value={query} onChange={(event) => { searchVersion.current += 1; setSearching(false); setQuery(event.target.value); setCandidates([]); setSelected(null); setSearchError(null); setActiveIndex(0); }} />
-      <HeroButton className="button button-secondary button-small" onPress={() => void search()} isDisabled={disabled || searching}>搜索</HeroButton>
-    </div>
-    {searchError && <span className="feishu-user-error" role="alert">{searchError}</span>}
-    {candidates.length > 0 && <div id={listboxId} className="feishu-user-results" role="listbox" aria-label="飞书用户搜索结果" aria-activedescendant={`${listboxId}-option-${activeIndex}`} aria-describedby={`${listboxId}-instructions`} tabIndex={0} onKeyDown={handleListboxKeyDown}>
-      {candidates.map((candidate, index) => <div id={`${listboxId}-option-${index}`} key={candidate.openId} role="option" aria-selected={selected?.openId === candidate.openId} data-active={activeIndex === index} className="feishu-user-option" onMouseMove={() => setActiveIndex(index)} onClick={() => { setActiveIndex(index); setSelected(candidate); }}>
-        <span><strong>{candidate.name}</strong>{candidate.enName && <small>{candidate.enName}</small>}</span><code>…{candidate.openId.slice(-6)}</code>
-      </div>)}
-    </div>}
-    {candidates.length > 0 && <span id={`${listboxId}-instructions`} className="feishu-user-hint">使用上下方向键选择，按 Enter 确认。</span>}
-    {!searching && !searchError && query.trim().length >= 2 && candidates.length === 0 && <span className="feishu-user-hint">没有找到可选用户，请检查姓名或通讯录权限。</span>}
-    {selected && <span className="feishu-user-hint" role="status">已选择：{selected.name}</span>}
-    <HeroButton className="button button-primary button-small" onPress={() => { if (selected) void onMap(selected); }} isDisabled={disabled || !selected}>{saveLabel}</HeroButton>
+    {loadError
+      ? <span className="feishu-user-error" role="alert">{loadError}</span>
+      : <div className="feishu-user-search">
+          <select aria-label="选择负责人" value={selectedId} disabled={disabled || loading || saving}
+            onChange={(event) => setSelectedId(event.target.value)}>
+            <option value="">{loading ? "正在读取人员…" : people.length ? "请选择负责人" : "名单为空，请先维护负责人映射"}</option>
+            {people.map((person) => <option key={person.feishuUserId} value={person.feishuUserId}>{person.name}</option>)}
+          </select>
+          <button className="button button-primary button-small" onClick={() => void save()} disabled={disabled || !selected || saving}>
+            {saving ? "保存中…" : saveLabel}
+          </button>
+        </div>}
   </div>;
 }
 
@@ -846,10 +847,10 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
       </div>
       <p className="detail-actionbar-hint">{guidance}</p>
       {ownerPickerOpen && <div className="detail-owner-editor" id={ownerEditorId}>
-        <p className="detail-actionbar-hint">搜索并选择飞书用户；保存后会覆盖当前负责人并重新排队 Base 推送。</p>
+        <p className="detail-actionbar-hint">从人员名单中选择负责人；保存后会覆盖当前负责人并重新排队 Base 推送。</p>
         <FeishuUserPicker key={detail.id} disabled={busy} saveLabel={ownerSaveLabel} onMap={async (user) => {
           const ok = await onAct(async () => {
-            const result = await setOwner(detail.id, { feishuUserId: user.openId, feishuIdType: "open_id" });
+            const result = await setOwner(detail.id, { feishuUserId: user.feishuUserId, feishuIdType: user.feishuIdType });
             return `${user.name} 负责人已${ownerMapped ? "变更" : "分配"}（${pipelineLabel("owner", result.ownerState)}），推送已排队`;
           }, detail.id);
           if (ok) setOwnerPickerOpen(false);
@@ -1025,11 +1026,11 @@ export function MappingsPanel({ onRefresh }: { onRefresh: () => void }) {
   }, []);
   useEffect(() => { void load(); }, [load]);
 
-  const submit = async (user: FeishuUserCandidate) => {
+  const submit = async (user: FeishuUserSelection) => {
     if (!targetId) return;
     setBusy(true); setNotice(null);
     try {
-      const result = await setOwner(targetId, { feishuUserId: user.openId, feishuIdType: "open_id" });
+      const result = await setOwner(targetId, { feishuUserId: user.feishuUserId, feishuIdType: user.feishuIdType });
       setNotice(`${user.name} 映射已持久化（${result.ownerState}），Base 推送已入队。`);
       setTargetId(null);
       onRefresh(); await load();

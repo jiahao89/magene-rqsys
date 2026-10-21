@@ -164,49 +164,16 @@ describe("MappingsPanel (ticket 17)", () => {
 
     render(<MappingsPanel onRefresh={() => undefined} />);
     fireEvent.click(await screen.findByRole("button", { name: "选择飞书用户" }));
-    fireEvent.change(screen.getByLabelText("搜索飞书用户"), { target: { value: "Ada" } });
-    fireEvent.click(screen.getByRole("button", { name: "搜索" }));
-    fireEvent.click(await screen.findByRole("option", { name: /Ada/ }));
-
-    fireEvent.change(screen.getByLabelText("搜索飞书用户"), { target: { value: "Bob" } });
-    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    // 名单来自已在「负责人映射」里维护的人员，不再搜索飞书通讯录
+    const picker = await screen.findByLabelText("选择负责人");
     expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "搜索" }));
-    const listbox = await screen.findByRole("listbox");
-    fireEvent.keyDown(listbox, { key: "ArrowDown" });
-    fireEvent.keyDown(listbox, { key: "Enter" });
-    expect(await screen.findByText("已选择：Bobby")).toBeInTheDocument();
+    fireEvent.change(picker, { target: { value: "ou-user" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
 
     expect(await screen.findByText(/映射已持久化（manually_mapped），Base 推送已入队/)).toBeInTheDocument();
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/requirements/req-1/owner", expect.objectContaining({ method: "PUT", body: JSON.stringify({ feishuUserId: "ou-bobby", feishuIdType: "open_id" }) })));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/requirements/req-1/owner", expect.objectContaining({ method: "PUT", body: JSON.stringify({ feishuUserId: "ou-user", feishuIdType: "open_id" }) })));
   });
 
-  it("ignores an older directory response when the operator has changed the search query", async () => {
-    let resolveAda: ((response: Response) => void) | undefined;
-    fetchMock.mockImplementation(async (input, init) => {
-      const path = typeof input === "string" ? input : new Request(input).url;
-      if (path === "/api/feishu/users?q=Ada") return new Promise<Response>((resolve) => { resolveAda = resolve; });
-      if (path === "/api/feishu/users?q=Bob") return jsonOk({ items: [{ openId: "ou-bob", name: "Bob" }] });
-      if (path.includes("ownerState=pending_mapping")) return jsonOk({ items: [pending], nextCursor: null });
-      if (path.startsWith("/api/requirements")) return jsonOk({ items: [], nextCursor: null });
-      if (path === "/api/mappings") return jsonOk({ items: [], nextCursor: null });
-      throw new Error(`unexpected fetch ${path} ${init?.method ?? "GET"}`);
-    });
-
-    render(<MappingsPanel onRefresh={() => undefined} />);
-    fireEvent.click(await screen.findByRole("button", { name: "选择飞书用户" }));
-    fireEvent.change(screen.getByLabelText("搜索飞书用户"), { target: { value: "Ada" } });
-    fireEvent.click(screen.getByRole("button", { name: "搜索" }));
-    await waitFor(() => expect(resolveAda).toBeTypeOf("function"));
-
-    fireEvent.change(screen.getByLabelText("搜索飞书用户"), { target: { value: "Bob" } });
-    await act(async () => { resolveAda?.(jsonOk({ items: [{ openId: "ou-ada", name: "Ada" }] })); });
-    expect(screen.queryByRole("option", { name: /Ada/ })).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "搜索" }));
-    expect(await screen.findByRole("option", { name: /Bob/ })).toBeInTheDocument();
-  });
 });
 
 describe("RequirementsPanel (ticket 17)", () => {
@@ -379,7 +346,7 @@ describe("RequirementsPanel (ticket 17)", () => {
 
     expect(await screen.findByRole("heading", { name: "需要报表" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "分配 / 变更负责人" })).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByLabelText("搜索飞书用户")).toBeVisible();
+    expect(screen.getByLabelText("选择负责人")).toBeVisible();
     expect(window.location.search).toContain("requirement=req-1");
   });
 
@@ -522,7 +489,7 @@ describe("RequirementsPanel (ticket 17)", () => {
     fetchMock.mockImplementation(async (input, init) => {
       const path = typeof input === "string" ? input : new Request(input).url;
       if (path === "/api/requirements/req-1") return jsonOk(detail({ pipeline: failedRow.pipeline }));
-      if (path === "/api/feishu/users?q=Alex") return jsonOk({ items: [{ openId: "ou-alex-new", name: "Alex Chen" }] });
+      if (path === "/api/mappings") return jsonOk({ items: [{ id: "map-alex", teambitionUserId: "tb-alex", teambitionDisplayName: "Alex Chen", feishuUserId: "ou-alex-new", feishuIdType: "open_id", matchMethod: "manual", createdBy: null, updatedAt: "2026-10-01T00:00:00Z" }] });
       if (path === "/api/requirements/req-1/owner" && init?.method === "PUT") return jsonOk({ requirementId: "req-1", ownerState: "manually_mapped", status: "queued" });
       return jsonOk({ items: [failedRow], nextCursor: null });
     });
@@ -534,9 +501,7 @@ describe("RequirementsPanel (ticket 17)", () => {
     expect(status.getByTitle("负责人：已手动匹配（manually_mapped）")).toBeInTheDocument();
     expect(status.getByTitle("推送：推送失败（failed）")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "分配 / 变更负责人" }));
-    fireEvent.change(screen.getByLabelText("搜索飞书用户"), { target: { value: "Alex" } });
-    fireEvent.click(screen.getByRole("button", { name: "搜索" }));
-    fireEvent.click(await screen.findByRole("option", { name: /Alex Chen/ }));
+    fireEvent.change(await screen.findByLabelText("选择负责人"), { target: { value: "ou-alex-new" } });
     fireEvent.click(screen.getByRole("button", { name: "变更负责人并入队推送" }));
 
     expect(await screen.findByText(/推送已排队/)).toBeInTheDocument();

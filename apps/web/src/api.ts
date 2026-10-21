@@ -321,6 +321,16 @@ export async function listBatches(params: { status?: string; since?: string; unt
   return requestJson<{ items: BatchSummary[]; nextCursor: string | null }>(`/api/batches${buildSearch({ status, since, until, limit, cursor })}`, fetcher);
 }
 
+export interface FeishuUserSelection {
+  feishuUserId: string;
+  feishuIdType: "open_id" | "user_id" | "union_id";
+  name: string;
+}
+
+export async function resolveFeishuUser(platformUserId: string, fetcher: typeof fetch = fetch): Promise<FeishuUserSelection> {
+  return requestJson<FeishuUserSelection>(`/api/feishu/users/resolve?platformUserId=${encodeURIComponent(platformUserId)}`, fetcher);
+}
+
 export interface PersonMapping {
   id: string;
   teambitionUserId: string | null;
