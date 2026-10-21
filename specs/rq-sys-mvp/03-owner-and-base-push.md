@@ -50,7 +50,8 @@ Use Base automation where the target Base can express the trigger and recipient 
 
 | Event | Recipient | Deduplication |
 |---|---|---|
-| First successful push | **Silent** — no notification fields written | Not applicable |
+| First successful push, owner from automatic matching | **Silent** — no notification fields written | Not applicable |
+| First successful push, owner **assigned by hand** (2026-10-21) | The assigned owner — a human decision must reach the person who now owns the work | New owner |
 | Substantive source change successfully pushed | Current owner; PM Leader when there is no owner | One per substantive source version |
 | Owner assigned after an empty-owner push | Newly assigned owner | One per assignment event |
 | TB owner changes to a mapped person | New owner | One per mapped owner change |
