@@ -1056,3 +1056,103 @@ export class PanelErrorBoundary extends Component<{ children: ReactNode }, Error
     return this.props.children;
   }
 }
+
+export function GuidePanel() {
+  const stages = [
+    { name: "拉取", from: "Teambition", desc: "从 TB 项目拉取需求原文。只读，系统从不回写 TB。", who: "系统自动" },
+    { name: "AI 分析", from: "应用", desc: "模型给出模块、优先级、置信度和 U/M/S/C 建议。结果独立版本化，可重试。", who: "系统自动" },
+    { name: "负责人", from: "应用", desc: "把 TB 执行人映射到飞书用户。没映射的需求仍可推送，只是 Base 里负责人为空。", who: "系统自动 + 人工补" },
+    { name: "推送", from: "飞书 Base", desc: "把 PM 字段和系统字段写进多维表格。同一诉求重复推送不会重复写。", who: "系统自动" },
+    { name: "通知", from: "Base 自动化", desc: "Base 发现通知事件变化后，按规则发给负责人。", who: "Base 自动化" },
+  ];
+  const states = [
+    ["拉取", "已同步 / 待同步 / 同步中 / 同步失败"],
+    ["AI 分析", "已分析 / 待分析 / 分析中 / 可重试 / 失败"],
+    ["负责人", "已手动匹配 / 已自动匹配 / 待匹配 / 无需负责人"],
+    ["推送", "已推送 / 待推送 / 推送中 / 推送失败"],
+  ];
+  const notices = [
+    ["首次推送", "不发", "避免批量回填时刷屏"],
+    ["分配或变更负责人", "发给新负责人", "负责人变更后由新负责人接手"],
+    ["需求内容有实质变更", "发给当前负责人", "负责人为空时发给 PM Leader"],
+    ["AI 分析失败后重试成功", "发给当前负责人", "同上"],
+    ["改备注、改错别字", "不发", "不构成实质变更"],
+  ];
+  return <section className="panel requirements-panel guide-panel">
+    <div className="panel-heading">
+      <div><h2>使用指南</h2><p>这套系统的数据怎么流、状态怎么读、每天该做什么。</p></div>
+    </div>
+
+    <div className="guide-section">
+      <h3>一、数据从哪里来，到哪里去</h3>
+      <p className="guide-lead">Teambition 拥有需求原文，应用拥有处理状态，飞书多维表格拥有 PM 处理结果和通知。三者各管一段，互不覆盖。</p>
+      <div className="guide-flow">
+        <span className="guide-node guide-node-source">Teambition<small>需求原文 · 只读</small></span>
+        <span className="guide-arrow">→</span>
+        <span className="guide-node">应用数据库<small>处理状态 · 快照 · 映射</small></span>
+        <span className="guide-arrow">→</span>
+        <span className="guide-node">飞书多维表格<small>PM 字段 · 通知</small></span>
+        <span className="guide-arrow">→</span>
+        <span className="guide-node guide-node-target">飞书消息<small>发给负责人</small></span>
+      </div>
+      <p className="guide-note">系统只读 Teambition，从不回写。你在页面里改的是应用侧的负责人映射，不是 TB 数据。</p>
+    </div>
+
+    <div className="guide-section">
+      <h3>二、五个阶段各自在做什么</h3>
+      <div className="guide-table"><table>
+        <thead><tr><th>阶段</th><th>数据归属</th><th>做什么</th><th>谁触发</th></tr></thead>
+        <tbody>{stages.map((s) => <tr key={s.name}><td><strong>{s.name}</strong></td><td>{s.from}</td><td>{s.desc}</td><td>{s.who}</td></tr>)}</tbody>
+      </table></div>
+      <p className="guide-note">四个处理状态互相独立：分析失败不影响推送，负责人空缺也不阻断推送。</p>
+    </div>
+
+    <div className="guide-section">
+      <h3>三、状态怎么读</h3>
+      <div className="guide-state-grid">{states.map(([stage, values]) => <div className="guide-state-card" key={stage}>
+        <strong>{stage}</strong><span>{values}</span>
+      </div>)}</div>
+      <p className="guide-note">页面上的状态一律显示中文；把鼠标停上去能看到原始值，便于排查。</p>
+    </div>
+
+    <div className="guide-section">
+      <h3>四、每天该做什么</h3>
+      <ol className="guide-steps">
+        <li><strong>先看总览。</strong>四个指标告诉你今天有多少需求卡在哪个阶段。</li>
+        <li><strong>再看需求池的「待分配」。</strong>这些是 TB 里有执行人但还没对应飞书账号的需求。在详情页点「分配负责人」即可，分配后会自动排队推送并通知对方。</li>
+        <li><strong>然后看「推送失败」。</strong>多数是 Base 字段问题。详情页点「重试 Base 推送」；版本不一致时系统会先重新同步。</li>
+        <li><strong>怀疑 AI 结论时</strong>，在详情页展开「查看依据与历史」，核对原文证据和推断过程。AI 推断会明确标注。</li>
+      </ol>
+      <p className="guide-note">每周一上午系统会自动同步一次（可在「数据源配置」调整）。平时不需要手动触发。</p>
+    </div>
+
+    <div className="guide-section">
+      <h3>五、什么时候会收到通知</h3>
+      <div className="guide-table"><table>
+        <thead><tr><th>事件</th><th>是否通知</th><th>为什么</th></tr></thead>
+        <tbody>{notices.map(([event, yes, why]) => <tr key={event}>
+          <td>{event}</td>
+          <td><span className={`badge ${yes === "不发" ? "status-neutral" : "status-success"}`}>{yes}</span></td>
+          <td>{why}</td>
+        </tr>)}</tbody>
+      </table></div>
+      <p className="guide-note">同一事件重复推送不会重复通知：事件 ID 是确定性的，Base 只有看到变化才会发消息。</p>
+    </div>
+
+    <div className="guide-section">
+      <h3>六、常见问题</h3>
+      <dl className="guide-faq">
+        <dt>需求改了但 Base 没变？</dt>
+        <dd>推送是排队执行的，通常几十秒内完成。若长期不动，去需求池看它的推送状态和最近失败原因。</dd>
+        <dt>负责人是空的怎么办？</dt>
+        <dd>说明这个 TB 执行人还没对应飞书账号。在「负责人映射」里补一条，或在需求详情页直接分配。空负责人的需求本身仍会推送到 Base，不阻塞。</dd>
+        <dt>通知没收到？</dt>
+        <dd>先确认这条需求是否发生过「分配负责人 / 内容实质变更 / AI 重试成功」之一——首次推送和改错别字都不会发。再确认 Base 里的「系统通知收件人」是否有值。</dd>
+        <dt>AI 分析失败了怎么办？</dt>
+        <dd>系统会自动重试最多 3 次；也可以在详情页手动点「重试 AI 分析」。分析失败不影响已推送的需求内容。</dd>
+        <dt>页面上的「推送成功」等于消息已送达吗？</dt>
+        <dd>不等于。推送成功只表示 Base 已写入；消息是否送达取决于 Base 自动化规则是否开启。可在多维表格里查看自动化运行记录。</dd>
+      </dl>
+    </div>
+  </section>;
+}

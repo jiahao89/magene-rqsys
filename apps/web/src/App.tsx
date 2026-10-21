@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { Activity, ArrowDownToLine, ArrowRight, Blocks, Check, ChevronDown, CircleAlert, CircleHelp, Clock3, Command, Database, FileClock, FolderSync, Gauge, GitBranch, Layers3, ListChecks, LoaderCircle, Moon, Play, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Sun, Users, X } from "lucide-react";
 import { ApiError, createPriorityRuleDraft, getHealth, getOverviewMetrics, listDictionaryVersions, listPriorityRules, listSources, publishPriorityRule, runSync, type DictionaryVersion, type OverviewMetrics, type PriorityRuleVersion, type PublishStatus, type SourceConfig, type SyncExecutionMode } from "./api";
-import { AuditPanel, BatchesPanel, MappingsPanel, ModulesPanel, PanelErrorBoundary, PeoplePanel, RequirementsPanel, SourcesPanel } from "./panels";
+import { AuditPanel, BatchesPanel, MappingsPanel, ModulesPanel, PanelErrorBoundary, PeoplePanel, RequirementsPanel, SourcesPanel, GuidePanel } from "./panels";
 import { readRequirementDeepLink } from "./deep-link";
 import { stateLabel } from "./state-labels";
 import { checkScheduleHealth, describeCountdown, formatInZone, nextRunAt, type WeeklySchedule } from "./schedule";
 
 type Batch = { id: string; status: string; totalCount: number; succeededCount: number; failedCount: number; startedAt?: string; completedAt?: string; errorSummary?: string };
 type Requirement = { id: string; sourceRequirementId: string; title: string; sourceVersion: number; pipeline: { pull: string; analysis: string; owner: string; push: string }; analysis?: { module?: string; confidence?: string } | null };
-type Page = "Overview" | "Requirements" | "Batches" | "Sources" | "Mappings" | "Modules" | "People" | "Rules" | "Audit";
+type Page = "Overview" | "Requirements" | "Batches" | "Sources" | "Mappings" | "Modules" | "People" | "Rules" | "Audit" | "Guide";
 type LoadState = "loading" | "ready" | "error";
 type Theme = "light" | "dark";
 
@@ -19,9 +19,9 @@ function readStoredTheme(): Theme {
 
 const navigation: { label: Page; icon: typeof Gauge }[] = [
   { label: "Overview", icon: Gauge }, { label: "Requirements", icon: ListChecks }, { label: "Batches", icon: FolderSync },
-  { label: "Sources", icon: Database }, { label: "Mappings", icon: Users }, { label: "Modules", icon: Blocks }, { label: "People", icon: Users }, { label: "Rules", icon: Settings2 }, { label: "Audit", icon: FileClock },
+  { label: "Sources", icon: Database }, { label: "Mappings", icon: Users }, { label: "Modules", icon: Blocks }, { label: "People", icon: Users }, { label: "Rules", icon: Settings2 }, { label: "Guide", icon: CircleHelp }, { label: "Audit", icon: FileClock },
 ];
-const pageTitles: Record<Page, string> = { Overview: "总览", Requirements: "需求池", Batches: "同步批次", Sources: "数据源配置", Mappings: "负责人映射", Modules: "功能模块", People: "人员", Rules: "优先级规则", Audit: "审计日志" };
+const pageTitles: Record<Page, string> = { Overview: "总览", Requirements: "需求池", Batches: "同步批次", Sources: "数据源配置", Mappings: "负责人映射", Modules: "功能模块", People: "人员", Rules: "优先级规则", Audit: "审计日志", Guide: "使用指南" };
 
 async function apiJson<T>(path: string): Promise<T> {
   const response = await fetch(path, { headers: { accept: "application/json" } });
@@ -205,6 +205,7 @@ function SecondaryContent({ page, sources, batches, requirements, loadState, dee
   if (page === "Rules") return <RulesPanel />;
   if (page === "Mappings") return <MappingsPanel onRefresh={onRefresh} />;
   if (page === "Audit") return <AuditPanel />;
+  if (page === "Guide") return <GuidePanel />;
   return <section className="panel placeholder-panel"><div className="placeholder-illustration"><span><Users size={23} /></span><i /><i /><i /></div><div className="eyebrow"><span className="eyebrow-line" />API 契约待实现</div><h2>页面未实现</h2><p>该页面尚未提供 API 契约。</p><button className="button button-secondary" onClick={() => onNavigate("Overview" as Page)}>返回总览<ArrowRight size={15} /></button></section>;
 }
 
@@ -294,7 +295,7 @@ function EmptyPanel({ loading, title, description }: { loading: boolean; title: 
 }
 
 function pageDescription(page: Page): string {
-  const descriptions: Record<Page, string> = { Overview: "同步流程的当前健康状态与执行概况。", Requirements: "按需求标题、TB负责人和处理状态检索需求。", Batches: "检查同步运行历史、阶段结果与失败项。", Sources: "查看项目来源与同步连接状态。", Mappings: "处理 Teambition 与 Feishu 负责人之间的映射。", Modules: "维护 AI 分类使用的功能模块及责任人员。", People: "维护可用于需求筛选和模块分工的组内人员。", Rules: "管理已校准的优先级规则。", Audit: "按操作人、时间和对象检查可追踪的工作流操作。" };
+  const descriptions: Record<Page, string> = { Overview: "同步流程的当前健康状态与执行概况。", Requirements: "按需求标题、TB负责人和处理状态检索需求。", Batches: "检查同步运行历史、阶段结果与失败项。", Sources: "查看项目来源与同步连接状态。", Mappings: "处理 Teambition 与 Feishu 负责人之间的映射。", Modules: "维护 AI 分类使用的功能模块及责任人员。", People: "维护可用于需求筛选和模块分工的组内人员。", Rules: "管理已校准的优先级规则。", Audit: "按操作人、时间和对象检查可追踪的工作流操作。", Guide: "系统工作流、状态含义与日常操作说明。" };
   return descriptions[page];
 }
 
