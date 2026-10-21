@@ -665,6 +665,10 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
       </div>
     </div>
     <StateBanner loadError={loadError ?? peopleError} notice={notice} onCloseNotice={() => setNotice(null)} />
+    <div className="list-summary" role="status">
+      <span className="list-summary-count">共 {sortedRows.length} 条{cursor ? "，可继续载入" : ""}{activeFilterCount > 0 ? `（已应用 ${activeFilterCount} 个筛选）` : ""}</span>
+      <span className="list-summary-sort">排序：待分配 → 推送失败 → 待推送 → 已推送；同组按更新时间倒序</span>
+    </div>
     <RequirementsTable rows={sortedRows} loading={loadState === "loading"} onOpen={(row) => void open(row.id, { push: true })} onAssign={(row) => void open(row.id, { push: true, openOwnerPicker: true })} />
     {cursor && <div className="rules-form"><HeroButton className="button button-secondary button-small" onPress={() => void load(appliedFiltersRef.current, cursor)} isDisabled={loadState === "loading"}>加载更多</HeroButton></div>}
   </section>;

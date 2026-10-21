@@ -787,3 +787,12 @@ html[data-theme="dark"] .field input[type="checkbox"] { accent-color: var(--rq-a
 .todo-card.is-danger .todo-value { color: #c62a2f; }
 .todo-card.is-info { border-left: 3px solid #3b82f6; }
 .todo-card.is-ok { border-left: 3px solid #2fa84f; }
+
+/* ---------- 需求池结果摘要 ---------- */
+.list-summary {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  padding: 10px 2px 8px; border-bottom: 1px solid var(--rq-border-subtle, #f0f2f5); margin-bottom: 2px;
+}
+.list-summary-count { font-size: 12.5px; font-weight: 600; color: var(--rq-text, #1f2329); }
+.list-summary-sort { font-size: 11.5px; color: var(--rq-text-tertiary, #818b9a); }
+@media (max-width: 720px) { .list-summary { flex-direction: column; gap: 4px; } }
