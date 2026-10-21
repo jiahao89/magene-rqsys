@@ -1055,3 +1055,11 @@ html[data-theme="dark"] .nav-item.is-active::before { background: var(--rq-accen
   .req-summary-title { font-size: 17px; }
   .req-owner-line { font-size: 14px; }
 }
+
+/* ---------- 编辑态提示 ---------- */
+.editing-badge {
+  flex: 0 0 100%; display: inline-flex; align-items: center; gap: 6px;
+  margin-bottom: 8px; padding: 5px 10px; border-radius: 6px;
+  font-size: 12px; font-weight: 600; color: #1d4ed8;
+  background: #eef4ff; border: 1px solid #d5e3ff;
+}
