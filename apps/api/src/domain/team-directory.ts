@@ -1,7 +1,7 @@
 import type { FunctionModuleEntry } from "./persistence.js";
 
 export const DEFAULT_TEAM_MEMBERS = [
-  "毕梓浩", "盛永帮", "刘媛媛", "李晨璐", "史东升", "贾浩", "兰谊伟",
+  "毕梓浩", "盛永帮", "刘媛媛", "李晨璐", "史东升", "贾浩", "兰诣伟",
 ] as const;
 
 // 初始模块只使用截图“功能模块”行里的内容；“其他”行的职责描述不作为模块。
@@ -50,14 +50,14 @@ export const DEFAULT_FUNCTION_MODULES: FunctionModuleEntry[] = [
   { name: "新手引导", personName: "贾浩" },
   { name: "帮助中心", personName: "贾浩" },
   { name: "极游系多语言", personName: "贾浩" },
-  { name: "码表设置-码表端", personName: "兰谊伟" },
-  { name: "App端通用设置", personName: "兰谊伟" },
-  { name: "日志/异常文件管理", personName: "兰谊伟" },
-  { name: "电源管理（后续转交）", personName: "兰谊伟" },
-  { name: "GNSS管理", personName: "兰谊伟" },
-  { name: "显示设置", personName: "兰谊伟" },
-  { name: "系统管理", personName: "兰谊伟" },
-  { name: "偏好设置", personName: "兰谊伟" },
-  { name: "锁屏/解锁", personName: "兰谊伟" },
-  { name: "场景+表盘+场景设置（后续转交）", personName: "兰谊伟" },
+  { name: "码表设置-码表端", personName: "兰诣伟" },
+  { name: "App端通用设置", personName: "兰诣伟" },
+  { name: "日志/异常文件管理", personName: "兰诣伟" },
+  { name: "电源管理（后续转交）", personName: "兰诣伟" },
+  { name: "GNSS管理", personName: "兰诣伟" },
+  { name: "显示设置", personName: "兰诣伟" },
+  { name: "系统管理", personName: "兰诣伟" },
+  { name: "偏好设置", personName: "兰诣伟" },
+  { name: "锁屏/解锁", personName: "兰诣伟" },
+  { name: "场景+表盘+场景设置（后续转交）", personName: "兰诣伟" },
 ];
