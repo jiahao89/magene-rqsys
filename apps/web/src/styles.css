@@ -891,3 +891,49 @@ html[data-theme="dark"] .field input[type="checkbox"] { accent-color: var(--rq-a
   .toolbar-field input, .toolbar-field select { width: 100%; }
   .toolbar-actions { margin-left: 0; width: 100%; }
 }
+
+/* ---------- 查询表单式 toolbar（antd pro / HeroUI 风格） ---------- */
+.qtoolbar {
+  display: flex; align-items: flex-start; flex-wrap: wrap; gap: 10px 12px;
+  padding: 12px 14px; margin: 10px 0 8px;
+  background: var(--rq-surface, #fff);
+  border: 1px solid var(--rq-border, #e8eaee); border-radius: 10px;
+}
+.qtoolbar-main { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; flex: 1 1 auto; min-width: 0; }
+.qfield { display: inline-flex; align-items: center; margin: 0; }
+.qfield > input, .qfield > select {
+  height: 34px; font-size: 13px; padding: 0 12px; border-radius: 8px;
+  border: 1px solid var(--rq-border, #dcdfe6); background: #fff; color: var(--rq-text, #1f2329);
+  transition: border-color .15s, box-shadow .15s;
+}
+.qfield > input:focus, .qfield > select:focus {
+  outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,.12);
+}
+.qfield-search { flex: 1 1 260px; max-width: 360px; }
+.qfield-search > input { width: 100%; padding-left: 32px; background-image: url("data:image/svg+xml;charset=utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='15' height='15' viewBox='0 0 24 24' fill='none' stroke='%238b94a3' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M21 21l-4.3-4.3'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: 10px center; }
+.qfield > select { min-width: 150px; cursor: pointer; }
+
+.qmore { position: relative; }
+.qmore > summary {
+  display: inline-flex; align-items: center; height: 34px; padding: 0 12px; cursor: pointer;
+  font-size: 13px; color: var(--rq-text-secondary, #5a6270);
+  border: 1px dashed var(--rq-border, #dcdfe6); border-radius: 8px; list-style: none; user-select: none;
+}
+.qmore > summary::-webkit-details-marker { display: none; }
+.qmore > summary::after { content: "▾"; margin-left: 6px; font-size: 10px; }
+.qmore[open] > summary { border-style: solid; border-color: #3b82f6; color: #2563eb; }
+.qmore-body {
+  position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; min-width: 300px;
+  display: flex; flex-direction: column; gap: 8px; padding: 12px;
+  background: #fff; border: 1px solid var(--rq-border, #e8eaee); border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(31,35,41,.12);
+}
+.qmore-body .qfield > input, .qmore-body .qfield > select { width: 100%; }
+.qtoolbar .toolbar-actions { margin-left: auto; align-self: center; gap: 8px; }
+
+@media (max-width: 900px) {
+  .qfield-search { flex: 1 1 100%; max-width: none; }
+  .qfield > select { min-width: 0; flex: 1 1 140px; }
+  .qtoolbar .toolbar-actions { margin-left: 0; width: 100%; justify-content: flex-end; }
+  .qmore-body { position: static; box-shadow: none; }
+}

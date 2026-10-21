@@ -585,17 +585,17 @@ describe("RequirementsPanel (ticket 17)", () => {
     render(<RequirementsPanel onRefresh={() => undefined} />);
     await screen.findByText("需要报表");
 
-    expect(screen.getByRole("group", { name: "搜索" })).toBeInTheDocument();
-    const filterGroup = within(screen.getByRole("group", { name: "筛选" }));
-    const batchGroup = within(screen.getByRole("group", { name: "批次与时间" }));
-    expect(filterGroup.getByText("负责人")).toBeInTheDocument();
-    expect(filterGroup.getByText("同步状态")).toBeInTheDocument();
-    expect(filterGroup.getByText("负责人状态")).toBeInTheDocument();
-    expect(filterGroup.getByText("分析状态")).toBeInTheDocument();
-    expect(filterGroup.getByText("推送状态")).toBeInTheDocument();
-    expect(batchGroup.getByText("批次 ID")).toBeInTheDocument();
-    const moreFilters = batchGroup.getByText(/更多筛选/).closest("details");
+    // 查询表单式 toolbar：搜索 + 负责人 + 同步状态 常驻，其余收进「更多筛选」
+    expect(screen.getByLabelText("搜索需求标题")).toBeInTheDocument();
+    expect(screen.getByLabelText("TB负责人筛选")).toBeInTheDocument();
+    expect(screen.getByLabelText("同步状态筛选")).toBeInTheDocument();
+    const moreFilters = screen.getByText(/更多筛选/).closest("details");
     expect(moreFilters).not.toHaveAttribute("open");
+    // 高级筛选控件在 details 内，收起时仍然存在于 DOM
+    expect(within(moreFilters as HTMLElement).getByLabelText("负责人筛选")).toBeInTheDocument();
+    expect(within(moreFilters as HTMLElement).getByLabelText("分析状态筛选")).toBeInTheDocument();
+    expect(within(moreFilters as HTMLElement).getByLabelText("推送状态筛选")).toBeInTheDocument();
+    expect(within(moreFilters as HTMLElement).getByLabelText("批次 ID 筛选")).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("TB负责人筛选"), { target: { value: "毕梓浩" } });
     expect(screen.getByText("1 个筛选生效")).toBeInTheDocument();

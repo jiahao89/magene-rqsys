@@ -631,37 +631,55 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
   return <section className="panel requirements-panel">
     
     
-    <div className="requirements-toolbar">
-      <div className="toolbar-groups">
-        <div className="toolbar-group" role="group" aria-label="搜索">
-          <span className="toolbar-group-title">搜索</span>
-          <label className="field toolbar-field"><span>需求标题</span><HeroInput aria-label="搜索需求标题" placeholder="搜索需求标题…" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(event) => { if (event.key === "Enter") applyFilters(); }} /></label>
-        </div>
-        <div className="toolbar-group" role="group" aria-label="筛选">
-          <span className="toolbar-group-title">筛选</span>
-          <label className="field toolbar-field"><span>负责人</span><select aria-label="TB负责人筛选" value={executorName} onChange={(e) => setExecutorName(e.target.value)}><option value="">全部 TB 负责人</option>{people.map((person) => <option key={person.name} value={person.name}>{person.name}</option>)}</select></label>
-          <label className="field toolbar-field"><span>同步状态</span><select aria-label="同步状态筛选" value={pullState} onChange={(e) => setPullState(e.target.value)}>{pullStateOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-          <label className="field toolbar-field"><span>负责人状态</span><select aria-label="负责人筛选" value={ownerState} onChange={(e) => setOwnerState(e.target.value)}>{ownerStateOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-          <label className="field toolbar-field"><span>分析状态</span><select aria-label="分析状态筛选" value={analysisState} onChange={(e) => setAnalysisState(e.target.value)}>{analysisStateOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-          <label className="field toolbar-field"><span>推送状态</span><select aria-label="推送状态筛选" value={pushState} onChange={(e) => setPushState(e.target.value)}>{pushStateOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-        </div>
-        <div className="toolbar-group" role="group" aria-label="批次与时间">
-          <span className="toolbar-group-title">批次与时间</span>
-          <label className="field toolbar-field"><span>批次 ID</span><HeroInput aria-label="批次 ID 筛选" placeholder="批次 ID" value={batchId} onChange={(e) => setBatchId(e.target.value)} /></label>
-          <details className="toolbar-more">
-            <summary>更多筛选{dateFilterCount > 0 ? `（已设置 ${dateFilterCount} 项）` : ""}</summary>
-            <div className="toolbar-more-body">
-              <label className="field toolbar-field"><span>最近同步始于</span><HeroInput type="datetime-local" aria-label="最近同步开始时间" value={since} onChange={(e) => setSince(e.target.value)} /></label>
-              <label className="field toolbar-field"><span>最近同步止于</span><HeroInput type="datetime-local" aria-label="最近同步结束时间" value={until} onChange={(e) => setUntil(e.target.value)} /></label>
-            </div>
-          </details>
-        </div>
+    <div className="qtoolbar">
+      <div className="qtoolbar-main">
+        <label className="qfield qfield-search">
+          <span className="sr-only">需求标题</span>
+          <input aria-label="搜索需求标题" placeholder="搜索需求标题或批次 ID…" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(event) => { if (event.key === "Enter") applyFilters(); }} />
+        </label>
+        <label className="qfield">
+          <span className="sr-only">负责人</span>
+          <select aria-label="TB负责人筛选" value={executorName} onChange={(e) => setExecutorName(e.target.value)}><option value="">全部 TB 负责人</option>{people.map((person) => <option key={person.name} value={person.name}>{person.name}</option>)}</select>
+        </label>
+        <label className="qfield">
+          <span className="sr-only">同步状态</span>
+          <select aria-label="同步状态筛选" value={pullState} onChange={(e) => setPullState(e.target.value)}>{pullStateOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+        </label>
+        <details className="qmore">
+          <summary>更多筛选{activeFilterCount - (query.trim() ? 1 : 0) - (executorName ? 1 : 0) - (pullState ? 1 : 0) > 0 ? `（${activeFilterCount - (query.trim() ? 1 : 0) - (executorName ? 1 : 0) - (pullState ? 1 : 0)}）` : ""}</summary>
+          <div className="qmore-body">
+            <label className="qfield">
+              <span className="sr-only">负责人状态</span>
+              <select aria-label="负责人筛选" value={ownerState} onChange={(e) => setOwnerState(e.target.value)}>{ownerStateOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+            </label>
+            <label className="qfield">
+              <span className="sr-only">分析状态</span>
+              <select aria-label="分析状态筛选" value={analysisState} onChange={(e) => setAnalysisState(e.target.value)}>{analysisStateOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+            </label>
+            <label className="qfield">
+              <span className="sr-only">推送状态</span>
+              <select aria-label="推送状态筛选" value={pushState} onChange={(e) => setPushState(e.target.value)}>{pushStateOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+            </label>
+            <label className="qfield">
+              <span className="sr-only">批次 ID</span>
+              <input aria-label="批次 ID 筛选" placeholder="批次 ID" value={batchId} onChange={(e) => setBatchId(e.target.value)} />
+            </label>
+            <label className="qfield">
+              <span className="sr-only">最近同步始于</span>
+              <input type="datetime-local" aria-label="最近同步开始时间" value={since} onChange={(e) => setSince(e.target.value)} />
+            </label>
+            <label className="qfield">
+              <span className="sr-only">最近同步止于</span>
+              <input type="datetime-local" aria-label="最近同步结束时间" value={until} onChange={(e) => setUntil(e.target.value)} />
+            </label>
+          </div>
+        </details>
       </div>
       <div className="toolbar-actions">
         {activeFilterCount > 0 && <span className="toolbar-active-count" role="status">{activeFilterCount} 个筛选生效</span>}
-        <HeroButton className="button button-primary button-small" onPress={applyFilters}>筛选</HeroButton>
-        <HeroButton className="button button-secondary button-small" onPress={refresh}><RefreshCw size={14} />刷新</HeroButton>
-        {activeFilterCount > 0 && <HeroButton className="link-button" onPress={clearFilters}>清除筛选</HeroButton>}
+        {activeFilterCount > 0 && <button className="link-button" onClick={clearFilters}>清除筛选</button>}
+        <button className="button button-secondary button-small" onClick={refresh}><RefreshCw size={14} />刷新</button>
+        <button className="button button-primary button-small" onClick={applyFilters}>筛选</button>
       </div>
     </div>
     <StateBanner loadError={loadError ?? peopleError} notice={notice} onCloseNotice={() => setNotice(null)} />
