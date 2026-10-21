@@ -17,9 +17,15 @@ function readStoredTheme(): Theme {
   catch { return "light"; }
 }
 
-const navigation: { label: Page; icon: typeof Gauge }[] = [
-  { label: "Overview", icon: Gauge }, { label: "Requirements", icon: ListChecks }, { label: "Batches", icon: FolderSync },
-  { label: "Sources", icon: Database }, { label: "Mappings", icon: Users }, { label: "Modules", icon: Blocks }, { label: "People", icon: Users }, { label: "Rules", icon: Settings2 }, { label: "Guide", icon: CircleHelp }, { label: "Audit", icon: FileClock },
+const navigationGroups: { title: string; items: { label: Page; icon: typeof Gauge }[] }[] = [
+  { title: "工作台", items: [
+    { label: "Overview", icon: Gauge }, { label: "Requirements", icon: ListChecks }, { label: "Batches", icon: FolderSync },
+  ] },
+  { title: "配置", items: [
+    { label: "Sources", icon: Database }, { label: "Mappings", icon: Users }, { label: "Modules", icon: Blocks },
+    { label: "People", icon: Users }, { label: "Rules", icon: Settings2 },
+  ] },
+  { title: "运维", items: [{ label: "Audit", icon: FileClock }, { label: "Guide", icon: CircleHelp }] },
 ];
 const pageTitles: Record<Page, string> = { Overview: "总览", Requirements: "需求池", Batches: "同步批次", Sources: "数据源配置", Mappings: "负责人映射", Modules: "功能模块", People: "人员", Rules: "优先级规则", Audit: "审计日志", Guide: "使用指南" };
 
@@ -142,9 +148,17 @@ function App() {
         <a className="brand" href="#overview" onClick={() => setPage("Overview")}><span className="brand-mark"><Layers3 size={19} strokeWidth={2.2} /></span><span className="brand-name">rq<span>·</span>sys</span><span className="brand-edition">WORKSPACE</span></a>
         <div className="workspace-switch"><span className="workspace-avatar">R</span><span className="workspace-copy"><strong>需求运营组</strong><small>本地工作区</small></span><ChevronDown size={14} className="muted-icon" /></div>
         <div className="nav-label">WORKSPACE</div>
-        <nav className="main-nav" aria-label="主导航">{navigation.map(({ label, icon: Icon }) => <button key={label} className={`nav-item ${page === label ? "active" : ""}`} onClick={() => setPage(label)}><Icon size={17} strokeWidth={1.8} /><span>{pageTitles[label]}</span>{label === "Batches" && batches.length > 0 && <span className="nav-count">{batches.length}</span>}</button>)}</nav>
+        <nav className="main-nav" aria-label="主导航">{navigationGroups.map((group) => <div className="nav-group" key={group.title}>
+          <div className="nav-group-label">{group.title}</div>
+          {group.items.map(({ label, icon: Icon }) => <button key={label} className={`nav-item ${page === label ? "is-active" : ""}`} onClick={() => setPage(label)} aria-current={page === label ? "page" : undefined}>
+            <Icon size={16} />{pageTitles[label]}
+          </button>)}
+        </div>)}</nav>
         <div className="sidebar-spacer" />
-        <div className="side-help"><div className="help-icon"><CircleHelp size={17} /></div><div><strong>需要帮助？</strong><span>查看本地运行指南</span></div><ArrowRight size={15} /></div>
+        <div className="side-help" role="button" tabIndex={0} onClick={() => setPage("Guide")}
+          onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setPage("Guide"); } }}>
+          <div className="help-icon"><CircleHelp size={17} /></div>
+          <div><strong>需要帮助？</strong><span>查看使用指南</span></div><ArrowRight size={15} /></div>
         <div className="user-profile"><div className="user-avatar">R</div><div className="user-copy"><strong>已登录用户</strong><span>租户内可用 · 无应用角色</span></div><button className="icon-button profile-menu" aria-label="账户菜单"><Settings2 size={17} /></button></div>
       </aside>
 
@@ -160,7 +174,25 @@ function App() {
             <section className="source-banner"><div className="source-leading"><span className="source-icon"><GitBranch size={17} /></span><div><span className="micro-label">当前同步来源</span><strong>{sources[0]?.projectName ?? (health === "loading" ? "正在加载配置…" : "尚未配置数据源")}</strong></div></div><div className="source-meta"><span className={`status-chip ${sources[0]?.enabled ? "status-live" : "status-muted"}`}><span />{sources[0]?.enabled ? "同步已启用" : "未启用"}</span><span className="source-meta-divider" /><span className="subtle-text">Teambition 项目</span></div><button className="text-link" onClick={() => setPage("Sources")}>管理来源 <ArrowRight size={14} /></button></section>
 
             <section className="section-block"><div className="section-heading"><div><h2>同步健康度</h2><p>四个处理阶段独立统计 · 不互相阻塞</p></div><button className="link-button" onClick={() => setPage("Requirements")}>查看需求池 <ArrowRight size={14} /></button></div>
-              <div className="metric-grid">{[
+              {/* 今日待办：把统计数字翻译成"该做什么"，并直接跳到对应筛选 */}
+            <section className="panel todo-panel">
+              <div className="panel-heading"><div><h2>今天要处理什么</h2><p>按优先级排列，点击直接跳到对应需求。</p></div></div>
+              <div className="todo-grid">
+                {[
+                  { key: "unassigned", label: "待分配负责人", value: Math.max(0, total - counts.owner), hint: "没有对应飞书账号，分配后会自动推送并通知", tone: "warn", page: "Requirements" as Page },
+                  { key: "failed", label: "推送失败", value: counts.failed, hint: "多数是 Base 字段问题，可在详情页重试", tone: counts.failed > 0 ? "danger" : "ok", page: "Requirements" as Page },
+                  { key: "pending", label: "待推送", value: Math.max(0, total - counts.push), hint: "已排队或等待同步，无需人工干预", tone: "info", page: "Requirements" as Page },
+                ].map((item) => (
+                  <button key={item.key} className={`todo-card is-${item.tone}`} onClick={() => setPage(item.page)}>
+                    <span className="todo-value">{item.value}</span>
+                    <span className="todo-label">{item.label}</span>
+                    <span className="todo-hint">{item.hint}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <div className="metric-grid">{[
                 { label: "已拉取需求", value: counts.pull, total, icon: ArrowDownToLine, color: "blue", delta: "Teambition → RQ-Sys" },
                 { label: "AI 分析完成", value: counts.analysis, total, icon: Sparkles, color: "violet", delta: "建议结果可独立重试" },
                 { label: "负责人已匹配", value: counts.owner, total, icon: Users, color: "amber", delta: "未分配需求仍可推送" },

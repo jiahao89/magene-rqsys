@@ -760,3 +760,30 @@ html[data-theme="dark"] .field input[type="checkbox"] { accent-color: var(--rq-a
   .guide-node { padding: 7px 10px; font-size: 12px; }
   .guide-arrow { display: none; }
 }
+
+/* ---------- 导航分组 ---------- */
+.nav-group { margin-bottom: 18px; }
+.nav-group:last-child { margin-bottom: 0; }
+.nav-group-label {
+  font-size: 11px; font-weight: 600; letter-spacing: .04em; color: var(--rq-text-tertiary, #9aa3b0);
+  padding: 0 12px 6px; text-transform: none;
+}
+.nav-group .nav-item { width: 100%; }
+
+/* ---------- 今日待办 ---------- */
+.todo-panel { margin-bottom: 18px; }
+.todo-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.todo-card {
+  display: flex; flex-direction: column; gap: 4px; align-items: flex-start; text-align: left;
+  padding: 16px 18px; border-radius: 10px; border: 1px solid var(--rq-border, #e8eaee);
+  background: var(--rq-surface, #fff); cursor: pointer; transition: border-color .15s, box-shadow .15s, transform .15s;
+}
+.todo-card:hover { border-color: #c9d4e4; box-shadow: 0 2px 10px rgba(31,35,41,.06); transform: translateY(-1px); }
+.todo-value { font-size: 26px; font-weight: 700; line-height: 1.1; color: var(--rq-text, #1f2329); }
+.todo-label { font-size: 13px; font-weight: 600; color: var(--rq-text, #1f2329); }
+.todo-hint { font-size: 11.5px; line-height: 1.55; color: var(--rq-text-tertiary, #818b9a); }
+.todo-card.is-warn { border-left: 3px solid #f0a020; }
+.todo-card.is-danger { border-left: 3px solid #e5484d; }
+.todo-card.is-danger .todo-value { color: #c62a2f; }
+.todo-card.is-info { border-left: 3px solid #3b82f6; }
+.todo-card.is-ok { border-left: 3px solid #2fa84f; }
