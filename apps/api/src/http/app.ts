@@ -47,6 +47,8 @@ function sourceDto(source: SourceConfigRecord) {
 function batchDto(batch: SyncBatchRecord) {
   return { id: batch.id, status: batch.status, triggerType: batch.triggerType, actorId: batch.actorId, totalCount: batch.totalCount, succeededCount: batch.succeededCount, failedCount: batch.failedCount, startedAt: batch.startedAt, completedAt: batch.completedAt, errorSummary: batch.errorSummary };
 }
+// Teambition 自建站的任务地址规则（由一条真实地址确认：/task/<任务ID>）。
+const TEAMBITION_TASK_BASE_URL = process.env.RQSYS_TEAMBITION_TASK_BASE_URL ?? "https://teambition.magene.cn/task";
 function requirementDto(req: RequirementRecord, analysis: Record<string, unknown> | null = null, analyses: unknown[] = [], ownerName: string | null = null) {
   // 展示字段：详情页 L1 需要标题/描述/负责人/更新时间；只加不改，避免破坏既有调用方。
   // ownerName 仅在详情接口注入（列表逐行查映射会 N+1），解析不到时为 null。
@@ -58,7 +60,7 @@ function requirementDto(req: RequirementRecord, analysis: Record<string, unknown
     description: req.description,
     sourceVersion: req.sourceVersion,
     updatedAt: req.updatedAt,
-    sourceUrl: req.sourceUrl,
+    sourceUrl: req.sourceUrl ?? `${TEAMBITION_TASK_BASE_URL}/${req.teambitionRequirementId}`,
     lastPushedAt: req.lastPushedAt,
     ownerName,
     pipeline: { pull: req.pipeline.pull, analysis: req.pipeline.analysis, owner: req.pipeline.owner, push: req.pipeline.push },
