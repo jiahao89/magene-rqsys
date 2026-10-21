@@ -802,9 +802,6 @@ html[data-theme="dark"] .field input[type="checkbox"] { accent-color: var(--rq-a
 
 /* ---------- 紧凑化：需求池 toolbar 与列表 ---------- */
 /* 1) 消除多余留白：页面标题区收窄 */
-.page-heading { padding-bottom: 10px; }
-.page-heading h1 { font-size: 22px; line-height: 1.3; margin: 0 0 4px; }
-.page-heading p { font-size: 12.5px; margin: 0; }
 
 /* 2) toolbar 改为单行紧凑布局 */
 .toolbar {
@@ -1095,7 +1092,6 @@ html, body, #root, .app-shell { max-width: 100%; overflow-x: hidden; }
 .main-area, .content-area { min-width: 0; max-width: 100%; }
 .panel, .req-detail-page { min-width: 0; max-width: 100%; }
 .table-scroll { max-width: 100%; overflow-x: auto; }
-.req-list { min-width: 0; }
 @media (max-width: 860px) {
   /* 手机端不再固定列宽，避免整页被撑到 700px 以上 */
   .req-list { min-width: 0; table-layout: auto; }
