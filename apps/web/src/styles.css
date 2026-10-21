@@ -796,3 +796,98 @@ html[data-theme="dark"] .field input[type="checkbox"] { accent-color: var(--rq-a
 .list-summary-count { font-size: 12.5px; font-weight: 600; color: var(--rq-text, #1f2329); }
 .list-summary-sort { font-size: 11.5px; color: var(--rq-text-tertiary, #818b9a); }
 @media (max-width: 720px) { .list-summary { flex-direction: column; gap: 4px; } }
+
+/* ---------- 紧凑化：需求池 toolbar 与列表 ---------- */
+/* 1) 消除多余留白：页面标题区收窄 */
+.page-heading { padding-bottom: 10px; }
+.page-heading h1 { font-size: 22px; line-height: 1.3; margin: 0 0 4px; }
+.page-heading p { font-size: 12.5px; margin: 0; }
+
+/* 2) toolbar 改为单行紧凑布局 */
+.toolbar {
+  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 12px;
+  padding: 12px 14px; background: var(--rq-surface-muted, #f7f8fa);
+  border: 1px solid var(--rq-border, #e8eaee); border-radius: 10px; margin-bottom: 12px;
+}
+.toolbar-group { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 10px; }
+/* 组之间只用竖分隔线，不再换行堆叠 */
+.toolbar-group + .toolbar-group {
+  padding-top: 0; padding-left: 12px; border-top: none;
+  border-left: 1px solid var(--rq-border, #e8eaee);
+}
+/* 组标题改为小号眉标，不再占 80px 灰块 */
+.toolbar-group-title {
+  width: auto; flex: 0 0 auto; align-self: center;
+  font-size: 10.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--rq-text-tertiary, #9aa3b0); padding: 0; background: none; border: none;
+}
+.toolbar-field { flex: 0 1 auto; min-width: 0; gap: 4px; }
+.toolbar-field > span { font-size: 11px; color: var(--rq-text-tertiary, #818b9a); }
+.toolbar-field input, .toolbar-field select { min-height: 32px; height: 32px; font-size: 13px; padding: 0 10px; border-radius: 8px; }
+.toolbar-field input { width: 200px; }
+.toolbar-field select { min-width: 148px; }
+/* 操作按钮紧跟筛选，不再被推到最底部 */
+.toolbar-actions { display: flex; gap: 8px; margin-left: auto; }
+.toolbar-actions .button { height: 32px; font-size: 13px; }
+
+/* 3) 列表更紧凑 */
+.list-summary { padding: 6px 2px; }
+.list-summary-sort { font-size: 11px; }
+.req-list th { padding: 9px 12px; font-size: 11.5px; font-weight: 600; letter-spacing: .02em; background: var(--rq-surface-muted, #f7f8fa); }
+.req-row td { padding: 10px 12px; }
+.req-row-title { font-size: 13px; }
+
+/* 4) 状态徽标更小更克制 */
+.req-row-stages { gap: 4px; }
+.req-row-stages .badge,
+.req-row-stages .status-badge { padding: 2px 7px; font-size: 11px; line-height: 1.5; border-radius: 5px; }
+
+/* 5) 未分配负责人不再用「待」字占位 */
+.req-owner.is-unassigned .req-avatar { background: #fff4e0; color: #b8730a; }
+
+@media (max-width: 900px) {
+  .toolbar-group + .toolbar-group { padding-left: 0; border-left: none; padding-top: 8px; border-top: 1px dashed var(--rq-border, #e8eaee); width: 100%; }
+  .toolbar-field input, .toolbar-field select { width: 100%; }
+  .toolbar-actions { margin-left: 0; width: 100%; }
+}
+
+/* ---------- toolbar 单行化（覆盖旧的分组堆叠） ---------- */
+.requirements-toolbar {
+  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 12px;
+  padding: 12px 14px; background: var(--rq-surface-muted, #f7f8fa);
+  border: 1px solid var(--rq-border, #e8eaee); border-radius: 10px; margin: 10px 0 6px;
+}
+.toolbar-groups {
+  display: flex; flex-direction: row; flex-wrap: wrap; align-items: flex-end;
+  gap: 10px 14px; flex: 1 1 auto; min-width: 0;
+}
+.toolbar-group { gap: 8px; align-items: flex-end; }
+.toolbar-group + .toolbar-group {
+  padding-top: 0; padding-left: 14px; border-top: none;
+  border-left: 1px solid var(--rq-border, #e0e3e8);
+}
+.toolbar-group-title {
+  width: auto; flex: 0 0 auto; align-self: center; padding: 0; background: none; border: none;
+  font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--rq-text-tertiary, #9aa3b0);
+}
+.toolbar-field { min-width: 0; gap: 3px; }
+.toolbar-field > span { font-size: 11px; color: var(--rq-text-tertiary, #818b9a); }
+.toolbar-field input, .toolbar-field select {
+  min-height: 32px; height: 32px; font-size: 13px; padding: 0 10px;
+  border-radius: 8px; background: #fff;
+}
+.toolbar-field input { width: 190px; }
+.toolbar-field select { min-width: 140px; }
+.toolbar-actions { padding-top: 0; margin-left: auto; align-self: flex-end; justify-content: flex-end; }
+.toolbar-actions .button { height: 32px; }
+.toolbar-more summary { height: 32px; display: inline-flex; align-items: center; }
+
+@media (max-width: 1100px) {
+  .toolbar-group + .toolbar-group { padding-left: 0; border-left: none; }
+  .toolbar-group { padding-top: 8px; border-top: 1px dashed var(--rq-border, #e8eaee); width: 100%; }
+  .toolbar-group:first-child { padding-top: 0; border-top: none; }
+  .toolbar-field { flex: 1 1 140px; }
+  .toolbar-field input, .toolbar-field select { width: 100%; }
+  .toolbar-actions { margin-left: 0; width: 100%; }
+}

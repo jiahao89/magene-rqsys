@@ -629,8 +629,8 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
   }
 
   return <section className="panel requirements-panel">
-    <div className="panel-heading"><div><h2>需求列表</h2><p>扫描与筛选；点击任意行进入详情页，行内不承载阅读与操作。</p></div></div>
-    <p className="req-list-hint">默认按「待人工处理」优先排序：待分配负责人 › 推送失败 › 待推送 › 已推送，同组按更新时间倒序。</p>
+    
+    
     <div className="requirements-toolbar">
       <div className="toolbar-groups">
         <div className="toolbar-group" role="group" aria-label="搜索">
