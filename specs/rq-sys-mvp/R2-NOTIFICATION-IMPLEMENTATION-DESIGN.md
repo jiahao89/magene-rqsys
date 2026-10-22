@@ -136,7 +136,7 @@ WHERE id=$2 AND source_version <= $3 AND push_version < $4
 
 | 事件 | 触发条件 | 收件人 |
 |---|---|---|
-| `first_push` | 应用首次成功推送该需求 | **PM Leader**（最终实现；提出人不通知） |
+| `first_push` | 应用首次成功推送该需求 | 自动匹配时**静默**；**人工分配时通知被分配的负责人**（D-12，2026-10-22 修订） |
 | `substantive_update` | 实质字段 hash 变化且推送成功 | 同上 |
 | `owner_assigned` / `owner_changed` | 负责人由空→A 或 A→B（含仅映射变化、源版本未变） | 新负责人 |
 | `ai_retry_success` | AI 由失败转成功且推送成功 | PM Leader + 当前负责人 |

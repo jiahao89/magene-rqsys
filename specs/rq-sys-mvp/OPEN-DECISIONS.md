@@ -26,3 +26,20 @@ This register prevents unresolved choices from becoming implementation assumptio
 ## 2026-10-15 Online acceptance follow-up
 
 The combined scheduled-safe-fixture path is now target verified: two successful platform deliveries reused one persisted weekly-window batch and completed actual AI/POC Base push. The default-off mode and both Base/fixture guards are documented in SCHEDULE-FIXTURE-ACCEPTANCE.md. All original Online variables and disabled trigger/source-plan states were restored; no real TB call occurred. Dev editor lifecycle remains a platform limitation, with fresh PreviewProxy 400/toStart evidence and a successful workspace-wake mitigation. It is not treated as a repaired application route. See Ticket09 for current commits/releases and exact scope.
+
+## D-12 (2026-10-22) 通知收件人：批量首推静默，人工分配必通知
+
+产品经理确认，本项**有意偏离 PRD 4.4**（4.4 要求首次推送也发通知）。执行规则：
+
+| 事件 | 收件人 |
+|---|---|
+| 首次推送 · 自动匹配负责人（批量回填） | **静默**，不写通知字段 |
+| 首次推送 · **人工分配负责人** | **被分配的负责人** |
+| 负责人分配/变更（已推送过的需求） | 新的当前负责人 |
+| 需求内容变更 | 当前负责人，无则 PM Leader |
+| AI 重试成功 | 当前负责人，无则 PM Leader |
+| 提出人 | 不通知 |
+
+理由：回填阶段 300+ 条需求一起推送，逐条通知会淹没真正需要处理的人工分配事件；而人工分配是明确的人类意图，被分配的人必须收到。
+
+**行动项**：PRD 4.4 需按本表修订；`RELEASE-CLOSEOUT.md`、`03-owner-and-base-push.md`、`R2-NOTIFICATION-IMPLEMENTATION-DESIGN.md` 已同步为该口径。代码实现见 `base/push-service.ts` 的 `computeNotification`。
