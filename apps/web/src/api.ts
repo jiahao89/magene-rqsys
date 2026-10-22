@@ -9,6 +9,8 @@ export interface OverviewMetrics {
   analysisAnalyzed: number;
   ownerResolved: number;
   pushPushed: number;
+  pushFailed: number;
+  pushPending: number;
   failed: number;
 }
 

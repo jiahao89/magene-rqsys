@@ -276,6 +276,10 @@ export interface RequirementQueryRepository {
     ownerResolved: number;
     pushPushed: number;
     failed: number;
+    /** 仅推送失败，与总览「推送失败」卡片的筛选口径一致。 */
+    pushFailed: number;
+    /** 仅推送待处理，与「待推送」卡片的筛选口径一致。 */
+    pushPending: number;
   }>;
   // 按 openapi /api/requirements 查询参数检索（q 匹配标题，游标按 created_at,id 倒序）
   search(query: {

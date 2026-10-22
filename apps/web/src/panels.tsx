@@ -252,8 +252,11 @@ export function ModulesPanel() {
   // 模块列表很长，编辑表单在页面顶部；点「编辑」后必须把表单带到视野里，否则看起来像没反应。
   const formRef = useRef<HTMLDivElement>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
+  // 编辑用独立状态，避免改一条模块时顶部的「新增」表单跟着一起变。
+  const [editName, setEditName] = useState("");
+  const [editPerson, setEditPerson] = useState("");
   const beginEdit = (item: FunctionModuleEntry) => {
-    setEditing(item.name); setName(item.name); setPersonName(item.personName ?? "");
+    setEditing(item.name); setEditName(item.name); setEditPerson(item.personName ?? "");
   };
 
   const load = useCallback(async () => {
@@ -268,7 +271,7 @@ export function ModulesPanel() {
     setBusy(true); setLoadError(null); setNotice(null);
     try {
       const result = await saveFunctionModules(version, next);
-      setVersion(result.version); setItems(result.items); setEditing(null); setName(""); setPersonName("");
+      setVersion(result.version); setItems(result.items); setEditing(null); setEditName(""); setEditPerson("");
       setNotice(`已发布模块字典 v${result.version}，后续 AI 分析将使用新版本。`);
     } catch (cause) {
       setLoadError(errorText(cause));
@@ -276,10 +279,10 @@ export function ModulesPanel() {
     } finally { setBusy(false); }
   };
   const submitEdit = () => {
-    const clean = name.trim();
+    const clean = editName.trim();
     if (!clean) { setLoadError("请填写功能模块名称。"); return; }
     if (items.some((candidate) => candidate.name.toLocaleLowerCase() === clean.toLocaleLowerCase() && candidate.name !== editing)) { setLoadError("功能模块名称不能重复。"); return; }
-    void save(items.map((candidate) => candidate.name === editing ? { name: clean, personName: personName || null } : candidate));
+    void save(items.map((candidate) => candidate.name === editing ? { name: clean, personName: editPerson || null } : candidate));
   };
   const submit = () => {
     const clean = name.trim();
@@ -296,9 +299,9 @@ export function ModulesPanel() {
     <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}><label className="field" style={{ flex: 1 }}><span>功能模块</span><HeroInput aria-label="功能模块名称" value={name} onChange={(event) => setName(event.target.value)} /></label><label className="field"><span>人员</span><select aria-label="模块责任人员" value={personName} onChange={(event) => setPersonName(event.target.value)}><option value="">未分配</option>{people.map((person) => <option key={person.name} value={person.name}>{person.name}</option>)}</select></label><HeroButton className="button button-primary button-small" onPress={submit} isDisabled={busy}>新增模块</HeroButton></div>
     {items.length ? <div className="table-scroll"><table><thead><tr><th>功能模块</th><th>人员</th><th>操作</th></tr></thead><tbody>{items.map((item) => editing === item.name
       ? <tr key={item.name} className="module-row is-editing">
-          <td><input className="inline-input" aria-label="编辑功能模块名称" value={name} onChange={(event) => setName(event.target.value)} autoFocus /></td>
-          <td><select className="inline-input" aria-label="编辑模块责任人员" value={personName} onChange={(event) => setPersonName(event.target.value)}><option value="">未分配</option>{people.map((person) => <option key={person.name} value={person.name}>{person.name}</option>)}</select></td>
-          <td><HeroButton className="button button-primary button-small" onPress={submitEdit} isDisabled={busy}>保存</HeroButton> <HeroButton className="button button-secondary button-small" onPress={() => { setEditing(null); setName(""); setPersonName(""); }} isDisabled={busy}>取消</HeroButton></td>
+          <td><input className="inline-input" aria-label="编辑功能模块名称" value={editName} onChange={(event) => setEditName(event.target.value)} autoFocus /></td>
+          <td><select className="inline-input" aria-label="编辑模块责任人员" value={editPerson} onChange={(event) => setEditPerson(event.target.value)}><option value="">未分配</option>{people.map((person) => <option key={person.name} value={person.name}>{person.name}</option>)}</select></td>
+          <td><HeroButton className="button button-primary button-small" onPress={submitEdit} isDisabled={busy}>保存</HeroButton> <HeroButton className="button button-secondary button-small" onPress={() => { setEditing(null); setEditName(""); setEditPerson(""); }} isDisabled={busy}>取消</HeroButton></td>
         </tr>
       : <tr key={item.name} className="module-row">
           <td>{item.name}</td>
@@ -856,7 +859,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
   const analysisVersions = [...detail.analyses].reverse();
   const failedAnalysis = analysisVersions.find((version) => version.safeErrorSummary !== null);
   const failureText = detail.pipeline.push === "failed"
-    ? (failedAnalysis?.safeErrorSummary ? `Base 推送失败；最近一次分析失败摘要：${failedAnalysis.safeErrorSummary}` : "Base 推送失败（接口未返回失败原因）。")
+    ? "Base 推送失败。可在详情页点「重试 Base 推送」；AI 分析失败是另一条独立链路，不影响推送。"
     : detail.pipeline.analysis === "failed" || detail.pipeline.analysis === "failed_retryable"
       ? failedAnalysis?.safeErrorSummary ?? "AI 分析失败（接口未返回失败摘要）。"
       : null;

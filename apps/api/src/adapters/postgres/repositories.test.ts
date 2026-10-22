@@ -58,13 +58,13 @@ test("overview aggregation excludes synthetic fixtures and maps database counts"
   const pool = {
     query: async (sql: string, values?: unknown[]) => {
       calls.push({ sql, values });
-      return { rows: [{ total: "311", pull_synced: "311", analysis_analyzed: "0", owner_resolved: "0", push_pushed: "0", failed: "0" }], rowCount: 1 };
+      return { rows: [{ total: "311", pull_synced: "311", analysis_analyzed: "0", owner_resolved: "0", push_pushed: "0", failed: "0", push_failed: "0", push_pending: "0" }], rowCount: 1 };
     },
     connect: async () => { throw new Error("not used"); },
   } as never;
   const store = new PostgresRepositories(pool);
   assert.deepEqual(await store.requirements.getPipelineCounts(), {
-    total: 311, pullSynced: 311, analysisAnalyzed: 0, ownerResolved: 0, pushPushed: 0, failed: 0,
+    total: 311, pullSynced: 311, analysisAnalyzed: 0, ownerResolved: 0, pushPushed: 0, failed: 0, pushFailed: 0, pushPending: 0,
   });
   assert.match(calls[0]!.sql, /GROUP BY|FILTER/);
   assert.match(calls[0]!.sql, /teambition_requirement_id NOT LIKE \$1/);

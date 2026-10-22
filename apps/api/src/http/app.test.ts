@@ -34,10 +34,10 @@ test("overview metrics return full pipeline counts and require an authenticated 
  assert.equal(protectedResponse.status, 401);
 
  const d = makeDependencies();
- (d.repositories!.requirements as unknown as { getPipelineCounts: () => Promise<unknown> }).getPipelineCounts = async () => ({ total: 311, pullSynced: 311, analysisAnalyzed: 0, ownerResolved: 0, pushPushed: 0, failed: 0 });
+ (d.repositories!.requirements as unknown as { getPipelineCounts: () => Promise<unknown> }).getPipelineCounts = async () => ({ total: 311, pullSynced: 311, analysisAnalyzed: 0, ownerResolved: 0, pushPushed: 0, failed: 0, pushFailed: 0, pushPending: 0 });
  const response = await handleApiRequest(new Request("http://localhost/api/overview/metrics"), d);
  assert.equal(response.status, 200);
- assert.deepEqual(await response.json(), { counts: { total: 311, pullSynced: 311, analysisAnalyzed: 0, ownerResolved: 0, pushPushed: 0, failed: 0 } });
+ assert.deepEqual(await response.json(), { counts: { total: 311, pullSynced: 311, analysisAnalyzed: 0, ownerResolved: 0, pushPushed: 0, failed: 0, pushFailed: 0, pushPending: 0 } });
 });
 test("test fixture status requires authentication and reports only its availability", async () => {
  const unauthenticatedResponse = await handleApiRequest(new Request("http://localhost/api/dev/fixtures/status"), unauthenticated);

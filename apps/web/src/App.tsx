@@ -212,12 +212,12 @@ function App() {
 
   const shownRequirements = requirements.filter((item) => item.title.toLowerCase().includes(query.toLowerCase()) || item.sourceRequirementId.includes(query));
   const latestBatch = batches[0];
-  const counts = { pull: metrics?.pullSynced ?? 0, analysis: metrics?.analysisAnalyzed ?? 0, owner: metrics?.ownerResolved ?? 0, push: metrics?.pushPushed ?? 0, failed: metrics?.failed ?? 0 };
+  const counts = { pull: metrics?.pullSynced ?? 0, analysis: metrics?.analysisAnalyzed ?? 0, owner: metrics?.ownerResolved ?? 0, push: metrics?.pushPushed ?? 0, failed: metrics?.failed ?? 0, pushFailed: metrics?.pushFailed ?? 0, pushPending: metrics?.pushPending ?? 0 };
   const total = metrics?.total ?? 0;
   const todoItems = [
     { key: "unassigned", label: "待分配负责人", value: metrics ? Math.max(0, total - counts.owner) : null, hint: "没有对应飞书账号，分配后会自动推送并通知", tone: "warn", filters: { ownerState: "pending_mapping" } },
-    { key: "failed", label: "推送失败", value: metrics ? counts.failed : null, hint: "可在需求详情页查看原因并重试", tone: metrics && counts.failed > 0 ? "danger" : "ok", filters: { push: "failed" } },
-    { key: "pending", label: "待推送", value: metrics ? Math.max(0, total - counts.push) : null, hint: "等待推送到多维表格", tone: "info", filters: { push: "pending" } },
+    { key: "failed", label: "推送失败", value: metrics ? counts.pushFailed : null, hint: "可在需求详情页查看原因并重试", tone: metrics && counts.failed > 0 ? "danger" : "ok", filters: { push: "failed" } },
+    { key: "pending", label: "待推送", value: metrics ? counts.pushPending : null, hint: "等待推送到多维表格", tone: "info", filters: { push: "pending" } },
   ] as const;
 
   return (
