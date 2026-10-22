@@ -22,6 +22,32 @@ export function shouldProcessSyncDownstream(mode: SyncExecutionMode | undefined)
 export type SyncJobRunner = (job: SyncJobContext) => Promise<SyncResult>;
 export interface SyncResult {batchId:string;status:BatchState;totalCount:number;succeededCount:number;failedCount:number;}
 
+
+/** 标题去重键：TB 原始数据里存在“需求 ID 不同、标题内容相同”的重复项。 */
+export function requirementTitleKey(title: unknown): string | null {
+  if (typeof title !== "string") return null;
+  const key = title.normalize("NFKC").trim().replace(/\s+/gu, " ").toLocaleLowerCase();
+  return key.length > 0 ? key : null;
+}
+
+/**
+ * 同一标题只保留最早的 TB 记录（created 升序，created 相同时按需求 ID），
+ * 其余视为 TB 原始数据重复，不进入需求池。空标题不参与去重。
+ */
+export function dedupeRequirementTitles(records: TeambitionTaskRecord[]): TeambitionTaskRecord[] {
+  const canonical = new Map<string, { id: string; created: string }>();
+  for (const record of records) {
+    const key = requirementTitleKey(record.content);
+    if (!key) continue;
+    const created = typeof record.created === "string" ? record.created : "";
+    const current = canonical.get(key);
+    if (!current || created < current.created || (created === current.created && record.id < current.id)) canonical.set(key, { id: record.id, created });
+  }
+  return records.filter((record) => {
+    const key = requirementTitleKey(record.content);
+    return !key || canonical.get(key)?.id === record.id;
+  });
+}
 function substantivePayload(requirement:NormalizedTeambitionRequirement):Record<string,unknown>{
   // 附件引用只取字段映射已批准的来源，不做 ID 子串推断
   const mapped=requirement.mappedFields;
@@ -49,6 +75,9 @@ export class SyncOrchestrator {
     // 单项重试：只处理指定需求（按源需求 ID 过滤）
     const onlyIds=input.onlyIds?new Set(input.onlyIds):null;
     if(onlyIds)all=all.filter((record)=>record.id!==undefined&&onlyIds.has(record.id));
+    // TB 原始数据里存在“需求 ID 不同、标题相同”的重复项：需求池只保留最早的一条，
+    // 其余不进入导入流程（批次计数按实际处理数统计，不写 sync_items）。
+    all=dedupeRequirementTitles(all);
     let succeededCount=0,failedCount=0;
     for(const record of all){const began=clock().toISOString();let requirementId:string|null=null;let action:"created"|"updated"|"unchanged"="created";let status:"succeeded"|"failed"="succeeded";let errorCode:string|null=null,errorDetail:string|null=null;let failureCode="source_item_invalid";
       try{

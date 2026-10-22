@@ -74,6 +74,39 @@ test("fetches all pages including archived tasks and deduplicates repeated IDs",
   assert.equal(h.calls.filter((call) => call.startsWith("upsert:one")).length, 1);
 });
 
+test("drops later TB records that share a normalized title, keeping the earliest one", async () => {
+  // TB 里存在 ID 不同、标题相同的重复需求；需求池只保留最早的一条，避免同一诉求重复流转。
+  const h = harness([
+    task("later", "【Beta】 同一个诉求", { created: "2026-02-01T00:00:00.000Z" }),
+    task("earlier", "【beta】  同一个诉求", { created: "2026-01-01T00:00:00.000Z" }),
+    task("other", "另一个诉求", { created: "2026-01-05T00:00:00.000Z" }),
+  ]);
+  const result = await h.orchestrator.run({ batchId: "batch-1", sourceConfigId: config.id, config });
+  assert.equal(result.status, "succeeded");
+  assert.equal(result.totalCount, 2);
+  assert.equal(result.succeededCount, 2);
+  assert.ok(h.calls.includes("upsert:earlier"));
+  assert.equal(h.calls.includes("upsert:later"), false);
+  assert.equal(h.calls.some((call) => call.startsWith("item:later")), false);
+  assert.ok(h.calls.includes("complete:succeeded:2:2:0"));
+});
+
+test("keeps blank titles and breaks created ties by requirement id", async () => {
+  const h = harness([
+    task("b", "", { created: "2026-01-01T00:00:00.000Z" }),
+    task("a", "  ", { created: "2026-01-01T00:00:00.000Z" }),
+    task("z", "重复标题", { created: "2026-01-01T00:00:00.000Z" }),
+    task("y", "重复标题", { created: "2026-01-01T00:00:00.000Z" }),
+  ]);
+  const result = await h.orchestrator.run({ batchId: "batch-1", sourceConfigId: config.id, config });
+  // 空标题不去重，两条都导入；重复标题按 created 相同、ID 升序保留 y（共 3 条）。
+  assert.equal(result.totalCount, 3);
+  assert.ok(h.calls.includes("upsert:a"));
+  assert.ok(h.calls.includes("upsert:b"));
+  assert.ok(h.calls.includes("upsert:y"));
+  assert.equal(h.calls.includes("upsert:z"), false);
+});
+
 test("does not expose unmapped provider custom fields in normalized payload", async () => {
   const h = harness([task("one", "One")]);
   capturedPayloads.length = 0;
