@@ -1,4 +1,62 @@
-import type { FunctionModuleEntry } from "./persistence.js";
+import { normalizeOwnerName } from "../owner/mapping.js";
+import type { FeishuIdType, FunctionModuleEntry } from "./persistence.js";
+
+// 人员页的飞书账号绑定：来源是 person_mappings 中按规范化姓名匹配的活跃行，
+// 不新增表、不改 TB 回写。人员名单（source_configs.owner_names）负责“有哪些人”，
+// 绑定负责“每个人对应哪个飞书账号”，需求分配下拉直接读这份映射。
+export interface TeamPersonBinding {
+  feishuUserId: string;
+  feishuIdType: FeishuIdType;
+  /** 绑定映射最近一次更新时间（ISO 8601）。 */
+  boundAt: string;
+}
+
+/** 写入绑定时的参数：boundAt 由服务端时间决定，不由调用方提供。 */
+export type TeamPersonBindingInput = Pick<TeamPersonBinding, "feishuUserId" | "feishuIdType">;
+
+export interface TeamPersonRecord {
+  name: string;
+  binding: TeamPersonBinding | null;
+  /**
+   * 同一姓名存在多条指向不同飞书账号的活跃映射。此时既不显示为“已绑定”，
+   * 也不让自动匹配替人猜账号；人员页只提示冲突，写操作返回 409 要求先人工核对。
+   */
+  bindingConflict: boolean;
+}
+
+/** person_mappings 中用于人员绑定展示的最小列（只取关系，不取任何联系方式）。 */
+export interface TeamMappingRow {
+  normalized_name: string | null;
+  feishu_user_id: string;
+  feishu_id_type: string;
+  updated_at: Date | string;
+}
+
+/**
+ * 把活跃映射归并到人员名单：同一姓名指向同一飞书身份才算“已绑定”；
+ * 指向多个不同身份时标记冲突，不猜其中任何一个（与自动匹配的歧义规则一致）。
+ */
+export function mergeTeamBindings(people: string[], mappings: readonly TeamMappingRow[]): TeamPersonRecord[] {
+  const byName = new Map<string, TeamMappingRow[]>();
+  for (const row of mappings) {
+    if (!row.normalized_name) continue;
+    const rows = byName.get(row.normalized_name) ?? [];
+    rows.push(row);
+    byName.set(row.normalized_name, rows);
+  }
+  return people.map((name) => {
+    const rows = byName.get(normalizeOwnerName(name)) ?? [];
+    const identities = new Set(rows.map((row) => `${row.feishu_user_id}|${row.feishu_id_type}`));
+    if (identities.size === 0) return { name, binding: null, bindingConflict: false };
+    if (identities.size > 1) return { name, binding: null, bindingConflict: true };
+    const latest = rows.reduce((best, row) => new Date(row.updated_at).getTime() > new Date(best.updated_at).getTime() ? row : best);
+    return {
+      name,
+      binding: { feishuUserId: latest.feishu_user_id, feishuIdType: latest.feishu_id_type as FeishuIdType, boundAt: new Date(latest.updated_at).toISOString() },
+      bindingConflict: false,
+    };
+  });
+}
 
 export const DEFAULT_TEAM_MEMBERS = [
   "毕梓浩", "盛永帮", "刘媛媛", "李晨璐", "史东升", "贾浩", "兰诣伟",

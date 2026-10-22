@@ -29,13 +29,13 @@ specs/rq-sys-mvp/openapi.yaml  OpenAPI 3.1 契约
 
 | 表 | 用途 | 关键约束 |
 |---|---|---|
-| `source_configs` | 单项目 TB 来源、需求类型、周计划、产品组人员名单（用于 Web 筛选和模块分工，不作为同步过滤条件）和字段映射 | project + requirement type 唯一；凭据不落库 |
+| `source_configs` | 单项目 TB 来源、需求类型、周计划、产品组人员名单（用于 Web 筛选、模块分工和人员→飞书账号绑定，不作为同步过滤条件）和字段映射 | project + requirement type 唯一；凭据不落库 |
 | `sync_batches` | 手动/定时批次、发起人、幂等键、汇总结果 | source + idempotency key 唯一 |
 | `requirements` | 当前规范化需求和 pull/AI/owner/push 独立状态 | source + TB requirement ID 唯一 |
 | `sync_items` | 批次内逐条结果及错误 | batch + TB requirement ID 唯一 |
 | `source_snapshots` | 只追加来源版本和 allowlist payload | requirement + version 唯一 |
 | `analysis_runs` | 结构化 AI 输出、版本、provider/prompt/dictionary/rule provenance | requirement + analysis version 唯一 |
-| `person_mappings` | TB user ID/唯一姓名到 Feishu identity 的映射 | 名称不设唯一约束；有歧义时不自动匹配 |
+| `person_mappings` | TB user ID/唯一姓名到 Feishu identity 的映射（人员页新绑定以 `teambition_user_id` 为空、按规范化姓名的 `unique_name` 行表达，改绑沿用原行；同一姓名同飞书账号只保留一条活跃映射） | 名称不设唯一约束；有歧义时不自动匹配 |
 | `pm_snapshots` | 实质变化推送前保存的 Base PM 字段快照 | 只追加；快照读取失败时不覆盖 Base |
 | `base_push_runs` | 每次 Base 新建/更新尝试及结果 | push version 与幂等键唯一 |
 | `module_dictionary_versions` | 受控模块字典版本 | 发布状态和版本留痕 |
@@ -59,6 +59,7 @@ HTTP 路径与现有 Spec 保持一致，公共健康检查除外。所有业务
 | `POST /api/items/{id}/retry` | 重试失败项目 | 只重试失败阶段，复用源需求键 |
 | `GET /api/requirements` / `GET /api/requirements/{id}` | 需求池与详情 | 独立返回四阶段状态 |
 | `PUT /api/requirements/{id}/owner` | 保存人工负责人映射并允许推送 | 操作人和 mapping 变更写审计 |
+| `PUT` / `DELETE /api/people/{name}/feishu` | 人员页维护到飞书账号的绑定 | 按规范化姓名维护活跃映射；不改写 TB/飞书，不改已推送 Base 行 |
 | `POST /api/analysis/{id}/retry` | 新建 AI 分析版本 | 不覆盖人工字段，不阻塞推送 |
 | `GET /api/audit` | 审计查询 | 不返回 token、联系方式或 provider 原始响应 |
 

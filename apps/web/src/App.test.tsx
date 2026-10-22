@@ -88,7 +88,7 @@ describe("RQ-Sys local workbench", () => {
     });
 
     render(<App />);
-    fireEvent.click(await screen.findByRole("link", { name: "数据源配置" }));
+    fireEvent.click(await screen.findByRole("link", { name: "数据源与计划" }));
     fireEvent.change(await screen.findByLabelText("项目名称"), { target: { value: "产品需求池" } });
     fireEvent.click(screen.getByRole("button", { name: "创建来源" }));
 
@@ -208,10 +208,61 @@ describe("RQ-Sys local workbench", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "打开主导航" }));
     expect(screen.getByRole("dialog", { name: "主导航" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("link", { name: "人员" }));
+    fireEvent.click(screen.getByRole("link", { name: "团队管理" }));
 
-    expect(window.location.hash).toBe("#people");
+    expect(window.location.hash).toBe("#team");
     expect(screen.queryByRole("dialog", { name: "主导航" })).not.toBeInTheDocument();
+  });
+
+  it("consolidates people and owner mappings into one team page with tabs", async () => {
+    fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/people") return Response.json({ items: [{ name: "贾浩", feishuUserId: null, feishuIdType: null, boundAt: null, bindingConflict: false }] });
+      if (path === "/api/mappings") return Response.json({ items: [] });
+      if (path.startsWith("/api/requirements")) return Response.json({ items: [], nextCursor: null });
+      return Response.json({ items: [] });
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("link", { name: "团队管理" }));
+    expect(await screen.findByRole("tab", { name: "人员" })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByText("贾浩")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "负责人映射" }));
+    expect(await screen.findByRole("heading", { name: "负责人映射" })).toBeInTheDocument();
+    expect(window.location.hash).toBe("#team");
+  });
+
+  it("keeps batches and audit under one sync records page with tabs", async () => {
+    fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      return Response.json({ items: [], nextCursor: null });
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("link", { name: "同步记录" }));
+    expect(await screen.findByRole("tab", { name: "同步批次" })).toHaveAttribute("aria-selected", "true");
+
+    fireEvent.click(screen.getByRole("tab", { name: "审计日志" }));
+    expect(await screen.findByRole("heading", { name: "审计日志" })).toBeInTheDocument();
+    expect(window.location.hash).toBe("#sync-records");
+  });
+
+  it("keeps one help entry and hides low-frequency actions behind advanced disclosures", async () => {
+    fetchMock.mockImplementation(async () => Response.json({ items: [] }));
+    render(<App />);
+
+    // 使用指南不再出现在侧栏（只有顶栏一个入口）。
+    expect(screen.queryByRole("link", { name: "使用指南" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "帮助" })).toHaveAttribute("title", "使用指南");
+    // 仅同步源数据属于低频高级操作，默认收起。
+    expect(screen.getByText("仅同步源数据").closest("details")).not.toHaveAttribute("open");
+    // 无功能的工作区下拉、固定头像和原型工作区文案都已移除。
+    expect(document.querySelector(".workspace-switch")).toBeNull();
+    expect(document.querySelector(".top-avatar")).toBeNull();
+    expect(screen.queryByText("本地工作区")).not.toBeInTheDocument();
   });
 
   it("opens the requirement pool with the matching owner filter from its dashboard todo", async () => {

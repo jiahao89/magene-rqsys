@@ -26,13 +26,202 @@ test("team directory CRUD survives a transport that cannot serialize PostgreSQL 
   };
   const store = new PostgresRepositories({ query, connect: async () => ({ query, release() {} }) } as never).directory;
   const event = { id: "event", actorId: "test-actor", eventType: "directory.test", entityType: "person", entityId: "Temporary PM", result: "succeeded" as const, safeDetails: {}, occurredAt: "2026-10-15T00:00:00.000Z" };
-  assert.deepEqual(await store.renamePerson("Temporary PM", "Renamed PM", event), ["Renamed PM"]);
+  assert.deepEqual(await store.renamePerson("Temporary PM", "Renamed PM", event), [{ name: "Renamed PM", binding: null, bindingConflict: false }]);
   assert.deepEqual((await store.listModules()).items, [{ name: "地图", personName: "Renamed PM" }]);
   assert.deepEqual(await store.deletePerson("Renamed PM", event), []);
   assert.deepEqual((await store.listModules()).items, [{ name: "地图", personName: null }]);
   const saved = await store.saveModules(3, [{ name: "导航", personName: null }], "test-actor", event.occurredAt, event);
   assert.equal(saved.version, 4);
   assert.deepEqual(saved.items, [{ name: "导航", personName: null }]);
+});
+
+type DirectoryMapping = { normalized_name: string; teambition_user_id: string | null; display_name: string | null; feishu_user_id: string; feishu_id_type: string; updated_at: string; active: boolean; match_method?: string };
+function directoryPool(people: string[], mappings: DirectoryMapping[]) {
+  const calls: Array<{ sql: string; values: unknown[] }> = [];
+  const query = async (sql: string, values: unknown[] = []) => {
+    calls.push({ sql, values });
+    if (sql.startsWith("SELECT pg_advisory_xact_lock")) return { rows: [{ lock_acquired: false }], rowCount: 1 };
+    if (sql.startsWith("SELECT id,owner_names,EXISTS")) return { rows: [{ id: "source-1", owner_names: people, has_dictionary: true }], rowCount: 1 };
+    if (sql.startsWith("SELECT id,owner_names FROM source_configs")) return { rows: [{ id: "source-1", owner_names: people }], rowCount: 1 };
+    if (sql.startsWith("SELECT EXISTS(SELECT 1 FROM module_dictionary_versions")) return { rows: [{ has_dictionary: true }], rowCount: 1 };
+    if (sql.startsWith("SELECT teambition_user_id,feishu_user_id,feishu_id_type FROM person_mappings")) {
+      const normalized = String(values[1]);
+      const rows = mappings.filter((row) => row.active && row.normalized_name === normalized);
+      return { rows, rowCount: rows.length };
+    }
+    if (sql.startsWith("SELECT teambition_display_name FROM person_mappings")) {
+      const feishu = String(values[1]);
+      const type = String(values[2]);
+      const normalized = String(values[3]);
+      const taken = mappings.find((row) => row.active && row.feishu_user_id === feishu && row.feishu_id_type === type && row.normalized_name !== normalized);
+      return { rows: taken ? [{ teambition_display_name: taken.display_name }] : [], rowCount: taken ? 1 : 0 };
+    }
+    if (sql.startsWith("SELECT normalized_name,feishu_user_id,feishu_id_type,updated_at FROM person_mappings")) {
+      const rows = mappings.filter((row) => row.active && row.normalized_name !== null);
+      return { rows, rowCount: rows.length };
+    }
+    if (sql.startsWith("UPDATE person_mappings SET feishu_user_id=")) {
+      const feishu = String(values[2]);
+      const type = String(values[3]);
+      const now = String(values[4]);
+      const normalized = String(values[1]);
+      for (const row of mappings) if (row.active && row.normalized_name === normalized) { row.feishu_user_id = feishu; row.feishu_id_type = type; row.updated_at = now; }
+      return { rows: [], rowCount: 0 };
+    }
+    if (sql.startsWith("INSERT INTO person_mappings")) {
+      const matchMethod = /'([a-z_]+)'/.exec(sql)?.[1] ?? "manual";
+      mappings.push({ normalized_name: String(values[3]), teambition_user_id: null, display_name: String(values[2]), feishu_user_id: String(values[4]), feishu_id_type: String(values[5]), updated_at: String(values[7]), active: true, match_method: matchMethod });
+      return { rows: [], rowCount: 1 };
+    }
+    if (sql.startsWith("SELECT normalized_name,feishu_user_id,feishu_id_type FROM person_mappings")) {
+      const targets = [String(values[1]), String(values[2])];
+      const rows = mappings.filter((row) => row.active && targets.includes(row.normalized_name));
+      return { rows, rowCount: rows.length };
+    }
+    if (sql.startsWith("UPDATE person_mappings SET teambition_display_name=$3,normalized_name=")) {
+      const from = String(values[1]);
+      const to = String(values[2]);
+      const toNormalized = String(values[3]);
+      const now = String(values[4]);
+      for (const row of mappings) if (row.active && row.normalized_name === from) { row.normalized_name = toNormalized; row.display_name = to; row.updated_at = now; }
+      return { rows: [], rowCount: 0 };
+    }
+    if (sql.startsWith("UPDATE person_mappings SET teambition_display_name=$3,updated_at=")) {
+      const from = String(values[1]);
+      const to = String(values[2]);
+      const now = String(values[3]);
+      for (const row of mappings) if (row.active && row.normalized_name === from) { row.display_name = to; row.updated_at = now; }
+      return { rows: [], rowCount: 0 };
+    }
+    if (sql.startsWith("UPDATE person_mappings SET active=false")) {
+      const normalized = String(values[1]);
+      const now = String(values[2]);
+      let count = 0;
+      for (const row of mappings) if (row.active && row.normalized_name === normalized) { row.active = false; row.updated_at = now; count += 1; }
+      return { rows: Array.from({ length: count }, (_, index) => ({ id: `deactivated-${index}` })), rowCount: count };
+    }
+    if (sql.startsWith("UPDATE source_configs")) { people = JSON.parse(String(values[1])) as string[]; return { rows: [], rowCount: 1 }; }
+    if (sql.startsWith("SELECT version,entries FROM module_dictionary_versions")) return { rows: [], rowCount: 0 };
+    if (sql.startsWith("UPDATE module_dictionary_versions")) return { rows: [], rowCount: 0 };
+    if (sql.startsWith("INSERT INTO module_dictionary_versions")) return { rows: [{ version: 2 }], rowCount: 1 };
+    if (sql.startsWith("INSERT INTO audit_events")) return { rows: [], rowCount: 1 };
+    return { rows: [], rowCount: 0 };
+  };
+  const pool = { query, connect: async () => ({ query, release() {} }) };
+  return { pool: pool as never, calls, mappings };
+}
+
+test("team directory reports roster bindings and flags same-name multi-account conflicts", async () => {
+  const mappings: DirectoryMapping[] = [
+    { normalized_name: "贾浩", teambition_user_id: null, display_name: "贾浩", feishu_user_id: "ou-jia", feishu_id_type: "open_id", updated_at: "2026-10-20T00:00:00.000Z", active: true },
+    { normalized_name: "刘媛媛", teambition_user_id: "tb-1", display_name: "刘媛媛", feishu_user_id: "ou-liu-a", feishu_id_type: "open_id", updated_at: "2026-10-19T00:00:00.000Z", active: true },
+    { normalized_name: "刘媛媛", teambition_user_id: "tb-2", display_name: "刘媛媛", feishu_user_id: "ou-liu-b", feishu_id_type: "open_id", updated_at: "2026-10-21T00:00:00.000Z", active: true },
+    { normalized_name: "李晨璐", teambition_user_id: null, display_name: "李晨璐", feishu_user_id: "ou-old", feishu_id_type: "open_id", updated_at: "2026-10-18T00:00:00.000Z", active: false },
+  ];
+  const { pool } = directoryPool(["贾浩", "刘媛媛", "李晨璐"], mappings);
+  const store = new PostgresRepositories(pool).directory;
+  assert.deepEqual(await store.listPeople(), [
+    { name: "贾浩", binding: { feishuUserId: "ou-jia", feishuIdType: "open_id", boundAt: "2026-10-20T00:00:00.000Z" }, bindingConflict: false },
+    { name: "刘媛媛", binding: null, bindingConflict: true },
+    { name: "李晨璐", binding: null, bindingConflict: false },
+  ]);
+});
+
+test("binding a person inserts one roster mapping and rejects an account already bound elsewhere", async () => {
+  const people = ["贾浩", "刘媛媛", "盛永帮"];
+  const mappings: DirectoryMapping[] = [
+    // 需求详情里已有人工映射（带 TB user ID）：人员页改绑应原地更新，而不是再插入一条同姓名映射。
+    { normalized_name: "盛永帮", teambition_user_id: "tb-9", display_name: "盛永帮", feishu_user_id: "ou-sheng-old", feishu_id_type: "open_id", updated_at: "2026-10-20T00:00:00.000Z", active: true },
+  ];
+  const { pool, calls } = directoryPool(people, mappings);
+  const store = new PostgresRepositories(pool).directory;
+  const event = (id: string) => ({ id, actorId: "test-actor", eventType: "team_person.feishu_bound", entityType: "team_person", result: "succeeded" as const, safeDetails: {}, occurredAt: "2026-10-22T00:00:00.000Z" });
+
+  const bound = await store.bindPersonFeishu("贾浩", { feishuUserId: "ou-jia", feishuIdType: "open_id" }, event("event-1"));
+  assert.deepEqual(bound[0], { name: "贾浩", binding: { feishuUserId: "ou-jia", feishuIdType: "open_id", boundAt: "2026-10-22T00:00:00.000Z" }, bindingConflict: false });
+  const insert = calls.find((call) => call.sql.startsWith("INSERT INTO person_mappings"));
+  assert.ok(insert);
+  // 人员页绑定按姓名唯一匹配生效：首推静默、owner 状态 auto_mapped（D-12）。
+  assert.match(insert.sql, /'unique_name'/);
+  assert.equal(mappings.find((row) => row.active && row.normalized_name === "贾浩")?.match_method, "unique_name");
+  assert.ok(calls.some((call) => call.sql.startsWith("INSERT INTO audit_events")));
+
+  // 同一飞书账号不能再绑定给另一位人员
+  await assert.rejects(() => store.bindPersonFeishu("刘媛媛", { feishuUserId: "ou-jia", feishuIdType: "open_id" }, event("event-2")), { name: "TeamDirectoryConflict" });
+
+  // 换一个账号时原地改绑，不新增同姓名映射（避免自动匹配歧义）
+  const rebound = await store.bindPersonFeishu("贾浩", { feishuUserId: "ou-jia-2", feishuIdType: "open_id" }, event("event-3"));
+  assert.equal(rebound[0]?.binding?.feishuUserId, "ou-jia-2");
+  assert.equal(mappings.filter((row) => row.active && row.normalized_name === "贾浩").length, 1);
+
+  // TB user 维度的既有映射被原地改绑：保留 TB user ID，仍然只有一条活跃映射。
+  const adopted = await store.bindPersonFeishu("盛永帮", { feishuUserId: "ou-sheng-new", feishuIdType: "open_id" }, event("event-4"));
+  assert.equal(adopted.find((person) => person.name === "盛永帮")?.binding?.feishuUserId, "ou-sheng-new");
+  const shengRows = mappings.filter((row) => row.active && row.normalized_name === "盛永帮");
+  assert.equal(shengRows.length, 1);
+  assert.equal(shengRows[0]?.teambition_user_id, "tb-9");
+});
+
+test("renaming a person carries the binding and refuses a target name bound to another account", async () => {
+  const people = ["贾浩", "刘媛媛"];
+  const mappings: DirectoryMapping[] = [
+    { normalized_name: "贾浩", teambition_user_id: null, display_name: "贾浩", feishu_user_id: "ou-jia", feishu_id_type: "open_id", updated_at: "2026-10-20T00:00:00.000Z", active: true, match_method: "unique_name" },
+    { normalized_name: "刘媛媛", teambition_user_id: "tb-liu", display_name: "刘媛媛", feishu_user_id: "ou-liu", feishu_id_type: "open_id", updated_at: "2026-10-20T00:00:00.000Z", active: true },
+    // 目标姓名已有另一飞书身份：改名必须拒绝，否则同一姓名会出现两条不同账号的活跃映射。
+    { normalized_name: "王五", teambition_user_id: "tb-wang", display_name: "王五", feishu_user_id: "ou-wang", feishu_id_type: "open_id", updated_at: "2026-10-20T00:00:00.000Z", active: true },
+  ];
+  const { pool } = directoryPool(people, mappings);
+  const store = new PostgresRepositories(pool).directory;
+  const event = { id: "event", actorId: "test-actor", eventType: "team_person.renamed", entityType: "team_person", result: "succeeded" as const, safeDetails: {}, occurredAt: "2026-10-22T00:00:00.000Z" };
+
+  const renamed = await store.renamePerson("贾浩", "贾浩改", event);
+  assert.equal(renamed.find((person) => person.name === "贾浩改")?.binding?.feishuUserId, "ou-jia");
+  assert.equal(mappings.some((row) => row.active && row.normalized_name === "贾浩"), false);
+  assert.equal(mappings.find((row) => row.active && row.normalized_name === "贾浩改")?.display_name, "贾浩改");
+
+  await assert.rejects(() => store.renamePerson("刘媛媛", "王五", event), { name: "TeamDirectoryConflict" });
+  assert.equal(mappings.filter((row) => row.active && row.normalized_name === "王五").length, 1);
+});
+
+test("requirement-level manual mapping replaces only that person's name-scoped mapping", async () => {
+  // 回归：旧实现按 (source, tb_user_id IS NULL) 停用所有人员维度映射；
+  // 人员页绑定也是人员维度行，一次需求人工分配会把全组绑定一起清掉。
+  const calls: Array<{ sql: string; values: unknown[] }> = [];
+  const now = "2026-10-22T00:00:00.000Z";
+  const query = async (sql: string, values: unknown[] = []) => {
+    calls.push({ sql, values });
+    if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") return { rows: [], rowCount: 0 };
+    if (sql.startsWith("SELECT * FROM person_mappings")) return { rows: [], rowCount: 0 };
+    if (sql.startsWith("SELECT teambition_display_name FROM person_mappings")) return { rows: [], rowCount: 0 };
+    if (sql.startsWith("INSERT INTO person_mappings")) return { rows: [{ id: "map-1", source_config_id: "s", teambition_user_id: null, teambition_display_name: "贾浩", normalized_name: "贾浩", feishu_user_id: "ou-new", feishu_id_type: "open_id", match_method: "manual", active: true, created_by: "u", created_at: new Date(now), updated_at: new Date(now) }], rowCount: 1 };
+    return { rows: [], rowCount: 0 };
+  };
+  const store = new PostgresRepositories({ query, connect: async () => ({ query, release() {} }) } as never);
+  const saved = await store.people.upsertManual({ sourceConfigId: "s", teambitionUserId: null, teambitionDisplayName: "贾浩", feishuUserId: "ou-new", feishuIdType: "open_id", createdBy: "u", now });
+  assert.equal(saved.feishuUserId, "ou-new");
+  const deactivate = calls.find((call) => call.sql.startsWith("UPDATE person_mappings SET active=false"));
+  assert.ok(deactivate);
+  // 只停用同名行；其他人员的绑定不受影响。
+  assert.match(deactivate.sql, /normalized_name IS NOT DISTINCT FROM \$4/);
+  assert.deepEqual(deactivate.values, ["s", now, null, "贾浩"]);
+  const guard = calls.find((call) => call.sql.startsWith("SELECT teambition_display_name FROM person_mappings"));
+  assert.ok(guard, "插入前必须检查账号是否已属于另一位人员");
+});
+
+test("deleting a person deactivates every active mapping for that name", async () => {
+  const people = ["贾浩", "刘媛媛"];
+  const mappings: DirectoryMapping[] = [
+    { normalized_name: "贾浩", teambition_user_id: null, display_name: "贾浩", feishu_user_id: "ou-jia", feishu_id_type: "open_id", updated_at: "2026-10-20T00:00:00.000Z", active: true, match_method: "unique_name" },
+    { normalized_name: "刘媛媛", teambition_user_id: null, display_name: "刘媛媛", feishu_user_id: "ou-liu", feishu_id_type: "open_id", updated_at: "2026-10-20T00:00:00.000Z", active: true, match_method: "unique_name" },
+  ];
+  const { pool } = directoryPool(people, mappings);
+  const store = new PostgresRepositories(pool).directory;
+  const event = { id: "event", actorId: "test-actor", eventType: "team_person.deleted", entityType: "team_person", result: "succeeded" as const, safeDetails: {}, occurredAt: "2026-10-22T00:00:00.000Z" };
+
+  const remaining = await store.deletePerson("贾浩", event);
+  assert.deepEqual(remaining.map((person) => person.name), ["刘媛媛"]);
+  assert.equal(mappings.some((row) => row.active && row.normalized_name === "贾浩"), false);
+  assert.equal(mappings.find((row) => row.active && row.normalized_name === "刘媛媛")?.feishu_user_id, "ou-liu");
 });
 
 function recordingPool() {

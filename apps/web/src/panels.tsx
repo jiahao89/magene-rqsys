@@ -10,12 +10,13 @@ import { readRequirementDeepLink } from "./deep-link";
 import { emptyRequirementListFilters, readRequirementListFilters, requirementPoolUrl, type RequirementListFilters } from "./requirements-url";
 import { formatDateTime, requirementOwnerView, requirementSourceFacts, requirementTime, sortRequirementsForAttention } from "./requirement-view";
 import {
-  ApiError, addTeamPerson, createSource, deleteTeamPerson, getBatch, getFunctionModules, getRequirement, listAudit, listBatches, listMappings, listRequirements, listTeamPeople, pushRequirement,
+  ApiError, addTeamPerson, bindTeamPersonFeishu, createSource, deleteTeamPerson, getBatch, getFunctionModules, getRequirement, listAudit, listBatches, listDictionaryVersions, listMappings, listRequirements, listTeamPeople, pushRequirement,
   renameTeamPerson, saveFunctionModules,
-  retryAnalysis, retrySyncItem, searchFeishuUsers, setOwner, updateSource,
-  type AnalysisVersionSummary, type AuditEvent, type BatchDetail, type BatchSummary, type PersonMapping, type FeishuUserSelection,
+  retryAnalysis, retrySyncItem, searchFeishuUsers, setOwner, unbindTeamPersonFeishu, updateSource,
+  type AnalysisVersionSummary, type AuditEvent, type BatchDetail, type BatchSummary, type DictionaryVersion, type PersonMapping, type PublishStatus, type FeishuUserSelection,
   type FeishuUserCandidate, type FunctionModuleEntry, type RequirementDetail, type RequirementSummary, type SourceConfig, type SourceConfigUpdate, type TeamPerson,
 } from "./api";
+import type { WorkbenchTab } from "./workbench-routing";
 
 export type LoadState = "loading" | "ready" | "error";
 
@@ -34,17 +35,17 @@ function StateBanner({ loadError, notice, onCloseNotice }: { loadError: string |
   </>;
 }
 
-function DeleteConfirmation({ description, disabled, onConfirm }: { description: string; disabled: boolean; onConfirm: () => void }) {
+function DeleteConfirmation({ description, disabled, onConfirm, triggerLabel = "删除", heading = "确认删除", confirmLabel = "确认删除" }: { description: string; disabled: boolean; onConfirm: () => void; triggerLabel?: string; heading?: string; confirmLabel?: string }) {
   return <HeroAlertDialog.Root>
-    <HeroAlertDialog.Trigger className="button button-secondary button-small" aria-disabled={disabled} tabIndex={disabled ? -1 : 0} style={disabled ? { pointerEvents: "none", opacity: 0.6 } : undefined}>删除</HeroAlertDialog.Trigger>
+    <HeroAlertDialog.Trigger className="button button-secondary button-small" aria-disabled={disabled} tabIndex={disabled ? -1 : 0} style={disabled ? { pointerEvents: "none", opacity: 0.6 } : undefined}>{triggerLabel}</HeroAlertDialog.Trigger>
     <HeroAlertDialog.Backdrop>
       <HeroAlertDialog.Container>
         <HeroAlertDialog.Dialog>
-          <HeroAlertDialog.Header><HeroAlertDialog.Heading>确认删除</HeroAlertDialog.Heading></HeroAlertDialog.Header>
+          <HeroAlertDialog.Header><HeroAlertDialog.Heading>{heading}</HeroAlertDialog.Heading></HeroAlertDialog.Header>
           <HeroAlertDialog.Body><p>{description}</p></HeroAlertDialog.Body>
           <HeroAlertDialog.Footer>
             <HeroButton slot="close" variant="secondary">取消</HeroButton>
-            <HeroButton slot="close" variant="danger" onPress={onConfirm}>确认删除</HeroButton>
+            <HeroButton slot="close" variant="danger" onPress={onConfirm}>{confirmLabel}</HeroButton>
           </HeroAlertDialog.Footer>
         </HeroAlertDialog.Dialog>
       </HeroAlertDialog.Container>
@@ -54,6 +55,13 @@ function DeleteConfirmation({ description, disabled, onConfirm }: { description:
 
 function timeLabel(value: string | null | undefined): string {
   return value ? new Date(value).toLocaleString("zh-CN") : "—";
+}
+
+const publishStatusChip: Record<PublishStatus, { label: string; className: string }> = { draft: { label: "草稿", className: "status-muted" }, published: { label: "已发布", className: "status-live" }, retired: { label: "已退役", className: "status-muted" } };
+
+export function PublishStatusChip({ status }: { status: PublishStatus }) {
+  const chip = publishStatusChip[status];
+  return <span className={`status-chip ${chip.className}`}><span />{chip.label}</span>;
 }
 
 function scheduleLabel(schedule: SourceConfig["schedule"]): string {
@@ -68,8 +76,8 @@ function FeishuUserPicker({ disabled, onMap, saveLabel = "保存负责人并入�
   onMap: (user: FeishuUserSelection) => Promise<void>;
   saveLabel?: string;
 }) {
-  // 名单来自「负责人映射」维护的人员，不再每次输入姓名搜索飞书通讯录：
-  // 分配负责人是高频动作，从固定名单里选比等搜索结果快。
+  // 名单来自 person_mappings（组内人员绑定的飞书账号 + 需求详情里建立的人工映射），
+  // 不再每次输入姓名搜索飞书通讯录：分配负责人是高频动作，从固定名单里选比等搜索结果快。
   const [people, setPeople] = useState<FeishuUserSelection[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [loading, setLoading] = useState(true);
@@ -111,7 +119,7 @@ function FeishuUserPicker({ disabled, onMap, saveLabel = "保存负责人并入�
       : <div className="feishu-user-search">
           <select aria-label="选择负责人" value={selectedId} disabled={disabled || loading || saving}
             onChange={(event) => setSelectedId(event.target.value)}>
-            <option value="">{loading ? "正在读取人员…" : people.length ? "请选择负责人" : "名单为空，请先维护负责人映射"}</option>
+            <option value="">{loading ? "正在读取人员…" : people.length ? "请选择负责人" : "名单为空，请先在「组内人员」绑定飞书账号"}</option>
             {people.map((person) => <option key={person.feishuUserId} value={person.feishuUserId}>{person.name}</option>)}
           </select>
           <button className="button button-primary button-small" onClick={() => void save()} disabled={disabled || !selected || saving}>
@@ -209,11 +217,80 @@ export function SourcesPanel({ sources, loadState, onRefresh }: { sources: Sourc
 
 // ---------- 人员与功能模块字典 ----------
 
+/** 飞书 user ID 很长，人员表格里只显示首尾；完整值放在 title 上，便于核对。 */
+function shortFeishuId(id: string): string {
+  return id.length <= 14 ? id : `${id.slice(0, 4)}…${id.slice(-6)}`;
+}
+
+/**
+ * 人员页的「绑定飞书账号」编辑器：按姓名搜索飞书通讯录，选中后保存映射。
+ * 搜索走 /api/feishu/users（独立部署时可用）；目标妙搭环境用平台通讯录搜索 + resolve。
+ */
+function FeishuAccountBinder({ personName, disabled, onSave, onCancel }: {
+  personName: string;
+  disabled: boolean;
+  onSave: (selection: FeishuUserSelection) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [query, setQuery] = useState(personName);
+  const [candidates, setCandidates] = useState<FeishuUserCandidate[]>([]);
+  const [selectedId, setSelectedId] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const search = useCallback(async (text: string) => {
+    const clean = text.trim();
+    if (clean.length < 2) { setError("请输入至少 2 个字符再搜索。"); return; }
+    setSearching(true); setError(null);
+    try {
+      const items = await searchFeishuUsers(clean);
+      setCandidates(items);
+      setSelectedId(items[0]?.openId ?? "");
+    } catch (cause) {
+      setCandidates([]); setSelectedId("");
+      setError(cause instanceof ApiError ? errorText(cause) : "无法搜索飞书通讯录，请稍后重试。");
+    } finally { setSearching(false); }
+  }, []);
+  // 打开编辑器就用人员姓名搜一次：多数情况姓名即飞书姓名，少打一次字。
+  useEffect(() => { void search(personName); }, [personName, search]);
+
+  const selected = candidates.find((candidate) => candidate.openId === selectedId) ?? null;
+  const save = async () => {
+    if (!selected) return;
+    setSaving(true); setError(null);
+    try { await onSave({ feishuUserId: selected.openId, feishuIdType: "open_id", name: selected.name }); }
+    catch (cause) { setError(cause instanceof ApiError ? errorText(cause) : "保存绑定失败，请重试。"); }
+    finally { setSaving(false); }
+  };
+
+  return <div className="feishu-account-binder">
+    <div className="feishu-user-search">
+      <HeroInput aria-label="搜索飞书账号" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void search(query); }} />
+      <HeroButton className="button button-secondary button-small" onPress={() => void search(query)} isDisabled={disabled || searching}>{searching ? "搜索中…" : "搜索"}</HeroButton>
+    </div>
+    {error && <span className="feishu-user-error" role="alert">{error}</span>}
+    {!error && !searching && candidates.length === 0 && <span className="feishu-user-hint">没有搜索到匹配的飞书账号。可换一个关键字（例如英文名）再试。</span>}
+    {candidates.length > 0 && <div className="feishu-user-results" role="listbox" aria-label="飞书账号候选">
+      {candidates.map((candidate) => <button key={candidate.openId} type="button" role="option" aria-selected={selectedId === candidate.openId} className="feishu-user-option" onClick={() => setSelectedId(candidate.openId)}>
+        <span>{candidate.name}{candidate.enName ? <small>{candidate.enName}</small> : null}</span>
+        <code>{shortFeishuId(candidate.openId)}</code>
+      </button>)}
+    </div>}
+    <div className="feishu-account-actions">
+      <HeroButton className="button button-primary button-small" onPress={() => void save()} isDisabled={disabled || saving || !selected}>{saving ? "保存中…" : "保存绑定"}</HeroButton>
+      <HeroButton className="button button-secondary button-small" onPress={onCancel} isDisabled={saving}>取消</HeroButton>
+    </div>
+    <span className="feishu-user-hint">绑定后该人员会出现在需求详情的负责人下拉中；没有 TB 用户 ID 的需求会按姓名唯一匹配到此人。</span>
+  </div>;
+}
+
 export function PeoplePanel() {
   const [people, setPeople] = useState<TeamPerson[]>([]);
   const [draft, setDraft] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
+  const [bindingName, setBindingName] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -226,16 +303,52 @@ export function PeoplePanel() {
 
   const submit = async (action: () => Promise<{ items: TeamPerson[] }>, success: string) => {
     setBusy(true); setLoadError(null); setNotice(null);
-    try { const result = await action(); setPeople(result.items); setNotice(success); setDraft(""); setEditing(null); }
+    try { const result = await action(); setPeople(result.items); setNotice(success); setDraft(""); setEditing(null); setBindingName(null); }
     catch (cause) { setLoadError(errorText(cause)); }
     finally { setBusy(false); }
   };
 
+  const bindFeishu = async (name: string, selection: FeishuUserSelection) => {
+    const result = await bindTeamPersonFeishu(name, selection);
+    setPeople(result.items);
+    setBindingName(null);
+    setNotice(`已绑定「${name}」的飞书账号。`);
+  };
+  const unbindFeishu = async (name: string) => {
+    setBusy(true); setLoadError(null); setNotice(null);
+    try {
+      const result = await unbindTeamPersonFeishu(name);
+      setPeople(result.items);
+      setNotice(`已解除「${name}」的飞书账号绑定。`);
+    } catch (cause) { setLoadError(errorText(cause)); }
+    finally { setBusy(false); }
+  };
+
   return <section className="panel requirements-panel">
-    <div className="panel-heading"><div><h2>组内人员</h2><p>用于按 TB 负责人筛选需求，并维护功能模块的责任人。</p></div><HeroButton className="button button-secondary button-small" onPress={() => void load()} isDisabled={busy}><RefreshCw size={14} />刷新</HeroButton></div>
+    <div className="panel-heading"><div><h2>组内人员</h2><p>用于按 TB 负责人筛选需求、维护功能模块责任人；绑定飞书账号后，该人员才会出现在需求的负责人下拉中。</p></div><HeroButton className="button button-secondary button-small" onPress={() => void load()} isDisabled={busy}><RefreshCw size={14} />刷新</HeroButton></div>
     <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
     <div className="rules-form" style={{ alignItems: "flex-end" }}><label className="field" style={{ flex: 1 }}><span>人员姓名</span><HeroInput aria-label="新增人员姓名" value={draft} onChange={(event) => setDraft(event.target.value)} /></label><HeroButton className="button button-primary button-small" onPress={() => void submit(() => addTeamPerson(draft), "人员已添加。")} isDisabled={busy || !draft.trim()}>新增人员</HeroButton></div>
-    {people.length ? <div className="table-scroll"><table><thead><tr><th>人员</th><th>操作</th></tr></thead><tbody>{people.map(({ name }) => <tr key={name}><td>{editing === name ? <HeroInput aria-label="编辑人员姓名" value={editDraft} onChange={(event) => setEditDraft(event.target.value)} /> : name}</td><td>{editing === name ? <><HeroButton className="button button-primary button-small" onPress={() => void submit(() => renameTeamPerson(name, editDraft), "人员及模块责任关系已更新。")} isDisabled={busy || !editDraft.trim()}>保存</HeroButton> <HeroButton className="button button-secondary button-small" onPress={() => setEditing(null)} isDisabled={busy}>取消</HeroButton></> : <><HeroButton className="button button-secondary button-small" onPress={() => { setEditing(name); setEditDraft(name); }} isDisabled={busy}>编辑</HeroButton> <DeleteConfirmation disabled={busy} description={`删除人员“${name}”？相关功能模块将变为未分配。`} onConfirm={() => void submit(() => deleteTeamPerson(name), "人员已删除，相关模块已解除分配。")} /></>}</td></tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadError ? "人员读取失败" : "暂无人员"}</strong><span>{loadError ? "检查 API 连接后刷新。" : "填写姓名并新增；数据源配置完成后可维护组内名单。"}</span></div>}
+    {people.length ? <div className="table-scroll"><table><thead><tr><th>人员</th><th>飞书账号</th><th>操作</th></tr></thead><tbody>{people.map((person) => <tr key={person.name}>
+      <td>{editing === person.name ? <HeroInput aria-label="编辑人员姓名" value={editDraft} onChange={(event) => setEditDraft(event.target.value)} /> : person.name}</td>
+      <td>{bindingName === person.name
+        ? <FeishuAccountBinder personName={person.name} disabled={busy} onSave={(selection) => bindFeishu(person.name, selection)} onCancel={() => setBindingName(null)} />
+        : <div className="person-binding">
+            {person.feishuUserId
+              ? <><span className="status-chip status-live"><span />已绑定</span><code className="mono-cell" title={person.feishuUserId}>{shortFeishuId(person.feishuUserId)}</code></>
+              : person.bindingConflict
+                ? <span className="status-chip status-danger"><span />同名多账号</span>
+                : <span className="subtle-text">未绑定</span>}
+            {person.bindingConflict
+              ? <span className="feishu-user-hint">同一姓名对应多个飞书账号，请先在「团队管理 → 负责人映射」核对，或解除绑定后重新绑定。</span>
+              : <HeroButton className="button button-secondary button-small" onPress={() => { setBindingName(person.name); setEditing(null); }} isDisabled={busy || editing === person.name}>{person.feishuUserId ? "重新绑定" : "绑定飞书账号"}</HeroButton>}
+          </div>}</td>
+      <td>{editing === person.name
+        ? <><HeroButton className="button button-primary button-small" onPress={() => void submit(() => renameTeamPerson(person.name, editDraft), "人员及模块责任关系已更新。")} isDisabled={busy || !editDraft.trim()}>保存</HeroButton> <HeroButton className="button button-secondary button-small" onPress={() => setEditing(null)} isDisabled={busy}>取消</HeroButton></>
+        : <><HeroButton className="button button-secondary button-small" onPress={() => { setEditing(person.name); setEditDraft(person.name); setBindingName(null); }} isDisabled={busy}>编辑</HeroButton>{" "}
+            {(person.feishuUserId || person.bindingConflict) && <DeleteConfirmation disabled={busy} triggerLabel="解除绑定" heading="解除飞书绑定" confirmLabel="确认解除" description={`解除「${person.name}」的飞书账号绑定？该人员名下需求的负责人映射将被清除，后续推送会停在待匹配负责人；已推送的 Base 记录不会被清除。`} onConfirm={() => void unbindFeishu(person.name)} />}{" "}
+            <DeleteConfirmation disabled={busy} description={`删除人员“${person.name}”？相关功能模块将变为未分配，飞书账号绑定同时解除。`} onConfirm={() => void submit(() => deleteTeamPerson(person.name), "人员已删除，相关模块已解除分配。")} /></>}
+      </td>
+    </tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadError ? "人员读取失败" : "暂无人员"}</strong><span>{loadError ? "检查 API 连接后刷新。" : "填写姓名并新增；数据源配置完成后可维护组内名单并绑定飞书账号。"}</span></div>}
   </section>;
 }
 
@@ -246,6 +359,8 @@ export function ModulesPanel() {
   const [personName, setPersonName] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
   const [people, setPeople] = useState<TeamPerson[]>([]);
+  const [versions, setVersions] = useState<DictionaryVersion[]>([]);
+  const [versionsError, setVersionsError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -259,12 +374,19 @@ export function ModulesPanel() {
     setEditing(item.name); setEditName(item.name); setEditPerson(item.personName ?? "");
   };
 
+  // 词典版本历史属于模块维护本身：不再要求用户去“规则”页找同一份数据。
+  const loadVersions = useCallback(async () => {
+    try { setVersions(await listDictionaryVersions()); setVersionsError(null); }
+    catch (cause) { setVersions([]); setVersionsError(errorText(cause)); }
+  }, []);
+
   const load = useCallback(async () => {
     try {
       const [directory, roster] = await Promise.all([getFunctionModules(), listTeamPeople()]);
       setVersion(directory.version); setItems(directory.items); setPeople(roster); setLoadError(null);
     } catch (cause) { setLoadError(errorText(cause)); }
-  }, []);
+    await loadVersions();
+  }, [loadVersions]);
   useEffect(() => { void load(); }, [load]);
 
   const save = async (next: FunctionModuleEntry[]) => {
@@ -273,6 +395,7 @@ export function ModulesPanel() {
       const result = await saveFunctionModules(version, next);
       setVersion(result.version); setItems(result.items); setEditing(null); setEditName(""); setEditPerson("");
       setNotice(`已发布模块字典 v${result.version}，后续 AI 分析将使用新版本。`);
+      await loadVersions();
     } catch (cause) {
       setLoadError(errorText(cause));
       if (cause instanceof ApiError && cause.status === 409) void load();
@@ -308,6 +431,10 @@ export function ModulesPanel() {
           <td>{item.personName ?? "未分配"}</td>
           <td><HeroButton className="button button-secondary button-small" onPress={() => beginEdit(item)} isDisabled={busy}>编辑</HeroButton> <DeleteConfirmation disabled={busy || items.length === 1} description={`删除功能模块“${item.name}”？`} onConfirm={() => void save(items.filter((candidate) => candidate.name !== item.name))} /></td>
         </tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadError ? "模块字典读取失败" : "暂无功能模块"}</strong><span>{loadError ? "检查 API 连接后刷新。" : "新增模块后，AI 分析会使用最新的已发布字典。"}</span></div>}
+    <div className="subsection">
+      <div className="panel-heading"><div><h3>词典版本历史</h3><p>每次保存生成一个新版本；仅最新发布版供 AI 分析使用。</p></div></div>
+      {versionsError ? <div className="table-empty"><strong>版本历史读取失败</strong><span>{versionsError}</span></div> : versions.length ? <div className="table-scroll"><table><thead><tr><th>版本</th><th>状态</th><th>模块</th><th>创建时间</th><th>发布时间</th></tr></thead><tbody>{versions.map((d) => <tr key={d.version}><td className="mono-cell">v{d.version}</td><td><PublishStatusChip status={d.status} /></td><td>{d.entries.map((entry) => typeof entry === "string" ? entry : `${entry.name}（${entry.personName ?? "未分配"}）`).join("、")}</td><td>{timeLabel(d.createdAt)}</td><td>{d.publishedAt ? timeLabel(d.publishedAt) : "—"}</td></tr>)}</tbody></table></div> : <div className="table-empty"><strong>还没有词典版本</strong><span>保存一次模块字典后会生成首个已发布版本。</span></div>}
+    </div>
   </section>;
 }
 
@@ -1124,6 +1251,36 @@ export class PanelErrorBoundary extends Component<{ children: ReactNode }, Error
   }
 }
 
+// ---------- 菜单收敛：团队管理 / 同步记录（同一入口下的页签，不做重复菜单） ----------
+
+function CompositeTabs({ label, tabs, active, onSelect }: { label: string; tabs: { id: string; label: string }[]; active: string; onSelect: (id: string) => void }) {
+  return <div className="composite-tabs" role="tablist" aria-label={label}>
+    {tabs.map((tab) => <button key={tab.id} type="button" role="tab" id={`${label}-${tab.id}`} aria-selected={active === tab.id} aria-controls={`${label}-${tab.id}-panel`} className={`composite-tab ${active === tab.id ? "is-active" : ""}`} onClick={() => onSelect(tab.id)}>{tab.label}</button>)}
+  </div>;
+}
+
+export function TeamPanel({ initialTab, onRefresh }: { initialTab?: WorkbenchTab | null; onRefresh: () => void }) {
+  const [tab, setTab] = useState<"people" | "mappings">(initialTab === "mappings" ? "mappings" : "people");
+  useEffect(() => { if (initialTab === "people" || initialTab === "mappings") setTab(initialTab); }, [initialTab]);
+  return <div className="composite-page">
+    <CompositeTabs label="团队管理" tabs={[{ id: "people", label: "人员" }, { id: "mappings", label: "负责人映射" }]} active={tab} onSelect={(id) => setTab(id as "people" | "mappings")} />
+    <div role="tabpanel" id={`团队管理-${tab}-panel`} aria-labelledby={`团队管理-${tab}`}>
+      {tab === "people" ? <PeoplePanel /> : <MappingsPanel onRefresh={onRefresh} />}
+    </div>
+  </div>;
+}
+
+export function SyncRecordsPanel({ initialTab, onRefresh }: { initialTab?: WorkbenchTab | null; onRefresh: () => void }) {
+  const [tab, setTab] = useState<"batches" | "audit">(initialTab === "audit" ? "audit" : "batches");
+  useEffect(() => { if (initialTab === "batches" || initialTab === "audit") setTab(initialTab); }, [initialTab]);
+  return <div className="composite-page">
+    <CompositeTabs label="同步记录" tabs={[{ id: "batches", label: "同步批次" }, { id: "audit", label: "审计日志" }]} active={tab} onSelect={(id) => setTab(id as "batches" | "audit")} />
+    <div role="tabpanel" id={`同步记录-${tab}-panel`} aria-labelledby={`同步记录-${tab}`}>
+      {tab === "batches" ? <BatchesPanel onRefresh={onRefresh} /> : <AuditPanel />}
+    </div>
+  </div>;
+}
+
 export function GuidePanel() {
   const stages = [
     { name: "拉取", from: "Teambition", desc: "从 TB 项目拉取需求原文。只读，系统从不回写 TB。", who: "系统自动" },
@@ -1137,7 +1294,7 @@ export function GuidePanel() {
       name: "同步状态（拉取）",
       values: "已同步 · 待同步 · 同步中 · 同步失败",
       when: "定时同步或手动触发时，从 Teambition 拉取需求原文。原文没变就不会产生新版本。",
-      stuck: "失败多半是 TB 凭据或网络问题，检查「数据源配置」后重试同步。",
+      stuck: "失败多半是 TB 凭据或网络问题，检查「数据源与计划」后重试同步。",
     },
     {
       name: "AI 分析状态",
@@ -1213,7 +1370,7 @@ export function GuidePanel() {
         <li><strong>然后看「推送失败」。</strong>多数是 Base 字段问题。详情页点「重试 Base 推送」；版本不一致时系统会先重新同步。</li>
         <li><strong>怀疑 AI 结论时</strong>，在详情页展开「查看依据与历史」，核对原文证据和推断过程。AI 推断会明确标注。</li>
       </ol>
-      <p className="guide-note">每周一上午系统会自动同步一次（可在「数据源配置」调整）。平时不需要手动触发。</p>
+      <p className="guide-note">每周一上午系统会自动同步一次（可在「数据源与计划」调整）。平时不需要手动触发。</p>
     </div>
 
     <div className="guide-section">
@@ -1235,7 +1392,7 @@ export function GuidePanel() {
         <dt>需求改了但 Base 没变？</dt>
         <dd>推送是排队执行的，通常几十秒内完成。若长期不动，去需求池看它的推送状态和最近失败原因。</dd>
         <dt>负责人是空的怎么办？</dt>
-        <dd>说明这个 TB 执行人还没对应飞书账号。在「负责人映射」里补一条，或在需求详情页直接分配。空负责人的需求本身仍会推送到 Base，不阻塞。</dd>
+        <dd>说明这个 TB 执行人还没对应飞书账号。在「团队管理 → 负责人映射」里补一条，或在需求详情页直接分配。空负责人的需求本身仍会推送到 Base，不阻塞。</dd>
         <dt>通知没收到？</dt>
         <dd>先确认这条需求是否发生过「分配负责人 / 内容实质变更 / AI 重试成功」之一——首次推送和改错别字都不会发。再确认 Base 里的「系统通知收件人」是否有值。</dd>
         <dt>AI 分析失败了怎么办？</dt>

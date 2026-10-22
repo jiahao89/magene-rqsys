@@ -261,6 +261,11 @@ tbody tr:hover { background: var(--rq-surface-row-hover); }
 .feishu-user-option small, .feishu-user-hint { color: var(--rq-muted); font-size: var(--rq-font-caption); }
 .feishu-user-option code { color: var(--rq-muted); font-size: var(--rq-font-caption); }
 .feishu-user-error { color: var(--rq-danger); font-size: var(--rq-font-caption); }
+/* 人员页「绑定飞书账号」：搜索 + 候选 + 保存，放在表格的飞书账号列内。 */
+.feishu-account-binder { display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 260px; }
+.feishu-account-actions { display: flex; gap: 6px; }
+.person-binding { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.person-binding .feishu-user-hint { flex-basis: 100%; }
 .mapping-editor { display: flex; align-items: flex-start; gap: 6px; min-width: 300px; }
 @media (max-width: 760px) { .mapping-editor { flex-direction: column; min-width: 240px; } }
 
@@ -1112,3 +1117,24 @@ html, body, #root, .app-shell { max-width: 100%; overflow-x: hidden; }
 .rules-module-count { white-space: nowrap; }
 .rules-module-detail { display: none; }
 .rules-module-detail[open] { display: block; }
+
+/* 菜单收敛：合并页签（团队管理 / 同步记录） */
+.composite-tabs { display: flex; flex-wrap: wrap; gap: 4px; width: fit-content; margin: 0 0 16px; padding: 4px; border: 1px solid var(--rq-border); border-radius: var(--rq-radius-md); background: var(--rq-surface-subtle); }
+.composite-tab { padding: 7px 14px; border: 0; border-radius: var(--rq-radius-sm); background: transparent; color: var(--rq-text-muted); font: inherit; font-size: var(--rq-font-caption); font-weight: 600; cursor: pointer; }
+.composite-tab:hover { color: var(--rq-text-strong); background: var(--rq-surface); }
+.composite-tab.is-active { color: var(--rq-accent-text); background: var(--rq-surface); box-shadow: 0 1px 2px rgba(16, 24, 40, .08); }
+.composite-tab:focus-visible { outline: 2px solid var(--rq-accent-text); outline-offset: 2px; }
+
+/* 低频操作不占主操作位：高级操作下拉、高级设置折叠区 */
+.advanced-actions { position: relative; }
+.advanced-actions > summary { list-style: none; cursor: pointer; }
+.advanced-actions > summary::-webkit-details-marker { display: none; }
+.advanced-actions-menu { position: absolute; z-index: 20; top: calc(100% + 6px); right: 0; display: grid; gap: 4px; min-width: 168px; padding: 6px; border: 1px solid var(--rq-border); border-radius: var(--rq-radius-md); background: var(--rq-surface); box-shadow: 0 10px 30px rgba(16, 24, 40, .14); }
+.advanced-settings { margin: 0 0 14px; border: 1px solid var(--rq-border); border-radius: var(--rq-radius-md); background: var(--rq-surface); }
+.advanced-settings > summary { padding: 10px 14px; cursor: pointer; color: var(--rq-text-strong); font-size: var(--rq-font-caption); font-weight: 600; }
+.advanced-settings[open] > summary { border-bottom: 1px solid var(--rq-divider); }
+.advanced-settings-hint { margin: 10px 14px 0; color: var(--rq-text-muted); font-size: var(--rq-font-caption); }
+.advanced-settings > .rules-form { padding: 10px 14px; }
+.advanced-settings > .rules-form:last-child { padding-bottom: 14px; }
+.subsection { margin-top: 22px; padding-top: 6px; border-top: 1px solid var(--rq-divider); }
+.subsection h3 { margin: 0; font-size: var(--rq-font-body); }

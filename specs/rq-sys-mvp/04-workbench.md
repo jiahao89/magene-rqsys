@@ -22,13 +22,15 @@ Operators need one place to configure and run synchronization, see each pipeline
 | Dashboard | Show configured source, last/next sync, scheduler health, latest batch and counts for pull, AI, owner matching, push, and failures |
 | Source settings | Configure one dedicated project, weekly schedule, and connection self-check; show credentials as valid/invalid only |
 | Requirement pool | Filter by title, maintained TB executor/person, batch, time, pull/AI/owner/push state; show independent stage states |
-| Batch list/detail | Show actor, trigger, times, counts, item actions, errors, and eligible retry controls |
+| Sync records · batches | Show actor, trigger, times, counts, item actions, errors, and eligible retry controls |
 | Requirement detail | Show immutable source snapshot/version, latest AI suggestion/evidence, owner mapping, Base record link, and all pipeline states |
-| Owner mapping | Select Feishu user for unresolved/duplicate name; save reusable mapping and trigger push |
+| Team management · owner mapping | Select Feishu user for unresolved/duplicate name; save reusable mapping and trigger push (per-requirement assignment stays in the requirement pool) |
 | Function modules | CRUD module names and their responsible person; changes publish a new dictionary snapshot for future AI runs, without rewriting old analysis |
-| Personnel | CRUD the product-group people list; renaming or deleting a person updates/clears module ownership references |
+| Team management · personnel | CRUD the product-group people list and bind each person to one Feishu account (the mapping the owner picker reads); renaming carries the binding, deleting deactivates it, and a conflicting name shows an explicit state instead of guessing |
 | Priority rules | Manage calibrated priority rules; priority remains blank until a rule is published |
-| Audit | Search sync, analysis, mapping, push, retry, and configuration actions by actor/time/object |
+| Sync records · audit | Search sync, analysis, mapping, push, retry, and configuration actions by actor/time/object |
+
+Navigation is consolidated so the same capability is not reachable from duplicate menus: personnel and owner mapping live under Team management tabs, batches and audit under Sync records tabs, module dictionary history lives with Function modules, and source settings sit under Settings → Data source and plan. The guide has exactly one stable entry (topbar help); low-frequency source-only sync and synthetic acceptance actions stay behind an advanced disclosure, and the legacy `/home` prototype route is removed.
 
 PM processing fields and notification delivery are not displayed as if Web had read them. If a Base link is available, open the Base record for PM work.
 
@@ -51,7 +53,7 @@ The removed local UI prototype had Dashboard, Pool, Sources, Preview, Batches, B
 - GET /api/batches/{id}
 - POST /api/items/{id}/retry
 - GET /api/requirements/{id}
-- GET/POST /api/people; PUT/DELETE /api/people/{name}
+- GET/POST /api/people; PUT/DELETE /api/people/{name}; PUT/DELETE /api/people/{name}/feishu (bind/unbind the Feishu account used by the owner picker)
 - GET/PUT /api/modules
 - PUT /api/requirements/{id}/owner
 - POST /api/analysis/{id}/retry

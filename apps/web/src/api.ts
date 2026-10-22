@@ -44,7 +44,14 @@ export interface DictionaryVersion {
   publishedAt: string | null;
 }
 
-export interface TeamPerson { name: string }
+// 人员页的飞书绑定：未绑定时三个字段为 null；bindingConflict 表示同名映射指向多个账号。
+export interface TeamPerson {
+  name: string;
+  feishuUserId: string | null;
+  feishuIdType: "open_id" | "user_id" | "union_id" | null;
+  boundAt: string | null;
+  bindingConflict: boolean;
+}
 export interface FunctionModuleEntry { name: string; personName: string | null }
 export interface FunctionModuleDirectory { version: number; items: FunctionModuleEntry[] }
 
@@ -135,6 +142,12 @@ export async function listTeamPeople(fetcher: typeof fetch = fetch): Promise<Tea
 export function addTeamPerson(name: string, fetcher: typeof fetch = fetch) { return postJson<{ items: TeamPerson[] }>("/api/people", { name }, fetcher); }
 export function renameTeamPerson(oldName: string, name: string, fetcher: typeof fetch = fetch) { return putJson<{ items: TeamPerson[] }>(`/api/people/${encodeURIComponent(oldName)}`, { name }, fetcher); }
 export function deleteTeamPerson(name: string, fetcher: typeof fetch = fetch) { return deleteJson<{ items: TeamPerson[] }>(`/api/people/${encodeURIComponent(name)}`, fetcher); }
+export function bindTeamPersonFeishu(name: string, selection: FeishuUserSelection, fetcher: typeof fetch = fetch) {
+  return putJson<{ items: TeamPerson[] }>(`/api/people/${encodeURIComponent(name)}/feishu`, { feishuUserId: selection.feishuUserId, feishuIdType: selection.feishuIdType }, fetcher);
+}
+export function unbindTeamPersonFeishu(name: string, fetcher: typeof fetch = fetch) {
+  return deleteJson<{ items: TeamPerson[] }>(`/api/people/${encodeURIComponent(name)}/feishu`, fetcher);
+}
 export function getFunctionModules(fetcher: typeof fetch = fetch) { return requestJson<FunctionModuleDirectory>("/api/modules", fetcher); }
 export function saveFunctionModules(version: number, items: FunctionModuleEntry[], fetcher: typeof fetch = fetch) { return putJson<FunctionModuleDirectory>("/api/modules", { version, items }, fetcher); }
 

@@ -7,6 +7,7 @@ import type { AuditEventRecord, BasePushRunRecord, BatchState, AnalysisRunRecord
 import type { AnalysisState, OwnerState, PullState, PushState } from "../domain/workflow.js";
 import type { ResolvedSourceConfigUpdate } from "../contracts/source.js";
 import type { RequirementRecord } from "../domain/persistence.js";
+import type { TeamPersonBindingInput, TeamPersonRecord } from "../domain/team-directory.js";
 
 export type AuditEventInput = Omit<AuditEventRecord, "entityId">;
 
@@ -119,6 +120,7 @@ export interface AnalysisRunRepository {
 }
 
 // person_mappings（有歧义时 resolveActive 返回 null，不自动匹配）
+// upsertManual 在目标飞书账号已绑定其他人员时抛 PersonMappingConflict（HTTP 层 409）。
 export interface PersonMappingRepository {
   upsertManual(params: {
     sourceConfigId: string;
@@ -239,11 +241,16 @@ export interface ModuleDictionaryRepository {
 
 // 团队人员沿用单项目 source_configs.owner_names；模块责任人关系随词典版本快照保存。
 // 人员改名/删除与模块责任人更新由适配器在同一事务内完成。
+// 飞书账号绑定落 person_mappings（按规范化姓名匹配的活跃映射），与需求分配下拉共用同一份映射；
+// 同一姓名只保留一条活跃映射，避免自动匹配出现歧义。
 export interface TeamDirectoryRepository {
-  listPeople(): Promise<string[]>;
-  addPerson(name: string, auditEvent: AuditEventInput): Promise<string[]>;
-  renamePerson(from: string, to: string, auditEvent: AuditEventInput): Promise<string[]>;
-  deletePerson(name: string, auditEvent: AuditEventInput): Promise<string[]>;
+  listPeople(): Promise<TeamPersonRecord[]>;
+  addPerson(name: string, auditEvent: AuditEventInput): Promise<TeamPersonRecord[]>;
+  renamePerson(from: string, to: string, auditEvent: AuditEventInput): Promise<TeamPersonRecord[]>;
+  deletePerson(name: string, auditEvent: AuditEventInput): Promise<TeamPersonRecord[]>;
+  // 人员页的飞书账号绑定：幂等；同一飞书账号不能同时绑定两位人员。
+  bindPersonFeishu(name: string, binding: TeamPersonBindingInput, auditEvent: AuditEventInput): Promise<TeamPersonRecord[]>;
+  unbindPersonFeishu(name: string, auditEvent: AuditEventInput): Promise<TeamPersonRecord[]>;
   listModules(): Promise<{ version: number; items: FunctionModuleEntry[] }>;
   saveModules(expectedVersion: number, items: FunctionModuleEntry[], createdBy: string, now: string, auditEvent: AuditEventInput): Promise<{ version: number; items: FunctionModuleEntry[] }>;
 }

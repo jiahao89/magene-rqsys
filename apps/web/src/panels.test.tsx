@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { BatchesPanel, MappingsPanel, ModulesPanel, PeoplePanel, RequirementsPanel, SourcesPanel } from "./panels";
-import type { SourceConfig } from "./api";
+import type { SourceConfig, TeamPerson } from "./api";
 
 const fetchMock = vi.fn<typeof fetch>();
 beforeEach(() => {
@@ -624,6 +624,48 @@ describe("团队字典维护", () => {
     fireEvent.click(within(renamedRow).getByRole("button", { name: "删除" }));
     fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "确认删除" }));
     expect(await screen.findByText("人员已删除，相关模块已解除分配。")).toBeInTheDocument();
+  });
+
+  it("binds a roster person to a Feishu account and unbinds it from the people table", async () => {
+    let people: TeamPerson[] = [{ name: "贾浩", feishuUserId: null, feishuIdType: null, boundAt: null, bindingConflict: false }];
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/people") return jsonOk({ items: people });
+      if (path.startsWith("/api/feishu/users?")) return jsonOk({ items: [{ openId: "ou-jiahao", name: "贾浩", enName: "Jia Hao" }] });
+      if (path === "/api/people/%E8%B4%BE%E6%B5%A9/feishu" && init?.method === "PUT") {
+        people = [{ name: "贾浩", feishuUserId: "ou-jiahao", feishuIdType: "open_id", boundAt: "2026-10-22T00:00:00.000Z", bindingConflict: false }];
+        return jsonOk({ items: people });
+      }
+      if (path === "/api/people/%E8%B4%BE%E6%B5%A9/feishu" && init?.method === "DELETE") {
+        people = [{ name: "贾浩", feishuUserId: null, feishuIdType: null, boundAt: null, bindingConflict: false }];
+        return jsonOk({ items: people });
+      }
+      throw new Error(`unexpected fetch ${path} ${init?.method ?? "GET"}`);
+    });
+
+    render(<PeoplePanel />);
+    const row = (await screen.findByText("贾浩")).closest("tr");
+    if (!row) throw new Error("Person row was not rendered");
+    expect(within(row).getByText("未绑定")).toBeInTheDocument();
+    fireEvent.click(within(row).getByRole("button", { name: "绑定飞书账号" }));
+
+    // 打开编辑器即按姓名搜索一次，候选来自 /api/feishu/users
+    const candidate = await screen.findByRole("option", { name: /贾浩/ });
+    fireEvent.click(candidate);
+    fireEvent.click(screen.getByRole("button", { name: "保存绑定" }));
+    expect(await screen.findByText("已绑定「贾浩」的飞书账号。")).toBeInTheDocument();
+
+    const boundRow = screen.getByText("贾浩").closest("tr");
+    if (!boundRow) throw new Error("Bound person row was not rendered");
+    expect(within(boundRow).getByText("已绑定")).toBeInTheDocument();
+    expect(within(boundRow).getByRole("button", { name: "重新绑定" })).toBeInTheDocument();
+
+    fireEvent.click(within(boundRow).getByRole("button", { name: "解除绑定" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "确认解除" }));
+    expect(await screen.findByText("已解除「贾浩」的飞书账号绑定。")).toBeInTheDocument();
+    const unboundRow = screen.getByText("贾浩").closest("tr");
+    if (!unboundRow) throw new Error("Unbound person row was not rendered");
+    expect(within(unboundRow).getByText("未绑定")).toBeInTheDocument();
   });
 
   it("supports creating, editing and deleting a module with a listed owner", async () => {

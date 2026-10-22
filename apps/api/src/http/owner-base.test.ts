@@ -37,6 +37,18 @@ test("manual owner mapping persists mapping, marks manually mapped, enqueues pus
   assert.equal((h.audited() as { eventType: string }).eventType, "owner.manually_mapped");
 });
 
+test("manual owner mapping returns 409 when the Feishu account belongs to another person", async () => {
+  const h = deps();
+  h.dependencies.repositories!.people!.upsertManual = async () => {
+    throw Object.assign(new Error("该飞书账号已绑定到「刘媛媛」，请先解除那边的人员绑定。"), { name: "PersonMappingConflict" });
+  };
+  const response = await handleApiRequest(new Request("http://localhost/api/requirements/req-1/owner", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ feishuUserId: "ou-user", feishuIdType: "open_id" }) }), h.dependencies);
+  assert.equal(response.status, 409);
+  const body = await response.json() as { error: { code: string; message: string } };
+  assert.equal(body.error.code, "CONFLICT");
+  assert.match(body.error.message, /刘媛媛/);
+});
+
 test("manual mapping does not bypass pull state or push when requirement is missing", async () => {
   const h = deps();
   const bad = await handleApiRequest(new Request("http://localhost/api/requirements/req-1/owner", { method: "PUT", headers: { "content-type": "application/json" }, body: "{}" }), h.dependencies);

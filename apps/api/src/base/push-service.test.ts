@@ -251,6 +251,16 @@ test("first push notifies the owner when a person was assigned by hand", async (
   assert.equal(h.baseInput?.notification?.recipientUserId, "ou-owner");
 });
 
+test("first push stays silent when the owner comes from a name-based roster binding", async () => {
+  // 人员页「绑定飞书账号」按姓名唯一匹配生效（unique_name），不是逐条需求的人工分配。
+  // D-12：批量首推的自动匹配保持静默；否则给组内 8 个人绑定账号就会触发成批通知。
+  const req = requirement({ executorName: "Owner" });
+  const h = makeHarness({ req, mapping: mappingRecord({ teambitionUserId: null, matchMethod: "unique_name" }), pmLeaderUserId: PM_LEADER_USER_ID });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.equal(h.baseInput?.notification, undefined);
+});
+
 test("writes the stable web requirement deep link on every push, including a silent first push", async () => {
   const h = makeHarness({ webBaseUrl: "https://workbench.example/app" });
   const result = await h.service.pushRequirement("req-1", "push:req-1:v2");

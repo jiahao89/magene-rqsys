@@ -13,6 +13,12 @@ export const DictionaryCreateSchema = z.object({
 
 export const TeamPersonCreateSchema = z.object({ name: z.string().trim().min(1).max(100) });
 export const TeamPersonRenameSchema = TeamPersonCreateSchema;
+// PUT /api/people/{name}/feishu 请求体：已解析的飞书用户身份。
+// 服务端只保存关系（ID + ID 类型），不保存头像、手机号、邮箱等联系方式。
+export const TeamPersonFeishuBindSchema = z.object({
+  feishuUserId: z.string().trim().min(1).max(200),
+  feishuIdType: z.enum(["open_id", "user_id", "union_id"]),
+});
 export const TeamModuleEntrySchema = z.object({
   name: z.string().trim().min(1).max(160),
   personName: z.string().trim().min(1).max(100).nullable(),

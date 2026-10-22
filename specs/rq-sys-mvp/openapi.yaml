@@ -253,6 +253,8 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: The selected Feishu account is already bound to another person, so the name-scoped mapping cannot be saved without first resolving that binding
   /api/requirements/{id}/push:
     post:
       summary: Queue a Feishu Base push retry; the queue deduplicates by source and analysis version
@@ -420,10 +422,10 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
   /api/people:
     get:
-      summary: List product-group personnel
+      summary: List product-group personnel with their Feishu account bindings
       responses:
         '200':
-          description: Current personnel names
+          description: Current personnel names and their active Feishu account binding, if any
           content:
             application/json:
               schema: { $ref: '#/components/schemas/TeamPersonList' }
@@ -448,7 +450,7 @@ paths:
         '409': { description: Duplicate person or source is not configured }
   /api/people/{name}:
     put:
-      summary: Rename a person and update module ownership references
+      summary: Rename a person, update module ownership references, and carry the Feishu binding over
       parameters:
         - name: name
           in: path
@@ -472,7 +474,7 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '409': { description: Name conflict or stale person }
     delete:
-      summary: Remove a person and clear module ownership references
+      summary: Remove a person, clear module ownership references, and deactivate the Feishu binding
       parameters:
         - name: name
           in: path
@@ -485,6 +487,52 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/TeamPersonList' }
         '409': { description: Person no longer exists }
+  /api/people/{name}/feishu:
+    put:
+      summary: Bind a roster person to a Feishu identity
+      description: Maintains the active name-scoped person mapping used by the requirement owner picker and by unique-name auto-matching. A new binding is stored as a name-based mapping (not a per-requirement hand assignment, so a bulk first push stays silent); rebinding reuses the existing row. One Feishu account may belong to one person only. This endpoint never writes to Teambition or Feishu.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                feishuUserId: { type: string, minLength: 1, maxLength: 200 }
+                feishuIdType: { type: string, enum: [open_id, user_id, union_id] }
+              required: [feishuUserId, feishuIdType]
+              additionalProperties: false
+      responses:
+        '200':
+          description: Binding saved (idempotent when the same identity is already bound)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TeamPersonList' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: Person does not exist, source is not configured, the Feishu account is already bound to another person, or the name has active mappings pointing to different accounts
+    delete:
+      summary: Unbind a roster person from their Feishu identity
+      description: Deactivates every active mapping whose normalized display name matches this person, including mappings that also carry a TB user ID. Later push attempts for this person find no owner identity and stop in owner mapping; Base rows already pushed are not modified.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Binding removed (idempotent when the person had no active binding)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TeamPersonList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { description: Person does not exist or source is not configured }
   /api/modules:
     get:
       summary: Get the active function-module dictionary
@@ -786,7 +834,13 @@ components:
       type: object
       properties:
         name: { type: string, minLength: 1, maxLength: 100 }
-      required: [name]
+        # 绑定关系来自 person_mappings 的活跃行；unbound 时三个绑定字段均为 null。
+        feishuUserId: { type: [string, 'null'], maxLength: 200 }
+        feishuIdType: { type: [string, 'null'], enum: [open_id, user_id, union_id, null] }
+        boundAt: { type: [string, 'null'], format: date-time }
+        # 同名映射指向多个不同飞书账号时为 true：需要人工核对，不显示为已绑定。
+        bindingConflict: { type: boolean }
+      required: [name, feishuUserId, feishuIdType, boundAt, bindingConflict]
       additionalProperties: false
     TeamPersonList:
       type: object

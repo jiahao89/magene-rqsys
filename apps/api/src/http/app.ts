@@ -4,10 +4,11 @@ import { SourceProjectResolutionError, type FeishuUserDirectory, type FeishuUser
 import { normalizeScheduleTime } from "../domain/workflow.js";
 import type { AuditEventRepository, AnalysisRunRepository, PipelineJobRepository, SourceConfigRepository, SyncBatchRepository, SyncItemRepository, PersonMappingRepository, RequirementQueryRepository, BasePushRunRepository, ModuleDictionaryRepository, PriorityRuleRepository, SourceSnapshotRepository, TeamDirectoryRepository } from "../application/repositories.js";
 import type { PersonMappingRecord, AnalysisRunRecord, ModuleDictionaryVersionRecord, PriorityRuleVersionRecord, RequirementRecord, SourceConfigRecord, SyncBatchRecord } from "../domain/persistence.js";
+import type { TeamPersonRecord } from "../domain/team-directory.js";
 import { AuditListQuerySchema, BatchListQuerySchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
 import { createHash, randomUUID } from "node:crypto";
 import { SourceConfigUpdateSchema, type ResolvedSourceConfigUpdate } from "../contracts/source.js";
-import { DictionaryCreateSchema, PriorityRuleCreateSchema, TeamModulesSaveSchema, TeamPersonCreateSchema, TeamPersonRenameSchema } from "../contracts/rules.js";
+import { DictionaryCreateSchema, PriorityRuleCreateSchema, TeamModulesSaveSchema, TeamPersonCreateSchema, TeamPersonFeishuBindSchema, TeamPersonRenameSchema } from "../contracts/rules.js";
 import { DEFAULT_TEAM_MEMBERS } from "../domain/team-directory.js";
 import { isDatabaseReady } from "../adapters/postgres/health.js";
 import { jsonError } from "./errors.js";
@@ -79,6 +80,10 @@ function analysisVersionDto(r: AnalysisRunRecord) {
 function mappingDto(m: PersonMappingRecord) {
   return { id: m.id, teambitionUserId: m.teambitionUserId, teambitionDisplayName: m.teambitionDisplayName, feishuUserId: m.feishuUserId, feishuIdType: m.feishuIdType, matchMethod: m.matchMethod, createdBy: m.createdBy, updatedAt: m.updatedAt };
 }
+// 人员页展示：名单 + 飞书账号绑定关系；bindingConflict 表示同名映射指向多个账号，需人工核对。
+function personDto(person: TeamPersonRecord) {
+  return { name: person.name, feishuUserId: person.binding?.feishuUserId ?? null, feishuIdType: person.binding?.feishuIdType ?? null, boundAt: person.binding?.boundAt ?? null, bindingConflict: person.bindingConflict };
+}
 function requirementSearchDto(req: RequirementRecord) { return requirementDto(req); }
 function dictionaryDto(d: ModuleDictionaryVersionRecord) { return { version: d.version, status: d.status, entries: d.entries, createdBy: d.createdBy, createdAt: d.createdAt, publishedAt: d.publishedAt }; }
 function priorityRuleDto(r: PriorityRuleVersionRecord) { return { id: r.id, version: r.version, status: r.status, rules: r.rules, validationEvidence: r.validationEvidence, createdBy: r.createdBy, createdAt: r.createdAt, publishedAt: r.publishedAt }; }
@@ -94,6 +99,15 @@ async function appendAudit(repositories: ApiRepositories, event: Parameters<ApiR
   catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
 }
 async function readJson(request: Request): Promise<unknown> { try { return await request.json(); } catch { return undefined; } }
+// 人员/模块目录的冲突语义统一：业务冲突 409，其余按依赖不可用处理（不伪装成功）。
+function directoryError(cause: unknown): Response {
+  return (cause as Error)?.name === "TeamDirectoryConflict" ? jsonError("CONFLICT", (cause as Error).message) : jsonError("DEPENDENCY_UNAVAILABLE");
+}
+// 人工映射冲突（账号已绑定其他人员）返回 409；其余保持依赖不可用，不伪装成功。
+async function mappingConflictResponse(action: () => Promise<PersonMappingRecord>): Promise<PersonMappingRecord | Response> {
+  try { return await action(); }
+  catch (cause) { return (cause as Error)?.name === "PersonMappingConflict" ? jsonError("CONFLICT", (cause as Error).message) : jsonError("DEPENDENCY_UNAVAILABLE"); }
+}
 
 async function resolveSourceConfig(
   update: ReturnType<typeof SourceConfigUpdateSchema.parse>,
@@ -240,7 +254,7 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
   if (method === "GET" && url.pathname === "/api/people") {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.directory) return jsonError("DEPENDENCY_UNAVAILABLE");
-    return json({ items: (await repositories.directory.listPeople()).map((name) => ({ name })) });
+    return json({ items: (await repositories.directory.listPeople()).map(personDto) });
   }
   if (method === "POST" && url.pathname === "/api/people") {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
@@ -249,8 +263,30 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
     try {
       const items = await repositories.directory.addPerson(body.data.name, { id: randomUUID(), actorId: auth.actor.id, eventType: "team_person.created", entityType: "team_person", result: "succeeded", safeDetails: {}, occurredAt: now });
-      return json({ items: items.map((name) => ({ name })) }, 201);
-    } catch (cause) { return (cause as Error)?.name === "TeamDirectoryConflict" ? jsonError("CONFLICT", (cause as Error).message) : jsonError("DEPENDENCY_UNAVAILABLE"); }
+      return json({ items: items.map(personDto) }, 201);
+    } catch (cause) { return directoryError(cause); }
+  }
+  const personFeishuMatch = url.pathname.match(/^\/api\/people\/([^/]+)\/feishu$/);
+  if (method === "PUT" && personFeishuMatch) {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.directory) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const body = TeamPersonFeishuBindSchema.safeParse(await readJson(request)); if (!body.success) return jsonError("VALIDATION_FAILED");
+    const name = decodeURIComponent(personFeishuMatch[1]!);
+    const now = (dependencies.now ?? (() => new Date()))().toISOString();
+    try {
+      const items = await repositories.directory.bindPersonFeishu(name, body.data, { id: randomUUID(), actorId: auth.actor.id, eventType: "team_person.feishu_bound", entityType: "team_person", result: "succeeded", safeDetails: {}, occurredAt: now });
+      return json({ items: items.map(personDto) });
+    } catch (cause) { return directoryError(cause); }
+  }
+  if (method === "DELETE" && personFeishuMatch) {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.directory) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const name = decodeURIComponent(personFeishuMatch[1]!);
+    const now = (dependencies.now ?? (() => new Date()))().toISOString();
+    try {
+      const items = await repositories.directory.unbindPersonFeishu(name, { id: randomUUID(), actorId: auth.actor.id, eventType: "team_person.feishu_unbound", entityType: "team_person", result: "succeeded", safeDetails: {}, occurredAt: now });
+      return json({ items: items.map(personDto) });
+    } catch (cause) { return directoryError(cause); }
   }
   const personMatch = url.pathname.match(/^\/api\/people\/([^/]+)$/);
   if (method === "PUT" && personMatch) {
@@ -261,8 +297,8 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
     try {
       const items = await repositories.directory.renamePerson(oldName, body.data.name, { id: randomUUID(), actorId: auth.actor.id, eventType: "team_person.renamed", entityType: "team_person", result: "succeeded", safeDetails: {}, occurredAt: now });
-      return json({ items: items.map((name) => ({ name })) });
-    } catch (cause) { return (cause as Error)?.name === "TeamDirectoryConflict" ? jsonError("CONFLICT", (cause as Error).message) : jsonError("DEPENDENCY_UNAVAILABLE"); }
+      return json({ items: items.map(personDto) });
+    } catch (cause) { return directoryError(cause); }
   }
   if (method === "DELETE" && personMatch) {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
@@ -271,8 +307,8 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
     try {
       const items = await repositories.directory.deletePerson(name, { id: randomUUID(), actorId: auth.actor.id, eventType: "team_person.deleted", entityType: "team_person", result: "succeeded", safeDetails: {}, occurredAt: now });
-      return json({ items: items.map((person) => ({ name: person })) });
-    } catch (cause) { return (cause as Error)?.name === "TeamDirectoryConflict" ? jsonError("CONFLICT", (cause as Error).message) : jsonError("DEPENDENCY_UNAVAILABLE"); }
+      return json({ items: items.map(personDto) });
+    } catch (cause) { return directoryError(cause); }
   }
   if (method === "GET" && url.pathname === "/api/modules") {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
@@ -286,7 +322,7 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
     try {
       return json(await repositories.directory.saveModules(body.data.version, body.data.items.map((item) => ({ name: item.name, personName: item.personName ?? null })), auth.actor.id, now, { id: randomUUID(), actorId: auth.actor.id, eventType: "module_dictionary.updated", entityType: "module_dictionary", result: "succeeded", safeDetails: { entryCount: body.data.items.length }, occurredAt: now }));
-    } catch (cause) { return (cause as Error)?.name === "TeamDirectoryConflict" ? jsonError("CONFLICT", (cause as Error).message) : jsonError("DEPENDENCY_UNAVAILABLE"); }
+    } catch (cause) { return directoryError(cause); }
   }
   const dictionaryPublishMatch = url.pathname.match(/^\/api\/rules\/dictionary\/(\d+)\/publish$/);
   if (method === "POST" && dictionaryPublishMatch) {
@@ -475,7 +511,8 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     if (req.pipeline.pull !== "synced") return jsonError("CONFLICT");
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
     // 工单 14：人工映射持久化成功后再入队推送——任一步失败不留虚假成功
-    const mapping = await repositories.people.upsertManual({ sourceConfigId:req.sourceConfigId, teambitionUserId:body.data.tbUserId ?? req.executorUserId, teambitionDisplayName:body.data.tbDisplayName ?? req.executorName, feishuUserId:body.data.feishuUserId, feishuIdType:body.data.feishuIdType, createdBy:auth.actor.id, now });
+    const mapping = await mappingConflictResponse(() => repositories.people!.upsertManual({ sourceConfigId:req.sourceConfigId, teambitionUserId:body.data.tbUserId ?? req.executorUserId, teambitionDisplayName:body.data.tbDisplayName ?? req.executorName, feishuUserId:body.data.feishuUserId, feishuIdType:body.data.feishuIdType, createdBy:auth.actor.id, now }));
+    if (mapping instanceof Response) return mapping;
     await repositories.requirements.setOwner(req.id,mapping.feishuUserId,"manually_mapped");
     const latestAnalysis = await repositories.analyses?.latest(req.id) ?? null;
     const analysisVersion = latestAnalysis?.analysisVersion ?? 0;

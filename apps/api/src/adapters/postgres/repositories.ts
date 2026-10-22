@@ -10,7 +10,8 @@ import type {
 import { normalizeScheduleTime, type AnalysisState, type OwnerState, type PullState, type PushState } from "../../domain/workflow.js";
 import { assertTransition } from "../../domain/transitions.js";
 import type { ResolvedSourceConfigUpdate } from "../../contracts/source.js";
-import { DEFAULT_FUNCTION_MODULES, DEFAULT_TEAM_MEMBERS } from "../../domain/team-directory.js";
+import { DEFAULT_FUNCTION_MODULES, DEFAULT_TEAM_MEMBERS, mergeTeamBindings, type TeamMappingRow, type TeamPersonBindingInput, type TeamPersonRecord } from "../../domain/team-directory.js";
+import { normalizeOwnerName } from "../../owner/mapping.js";
 import type {
   AnalysisRunRepository, AuditEventInput, AuditEventRepository, BasePushRunRepository,
   ModuleDictionaryRepository, PersonMappingRepository, PmSnapshotRepository,
@@ -153,7 +154,48 @@ async withRequirementLock<T>(requirementId:string,fn:()=>Promise<T>):Promise<T>{
 export { PostgresAnalysisRunRepository };
 import { PostgresAnalysisRunRepository } from "./analysis-run-repository.js";
 
-export class PostgresPersonMappingRepository implements PersonMappingRepository{constructor(private readonly pool:Pool){}async upsertManual(p:{sourceConfigId:string;teambitionUserId:string|null;teambitionDisplayName:string|null;feishuUserId:string;feishuIdType:"open_id"|"user_id"|"union_id";createdBy:string|null;now:string}){const normalized=p.teambitionDisplayName?.normalize("NFKC").trim().replace(/\s+/gu," ").toLocaleLowerCase()??null;const c=await this.pool.connect();try{await c.query("BEGIN");const existing=await c.query("SELECT * FROM person_mappings WHERE source_config_id=$1 AND active AND match_method='manual' AND teambition_user_id IS NOT DISTINCT FROM $2 AND feishu_user_id=$3 AND feishu_id_type=$4 LIMIT 1 FOR UPDATE",[p.sourceConfigId,p.teambitionUserId,p.feishuUserId,p.feishuIdType]);if(existing.rows[0]){await c.query("COMMIT");return mapping(existing.rows[0]);}await c.query("UPDATE person_mappings SET active=false,updated_at=$2 WHERE source_config_id=$1 AND active AND match_method='manual' AND teambition_user_id IS NOT DISTINCT FROM $3",[p.sourceConfigId,p.now,p.teambitionUserId]);const{rows}=await c.query("INSERT INTO person_mappings(id,source_config_id,teambition_user_id,teambition_display_name,normalized_name,feishu_user_id,feishu_id_type,match_method,created_by,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,'manual',$8,$9,$9) RETURNING *",[randomUUID(),p.sourceConfigId,p.teambitionUserId,p.teambitionDisplayName,normalized,p.feishuUserId,p.feishuIdType,p.createdBy,p.now]);await c.query("COMMIT");return mapping(rows[0]);}catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}}async resolveActive(s:string,b:{tbUserId?:string;normalizedName?:string}){const sql=b.tbUserId?"SELECT * FROM person_mappings WHERE source_config_id=$1 AND active AND teambition_user_id=$2":"SELECT * FROM person_mappings WHERE source_config_id=$1 AND active AND normalized_name=$2";const{rows}=await this.pool.query(sql,[s,b.tbUserId??b.normalizedName]);return rows.length===1?mapping(rows[0]):null;}async listActive(sourceConfigId:string){const{rows}=await this.pool.query("SELECT * FROM person_mappings WHERE source_config_id=$1 AND active ORDER BY updated_at DESC,id",[sourceConfigId]);return rows.map(mapping);}}
+/** 人工映射冲突：目标飞书账号已绑定到另一位人员。HTTP 层据此返回 409，不伪装成依赖故障。 */
+export class PersonMappingConflict extends Error {
+  constructor(message = "The Feishu account is already mapped to another person.") { super(message); this.name = "PersonMappingConflict"; }
+}
+export class PostgresPersonMappingRepository implements PersonMappingRepository {
+  constructor(private readonly pool: Pool) {}
+  async upsertManual(p: { sourceConfigId: string; teambitionUserId: string | null; teambitionDisplayName: string | null; feishuUserId: string; feishuIdType: "open_id" | "user_id" | "union_id"; createdBy: string | null; now: string }) {
+    const normalized = p.teambitionDisplayName?.normalize("NFKC").trim().replace(/\s+/gu, " ").toLocaleLowerCase() ?? null;
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const existing = await client.query("SELECT * FROM person_mappings WHERE source_config_id=$1 AND active AND match_method='manual' AND teambition_user_id IS NOT DISTINCT FROM $2 AND feishu_user_id=$3 AND feishu_id_type=$4 LIMIT 1 FOR UPDATE", [p.sourceConfigId, p.teambitionUserId, p.feishuUserId, p.feishuIdType]);
+      if (existing.rows[0]) { await client.query("COMMIT"); return mapping(existing.rows[0]); }
+      // 人员页绑定与需求详情的人工映射共用 person_mappings：同一飞书账号不能同时指向两位人员，
+      // 否则按姓名自动匹配会出现两个人抢一个账号。冲突交给 HTTP 层返回 409。
+      if (p.teambitionUserId === null) {
+        const taken = await client.query("SELECT teambition_display_name FROM person_mappings WHERE source_config_id=$1 AND active AND feishu_user_id=$2 AND feishu_id_type=$3 AND normalized_name IS DISTINCT FROM $4 LIMIT 1", [p.sourceConfigId, p.feishuUserId, p.feishuIdType, normalized]);
+        if (taken.rows[0]) throw new PersonMappingConflict(`该飞书账号已绑定到「${String(taken.rows[0].teambition_display_name ?? "其他人员")}」，请先解除那边的人员绑定。`);
+      }
+      // 人员维度（无 TB user ID）按规范化姓名去重，且不限制 match_method：
+      // 人员页绑定是 unique_name、需求详情人工映射是 manual，两者同时活跃会让按姓名解析变成歧义。
+      await client.query("UPDATE person_mappings SET active=false,updated_at=$2 WHERE source_config_id=$1 AND active AND teambition_user_id IS NOT DISTINCT FROM $3 AND ($3 IS NOT NULL OR normalized_name IS NOT DISTINCT FROM $4)", [p.sourceConfigId, p.now, p.teambitionUserId, normalized]);
+      const { rows } = await client.query("INSERT INTO person_mappings(id,source_config_id,teambition_user_id,teambition_display_name,normalized_name,feishu_user_id,feishu_id_type,match_method,created_by,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,'manual',$8,$9,$9) RETURNING *", [randomUUID(), p.sourceConfigId, p.teambitionUserId, p.teambitionDisplayName, normalized, p.feishuUserId, p.feishuIdType, p.createdBy, p.now]);
+      await client.query("COMMIT");
+      return mapping(rows[0]);
+    } catch (error) { await client.query("ROLLBACK"); throw error; }
+    finally { client.release(); }
+  }
+  async resolveActive(s: string, b: { tbUserId?: string; normalizedName?: string }) {
+    // 同名多条不同身份是歧义；同名同身份（人员页绑定 + 需求详情映射指向同一账号）不算歧义。
+    const sql = b.tbUserId
+      ? "SELECT * FROM person_mappings WHERE source_config_id=$1 AND active AND teambition_user_id=$2 ORDER BY updated_at DESC,id"
+      : "SELECT * FROM person_mappings WHERE source_config_id=$1 AND active AND normalized_name=$2 ORDER BY updated_at DESC,id";
+    const { rows } = await this.pool.query(sql, [s, b.tbUserId ?? b.normalizedName]);
+    if (rows.length === 0) return null;
+    return new Set(rows.map((row) => `${row.feishu_user_id}|${row.feishu_id_type}`)).size === 1 ? mapping(rows[0]) : null;
+  }
+  async listActive(sourceConfigId: string) {
+    const { rows } = await this.pool.query("SELECT * FROM person_mappings WHERE source_config_id=$1 AND active ORDER BY updated_at DESC,id", [sourceConfigId]);
+    return rows.map(mapping);
+  }
+}
 export class PostgresPmSnapshotRepository implements PmSnapshotRepository{constructor(private readonly pool:Pool){}async append(p:{requirementId:string;sourceVersion:number;baseRecordId:string;pmValues:Record<string,unknown>;capturedAt:string}){const{rows}=await this.pool.query("INSERT INTO pm_snapshots(id,requirement_id,source_version,base_record_id,pm_values,captured_at) VALUES($1,$2,$3,$4,$5,$6) RETURNING *",[randomUUID(),p.requirementId,p.sourceVersion,p.baseRecordId,p.pmValues,p.capturedAt]);return pmSnapshot(rows[0]);}async latest(id:string){const{rows}=await this.pool.query("SELECT * FROM pm_snapshots WHERE requirement_id=$1 ORDER BY source_version DESC,captured_at DESC LIMIT 1",[id]);return rows[0]?pmSnapshot(rows[0]):null;}}
 export class PostgresBasePushRunRepository implements BasePushRunRepository{constructor(private readonly pool:Pool){}async append(p:{requirementId:string;sourceVersion:number;pushVersion:number;idempotencyKey:string;startedAt:string}){const{rows}=await this.pool.query("INSERT INTO base_push_runs(id,requirement_id,source_version,push_version,status,idempotency_key,started_at) VALUES($1,$2,$3,$4,'running',$5,$6) ON CONFLICT(idempotency_key) DO NOTHING RETURNING *",[randomUUID(),p.requirementId,p.sourceVersion,p.pushVersion,p.idempotencyKey,p.startedAt]);if(rows[0])return basePush(rows[0]);const q=await this.pool.query("SELECT * FROM base_push_runs WHERE idempotency_key=$1",[p.idempotencyKey]);return basePush(q.rows[0]);}async findByIdempotencyKey(key:string){const{rows}=await this.pool.query("SELECT * FROM base_push_runs WHERE idempotency_key=$1",[key]);return rows[0]?basePush(rows[0]):null;}async latest(requirementId:string){const{rows}=await this.pool.query("SELECT * FROM base_push_runs WHERE requirement_id=$1 ORDER BY started_at DESC,id DESC LIMIT 1",[requirementId]);return rows[0]?basePush(rows[0]):null;}async latestSuccessful(requirementId:string){const{rows}=await this.pool.query("SELECT * FROM base_push_runs WHERE requirement_id=$1 AND status='pushed' ORDER BY source_version DESC,push_version DESC LIMIT 1",[requirementId]);return rows[0]?basePush(rows[0]):null;}async restart(id:string,startedAt:string){const{rows}=await this.pool.query("UPDATE base_push_runs SET status='running',started_at=$2,completed_at=NULL,safe_error_code=NULL,safe_error_summary=NULL WHERE id=$1 AND status IN ('failed','running') RETURNING *",[id,startedAt]);return rows[0]?basePush(rows[0]):null;}async updateResult(id:string,r:{status:"pushed"|"failed";baseRecordId?:string;safeErrorCode?:string;safeErrorSummary?:string;completedAt:string}){const{rows}=await this.pool.query("UPDATE base_push_runs SET status=$2,base_record_id=$3,safe_error_code=$4,safe_error_summary=$5,completed_at=$6 WHERE id=$1 RETURNING *",[id,r.status,r.baseRecordId??null,r.safeErrorCode??null,r.safeErrorSummary??null,r.completedAt]);return rows[0]?basePush(rows[0]):null;}}
 export class PostgresPipelineJobRepository implements PipelineJobRepository{constructor(private readonly pool:Pool){}async enqueue(p:{jobType:PipelineJobType;dedupeKey:string;payload:Record<string,unknown>;availableAt:string;maxAttempts?:number}){
@@ -204,30 +246,31 @@ function directoryNames(value: unknown): string[] {
 function duplicateName(names: string[], candidate: string): boolean {
   return names.some((name) => name.toLocaleLowerCase() === candidate.toLocaleLowerCase());
 }
+// 人员页绑定读取的映射列：只需要“姓名 → 飞书身份”的关系，不读取任何联系方式。
+// 归并规则在 domain/team-directory.ts（两仓共享），这里只负责取列。
+const TEAM_MAPPING_COLUMNS = "normalized_name,feishu_user_id,feishu_id_type,updated_at";
 export class TeamDirectoryConflict extends Error {
   constructor(message = "The team directory changed; refresh and retry.") { super(message); this.name = "TeamDirectoryConflict"; }
 }
 export class PostgresTeamDirectoryRepository implements TeamDirectoryRepository {
   constructor(private readonly pool: Pool) {}
-  async listPeople() {
-    const { rows } = await this.pool.query("SELECT owner_names,EXISTS(SELECT 1 FROM module_dictionary_versions WHERE status='published') AS has_dictionary FROM source_configs ORDER BY created_at,id LIMIT 1");
+  async listPeople(): Promise<TeamPersonRecord[]> {
+    const { rows } = await this.pool.query("SELECT id,owner_names,EXISTS(SELECT 1 FROM module_dictionary_versions WHERE status='published') AS has_dictionary FROM source_configs ORDER BY created_at,id LIMIT 1");
     if (!rows[0]) return [];
-    const names = directoryNames(rows[0].owner_names);
-    return names.length || rows[0].has_dictionary ? names : [...DEFAULT_TEAM_MEMBERS];
+    return this.peopleWithBindings(this.pool, String(rows[0].id), this.effectiveRoster(rows[0]!));
   }
   async addPerson(name: string, event: AuditEventInput) {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      const { rows } = await client.query("SELECT id,owner_names FROM source_configs ORDER BY created_at,id LIMIT 1 FOR UPDATE");
-      if (!rows[0]) throw new TeamDirectoryConflict("请先配置 Teambition 数据源。");
-      const people = await this.effectivePeople(client, rows[0].owner_names);
-      if (duplicateName(people, name)) throw new TeamDirectoryConflict("该人员已存在。");
-      const updated = [...people, name];
-      await client.query("UPDATE source_configs SET owner_names=$2::jsonb,updated_at=now() WHERE id=$1", [rows[0].id, JSON.stringify(updated)]);
+      const source = await this.lockSource(client);
+      if (duplicateName(source.people, name)) throw new TeamDirectoryConflict("该人员已存在。");
+      const updated = [...source.people, name];
+      await client.query("UPDATE source_configs SET owner_names=$2::jsonb,updated_at=now() WHERE id=$1", [source.id, JSON.stringify(updated)]);
       await appendAuditInTransaction(client, event, name);
+      const people = await this.peopleWithBindings(client, source.id, updated);
       await client.query("COMMIT");
-      return updated;
+      return people;
     } catch (error) { await client.query("ROLLBACK"); throw error; }
     finally { client.release(); }
   }
@@ -236,20 +279,20 @@ export class PostgresTeamDirectoryRepository implements TeamDirectoryRepository 
     try {
       await client.query("BEGIN");
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended('module_dictionary_versions',0)) IS NULL AS lock_acquired");
-      const source = await client.query("SELECT id,owner_names FROM source_configs ORDER BY created_at,id LIMIT 1 FOR UPDATE");
-      if (!source.rows[0]) throw new TeamDirectoryConflict("请先配置 Teambition 数据源。");
-      const people = await this.effectivePeople(client, source.rows[0].owner_names);
-      if (!people.includes(from)) throw new TeamDirectoryConflict("人员不存在或已被修改。");
-      if (from !== to && duplicateName(people.filter((name) => name !== from), to)) throw new TeamDirectoryConflict("该人员已存在。");
-      const updatedPeople = people.map((name) => name === from ? to : name);
-      const dictionary = await client.query("SELECT version,entries FROM module_dictionary_versions WHERE status='published' ORDER BY version DESC LIMIT 1 FOR UPDATE");
-      const modules = moduleDirectoryEntries(dictionary.rows[0]?.entries ?? DEFAULT_FUNCTION_MODULES);
+      const source = await this.lockSource(client);
+      if (!source.people.includes(from)) throw new TeamDirectoryConflict("人员不存在或已被修改。");
+      if (from !== to && duplicateName(source.people.filter((name) => name !== from), to)) throw new TeamDirectoryConflict("该人员已存在。");
+      const updatedPeople = source.people.map((name) => name === from ? to : name);
+      const modules = await this.lockedModules(client);
       const updatedModules = modules.map((module) => module.personName === from ? { ...module, personName: to } : module);
-      await client.query("UPDATE source_configs SET owner_names=$2::jsonb,updated_at=now() WHERE id=$1", [source.rows[0].id, JSON.stringify(updatedPeople)]);
+      await client.query("UPDATE source_configs SET owner_names=$2::jsonb,updated_at=now() WHERE id=$1", [source.id, JSON.stringify(updatedPeople)]);
+      // 绑定按规范化姓名关联：改名必须同步迁移，否则人员页显示“未绑定”、旧姓名仍占着映射。
+      if (from !== to) await this.migrateBindingsOnRename(client, source.id, from, to, event.occurredAt);
       if (JSON.stringify(modules) !== JSON.stringify(updatedModules)) await this.publishModules(client, updatedModules, event.actorId ?? "system", event.occurredAt, { ...event, id: randomUUID(), eventType: "module_dictionary.updated", entityType: "module_dictionary", safeDetails: { entryCount: updatedModules.length } });
       await appendAuditInTransaction(client, event, from);
+      const people = await this.peopleWithBindings(client, source.id, updatedPeople);
       await client.query("COMMIT");
-      return updatedPeople;
+      return people;
     } catch (error) { await client.query("ROLLBACK"); throw error; }
     finally { client.release(); }
   }
@@ -258,19 +301,64 @@ export class PostgresTeamDirectoryRepository implements TeamDirectoryRepository 
     try {
       await client.query("BEGIN");
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended('module_dictionary_versions',0)) IS NULL AS lock_acquired");
-      const source = await client.query("SELECT id,owner_names FROM source_configs ORDER BY created_at,id LIMIT 1 FOR UPDATE");
-      if (!source.rows[0]) throw new TeamDirectoryConflict("请先配置 Teambition 数据源。");
-      const people = await this.effectivePeople(client, source.rows[0].owner_names);
-      if (!people.includes(name)) throw new TeamDirectoryConflict("人员不存在或已被删除。");
-      const updatedPeople = people.filter((person) => person !== name);
-      const dictionary = await client.query("SELECT version,entries FROM module_dictionary_versions WHERE status='published' ORDER BY version DESC LIMIT 1 FOR UPDATE");
-      const modules = moduleDirectoryEntries(dictionary.rows[0]?.entries ?? DEFAULT_FUNCTION_MODULES);
+      const source = await this.lockSource(client);
+      if (!source.people.includes(name)) throw new TeamDirectoryConflict("人员不存在或已被删除。");
+      const updatedPeople = source.people.filter((person) => person !== name);
+      const modules = await this.lockedModules(client);
       const updatedModules = modules.map((module) => module.personName === name ? { ...module, personName: null } : module);
-      await client.query("UPDATE source_configs SET owner_names=$2::jsonb,updated_at=now() WHERE id=$1", [source.rows[0].id, JSON.stringify(updatedPeople)]);
+      await client.query("UPDATE source_configs SET owner_names=$2::jsonb,updated_at=now() WHERE id=$1", [source.id, JSON.stringify(updatedPeople)]);
+      // 删除人员同时解除其飞书绑定，避免已离开的人继续被自动匹配到新需求。
+      await client.query("UPDATE person_mappings SET active=false,updated_at=$3 WHERE source_config_id=$1 AND active AND normalized_name=$2", [source.id, normalizeOwnerName(name), event.occurredAt]);
       if (JSON.stringify(modules) !== JSON.stringify(updatedModules)) await this.publishModules(client, updatedModules, event.actorId ?? "system", event.occurredAt, { ...event, id: randomUUID(), eventType: "module_dictionary.updated", entityType: "module_dictionary", safeDetails: { entryCount: updatedModules.length } });
       await appendAuditInTransaction(client, event, name);
+      const people = await this.peopleWithBindings(client, source.id, updatedPeople);
       await client.query("COMMIT");
-      return updatedPeople;
+      return people;
+    } catch (error) { await client.query("ROLLBACK"); throw error; }
+    finally { client.release(); }
+  }
+  async bindPersonFeishu(name: string, binding: TeamPersonBindingInput, event: AuditEventInput) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const source = await this.lockSource(client);
+      if (!source.people.includes(name)) throw new TeamDirectoryConflict("人员不存在或已被修改。");
+      const normalized = normalizeOwnerName(name);
+      const existing = await client.query("SELECT teambition_user_id,feishu_user_id,feishu_id_type FROM person_mappings WHERE source_config_id=$1 AND active AND normalized_name=$2 FOR UPDATE", [source.id, normalized]);
+      const rows = existing.rows as Array<{ teambition_user_id: string | null; feishu_user_id: string; feishu_id_type: string }>;
+      // 同一个姓名若已指向多个不同飞书账号，先人工核对，不用“绑定”动作替人拍板。
+      if (new Set(rows.map((row) => `${row.feishu_user_id}|${row.feishu_id_type}`)).size > 1) throw new TeamDirectoryConflict("该姓名存在多条指向不同飞书账号的映射，请先在「负责人映射」中核对后再绑定。");
+      const alreadyBound = rows.length > 0 && rows.every((row) => row.feishu_user_id === binding.feishuUserId && row.feishu_id_type === binding.feishuIdType);
+      if (!alreadyBound) {
+        // 同一飞书账号只能对应一位人员：不论该账号现有的映射来自人员页还是需求详情。
+        const taken = await client.query("SELECT teambition_display_name FROM person_mappings WHERE source_config_id=$1 AND active AND feishu_user_id=$2 AND feishu_id_type=$3 AND normalized_name IS DISTINCT FROM $4 LIMIT 1", [source.id, binding.feishuUserId, binding.feishuIdType, normalized]);
+        if (taken.rows[0]) throw new TeamDirectoryConflict(`该飞书账号已绑定到「${String(taken.rows[0].teambition_display_name ?? "其他人员")}」，请先解除那边的人员绑定。`);
+        if (rows.length > 0) {
+          // 同一姓名已有映射（例如需求详情里的人工映射）：原地改绑，避免新增同姓名映射把自动匹配变成歧义。
+          await client.query("UPDATE person_mappings SET feishu_user_id=$3,feishu_id_type=$4,updated_at=$5 WHERE source_config_id=$1 AND active AND normalized_name=$2", [source.id, normalized, binding.feishuUserId, binding.feishuIdType, event.occurredAt]);
+        } else {
+          // 人员页绑定按“姓名唯一匹配”生效，不是逐条需求的人工分配：首推保持静默，owner 状态落 auto_mapped。
+          await client.query("INSERT INTO person_mappings(id,source_config_id,teambition_user_id,teambition_display_name,normalized_name,feishu_user_id,feishu_id_type,match_method,created_by,created_at,updated_at) VALUES($1,$2,NULL,$3,$4,$5,$6,'unique_name',$7,$8,$8)", [randomUUID(), source.id, name, normalized, binding.feishuUserId, binding.feishuIdType, event.actorId, event.occurredAt]);
+        }
+        await appendAuditInTransaction(client, event, name);
+      }
+      const people = await this.peopleWithBindings(client, source.id, source.people);
+      await client.query("COMMIT");
+      return people;
+    } catch (error) { await client.query("ROLLBACK"); throw error; }
+    finally { client.release(); }
+  }
+  async unbindPersonFeishu(name: string, event: AuditEventInput) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const source = await this.lockSource(client);
+      if (!source.people.includes(name)) throw new TeamDirectoryConflict("人员不存在或已被删除。");
+      const result = await client.query("UPDATE person_mappings SET active=false,updated_at=$3 WHERE source_config_id=$1 AND active AND normalized_name=$2 RETURNING id", [source.id, normalizeOwnerName(name), event.occurredAt]);
+      if (result.rows.length > 0) await appendAuditInTransaction(client, event, name);
+      const people = await this.peopleWithBindings(client, source.id, source.people);
+      await client.query("COMMIT");
+      return people;
     } catch (error) { await client.query("ROLLBACK"); throw error; }
     finally { client.release(); }
   }
@@ -311,6 +399,44 @@ export class PostgresTeamDirectoryRepository implements TeamDirectoryRepository 
     const { rows } = await client.query("INSERT INTO module_dictionary_versions(version,status,entries,created_by,created_at,published_at) SELECT COALESCE(MAX(version),0)+1,'published',$1,$2,$3,$3 FROM module_dictionary_versions RETURNING version", [JSON.stringify(items), createdBy, now]);
     await appendAuditInTransaction(client, event, String(rows[0]!.version));
     return { version: Number(rows[0]!.version) };
+  }
+  private effectiveRoster(row: { owner_names?: unknown; has_dictionary?: unknown }) {
+    const names = directoryNames(row.owner_names);
+    return names.length || row.has_dictionary ? names : [...DEFAULT_TEAM_MEMBERS];
+  }
+  private async lockSource(client: PoolClient) {
+    const { rows } = await client.query("SELECT id,owner_names FROM source_configs ORDER BY created_at,id LIMIT 1 FOR UPDATE");
+    if (!rows[0]) throw new TeamDirectoryConflict("请先配置 Teambition 数据源。");
+    return { id: String(rows[0].id), people: await this.effectivePeople(client, rows[0].owner_names) };
+  }
+  private async lockedModules(client: PoolClient) {
+    const dictionary = await client.query("SELECT version,entries FROM module_dictionary_versions WHERE status='published' ORDER BY version DESC LIMIT 1 FOR UPDATE");
+    return moduleDirectoryEntries(dictionary.rows[0]?.entries ?? DEFAULT_FUNCTION_MODULES);
+  }
+  /**
+   * 改名时迁移该姓名的活跃映射。目标姓名已有同一飞书身份时合并（停用目标行），
+   * 已有不同身份时拒绝：同一姓名出现多条不同账号会让自动匹配退化为“待匹配”。
+   */
+  private async migrateBindingsOnRename(client: PoolClient, sourceConfigId: string, from: string, to: string, occurredAt: string) {
+    const fromNormalized = normalizeOwnerName(from);
+    const toNormalized = normalizeOwnerName(to);
+    if (fromNormalized === toNormalized) {
+      await client.query("UPDATE person_mappings SET teambition_display_name=$3,updated_at=$4 WHERE source_config_id=$1 AND active AND normalized_name=$2", [sourceConfigId, fromNormalized, to, occurredAt]);
+      return;
+    }
+    const { rows: renameRows } = await client.query("SELECT normalized_name,feishu_user_id,feishu_id_type FROM person_mappings WHERE source_config_id=$1 AND active AND normalized_name IN ($2,$3) FOR UPDATE", [sourceConfigId, fromNormalized, toNormalized]);
+    const rows = renameRows as Array<{ normalized_name: string | null; feishu_user_id: string; feishu_id_type: string }>;
+    const moved = rows.filter((row) => row.normalized_name === fromNormalized);
+    const occupied = rows.filter((row) => row.normalized_name === toNormalized);
+    const identity = (row: { feishu_user_id: string; feishu_id_type: string }) => `${row.feishu_user_id}|${row.feishu_id_type}`;
+    const movedIdentities = new Set(moved.map(identity));
+    if (occupied.some((row) => !movedIdentities.has(identity(row)))) throw new TeamDirectoryConflict("目标姓名已有指向其他飞书账号的映射，请先在「负责人映射」中核对后再改名。");
+    if (occupied.length > 0) await client.query("UPDATE person_mappings SET active=false,updated_at=$3 WHERE source_config_id=$1 AND active AND normalized_name=$2", [sourceConfigId, toNormalized, occurredAt]);
+    await client.query("UPDATE person_mappings SET teambition_display_name=$3,normalized_name=$4,updated_at=$5 WHERE source_config_id=$1 AND active AND normalized_name=$2", [sourceConfigId, fromNormalized, to, toNormalized, occurredAt]);
+  }
+  private async peopleWithBindings(client: Pool | PoolClient, sourceConfigId: string, people: string[]): Promise<TeamPersonRecord[]> {
+    const { rows } = await client.query(`SELECT ${TEAM_MAPPING_COLUMNS} FROM person_mappings WHERE source_config_id=$1 AND active AND normalized_name IS NOT NULL`, [sourceConfigId]);
+    return mergeTeamBindings(people, rows as TeamMappingRow[]);
   }
   private async effectivePeople(client: PoolClient, ownerNames: unknown) {
     const names = directoryNames(ownerNames);
