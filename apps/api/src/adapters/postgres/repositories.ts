@@ -175,7 +175,7 @@ export class PostgresPersonMappingRepository implements PersonMappingRepository 
       }
       // 人员维度（无 TB user ID）按规范化姓名去重，且不限制 match_method：
       // 人员页绑定是 unique_name、需求详情人工映射是 manual，两者同时活跃会让按姓名解析变成歧义。
-      await client.query("UPDATE person_mappings SET active=false,updated_at=$2 WHERE source_config_id=$1 AND active AND teambition_user_id IS NOT DISTINCT FROM $3 AND ($3 IS NOT NULL OR normalized_name IS NOT DISTINCT FROM $4)", [p.sourceConfigId, p.now, p.teambitionUserId, normalized]);
+      await client.query("UPDATE person_mappings SET active=false,updated_at=$2 WHERE source_config_id=$1 AND active AND teambition_user_id IS NOT DISTINCT FROM $3 AND ($3::text IS NOT NULL OR normalized_name IS NOT DISTINCT FROM $4)", [p.sourceConfigId, p.now, p.teambitionUserId, normalized]);
       const { rows } = await client.query("INSERT INTO person_mappings(id,source_config_id,teambition_user_id,teambition_display_name,normalized_name,feishu_user_id,feishu_id_type,match_method,created_by,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,'manual',$8,$9,$9) RETURNING *", [randomUUID(), p.sourceConfigId, p.teambitionUserId, p.teambitionDisplayName, normalized, p.feishuUserId, p.feishuIdType, p.createdBy, p.now]);
       await client.query("COMMIT");
       return mapping(rows[0]);
@@ -330,15 +330,28 @@ export class PostgresTeamDirectoryRepository implements TeamDirectoryRepository 
       if (new Set(rows.map((row) => `${row.feishu_user_id}|${row.feishu_id_type}`)).size > 1) throw new TeamDirectoryConflict("该姓名存在多条指向不同飞书账号的映射，请先在「负责人映射」中核对后再绑定。");
       const alreadyBound = rows.length > 0 && rows.every((row) => row.feishu_user_id === binding.feishuUserId && row.feishu_id_type === binding.feishuIdType);
       if (!alreadyBound) {
-        // 同一飞书账号只能对应一位人员：不论该账号现有的映射来自人员页还是需求详情。
-        const taken = await client.query("SELECT teambition_display_name FROM person_mappings WHERE source_config_id=$1 AND active AND feishu_user_id=$2 AND feishu_id_type=$3 AND normalized_name IS DISTINCT FROM $4 LIMIT 1", [source.id, binding.feishuUserId, binding.feishuIdType, normalized]);
-        if (taken.rows[0]) throw new TeamDirectoryConflict(`该飞书账号已绑定到「${String(taken.rows[0].teambition_display_name ?? "其他人员")}」，请先解除那边的人员绑定。`);
+        // 同一飞书账号只能对应一位人员。先看这个账号现有的活跃映射：
+        // - 已属于另一位有姓名的人员：必须人工先解绑，绑定时不替人改归属。
+        // - 只有 TB user ID、没有姓名（历史需求级映射没取到执行人姓名）：这种行不属于“另一个人”，
+        //   绑定时补全姓名并复用，避免管理员卡在“已绑定到「其他人员」”。
+        const owned = await client.query("SELECT id,normalized_name,teambition_display_name FROM person_mappings WHERE source_config_id=$1 AND active AND feishu_user_id=$2 AND feishu_id_type=$3 FOR UPDATE", [source.id, binding.feishuUserId, binding.feishuIdType]);
+        const ownerRows = owned.rows as Array<{ id: string; normalized_name: string | null; teambition_display_name: string | null }>;
+        const differentPerson = ownerRows.find((row) => row.normalized_name !== null && row.normalized_name !== normalized);
+        if (differentPerson) throw new TeamDirectoryConflict(`该飞书账号已绑定到「${String(differentPerson.teambition_display_name ?? "其他人员")}」，请先解除那边的人员绑定。`);
+        const canAdopt = (row: { normalized_name: string | null; teambition_display_name: string | null }) => row.normalized_name === null && (row.teambition_display_name === null || normalizeOwnerName(row.teambition_display_name) === normalized);
+        const unnamedOther = ownerRows.find((row) => row.normalized_name === null && !canAdopt(row));
+        if (unnamedOther) throw new TeamDirectoryConflict(`该飞书账号已绑定到「${String(unnamedOther.teambition_display_name ?? "其他人员")}」，请先解除那边的人员绑定。`);
+        const adoptable = ownerRows.filter(canAdopt);
         if (rows.length > 0) {
           // 同一姓名已有映射（例如需求详情里的人工映射）：原地改绑，避免新增同姓名映射把自动匹配变成歧义。
           await client.query("UPDATE person_mappings SET feishu_user_id=$3,feishu_id_type=$4,updated_at=$5 WHERE source_config_id=$1 AND active AND normalized_name=$2", [source.id, normalized, binding.feishuUserId, binding.feishuIdType, event.occurredAt]);
-        } else {
+        } else if (adoptable.length === 0) {
           // 人员页绑定按“姓名唯一匹配”生效，不是逐条需求的人工分配：首推保持静默，owner 状态落 auto_mapped。
           await client.query("INSERT INTO person_mappings(id,source_config_id,teambition_user_id,teambition_display_name,normalized_name,feishu_user_id,feishu_id_type,match_method,created_by,created_at,updated_at) VALUES($1,$2,NULL,$3,$4,$5,$6,'unique_name',$7,$8,$8)", [randomUUID(), source.id, name, normalized, binding.feishuUserId, binding.feishuIdType, event.actorId, event.occurredAt]);
+        }
+        for (const row of adoptable) {
+          // 复用原行（保留 TB user ID 和 match_method），只补姓名；不新增同账号映射。
+          await client.query("UPDATE person_mappings SET teambition_display_name=$2,normalized_name=$3,updated_at=$4 WHERE id=$1 AND active", [row.id, name, normalized, event.occurredAt]);
         }
         await appendAuditInTransaction(client, event, name);
       }

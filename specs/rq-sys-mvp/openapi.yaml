@@ -490,7 +490,7 @@ paths:
   /api/people/{name}/feishu:
     put:
       summary: Bind a roster person to a Feishu identity
-      description: Maintains the active name-scoped person mapping used by the requirement owner picker and by unique-name auto-matching. A new binding is stored as a name-based mapping (not a per-requirement hand assignment, so a bulk first push stays silent); rebinding reuses the existing row. One Feishu account may belong to one person only. This endpoint never writes to Teambition or Feishu.
+      description: Maintains the active name-scoped person mapping used by the requirement owner picker and by unique-name auto-matching. A new binding is stored as a name-based mapping (not a per-requirement hand assignment, so a bulk first push stays silent); rebinding reuses the existing row. One Feishu account may belong to one person only: an existing active mapping for that account that has no person name (a legacy requirement-level mapping that never captured the executor name) is adopted and labelled with this person, while an account already labelled for a different person returns 409. This endpoint never writes to Teambition or Feishu.
       parameters:
         - name: name
           in: path

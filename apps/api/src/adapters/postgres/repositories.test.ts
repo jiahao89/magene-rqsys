@@ -35,7 +35,7 @@ test("team directory CRUD survives a transport that cannot serialize PostgreSQL 
   assert.deepEqual(saved.items, [{ name: "导航", personName: null }]);
 });
 
-type DirectoryMapping = { normalized_name: string; teambition_user_id: string | null; display_name: string | null; feishu_user_id: string; feishu_id_type: string; updated_at: string; active: boolean; match_method?: string };
+type DirectoryMapping = { normalized_name: string | null; teambition_user_id: string | null; display_name: string | null; feishu_user_id: string; feishu_id_type: string; updated_at: string; active: boolean; match_method?: string };
 function directoryPool(people: string[], mappings: DirectoryMapping[]) {
   const calls: Array<{ sql: string; values: unknown[] }> = [];
   const query = async (sql: string, values: unknown[] = []) => {
@@ -48,6 +48,21 @@ function directoryPool(people: string[], mappings: DirectoryMapping[]) {
       const normalized = String(values[1]);
       const rows = mappings.filter((row) => row.active && row.normalized_name === normalized);
       return { rows, rowCount: rows.length };
+    }
+    if (sql.startsWith("SELECT id,normalized_name,teambition_display_name FROM person_mappings")) {
+      const feishu = String(values[1]);
+      const type = String(values[2]);
+      const rows = mappings
+        .map((row, index) => ({ row, index }))
+        .filter(({ row }) => row.active && row.feishu_user_id === feishu && row.feishu_id_type === type)
+        .map(({ row, index }) => ({ id: `m-${index}`, normalized_name: row.normalized_name, teambition_display_name: row.display_name }));
+      return { rows, rowCount: rows.length };
+    }
+    if (sql.startsWith("UPDATE person_mappings SET teambition_display_name=$2,normalized_name=$3,updated_at=$4")) {
+      const index = Number(String(values[0]).replace("m-", ""));
+      const row = mappings[index];
+      if (row) { row.display_name = String(values[1]); row.normalized_name = String(values[2]); row.updated_at = String(values[3]); }
+      return { rows: [], rowCount: row ? 1 : 0 };
     }
     if (sql.startsWith("SELECT teambition_display_name FROM person_mappings")) {
       const feishu = String(values[1]);
@@ -75,7 +90,7 @@ function directoryPool(people: string[], mappings: DirectoryMapping[]) {
     }
     if (sql.startsWith("SELECT normalized_name,feishu_user_id,feishu_id_type FROM person_mappings")) {
       const targets = [String(values[1]), String(values[2])];
-      const rows = mappings.filter((row) => row.active && targets.includes(row.normalized_name));
+      const rows = mappings.filter((row) => row.active && targets.includes(String(row.normalized_name)));
       return { rows, rowCount: rows.length };
     }
     if (sql.startsWith("UPDATE person_mappings SET teambition_display_name=$3,normalized_name=")) {
@@ -162,6 +177,29 @@ test("binding a person inserts one roster mapping and rejects an account already
   assert.equal(shengRows[0]?.teambition_user_id, "tb-9");
 });
 
+test("binding a person adopts an existing unnamed TB-scoped mapping for the same Feishu account", async () => {
+  // 回归：历史需求级映射可能只有 TB user ID + 飞书账号、没有姓名（执行人姓名当时没取到）。
+  // 人员页绑定时应补全姓名并复用该行，而不是报“已绑定到其他人员”把人挡死。
+  const people = ["刘媛媛", "贾浩"];
+  const mappings: DirectoryMapping[] = [
+    { normalized_name: null, teambition_user_id: "tb-liu", display_name: null, feishu_user_id: "ou-liu", feishu_id_type: "open_id", updated_at: "2026-10-18T00:00:00.000Z", active: true, match_method: "manual" },
+    // 只有显示名、且明确属于另一位人员的无姓名行：仍然拒绝，避免悄悄改归属。
+    { normalized_name: null, teambition_user_id: "tb-wang", display_name: "王五", feishu_user_id: "ou-jia", feishu_id_type: "open_id", updated_at: "2026-10-18T00:00:00.000Z", active: true, match_method: "manual" },
+  ];
+  const { pool, calls } = directoryPool(people, mappings);
+  const store = new PostgresRepositories(pool).directory;
+  const event = (id: string) => ({ id, actorId: "test-actor", eventType: "team_person.feishu_bound", entityType: "team_person", result: "succeeded" as const, safeDetails: {}, occurredAt: "2026-10-22T00:00:00.000Z" });
+
+  const bound = await store.bindPersonFeishu("刘媛媛", { feishuUserId: "ou-liu", feishuIdType: "open_id" }, event("event-1"));
+  assert.equal(bound.find((person) => person.name === "刘媛媛")?.binding?.feishuUserId, "ou-liu");
+  assert.equal(mappings[0]?.normalized_name, "刘媛媛");
+  assert.equal(mappings[0]?.display_name, "刘媛媛");
+  assert.equal(mappings[0]?.teambition_user_id, "tb-liu");
+  assert.equal(calls.some((call) => call.sql.startsWith("INSERT INTO person_mappings")), false, "复用已有行时不应再插入一条同账号映射");
+
+  await assert.rejects(() => store.bindPersonFeishu("贾浩", { feishuUserId: "ou-jia", feishuIdType: "open_id" }, event("event-2")), { name: "TeamDirectoryConflict" });
+});
+
 test("renaming a person carries the binding and refuses a target name bound to another account", async () => {
   const people = ["贾浩", "刘媛媛"];
   const mappings: DirectoryMapping[] = [
@@ -203,6 +241,8 @@ test("requirement-level manual mapping replaces only that person's name-scoped m
   assert.ok(deactivate);
   // 只停用同名行；其他人员的绑定不受影响。
   assert.match(deactivate.sql, /normalized_name IS NOT DISTINCT FROM \$4/);
+  // Drizzle 传输层会把重复占位符拆成独立参数；没有 ::text 时 PostgreSQL 无法推断 $3 IS NOT NULL 的类型。
+  assert.match(deactivate.sql, /\(\$3::text IS NOT NULL/);
   assert.deepEqual(deactivate.values, ["s", now, null, "贾浩"]);
   const guard = calls.find((call) => call.sql.startsWith("SELECT teambition_display_name FROM person_mappings"));
   assert.ok(guard, "插入前必须检查账号是否已属于另一位人员");

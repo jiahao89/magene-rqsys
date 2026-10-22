@@ -26,7 +26,7 @@ Operators need one place to configure and run synchronization, see each pipeline
 | Requirement detail | Show immutable source snapshot/version, latest AI suggestion/evidence, owner mapping, Base record link, and all pipeline states |
 | Team management · owner mapping | Select Feishu user for unresolved/duplicate name; save reusable mapping and trigger push (per-requirement assignment stays in the requirement pool) |
 | Function modules | CRUD module names and their responsible person; changes publish a new dictionary snapshot for future AI runs, without rewriting old analysis |
-| Team management · personnel | CRUD the product-group people list and bind each person to one Feishu account (the mapping the owner picker reads); renaming carries the binding, deleting deactivates it, and a conflicting name shows an explicit state instead of guessing |
+| Team management · personnel | CRUD the product-group people list and bind each person to one Feishu account (the mapping the owner picker reads); renaming carries the binding, deleting deactivates it, a mapping row for the same account that never had a person name is adopted and labelled instead of blocking the bind, and a conflicting name shows an explicit state instead of guessing |
 | Priority rules | Manage calibrated priority rules; priority remains blank until a rule is published |
 | Sync records · audit | Search sync, analysis, mapping, push, retry, and configuration actions by actor/time/object |
 
