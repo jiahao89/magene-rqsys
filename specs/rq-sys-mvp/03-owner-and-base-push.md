@@ -20,6 +20,7 @@ The pipeline must resolve Teambition owners to Feishu users when possible, push 
 - If ID is absent, match only when the TB name resolves uniquely to an active mapping.
 - Missing or duplicate name match becomes 待匹配. PM Leader/designated operator selects a Feishu user in Web; persist the mapping for reuse; selection enables push.
 - If TB has no owner, set owner state to 无需匹配 and allow an empty-owner push. Do not notify a nonexistent owner.
+- If TB has no owner and an operator assigns one in Web, store that owner on the requirement itself (never as a person mapping, so the roster binding and other requirements are untouched), move the owner state to 已手动匹配, and queue a push. The push writes that owner to Base once and notifies them (首次推送 or 空负责人后分配 → 已分配负责人; 改派 → 负责人变更 from the owner previously written). Once the same hand-picked owner is in Base, later pushes leave the Base person field alone so a Base-side edit is preserved. When TB later provides a mapped executor, the TB owner wins and the per-requirement owner is cleared.
 - If TB later changes to a mapped owner, update the Base owner and notify the new owner.
 - If TB owner is empty or cannot be matched, preserve a manually assigned Base owner.
 - Do not design behavior for users outside the configured project scope in this MVP.
@@ -64,7 +65,7 @@ A failed Base upsert must not emit a success notification. A notification delive
 
 ## Interface contract
 
-- PUT /api/requirements/{id}/owner — save manual Feishu-user selection, persist mapping, then trigger push.
+- PUT /api/requirements/{id}/owner — save manual Feishu-user selection (a reusable mapping when TB has an executor; a per-requirement owner when it does not), then trigger push.
 - Push adapter performs lookup/create/update by the external requirement key and returns Feishu record ID.
 - The automation layer owns message formatting and delivery history unless the target environment cannot express a required rule; any server-side fallback requires an explicit decision and audit record.
 

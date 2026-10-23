@@ -153,3 +153,14 @@ test("TB 无负责人：先 not_required 再空负责人推送，且新源版本
   await createBasePushService(newVersion.deps).pushRequirement("req-1", "k7");
   assert.equal(newVersion.pushedInputs[0]!.substantiveChanged, true);
 });
+
+test("无 TB 负责人但已在 Web 指定负责人：分析终态后保持 manually_mapped 并入队推送", async () => {
+  const manualOwner = { feishuUserId: "u-assignee", feishuIdType: "user_id" as const, name: "毕梓浩", assignedBy: "operator", assignedAt: "2026-10-09T00:00:00.000Z", pushedFeishuUserId: null };
+  for (const owner of ["pending_mapping", "not_required"] as const) {
+    const fixture = makeAdvanceFixture(requirement({ manualOwner, pipeline: { pull: "synced", analysis: "analyzed", owner, push: "pending" } }), false);
+    const advance = createAnalysisAdvancer(fixture);
+    assert.equal(await advance("req-1", "analyzed", "worker", 1), "queued");
+    assert.deepEqual(fixture.ownerChanges, ["u-assignee:manually_mapped"]);
+    assert.equal(fixture.requirementRow.pipeline.owner, "manually_mapped");
+  }
+});

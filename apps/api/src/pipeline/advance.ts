@@ -29,7 +29,10 @@ export function createAnalysisAdvancer(deps: AdvanceDeps) {
     const hasTbOwner = Boolean(req.executorUserId || req.executorName);
     let waitingMapping = false;
     if (!hasTbOwner) {
-      if (req.pipeline.owner === "pending_mapping") await deps.requirements.setOwner(req.id, null, "not_required");
+      // Web 已为该需求指定负责人时保持 manually_mapped；否则可空负责人推送。
+      if (req.manualOwner) {
+        if (req.pipeline.owner !== "manually_mapped") await deps.requirements.setOwner(req.id, req.manualOwner.feishuUserId, "manually_mapped");
+      } else if (req.pipeline.owner === "pending_mapping") await deps.requirements.setOwner(req.id, null, "not_required");
     } else {
       const ownerLookup = req.executorUserId ? { tbUserId: req.executorUserId } : { normalizedName: normalizeOwnerName(req.executorName!) };
       const mapping = await deps.people.resolveActive(req.sourceConfigId, ownerLookup);
@@ -83,7 +86,13 @@ export function createSourceMetadataAdvancer(deps: AdvanceDeps, options: { now?:
         ? { normalizedName: normalizeOwnerName(req.executorName) }
         : null;
 
-    if (!ownerLookup) {
+    if (!ownerLookup && req.manualOwner) {
+      // TB 无执行人且 Web 已为该需求指定负责人：保留人工指定，不回落为无需负责人。
+      if (ownerState !== "manually_mapped") {
+        await deps.requirements.setOwner(req.id, req.manualOwner.feishuUserId, "manually_mapped");
+        ownerState = "manually_mapped";
+      }
+    } else if (!ownerLookup) {
       if (ownerState !== "not_required") {
         if (ownerState !== "pending_mapping") {
           await deps.requirements.setOwner(req.id, null, "pending_mapping");

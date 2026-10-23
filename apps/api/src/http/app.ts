@@ -85,6 +85,8 @@ function personDto(person: TeamPersonRecord) {
   return { name: person.name, feishuUserId: person.binding?.feishuUserId ?? null, feishuIdType: person.binding?.feishuIdType ?? null, boundAt: person.binding?.boundAt ?? null, bindingConflict: person.bindingConflict };
 }
 function requirementSearchDto(req: RequirementRecord) { return requirementDto(req); }
+// TB 无执行人时，负责人是 Web 为这一条需求指定的人。
+function manualOwnerName(req: RequirementRecord): string | null { return !req.executorUserId && !req.executorName ? req.manualOwner?.name ?? null : null; }
 function dictionaryDto(d: ModuleDictionaryVersionRecord) { return { version: d.version, status: d.status, entries: d.entries, createdBy: d.createdBy, createdAt: d.createdAt, publishedAt: d.publishedAt }; }
 function priorityRuleDto(r: PriorityRuleVersionRecord) { return { id: r.id, version: r.version, status: r.status, rules: r.rules, validationEvidence: r.validationEvidence, createdBy: r.createdBy, createdAt: r.createdAt, publishedAt: r.publishedAt }; }
 async function actorFor(request: Request, dependencies: ApiDependencies) {
@@ -399,7 +401,7 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const mappings = repositories.people ? await repositories.people.listActive(page.items[0]?.sourceConfigId ?? "") : [];
     const nameByTbUser = new Map(mappings.filter((m) => m.teambitionUserId && m.teambitionDisplayName).map((m) => [m.teambitionUserId as string, m.teambitionDisplayName as string]));
     return json({
-      items: page.items.map((item) => ({ ...requirementSearchDto(item), ownerName: item.executorUserId ? nameByTbUser.get(item.executorUserId) ?? null : null })),
+      items: page.items.map((item) => ({ ...requirementSearchDto(item), ownerName: item.executorUserId ? nameByTbUser.get(item.executorUserId) ?? null : manualOwnerName(item) })),
       nextCursor: page.nextCursor,
     });
   }
@@ -411,7 +413,7 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const latest = await repositories.analyses?.latest(req.id) ?? null;
     const history = await repositories.analyses?.listByRequirement(req.id) ?? [];
     // 负责人姓名：详情单条解析一次，解析不到返回 null；前端会退回只显示映射状态。
-    let ownerName: string | null = null;
+    let ownerName: string | null = manualOwnerName(req);
     if (req.executorUserId || req.executorName) {
       try {
         const mapping = await repositories.people?.resolveActive(req.sourceConfigId, req.executorUserId ? { tbUserId: req.executorUserId } : { normalizedName: normalizeOwnerName(req.executorName!) });
@@ -510,6 +512,23 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const req = await repositories.requirements.get(decodeURIComponent(ownerMatch[1]!)); if (!req) return jsonError("NOT_FOUND");
     if (req.pipeline.pull !== "synced") return jsonError("CONFLICT");
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
+    // TB 无执行人：负责人只属于这一条需求，存到需求本身，不写人员映射（否则会改写名单人员的绑定、波及其他需求）。
+    if (!req.executorUserId && !req.executorName) {
+      const latestAnalysis = await repositories.analyses?.latest(req.id) ?? null;
+      const analysisVersion = latestAnalysis?.analysisVersion ?? 0;
+      // 每次指定都是独立意图：改派回同一个人也要重新推送，因此键里带唯一的指定 ID。
+      const idempotencyKey = basePushIdempotencyKey(req.id, req.sourceVersion, analysisVersion, `owner:${crypto.randomUUID()}`);
+      try {
+        await repositories.requirements.assignManualOwner(req.id, { feishuUserId: body.data.feishuUserId, feishuIdType: body.data.feishuIdType, name: body.data.tbDisplayName ?? null, assignedBy: auth.actor.id, assignedAt: now });
+      } catch (cause) {
+        return (cause as Error)?.name === "InvalidTransitionError" ? jsonError("CONFLICT") : jsonError("DEPENDENCY_UNAVAILABLE");
+      }
+      try { await repositories.jobs.enqueue({ jobType: "base_push", dedupeKey: idempotencyKey, payload: { requirementId: req.id, sourceVersion: req.sourceVersion, analysisVersion, idempotencyKey, actorId: auth.actor.id }, availableAt: now }); }
+      catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
+      const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "owner.manually_mapped", entityType: "requirement", entityId: req.id, result: "succeeded", safeDetails: { reason: "no_teambition_owner", sourceVersion: req.sourceVersion }, occurredAt: now });
+      if (auditFailure) return auditFailure;
+      return json({ requirementId: req.id, ownerState: "manually_mapped", status: "queued" });
+    }
     // 工单 14：人工映射持久化成功后再入队推送——任一步失败不留虚假成功
     const mapping = await mappingConflictResponse(() => repositories.people!.upsertManual({ sourceConfigId:req.sourceConfigId, teambitionUserId:body.data.tbUserId ?? req.executorUserId, teambitionDisplayName:body.data.tbDisplayName ?? req.executorName, feishuUserId:body.data.feishuUserId, feishuIdType:body.data.feishuIdType, createdBy:auth.actor.id, now }));
     if (mapping instanceof Response) return mapping;

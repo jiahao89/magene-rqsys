@@ -48,6 +48,7 @@ const sourceSnapshot = (overrides: Partial<SourceSnapshotRecord> = {}): SourceSn
 
 interface CapturedPushInput {
   projectId: string;
+  owner?: { userId: string; idType: "open_id" | "user_id" | "union_id" } | null;
   platformRequirementId: string;
   substantiveChanged: boolean;
   requirementLink?: string;
@@ -97,7 +98,9 @@ function makeHarness(options: {
   const service = createBasePushService({
     requirements: {
       get: async () => req,
-      setOwner: async () => { calls.push("owner"); },
+      setOwner: async (_id: string, _owner: string | null, state: RequirementRecord["pipeline"]["owner"]) => { calls.push("owner"); calls.push(`owner-state:${state}`); },
+      markManualOwnerPushed: async (_id: string, feishuUserId: string) => { calls.push(`manual-owner-pushed:${feishuUserId}`); },
+      clearManualOwner: async () => { calls.push("manual-owner-cleared"); },
       setPushState: async (_id: string, state: RequirementRecord["pipeline"]["push"]) => { calls.push(`state:${state}`); req.pipeline.push = state; },
       setBaseRecord: async (_id: string, recordId: string) => {
         if (options.bookkeepingError) throw new Error("bookkeeping down");
@@ -610,4 +613,101 @@ test("the requirement advisory lock serializes concurrent pushes and prevents a 
   assert.ok(firstLockExit >= 0 && secondLockEnter > firstLockExit, `第二个推送必须等第一个完成: ${calls.join(",")}`);
   // 第二个推送看到第一个已推送的 run，走幂等重放（不再写 Base）。
   assert.equal(runs.get("push:req-1:v2")?.status, "pushed");
+});
+
+// ---- 无 TB 负责人时 Web 逐条指定的负责人（Spec 03：空负责人推送后再分配 → 通知新负责人；不得被同步抹掉）----
+const manualOwner = (overrides: Partial<NonNullable<RequirementRecord["manualOwner"]>> = {}): NonNullable<RequirementRecord["manualOwner"]> => ({
+  feishuUserId: "u-assignee", feishuIdType: "user_id", name: "毕梓浩", assignedBy: "operator-1",
+  assignedAt: "2026-10-09T12:00:00.000Z", pushedFeishuUserId: null, ...overrides,
+});
+
+test("a hand-picked owner on a requirement without a TB owner is written to Base and notified on the first push", async () => {
+  const req = requirement({ baseRecordId: null, manualOwner: manualOwner(), pipeline: { pull: "synced", analysis: "analyzed", owner: "manually_mapped", push: "pending" } });
+  const h = makeHarness({ req, pmLeaderUserId: PM_LEADER_USER_ID });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.deepEqual(h.baseInput?.owner, { userId: "u-assignee", idType: "user_id" });
+  assert.deepEqual(h.baseInput?.notification, {
+    eventType: "已分配负责人",
+    eventId: "owner_assigned:req-1:sv2:none:u-assignee",
+    recipientUserId: "u-assignee",
+    recipientIdType: "user_id",
+    ownerMergeUserId: "u-assignee",
+  });
+  assert.ok(h.calls.includes("manual-owner-pushed:u-assignee"));
+  // 已经是 manually_mapped，不应再发起状态迁移
+  assert.equal(h.calls.some((call) => call.startsWith("owner-state:")), false);
+});
+
+test("assigning an owner after an empty-owner push notifies the newly assigned owner", async () => {
+  const req = requirement({ manualOwner: manualOwner(), pipeline: { pull: "synced", analysis: "analyzed", owner: "manually_mapped", push: "pending" } });
+  const h = makeHarness({
+    req, pmLeaderUserId: PM_LEADER_USER_ID,
+    lastSuccessful: pushRun({ sourceVersion: 2 }),
+    sourceSnapshot: sourceSnapshot({ sourceVersion: 2, substantiveHash: req.substantiveHash, payload: { sourceExecutorId: null, mappedFields: {} } }),
+  });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2:owner");
+  assert.equal(result.kind, "pushed");
+  assert.deepEqual(h.baseInput?.owner, { userId: "u-assignee", idType: "user_id" });
+  assert.equal(h.baseInput?.notification?.eventId, "owner_assigned:req-1:sv2:none:u-assignee");
+  assert.equal(h.baseInput?.notification?.recipientUserId, "u-assignee");
+});
+
+test("once the hand-picked owner is in Base, later pushes neither rewrite the owner nor notify again", async () => {
+  // PM 之后可能直接在 Base 改了负责人：同一人工负责人已写入过，就不再覆盖 Base 的人员字段。
+  const req = requirement({ manualOwner: manualOwner({ pushedFeishuUserId: "u-assignee" }), pipeline: { pull: "synced", analysis: "analyzed", owner: "manually_mapped", push: "pending" } });
+  const h = makeHarness({
+    req, pmLeaderUserId: PM_LEADER_USER_ID,
+    lastSuccessful: pushRun({ sourceVersion: 1 }),
+    sourceSnapshot: sourceSnapshot({ substantiveHash: req.substantiveHash, payload: { sourceExecutorId: null, mappedFields: {} } }),
+  });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.equal(h.baseInput?.owner, null);
+  assert.equal(h.baseInput?.notification, undefined);
+});
+
+test("a substantive change on a hand-assigned requirement notifies that owner rather than the PM Leader", async () => {
+  const req = requirement({ manualOwner: manualOwner({ pushedFeishuUserId: "u-assignee" }), pipeline: { pull: "synced", analysis: "analyzed", owner: "manually_mapped", push: "pending" } });
+  const h = makeHarness({
+    req, pmLeaderUserId: PM_LEADER_USER_ID,
+    lastSuccessful: pushRun({ sourceVersion: 1 }),
+    sourceSnapshot: sourceSnapshot({ substantiveHash: "substantive-v1", payload: { sourceExecutorId: null, mappedFields: {} } }),
+  });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.equal(h.baseInput?.notification?.eventId, "substantive_update:req-1:sv2");
+  assert.equal(h.baseInput?.notification?.recipientUserId, "u-assignee");
+  assert.equal(h.baseInput?.notification?.recipientIdType, "user_id");
+});
+
+test("reassigning a hand-picked owner produces owner_changed from the owner previously written to Base", async () => {
+  const req = requirement({ manualOwner: manualOwner({ feishuUserId: "u-next", name: "盛永帮", pushedFeishuUserId: "u-assignee" }), pipeline: { pull: "synced", analysis: "analyzed", owner: "manually_mapped", push: "pending" } });
+  const h = makeHarness({
+    req, pmLeaderUserId: PM_LEADER_USER_ID,
+    lastSuccessful: pushRun({ sourceVersion: 2 }),
+    sourceSnapshot: sourceSnapshot({ sourceVersion: 2, substantiveHash: req.substantiveHash, payload: { sourceExecutorId: null, mappedFields: {} } }),
+  });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2:owner");
+  assert.equal(result.kind, "pushed");
+  assert.deepEqual(h.baseInput?.owner, { userId: "u-next", idType: "user_id" });
+  assert.equal(h.baseInput?.notification?.eventId, "owner_changed:req-1:sv2:u-assignee:u-next");
+  assert.ok(h.calls.includes("manual-owner-pushed:u-next"));
+});
+
+test("a stored hand-picked owner on a no-TB-owner requirement moves the owner state from not_required", async () => {
+  const req = requirement({ baseRecordId: null, manualOwner: manualOwner(), pipeline: { pull: "synced", analysis: "analyzed", owner: "not_required", push: "pending" } });
+  const h = makeHarness({ req });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.ok(h.calls.includes("owner-state:manually_mapped"));
+});
+
+test("once Teambition provides a mapped owner, the TB owner wins and the hand-picked owner is cleared", async () => {
+  const req = requirement({ executorUserId: "tb-owner", executorName: "Owner", manualOwner: manualOwner({ pushedFeishuUserId: "u-assignee" }), pipeline: { pull: "synced", analysis: "analyzed", owner: "auto_mapped", push: "pending" } });
+  const h = makeHarness({ req, mapping: mappingRecord({ matchMethod: "tb_user_id" }) });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.deepEqual(h.baseInput?.owner, { userId: "ou-owner", idType: "open_id" });
+  assert.ok(h.calls.includes("manual-owner-cleared"));
 });

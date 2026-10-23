@@ -42,7 +42,7 @@ export const PIPELINE_TRANSITIONS: {
     pending_mapping: ["auto_mapped", "manually_mapped", "not_required"],
     auto_mapped: ["pending_mapping", "manually_mapped"], // TB 负责人变化后重解析；操作员可覆盖
     manually_mapped: ["pending_mapping", "manually_mapped"], // 保留人工结果；允许用户改派给另一位负责人
-    not_required: ["pending_mapping"], // 需求获得执行人后重新进入映射
+    not_required: ["pending_mapping", "manually_mapped"], // 需求获得执行人后重新进入映射；或在 Web 为该需求指定负责人
   },
   push: {
     pending: ["running"],

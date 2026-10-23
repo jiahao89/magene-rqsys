@@ -68,3 +68,60 @@ test("push API queues the asynchronous Base push and deduplicates by requirement
   assert.equal(replay.status, 202);
   assert.deepEqual(await replay.json(), { requirementId: "req-1", status: "queued" });
 });
+
+// 无 TB 负责人的需求：负责人只属于这一条需求，不能写成人员映射（否则会改写名单里这个人的绑定）。
+function unownedDeps(ownerState: RequirementRecord["pipeline"]["owner"] = "not_required") {
+  const h = deps();
+  const row: RequirementRecord = { ...requirement, executorUserId: null, executorName: null, pipeline: { ...requirement.pipeline, owner: ownerState } };
+  let assigned: unknown = null;
+  let mappingWrites = 0;
+  const repositories = h.dependencies.repositories as unknown as {
+    requirements: Record<string, unknown>;
+    people: { upsertManual: (p: unknown) => Promise<PersonMappingRecord> };
+  };
+  repositories.requirements.get = async () => row;
+  repositories.requirements.assignManualOwner = async (id: string, owner: unknown) => { assigned = { id, owner }; };
+  repositories.people.upsertManual = async () => { mappingWrites += 1; throw new Error("no-owner assignment must not write person mappings"); };
+  return { ...h, assigned: () => assigned, mappingWrites: () => mappingWrites };
+}
+const ownerPut = (body: unknown) => new Request("http://localhost/api/requirements/req-1/owner", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+test("assigning an owner to a requirement without a TB owner stores it on the requirement and queues a push", async () => {
+  const h = unownedDeps();
+  const response = await handleApiRequest(ownerPut({ feishuUserId: "u-assignee", feishuIdType: "user_id", tbDisplayName: "毕梓浩" }), h.dependencies);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { requirementId: "req-1", ownerState: "manually_mapped", status: "queued" });
+  assert.deepEqual(h.assigned(), { id: "req-1", owner: { feishuUserId: "u-assignee", feishuIdType: "user_id", name: "毕梓浩", assignedBy: "operator", assignedAt: "2026-10-09T00:00:00.000Z" } });
+  assert.equal(h.mappingWrites(), 0);
+  const queued = h.queued() as { jobType: string; dedupeKey: string; payload: { idempotencyKey: string } };
+  assert.equal(queued.jobType, "base_push");
+  // 每次指定都是独立意图：改派回同一个人也必须重新入队，因此键里带唯一的指定 ID。
+  assert.match(queued.dedupeKey, /^base-push:req-1:sv1:av0:owner:[0-9a-f-]{36}$/);
+  assert.equal(queued.payload.idempotencyKey, queued.dedupeKey);
+  assert.equal((h.audited() as { eventType: string }).eventType, "owner.manually_mapped");
+});
+
+test("a legacy no-owner requirement still waiting for mapping accepts a per-requirement owner", async () => {
+  const h = unownedDeps("pending_mapping");
+  const response = await handleApiRequest(ownerPut({ feishuUserId: "u-assignee", feishuIdType: "user_id", tbDisplayName: "毕梓浩" }), h.dependencies);
+  assert.equal(response.status, 200);
+  assert.equal(h.mappingWrites(), 0);
+});
+
+test("a per-requirement owner assignment that cannot be stored reports a dependency failure and queues nothing", async () => {
+  const h = unownedDeps();
+  (h.dependencies.repositories as unknown as { requirements: Record<string, unknown> }).requirements.assignManualOwner = async () => { throw new Error("database down"); };
+  const response = await handleApiRequest(ownerPut({ feishuUserId: "u-assignee", feishuIdType: "user_id", tbDisplayName: "毕梓浩" }), h.dependencies);
+  assert.equal(response.status, 503);
+  assert.equal(h.queued(), undefined);
+});
+
+test("the requirement detail shows the per-requirement owner picked for a no-TB-owner requirement", async () => {
+  const h = unownedDeps("manually_mapped");
+  const repositories = h.dependencies.repositories as unknown as { requirements: Record<string, unknown> };
+  const base = await (repositories.requirements.get as () => Promise<RequirementRecord>)();
+  repositories.requirements.get = async () => ({ ...base, manualOwner: { feishuUserId: "u-assignee", feishuIdType: "user_id", name: "毕梓浩", assignedBy: "operator", assignedAt: "2026-10-09T00:00:00.000Z", pushedFeishuUserId: null } });
+  const response = await handleApiRequest(new Request("http://localhost/api/requirements/req-1"), h.dependencies);
+  assert.equal(response.status, 200);
+  assert.equal((await response.json() as { ownerName: string | null }).ownerName, "毕梓浩");
+});

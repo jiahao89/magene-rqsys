@@ -234,6 +234,13 @@ paths:
   /api/requirements/{id}/owner:
     put:
       summary: Save an operator-selected Feishu owner
+      description: >-
+        When the Teambition requirement has an executor, the selection is saved as a reusable
+        person mapping for that executor. When Teambition has no executor, the selection is
+        stored on this requirement only (no person mapping is written), the owner state becomes
+        manually_mapped, and a Base push is queued; `tbDisplayName` is kept as the owner's
+        display name. Every assignment queues its own push, so reassigning back to a previous
+        person is pushed again.
       parameters:
         - $ref: '#/components/parameters/Id'
       requestBody:
@@ -254,7 +261,8 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '409':
-          description: The selected Feishu account is already bound to another person, so the name-scoped mapping cannot be saved without first resolving that binding
+          description: The selected Feishu account is already bound to another person, so the name-scoped mapping cannot be saved without first resolving that binding; or the requirement is not synced / its owner state does not allow a manual owner
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /api/requirements/{id}/push:
     post:
       summary: Queue a Feishu Base push retry; the queue deduplicates by source and analysis version
@@ -764,7 +772,7 @@ components:
         updatedAt: { type: string, format: date-time }
         sourceUrl: { type: string, nullable: true }
         lastPushedAt: { type: string, format: date-time, nullable: true }
-        # 仅详情接口返回（列表不逐行解析映射，恒为 null）。
+        # TB 有执行人时为映射的人员姓名；TB 无执行人时为 Web 为该需求指定的负责人姓名；解析不到为 null。
         ownerName: { type: string, nullable: true }
         pipeline:
           type: object

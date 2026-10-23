@@ -6,7 +6,7 @@
 import type { AuditEventRecord, BasePushRunRecord, BatchState, AnalysisRunRecord, FunctionModuleEntry, ModuleDictionaryVersionRecord, PersonMappingRecord, PmSnapshotRecord, PipelineJobRecord, PipelineJobType, PriorityLevel, PriorityRuleVersionRecord, SourceConfigRecord, SourceSnapshotRecord, SyncBatchRecord, SyncItemAction, SyncItemRecord, SyncTrigger } from "../domain/persistence.js";
 import type { AnalysisState, OwnerState, PullState, PushState } from "../domain/workflow.js";
 import type { ResolvedSourceConfigUpdate } from "../contracts/source.js";
-import type { RequirementRecord } from "../domain/persistence.js";
+import type { RequirementManualOwner, RequirementRecord } from "../domain/persistence.js";
 import type { TeamPersonBindingInput, TeamPersonRecord } from "../domain/team-directory.js";
 
 export type AuditEventInput = Omit<AuditEventRecord, "entityId">;
@@ -315,6 +315,13 @@ export interface RequirementQueryRepository {
   updateAnalysisState(requirementId: string, to: AnalysisState): Promise<void>;
   // 负责人落库：feishuUserId 来自 person_mappings，本表只推进 owner 状态
   setOwner(requirementId: string, feishuUserId: string | null, state: OwnerState): Promise<void>;
+  // TB 无执行人时的逐条人工负责人：写入需求本身并迁移到 manually_mapped（非法迁移抛 InvalidTransitionError）。
+  // 改派只替换当前负责人，保留 pushedFeishuUserId，直到下一次推送把新负责人写进 Base。
+  assignManualOwner(requirementId: string, owner: Omit<RequirementManualOwner, "pushedFeishuUserId">): Promise<void>;
+  // 推送成功写入了人工负责人后记账；只在仍是同一负责人时生效，避免覆盖推送期间发生的改派。
+  markManualOwnerPushed(requirementId: string, feishuUserId: string): Promise<void>;
+  // TB 负责人接管后清除逐条人工负责人。
+  clearManualOwner(requirementId: string): Promise<void>;
   setBaseRecord(requirementId: string, baseRecordId: string, pushedAt: string): Promise<void>;
   setPushState(requirementId: string, state: PushState): Promise<void>;
   /**

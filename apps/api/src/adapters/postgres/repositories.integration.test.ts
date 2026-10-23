@@ -10,7 +10,7 @@ import { createBasePushService } from "../../base/push-service.js";
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),"../../../../../");
 async function getDatabaseUrl(){if(process.env.DATABASE_URL)return process.env.DATABASE_URL;const env=await readFile(resolve(root,".env"),"utf8").catch(()=>"");const value=env.match(/^DATABASE_URL=(.+)$/m)?.[1]?.trim();if(!value)throw new Error("PostgreSQL integration tests require DATABASE_URL in environment or repo .env");return value;}
-async function setup(){const connectionString=await getDatabaseUrl();const admin=new Pool({connectionString,connectionTimeoutMillis:5000});const schema=`rq_test_${randomUUID().replaceAll("-","")}`;await admin.query(`CREATE SCHEMA "${schema}"`);const pool=new Pool({connectionString,options:`-c search_path=${schema}`,max:5});try{const sql=await readFile(resolve(root,"database/migrations/0001_initial.sql"),"utf8");await pool.query(sql);const next=await readFile(resolve(root,"database/migrations/0002_single_source_config.sql"),"utf8");await pool.query(next);const platformId=await readFile(resolve(root,"database/migrations/0004_platform_requirement_id.sql"),"utf8");await pool.query(platformId);const platformIdBackfill=await readFile(resolve(root,"database/migrations/0005_platform_requirement_id_backfill.sql"),"utf8");await pool.query(platformIdBackfill);return{pool,admin,schema,repos:new PostgresRepositories(pool as never)};}catch(error){await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();throw error;}}
+async function setup(){const connectionString=await getDatabaseUrl();const admin=new Pool({connectionString,connectionTimeoutMillis:5000});const schema=`rq_test_${randomUUID().replaceAll("-","")}`;await admin.query(`CREATE SCHEMA "${schema}"`);const pool=new Pool({connectionString,options:`-c search_path=${schema}`,max:5});try{const sql=await readFile(resolve(root,"database/migrations/0001_initial.sql"),"utf8");await pool.query(sql);const next=await readFile(resolve(root,"database/migrations/0002_single_source_config.sql"),"utf8");await pool.query(next);const platformId=await readFile(resolve(root,"database/migrations/0004_platform_requirement_id.sql"),"utf8");await pool.query(platformId);const platformIdBackfill=await readFile(resolve(root,"database/migrations/0005_platform_requirement_id_backfill.sql"),"utf8");await pool.query(platformIdBackfill);const manualOwner=await readFile(resolve(root,"database/migrations/0006_requirement_manual_owner.sql"),"utf8");await pool.query(manualOwner);return{pool,admin,schema,repos:new PostgresRepositories(pool as never)};}catch(error){await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();throw error;}}
 async function cleanup(ctx:{pool:Pool;admin:Pool;schema:string}){await ctx.pool.end();await ctx.admin.query(`DROP SCHEMA "${ctx.schema}" CASCADE`);await ctx.admin.end();}
 const config={projectId:"tb-project",projectName:"Product",requirementTypeId:"req-type",enabled:true,schedule:{enabled:true,weekday:1,time:"09:30",timezone:"Asia/Shanghai"},ownerNames:["PM Owner"],fieldMap:{description:"cf-description"}};
 function requirementWrite(sourceConfigId:string, latestBatchId:string, overrides:Partial<import("./repositories.js").RequirementRowWrite>={}) {
@@ -197,4 +197,44 @@ test("concurrent pushes of the same requirement serialize through the advisory l
   } finally {
     await cleanup(ctx);
   }
+});
+
+test("a no-TB-owner requirement keeps a per-requirement owner across syncs until it is cleared",async()=>{
+  const ctx=await setup();
+  try{
+    const source=await ctx.repos.sources.create(config);
+    const batch=await ctx.repos.batches.create({sourceConfigId:source.id,triggerType:"manual",actorId:null,idempotencyKey:"manual-owner-batch-1",startedAt:"2026-10-08T00:00:00Z"});
+    const row=await ctx.repos.requirements.upsertRequirement(source.id,"task-1",requirementWrite(source.id,batch.id));
+    await ctx.repos.requirements.setOwner(row.id,null,"not_required");
+    assert.equal((await ctx.repos.requirements.get(row.id))?.manualOwner,null);
+    await ctx.repos.requirements.assignManualOwner(row.id,{feishuUserId:"u-assignee",feishuIdType:"user_id",name:"毕梓浩",assignedBy:"operator",assignedAt:"2026-10-09T00:00:00.000Z"});
+    let loaded=await ctx.repos.requirements.get(row.id);
+    assert.equal(loaded?.pipeline.owner,"manually_mapped");
+    assert.deepEqual(loaded?.manualOwner,{feishuUserId:"u-assignee",feishuIdType:"user_id",name:"毕梓浩",assignedBy:"operator",assignedAt:"2026-10-09T00:00:00.000Z",pushedFeishuUserId:null});
+    // 人员映射表不受影响
+    assert.deepEqual(await ctx.repos.people.listActive(source.id),[]);
+    await ctx.repos.requirements.markManualOwnerPushed(row.id,"u-assignee");
+    // 再次同步（源数据变化）不能抹掉人工负责人
+    await ctx.repos.requirements.upsertRequirement(source.id,"task-1",requirementWrite(source.id,batch.id,{sourceHash:"c".repeat(64)}));
+    loaded=await ctx.repos.requirements.get(row.id);
+    assert.equal(loaded?.manualOwner?.feishuUserId,"u-assignee");
+    assert.equal(loaded?.manualOwner?.pushedFeishuUserId,"u-assignee");
+    // 改派：新负责人覆盖，但「已写入 Base 的负责人」保留到下一次推送成功
+    await ctx.repos.requirements.assignManualOwner(row.id,{feishuUserId:"u-next",feishuIdType:"user_id",name:"盛永帮",assignedBy:"operator",assignedAt:"2026-10-10T00:00:00.000Z"});
+    loaded=await ctx.repos.requirements.get(row.id);
+    assert.equal(loaded?.manualOwner?.feishuUserId,"u-next");
+    assert.equal(loaded?.manualOwner?.pushedFeishuUserId,"u-assignee");
+    await ctx.repos.requirements.clearManualOwner(row.id);
+    assert.equal((await ctx.repos.requirements.get(row.id))?.manualOwner,null);
+  }finally{await cleanup(ctx);}
+});
+test("assigning a per-requirement owner to a missing requirement fails without side effects",async()=>{
+  const ctx=await setup();
+  try{
+    const source=await ctx.repos.sources.create(config);
+    const batch=await ctx.repos.batches.create({sourceConfigId:source.id,triggerType:"manual",actorId:null,idempotencyKey:"manual-owner-batch-2",startedAt:"2026-10-08T00:00:00Z"});
+    const row=await ctx.repos.requirements.upsertRequirement(source.id,"task-1",requirementWrite(source.id,batch.id));
+    await assert.rejects(()=>ctx.repos.requirements.assignManualOwner("00000000-0000-4000-8000-000000000999",{feishuUserId:"u",feishuIdType:"user_id",name:null,assignedBy:null,assignedAt:"2026-10-09T00:00:00.000Z"}),/not found/);
+    assert.equal((await ctx.repos.requirements.get(row.id))?.manualOwner,null);
+  }finally{await cleanup(ctx);}
 });

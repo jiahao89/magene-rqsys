@@ -97,10 +97,26 @@ export interface RequirementRecord {
   baseRecordId: string | null;
   lastPushedAt: string | null;
   pipeline: RequirementPipelineState;
+  /** TB 无执行人时在 Web 为这一条需求指定的负责人；TB 有执行人时不使用。缺省视为未指定。 */
+  manualOwner?: RequirementManualOwner | null;
   firstSeenAt: string;
   lastSeenAt: string;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * 逐条需求的人工负责人：只属于这一条需求，不写 person_mappings，因此不会改写名单人员的账号绑定，
+ * 也不会影响其他需求。pushedFeishuUserId 是最近一次成功写进 Base 的人工负责人：
+ * 与当前负责人相同时，后续推送不再覆盖 Base 人员字段（PM 可能已在 Base 里改过）。
+ */
+export interface RequirementManualOwner {
+  feishuUserId: string;
+  feishuIdType: FeishuIdType;
+  name: string | null;
+  assignedBy: string | null;
+  assignedAt: string;
+  pushedFeishuUserId: string | null;
 }
 
 // sync_items：批次内逐条结果及错误。

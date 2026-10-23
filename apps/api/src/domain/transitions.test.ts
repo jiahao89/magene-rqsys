@@ -55,6 +55,8 @@ test("owner 迁移：auto_mapped → manually_mapped 允许，人工映射不可
   assert.equal(canTransition("owner", "manually_mapped", "auto_mapped"), false);
   assert.equal(canTransition("owner", "manually_mapped", "pending_mapping"), true); // TB 负责人实质变更后重新解析；无匹配时仓储保留 Base 手动负责人
   assert.equal(canTransition("owner", "not_required", "pending_mapping"), true);
+  // TB 无执行人时，操作员可在 Web 为该条需求指定负责人。
+  assert.equal(canTransition("owner", "not_required", "manually_mapped"), true);
 });
 
 test("push 合法迁移：failed → pending 重试，pushed → running 实质更新", () => {

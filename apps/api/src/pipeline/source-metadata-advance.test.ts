@@ -64,3 +64,13 @@ test("metadata-only source update preserves an existing manual owner selection",
   assert.equal(h.calls.some((call) => call.startsWith("owner:")), false);
   assert.ok(h.calls.some((call) => call.startsWith("job:base_push:")));
 });
+
+test("metadata-only sync of a no-TB-owner requirement keeps the owner picked in Web", async () => {
+  const manualOwner = { feishuUserId: "u-assignee", feishuIdType: "user_id" as const, name: "毕梓浩", assignedBy: "operator", assignedAt: "2026-10-09T00:00:00Z", pushedFeishuUserId: "u-assignee" };
+  for (const owner of ["pending_mapping", "not_required", "manually_mapped"] as const) {
+    const h = harness(requirement({ executorUserId: null, executorName: null, manualOwner, pipeline: { pull: "synced", analysis: "analyzed", owner, push: "pending" } }), null);
+    assert.equal(await h.advance("req-1", "operator", 1), "queued");
+    assert.equal(h.calls.some((call) => call.endsWith(":not_required")), false);
+    assert.equal(h.calls.filter((call) => call.startsWith("owner:")).at(-1) ?? "unchanged", owner === "manually_mapped" ? "unchanged" : "owner:u-assignee:manually_mapped");
+  }
+});
