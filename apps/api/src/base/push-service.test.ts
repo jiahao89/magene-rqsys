@@ -100,6 +100,7 @@ function makeHarness(options: {
       get: async () => req,
       setOwner: async (_id: string, _owner: string | null, state: RequirementRecord["pipeline"]["owner"]) => { calls.push("owner"); calls.push(`owner-state:${state}`); },
       markManualOwnerPushed: async (_id: string, feishuUserId: string) => { calls.push(`manual-owner-pushed:${feishuUserId}`); },
+      markLastPushedOwner: async (_id: string, owner: { feishuUserId: string } | null) => { calls.push(`last-owner:${owner?.feishuUserId ?? "none"}`); },
       clearManualOwner: async () => { calls.push("manual-owner-cleared"); },
       setPushState: async (_id: string, state: RequirementRecord["pipeline"]["push"]) => { calls.push(`state:${state}`); req.pipeline.push = state; },
       setBaseRecord: async (_id: string, recordId: string) => {
@@ -244,14 +245,24 @@ test("first push stays silent so a bulk backfill cannot flood the PM Leader", as
   assert.ok(h.calls.includes("base"));
 });
 
-test("first push notifies the owner when a person was assigned by hand", async () => {
+test("first push notifies the owner when this requirement was assigned by hand", async () => {
   // 人工分配是明确的人类意图：被分配的人必须收到通知，否则不知道有这件事要做。
+  const req = requirement({ executorUserId: "tb-owner", executorName: "Owner", manualOwner: manualOwner(), pipeline: { pull: "synced", analysis: "analyzed", owner: "manually_mapped", push: "pending" } });
+  const h = makeHarness({ req, mapping: mappingRecord({ matchMethod: "tb_user_id" }), pmLeaderUserId: PM_LEADER_USER_ID });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.deepEqual(h.baseInput?.owner, { userId: "u-assignee", idType: "user_id" });
+  assert.equal(h.baseInput?.notification?.eventType, "已分配负责人");
+  assert.equal(h.baseInput?.notification?.recipientUserId, "u-assignee");
+});
+
+test("first push stays silent when the owner comes from a manual TB mapping", async () => {
+  // 某位 TB 执行人曾被分配过一次，不代表他的每条新需求都被人工分配过；自动匹配首推必须静默。
   const req = requirement({ executorUserId: "tb-owner", executorName: "Owner" });
   const h = makeHarness({ req, mapping: mappingRecord({ matchMethod: "manual" }), pmLeaderUserId: PM_LEADER_USER_ID });
   const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
   assert.equal(result.kind, "pushed");
-  assert.equal(h.baseInput?.notification?.eventType, "已分配负责人");
-  assert.equal(h.baseInput?.notification?.recipientUserId, "ou-owner");
+  assert.equal(h.baseInput?.notification, undefined);
 });
 
 test("first push stays silent when the owner comes from a name-based roster binding", async () => {
@@ -441,6 +452,25 @@ test("AI retry success without an owner falls back to the PM Leader", async () =
   });
 });
 
+test("owner switch from the last pushed manual owner to the TB mapping produces owner_changed", async () => {
+  // 旧实现用当前映射反推历史负责人，切换类型时会误报 owner_assigned；lastPushedOwner 必须作为唯一依据。
+  const req = requirement({ executorUserId: "tb-owner", executorName: "Owner", lastPushedOwner: { feishuUserId: "u-assignee", feishuIdType: "user_id" }, pipeline: { pull: "synced", analysis: "analyzed", owner: "auto_mapped", push: "pending" } });
+  const h = makeHarness({ req, mapping: mappingRecord({ feishuUserId: "ou-owner", matchMethod: "tb_user_id" }), lastSuccessful: pushRun({ sourceVersion: 2 }), sourceSnapshot: sourceSnapshot({ substantiveHash: req.substantiveHash }) });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.equal(h.baseInput?.notification?.eventType, "负责人变更");
+  assert.equal(h.baseInput?.notification?.recipientUserId, "ou-owner");
+  assert.match(h.baseInput?.notification?.eventId ?? "", /u-assignee.*ou-owner/);
+});
+
+test("suspected duplicates can never be pushed to Base", async () => {
+  const req = requirement({ duplicateOfRequirementId: "req-canonical" });
+  const h = makeHarness({ req });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "conflict");
+  assert.equal(h.calls.includes("base"), false);
+});
+
 test("a repeated no-change sync is silent and writes no notification fields", async () => {
   const req = requirement({ executorUserId: "tb-owner", executorName: "Owner" });
   const h = makeHarness({
@@ -545,6 +575,9 @@ test("the requirement advisory lock serializes concurrent pushes and prevents a 
       setOwner: async () => { calls.push("owner"); },
       setPushState: async (_id: string, state: RequirementRecord["pipeline"]["push"]) => { req.pipeline.push = state; calls.push(`state:${state}`); },
       setBaseRecord: async () => { calls.push("base-record"); },
+      markLastPushedOwner: async () => { calls.push("last-owner"); },
+      markManualOwnerPushed: async () => { calls.push("manual-owner-pushed"); },
+      clearManualOwner: async () => { calls.push("manual-owner-cleared"); },
       withRequirementLock: async <T>(_requirementId: string, fn: () => Promise<T>): Promise<T> => {
         const previous = lockTail;
         let release!: () => void;
@@ -703,11 +736,12 @@ test("a stored hand-picked owner on a no-TB-owner requirement moves the owner st
   assert.ok(h.calls.includes("owner-state:manually_mapped"));
 });
 
-test("once Teambition provides a mapped owner, the TB owner wins and the hand-picked owner is cleared", async () => {
-  const req = requirement({ executorUserId: "tb-owner", executorName: "Owner", manualOwner: manualOwner({ pushedFeishuUserId: "u-assignee" }), pipeline: { pull: "synced", analysis: "analyzed", owner: "auto_mapped", push: "pending" } });
+test("a hand-picked owner keeps precedence after Teambition later provides a mapped owner", async () => {
+  // 单条改派只属于这一条需求：TB 后补执行人也不能悄悄把负责人换掉；要换需显式「恢复默认负责人」。
+  const req = requirement({ executorUserId: "tb-owner", executorName: "Owner", manualOwner: manualOwner(), pipeline: { pull: "synced", analysis: "analyzed", owner: "manually_mapped", push: "pending" } });
   const h = makeHarness({ req, mapping: mappingRecord({ matchMethod: "tb_user_id" }) });
   const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
   assert.equal(result.kind, "pushed");
-  assert.deepEqual(h.baseInput?.owner, { userId: "ou-owner", idType: "open_id" });
-  assert.ok(h.calls.includes("manual-owner-cleared"));
+  assert.deepEqual(h.baseInput?.owner, { userId: "u-assignee", idType: "user_id" });
+  assert.ok(!h.calls.includes("manual-owner-cleared"));
 });

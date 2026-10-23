@@ -245,6 +245,11 @@ export function setOwner(id: string, input: { feishuUserId: string; feishuIdType
   return putJson<{ requirementId: string; ownerState: string; status: string }>(`/api/requirements/${id}/owner`, input, fetcher);
 }
 
+/** 清除本条需求的人工负责人，恢复为 TB 执行人默认负责人（无执行人时为空负责人）。 */
+export function clearOwner(id: string, fetcher: typeof fetch = fetch): Promise<{ requirementId: string; ownerState: RequirementOwnerState; status: string }> {
+  return deleteJson<{ requirementId: string; ownerState: RequirementOwnerState; status: string }>(`/api/requirements/${id}/owner`, fetcher);
+}
+
 export async function searchFeishuUsers(query: string, fetcher: typeof fetch = fetch): Promise<FeishuUserCandidate[]> {
   const params = new URLSearchParams({ q: query.trim() });
   const result = await requestJson<{ items: FeishuUserCandidate[] }>(`/api/feishu/users?${params.toString()}`, fetcher);
@@ -276,6 +281,8 @@ export interface RequirementSummary {
   pipeline: { pull: string; analysis: string; owner: RequirementOwnerState; push: string };
   source?: Record<string, unknown>;
   ownerName?: string | null;
+  manualOwner?: { feishuUserId: string; feishuIdType: "open_id" | "user_id" | "union_id"; name: string | null; assignedAt: string } | null;
+  duplicateOf?: string | null;
   updatedAt?: string | null;
 }
 
@@ -305,6 +312,9 @@ export interface RequirementDetail {
   analyses: AnalysisVersionSummary[];
   baseRecordId: string | null;
   ownerName?: string | null;
+  manualOwner?: { feishuUserId: string; feishuIdType: "open_id" | "user_id" | "union_id"; name: string | null; assignedAt: string } | null;
+  duplicateOf?: string | null;
+  duplicates?: Array<{ id: string; title: string; teambitionRequirementId: string }>;
   updatedAt?: string | null;
   lastPushedAt?: string | null;
 }

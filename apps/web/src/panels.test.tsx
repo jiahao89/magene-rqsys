@@ -170,7 +170,7 @@ describe("MappingsPanel (ticket 17)", () => {
     fireEvent.change(picker, { target: { value: "ou-user" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
 
-    expect(await screen.findByText(/映射已持久化（manually_mapped），Base 推送已入队/)).toBeInTheDocument();
+    expect(await screen.findByText(/已指定为这条需求的负责人（manually_mapped），Base 推送已入队/)).toBeInTheDocument();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/requirements/req-1/owner", expect.objectContaining({ method: "PUT", body: JSON.stringify({ feishuUserId: "ou-user", feishuIdType: "open_id", tbDisplayName: "Ada" }) })));
   });
 
@@ -335,6 +335,22 @@ describe("RequirementsPanel (ticket 17)", () => {
     fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
     await waitFor(() => expect(window.location.search).toBe(""));
     expect((screen.getByLabelText("搜索需求标题") as HTMLInputElement).value).toBe("");
+  });
+
+  it("shows the suspected-duplicate notice with detail links and marks a per-requirement owner", async () => {
+    mockPanel({
+      detailBody: detail({
+        manualOwner: { feishuUserId: "ou-owner", feishuIdType: "open_id", name: "毕梓浩", assignedAt: "2026-10-09T00:00:00.000Z" },
+        duplicates: [{ id: "req-2", title: "重复的需求", teambitionRequirementId: "tb-2" }],
+      }),
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await openFirstRow();
+
+    expect(screen.getByRole("note")).toHaveTextContent("发现 1 条同标题疑似重复需求");
+    expect(screen.getByRole("link", { name: "重复的需求" })).toHaveAttribute("href", "?requirement=req-2");
+    expect(screen.getByText("手动指定")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "恢复默认负责人" })).toBeInTheDocument();
   });
 
   it("opens the detail page with the owner picker from a pending-owner row action", async () => {

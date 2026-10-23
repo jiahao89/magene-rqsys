@@ -68,6 +68,8 @@ function requirementDto(req: RequirementRecord, analysis: Record<string, unknown
     source: req.sourcePayload,
     analysis,
     baseRecordId: req.baseRecordId,
+    manualOwner: req.manualOwner ? { feishuUserId: req.manualOwner.feishuUserId, feishuIdType: req.manualOwner.feishuIdType, name: req.manualOwner.name, assignedAt: req.manualOwner.assignedAt } : null,
+    duplicateOf: req.duplicateOfRequirementId ?? null,
     analyses,
   };
 }
@@ -85,8 +87,8 @@ function personDto(person: TeamPersonRecord) {
   return { name: person.name, feishuUserId: person.binding?.feishuUserId ?? null, feishuIdType: person.binding?.feishuIdType ?? null, boundAt: person.binding?.boundAt ?? null, bindingConflict: person.bindingConflict };
 }
 function requirementSearchDto(req: RequirementRecord) { return requirementDto(req); }
-// TB 无执行人时，负责人是 Web 为这一条需求指定的人。
-function manualOwnerName(req: RequirementRecord): string | null { return !req.executorUserId && !req.executorName ? req.manualOwner?.name ?? null : null; }
+// 逐条人工负责人优先于 TB 执行人映射；两者都没有时为空。
+function manualOwnerName(req: RequirementRecord): string | null { return req.manualOwner?.name ?? null; }
 function dictionaryDto(d: ModuleDictionaryVersionRecord) { return { version: d.version, status: d.status, entries: d.entries, createdBy: d.createdBy, createdAt: d.createdAt, publishedAt: d.publishedAt }; }
 function priorityRuleDto(r: PriorityRuleVersionRecord) { return { id: r.id, version: r.version, status: r.status, rules: r.rules, validationEvidence: r.validationEvidence, createdBy: r.createdBy, createdAt: r.createdAt, publishedAt: r.publishedAt }; }
 async function actorFor(request: Request, dependencies: ApiDependencies) {
@@ -401,7 +403,7 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const mappings = repositories.people ? await repositories.people.listActive(page.items[0]?.sourceConfigId ?? "") : [];
     const nameByTbUser = new Map(mappings.filter((m) => m.teambitionUserId && m.teambitionDisplayName).map((m) => [m.teambitionUserId as string, m.teambitionDisplayName as string]));
     return json({
-      items: page.items.map((item) => ({ ...requirementSearchDto(item), ownerName: item.executorUserId ? nameByTbUser.get(item.executorUserId) ?? null : manualOwnerName(item) })),
+      items: page.items.map((item) => ({ ...requirementSearchDto(item), ownerName: manualOwnerName(item) ?? (item.executorUserId ? nameByTbUser.get(item.executorUserId) ?? null : null) })),
       nextCursor: page.nextCursor,
     });
   }
@@ -420,7 +422,8 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
         ownerName = mapping?.teambitionDisplayName ?? null;
       } catch { /* 姓名是展示增强，解析失败不影响详情返回 */ }
     }
-    return json(requirementDto(req, latest && latest.status === "analyzed" ? latest.structuredResult : null, history.map(analysisVersionDto), ownerName));
+    const duplicates = await repositories.requirements.listDuplicates(req.id);
+    return json({ ...requirementDto(req, latest && latest.status === "analyzed" ? latest.structuredResult : null, history.map(analysisVersionDto), ownerName), duplicates });
   }
   const itemRetryMatch = url.pathname.match(/^\/api\/items\/([^/]+)\/retry$/);
   if (method === "POST" && itemRetryMatch) {
@@ -505,41 +508,57 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     return json({ requirementId: req.id, status: "queued" }, 202);
   }
   const ownerMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/owner$/);
-  if (method === "PUT" && ownerMatch) {
+  if ((method === "PUT" || method === "DELETE") && ownerMatch) {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.people || !repositories.requirements || !repositories.jobs || !repositories.audit) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const body = OwnerMappingUpdateSchema.safeParse(await readJson(request)); if (!body.success) return jsonError("VALIDATION_FAILED");
     const req = await repositories.requirements.get(decodeURIComponent(ownerMatch[1]!)); if (!req) return jsonError("NOT_FOUND");
+    if (req.duplicateOfRequirementId) return jsonError("CONFLICT", "疑似重复需求不参与负责人分配。");
     if (req.pipeline.pull !== "synced") return jsonError("CONFLICT");
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
-    // TB 无执行人：负责人只属于这一条需求，存到需求本身，不写人员映射（否则会改写名单人员的绑定、波及其他需求）。
-    if (!req.executorUserId && !req.executorName) {
-      const latestAnalysis = await repositories.analyses?.latest(req.id) ?? null;
-      const analysisVersion = latestAnalysis?.analysisVersion ?? 0;
-      // 每次指定都是独立意图：改派回同一个人也要重新推送，因此键里带唯一的指定 ID。
-      const idempotencyKey = basePushIdempotencyKey(req.id, req.sourceVersion, analysisVersion, `owner:${crypto.randomUUID()}`);
+    const latestAnalysis = await repositories.analyses?.latest(req.id) ?? null;
+    const analysisVersion = latestAnalysis?.analysisVersion ?? 0;
+    if (method === "DELETE") {
+      // 恢复默认负责人：清除本条需求的人工指定，再按 TB 执行人映射重新解析。
+      if (!req.manualOwner) return jsonError("CONFLICT", "该需求没有单独指定的负责人。");
+      const hasTbOwner = Boolean(req.executorUserId || req.executorName);
+      const mapping = req.executorUserId
+        ? await repositories.people.resolveActive(req.sourceConfigId, { tbUserId: req.executorUserId })
+        : req.executorName ? await repositories.people.resolveActive(req.sourceConfigId, { normalizedName: normalizeOwnerName(req.executorName) }) : null;
+      const targetState = mapping ? "auto_mapped" : hasTbOwner ? "pending_mapping" : "not_required";
       try {
-        await repositories.requirements.assignManualOwner(req.id, { feishuUserId: body.data.feishuUserId, feishuIdType: body.data.feishuIdType, name: body.data.tbDisplayName ?? null, assignedBy: auth.actor.id, assignedAt: now });
+        await repositories.requirements.clearManualOwner(req.id);
+        // 状态机没有 manually_mapped → not_required 的直接迁移，按既有路径经过 pending_mapping。
+        if (targetState === "not_required" && req.pipeline.owner === "manually_mapped") {
+          await repositories.requirements.setOwner(req.id, null, "pending_mapping");
+        }
+        await repositories.requirements.setOwner(req.id, mapping?.feishuUserId ?? null, targetState);
       } catch (cause) {
         return (cause as Error)?.name === "InvalidTransitionError" ? jsonError("CONFLICT") : jsonError("DEPENDENCY_UNAVAILABLE");
       }
-      try { await repositories.jobs.enqueue({ jobType: "base_push", dedupeKey: idempotencyKey, payload: { requirementId: req.id, sourceVersion: req.sourceVersion, analysisVersion, idempotencyKey, actorId: auth.actor.id }, availableAt: now }); }
-      catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
-      const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "owner.manually_mapped", entityType: "requirement", entityId: req.id, result: "succeeded", safeDetails: { reason: "no_teambition_owner", sourceVersion: req.sourceVersion }, occurredAt: now });
+      if (mapping || !hasTbOwner) {
+        const idempotencyKey = basePushIdempotencyKey(req.id, req.sourceVersion, analysisVersion, `owner-reset:${crypto.randomUUID()}`);
+        try {
+          await repositories.jobs.enqueue({ jobType: "base_push", dedupeKey: idempotencyKey, payload: { requirementId: req.id, sourceVersion: req.sourceVersion, analysisVersion, idempotencyKey, actorId: auth.actor.id }, availableAt: now });
+        } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
+      }
+      const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "owner.manual_cleared", entityType: "requirement", entityId: req.id, result: "succeeded", safeDetails: { sourceVersion: req.sourceVersion }, occurredAt: now });
       if (auditFailure) return auditFailure;
-      return json({ requirementId: req.id, ownerState: "manually_mapped", status: "queued" });
+      return json({ requirementId: req.id, ownerState: targetState, status: mapping || !hasTbOwner ? "queued" : "waiting_mapping" });
     }
-    // 工单 14：人工映射持久化成功后再入队推送——任一步失败不留虚假成功
-    const mapping = await mappingConflictResponse(() => repositories.people!.upsertManual({ sourceConfigId:req.sourceConfigId, teambitionUserId:body.data.tbUserId ?? req.executorUserId, teambitionDisplayName:body.data.tbDisplayName ?? req.executorName, feishuUserId:body.data.feishuUserId, feishuIdType:body.data.feishuIdType, createdBy:auth.actor.id, now }));
-    if (mapping instanceof Response) return mapping;
-    await repositories.requirements.setOwner(req.id,mapping.feishuUserId,"manually_mapped");
-    const latestAnalysis = await repositories.analyses?.latest(req.id) ?? null;
-    const analysisVersion = latestAnalysis?.analysisVersion ?? 0;
-    const idempotencyKey = basePushIdempotencyKey(req.id,req.sourceVersion,analysisVersion,`mapping:${mapping.id}`);
-    await repositories.jobs.enqueue({jobType:"base_push",dedupeKey:idempotencyKey,payload:{requirementId:req.id,sourceVersion:req.sourceVersion,analysisVersion,idempotencyKey,actorId:auth.actor.id},availableAt:now});
-    const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "owner.manually_mapped", entityType: "requirement", entityId: req.id, result: "succeeded", safeDetails: {}, occurredAt: now });
+    const body = OwnerMappingUpdateSchema.safeParse(await readJson(request)); if (!body.success) return jsonError("VALIDATION_FAILED");
+    // 逐条负责人：只写需求本身，绝不改写 person_mappings（否则会改掉同 TB 执行人名下全部需求）。
+    const idempotencyKey = basePushIdempotencyKey(req.id, req.sourceVersion, analysisVersion, `owner:${crypto.randomUUID()}`);
+    try {
+      await repositories.requirements.assignManualOwner(req.id, { feishuUserId: body.data.feishuUserId, feishuIdType: body.data.feishuIdType, name: body.data.tbDisplayName ?? null, assignedBy: auth.actor.id, assignedAt: now });
+    } catch (cause) {
+      return (cause as Error)?.name === "InvalidTransitionError" ? jsonError("CONFLICT") : jsonError("DEPENDENCY_UNAVAILABLE");
+    }
+    try {
+      await repositories.jobs.enqueue({ jobType: "base_push", dedupeKey: idempotencyKey, payload: { requirementId: req.id, sourceVersion: req.sourceVersion, analysisVersion, idempotencyKey, actorId: auth.actor.id }, availableAt: now });
+    } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
+    const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "owner.manually_mapped", entityType: "requirement", entityId: req.id, result: "succeeded", safeDetails: { reason: "per_requirement", sourceVersion: req.sourceVersion }, occurredAt: now });
     if (auditFailure) return auditFailure;
-    return json({requirementId:req.id,ownerState:"manually_mapped",status:"queued"});
+    return json({ requirementId: req.id, ownerState: "manually_mapped", status: "queued" });
   }
   const pushMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/push$/);
   if (method === "POST" && pushMatch) {

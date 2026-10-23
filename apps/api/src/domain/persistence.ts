@@ -97,12 +97,22 @@ export interface RequirementRecord {
   baseRecordId: string | null;
   lastPushedAt: string | null;
   pipeline: RequirementPipelineState;
-  /** TB 无执行人时在 Web 为这一条需求指定的负责人；TB 有执行人时不使用。缺省视为未指定。 */
+  /** Web 为这一条需求指定的负责人；优先于 TB 执行人映射，且不影响任何其他需求。缺省视为未指定。 */
   manualOwner?: RequirementManualOwner | null;
+  /** 最近一次成功推送写入 Base 的负责人；用于判断"负责人变更"事件，避免用当前映射反推历史。 */
+  lastPushedOwner?: PushedOwner | null;
+  /** 同标题疑似重复时指向最早那条需求；重复项不进入默认需求池、不分析、不推送。 */
+  duplicateOfRequirementId?: string | null;
   firstSeenAt: string;
   lastSeenAt: string;
   createdAt: string;
   updatedAt: string;
+}
+
+/** 成功推送后记录的负责人快照，用于计算下一次"负责人变更"。 */
+export interface PushedOwner {
+  feishuUserId: string;
+  feishuIdType: FeishuIdType;
 }
 
 /**

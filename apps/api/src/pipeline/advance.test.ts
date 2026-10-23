@@ -55,6 +55,18 @@ test("TB 有负责人且映射唯一：分析失败终态也入队推送（AI �
   assert.deepEqual(fixture.auditResults, ["failed"]);
 });
 
+test("单条人工负责人优先：TB 执行人未匹配映射也照常推送", async () => {
+  const fixture = makeAdvanceFixture(requirement({
+    executorUserId: "tb-user",
+    manualOwner: { feishuUserId: "u-assignee", feishuIdType: "user_id", name: "毕梓浩", assignedBy: "operator", assignedAt: "2026-10-09T00:00:00.000Z", pushedFeishuUserId: null },
+    pipeline: { pull: "synced", analysis: "analyzed", owner: "manually_mapped", push: "pending" },
+  }), false);
+  const advance = createAnalysisAdvancer(fixture);
+  assert.equal(await advance("req-1", "analyzed", "worker", 1), "queued");
+  assert.deepEqual(fixture.ownerChanges, []);
+  assert.deepEqual(fixture.queuedJobs.map((j) => j.dedupeKey), ["base-push:req-1:sv1:av1"]);
+});
+
 test("TB 有负责人但未匹配：等待人工映射，不入队推送", async () => {
   const fixture = makeAdvanceFixture(requirement({ executorUserId: "tb-user" }), false);
   const advance = createAnalysisAdvancer(fixture);
@@ -90,6 +102,9 @@ function makePushFixture(req: RequirementRecord, options: { resolveMapping?: boo
       setOwner: async (_id: string, owner: string | null, state: "pending_mapping" | "auto_mapped" | "manually_mapped" | "not_required") => { actions.push(`owner:${owner}:${state}`); },
       setPushState: async (_id: string, state: "pending" | "running" | "pushed" | "failed") => { actions.push(`push:${state}`); },
       setBaseRecord: async (_id: string, recordId: string) => { actions.push(`base-record:${recordId}`); },
+      markLastPushedOwner: async (_id: string, owner: { feishuUserId: string } | null) => { actions.push(`last-owner:${owner?.feishuUserId ?? "none"}`); },
+      markManualOwnerPushed: async () => { actions.push("manual-owner-pushed"); },
+      clearManualOwner: async () => { actions.push("manual-owner-cleared"); },
     } as unknown as BasePushServiceDeps["requirements"],
     people: { resolveActive: async () => options.resolveMapping ? mapping : null } as unknown as BasePushServiceDeps["people"],
     basePushes: {

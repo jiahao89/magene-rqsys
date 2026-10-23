@@ -9,19 +9,19 @@ The pipeline must resolve Teambition owners to Feishu users when possible, push 
 ## User stories
 
 1. As an operator, I want an owner to match by stable Teambition user ID first and unique name second, so that the Base person field is accurate.
-2. As a PM Leader, I want to select a Feishu user when automatic mapping is ambiguous or missing, so that the requirement can still be pushed.
+2. As a PM Leader, I want to select a Feishu user for one requirement when automatic mapping is ambiguous or missing, so that the requirement can be pushed without changing anyone else's owner.
 3. As an operator, I want a requirement with no Teambition owner to push with an empty owner, so that missing ownership does not block intake.
-4. As a PM, I want a manually assigned Base owner preserved when Teambition is unassigned or unresolved, so that source sync cannot erase a deliberate assignment.
+4. As a PM, I want a per-requirement owner preserved through later Teambition owner changes until I explicitly restore the default, so that a deliberate single-requirement assignment cannot be silently overwritten.
 5. As a stakeholder, I want notifications only for meaningful push, change, assignment, or successful-retry events, so that repeated syncs do not create noise.
 
 ## Owner-matching rules
 
 - If TB owner ID exists, match by ID.
 - If ID is absent, match only when the TB name resolves uniquely to an active mapping.
-- Missing or duplicate name match becomes 待匹配. PM Leader/designated operator selects a Feishu user in Web; persist the mapping for reuse; selection enables push.
+- Missing or duplicate name match becomes 待匹配. PM Leader/designated operator selects a Feishu user for that requirement in Web; the selection is stored on the requirement only (never in person_mappings) and enables push. Reusable TB-executor default mappings are maintained separately in Team management / person bindings, never implicitly by a single-requirement assignment.
 - If TB has no owner, set owner state to 无需匹配 and allow an empty-owner push. Do not notify a nonexistent owner.
-- If TB has no owner and an operator assigns one in Web, store that owner on the requirement itself (never as a person mapping, so the roster binding and other requirements are untouched), move the owner state to 已手动匹配, and queue a push. The push writes that owner to Base once and notifies them (首次推送 or 空负责人后分配 → 已分配负责人; 改派 → 负责人变更 from the owner previously written). Once the same hand-picked owner is in Base, later pushes leave the Base person field alone so a Base-side edit is preserved. When TB later provides a mapped executor, the TB owner wins and the per-requirement owner is cleared.
-- If TB later changes to a mapped owner, update the Base owner and notify the new owner.
+- If an operator assigns an owner to any requirement in Web (TB owner present or not), store that owner on the requirement itself (never as a person mapping, so the roster binding and other requirements are untouched), move the owner state to 已手动匹配, and queue a push. The per-requirement owner takes precedence over the TB-executor mapping, survives later source/executor updates until explicitly cleared, and never changes another requirement's owner. The push writes that owner to Base once and notifies them (首次推送 → 已分配负责人; 改派 → 负责人变更 from the owner actually written in the last successful push). Once the same hand-picked owner is in Base, later pushes leave the Base person field alone so a Base-side edit is preserved. `DELETE /api/requirements/{id}/owner` clears the manual owner, restores the TB default mapping (or pending/no-owner) and queues a push when a default exists.
+- If TB later changes to a mapped owner and the requirement has no per-requirement owner, update the Base owner and notify the new owner.
 - If TB owner is empty or cannot be matched, preserve a manually assigned Base owner.
 - Do not design behavior for users outside the configured project scope in this MVP.
 
@@ -76,7 +76,9 @@ A failed Base upsert must not emit a success notification. A notification delive
 3. Given duplicate or missing owner mapping, then the record remains unmapped until an operator selects a Feishu user; no duplicate Base record is created.
 4. Given the TB requirement has no owner, then the record is pushed with an empty owner and no owner notification.
 5. Given Base already has a manual owner and TB owner is empty/unmatched, then sync preserves that manual owner.
-6. Given TB owner later maps to a new Feishu user, then Base owner changes and only the new owner receives the owner-change notification.
+6. Given a requirement has no per-requirement owner and the TB owner later maps to a new Feishu user, then Base owner changes and only the new owner receives the owner-change notification. Given a per-requirement owner exists, the TB change does not overwrite it.
+6a. Given an operator assigns an owner to one requirement, then only that requirement's Base owner changes; other requirements of the same TB executor and the global mapping stay unchanged.
+6b. Given an operator clears a per-requirement owner, then the requirement falls back to the TB default mapping (or pending/no-owner) and the recipient of the change is the restored owner.
 7. Given a substantive source change, then a PM snapshot is saved before writes; if snapshot fails, the existing Base row and PM state remain intact.
 8. Given an unchanged scheduled sync, then no PM state reset, duplicate row, or duplicate notification occurs.
 9. Given analysis failure or low confidence, then an otherwise eligible requirement can still be pushed.

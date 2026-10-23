@@ -74,6 +74,12 @@ export function createPostgresSyncPersistence(
         occurredAt: result.completedAt,
       });
     },
+    async listTitleCandidates(sourceConfigId) {
+      return repositories.requirements.listTitleCandidates(sourceConfigId);
+    },
+    async setDuplicateOf(requirementId, canonicalRequirementId) {
+      await repositories.requirements.setDuplicateOf(requirementId, canonicalRequirementId);
+    },
     touchedRequirements() {
       return touched;
     },

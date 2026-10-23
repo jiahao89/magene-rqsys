@@ -13,6 +13,9 @@ export interface SyncPersistence {
   appendSourceSnapshot(input:{requirementId:string;sourceVersion:number;sourceHash:string;substantiveHash:string;payload:Record<string,unknown>;isSubstantiveChange:boolean;capturedAt:string}):Promise<void>;
   writeSyncItem(input:{batchId:string;requirementId:string|null;teambitionRequirementId:string;action:"created"|"updated"|"unchanged";status:"succeeded"|"failed";errorCode:string|null;errorDetail:string|null;startedAt:string;completedAt:string}):Promise<void>;
   completeBatch(batchId:string,result:{status:BatchState;totalCount:number;succeededCount:number;failedCount:number;errorSummary:string|null;completedAt:string}):Promise<void>;
+  // 疑似重复检测：读取当前来源全部需求，再把同标题后出现的记录指向最早一条。
+  listTitleCandidates(sourceConfigId:string):Promise<Array<{id:string;teambitionRequirementId:string;title:string;sourceCreatedAt:string|null;duplicateOfRequirementId:string|null}>>;
+  setDuplicateOf(requirementId:string,canonicalRequirementId:string|null):Promise<void>;
 }
 export interface SyncInput { batchId:string;sourceConfigId:string;config:SourceProjectConfig;startedAt?:string;onlyIds?:string[];mode?:SyncExecutionMode }
 // Queue payloads resolve configuration at the application composition seam; the orchestrator stays provider-agnostic.
@@ -23,7 +26,7 @@ export type SyncJobRunner = (job: SyncJobContext) => Promise<SyncResult>;
 export interface SyncResult {batchId:string;status:BatchState;totalCount:number;succeededCount:number;failedCount:number;}
 
 
-/** 标题去重键：TB 原始数据里存在“需求 ID 不同、标题内容相同”的重复项。 */
+/** 标题比较键：仅用于“疑似重复”提示，不参与需求身份或去重。 */
 export function requirementTitleKey(title: unknown): string | null {
   if (typeof title !== "string") return null;
   const key = title.normalize("NFKC").trim().replace(/\s+/gu, " ").toLocaleLowerCase();
@@ -31,23 +34,38 @@ export function requirementTitleKey(title: unknown): string | null {
 }
 
 /**
- * 同一标题只保留最早的 TB 记录（created 升序，created 相同时按需求 ID），
- * 其余视为 TB 原始数据重复，不进入需求池。空标题不参与去重。
+ * 同标题只做“疑似重复”标注：保留全部 TB 需求（身份仍是 TB 需求 ID），
+ * 把后出现的记录指向最早一条，供页面提示和人工判断；不删除、不改写 Base。
  */
-export function dedupeRequirementTitles(records: TeambitionTaskRecord[]): TeambitionTaskRecord[] {
-  const canonical = new Map<string, { id: string; created: string }>();
-  for (const record of records) {
-    const key = requirementTitleKey(record.content);
+export async function markDuplicateTitles(persistence: Pick<SyncPersistence, "listTitleCandidates" | "setDuplicateOf">, sourceConfigId: string): Promise<void> {
+  const candidates = await persistence.listTitleCandidates(sourceConfigId);
+  const groups = new Map<string, typeof candidates>();
+  for (const candidate of candidates) {
+    const key = requirementTitleKey(candidate.title);
     if (!key) continue;
-    const created = typeof record.created === "string" ? record.created : "";
-    const current = canonical.get(key);
-    if (!current || created < current.created || (created === current.created && record.id < current.id)) canonical.set(key, { id: record.id, created });
+    const group = groups.get(key) ?? [];
+    group.push(candidate);
+    groups.set(key, group);
   }
-  return records.filter((record) => {
-    const key = requirementTitleKey(record.content);
-    return !key || canonical.get(key)?.id === record.id;
-  });
+  for (const group of groups.values()) {
+    if (group.length < 2) {
+      for (const candidate of group) if (candidate.duplicateOfRequirementId !== null) await persistence.setDuplicateOf(candidate.id, null);
+      continue;
+    }
+    const ordered = [...group].sort((left, right) => {
+      const leftCreated = left.sourceCreatedAt ?? "";
+      const rightCreated = right.sourceCreatedAt ?? "";
+      if (leftCreated !== rightCreated) return leftCreated < rightCreated ? -1 : 1;
+      return left.teambitionRequirementId < right.teambitionRequirementId ? -1 : left.teambitionRequirementId > right.teambitionRequirementId ? 1 : 0;
+    });
+    const canonical = ordered[0]!;
+    if (canonical.duplicateOfRequirementId !== null) await persistence.setDuplicateOf(canonical.id, null);
+    for (const duplicate of ordered.slice(1)) {
+      if (duplicate.duplicateOfRequirementId !== canonical.id) await persistence.setDuplicateOf(duplicate.id, canonical.id);
+    }
+  }
 }
+
 function substantivePayload(requirement:NormalizedTeambitionRequirement):Record<string,unknown>{
   // 附件引用只取字段映射已批准的来源，不做 ID 子串推断
   const mapped=requirement.mappedFields;
@@ -75,9 +93,6 @@ export class SyncOrchestrator {
     // 单项重试：只处理指定需求（按源需求 ID 过滤）
     const onlyIds=input.onlyIds?new Set(input.onlyIds):null;
     if(onlyIds)all=all.filter((record)=>record.id!==undefined&&onlyIds.has(record.id));
-    // TB 原始数据里存在“需求 ID 不同、标题相同”的重复项：需求池只保留最早的一条，
-    // 其余不进入导入流程（批次计数按实际处理数统计，不写 sync_items）。
-    all=dedupeRequirementTitles(all);
     let succeededCount=0,failedCount=0;
     for(const record of all){const began=clock().toISOString();let requirementId:string|null=null;let action:"created"|"updated"|"unchanged"="created";let status:"succeeded"|"failed"="succeeded";let errorCode:string|null=null,errorDetail:string|null=null;let failureCode="source_item_invalid";
       try{
@@ -88,8 +103,14 @@ export class SyncOrchestrator {
         if(previous&&previous.sourceHash===hash&&!analysisRequired&&input.mode==="source_only"){requirementId=previous.id;action="unchanged";}
         else {const capturedAt=clock().toISOString();failureCode="source_item_write_failed";const upserted=await this.persistence.upsertRequirement({...normalized,sourceHash:hash,substantiveHash:sub,sourceVersion:version,latestBatchId:input.batchId,analysisRequired,snapshot:{payload,isSubstantiveChange:substantive,capturedAt}});requirementId=upserted.id;action=previous?(changed?"updated":"unchanged"):"created";if(!previous||changed){failureCode="source_snapshot_failed";await this.persistence.appendSourceSnapshot({requirementId,sourceVersion:version,sourceHash:hash,substantiveHash:sub,payload,isSubstantiveChange:substantive,capturedAt});}}
       }catch{status="failed";errorCode=failureCode;errorDetail=failureCode==="source_snapshot_failed"?"Requirement updated, but its source snapshot could not be saved":"Requirement could not be synchronized";}
-      const completedAt=clock().toISOString();await this.persistence.writeSyncItem({batchId:input.batchId,requirementId,teambitionRequirementId:record.id,action,status,errorCode,errorDetail,startedAt:began,completedAt});if(status==="succeeded")succeededCount++;else failedCount++;
+      const completedAt=clock().toISOString();
+      // 单条结果写库失败不能拖垮整批：记为该条失败并继续，避免整个 sync job 被重试 5 次。
+      try{await this.persistence.writeSyncItem({batchId:input.batchId,requirementId,teambitionRequirementId:record.id,action,status,errorCode,errorDetail,startedAt:began,completedAt});}
+      catch{status="failed";errorCode="sync_item_write_failed";errorDetail="Sync item result could not be persisted";}
+      if(status==="succeeded")succeededCount++;else failedCount++;
     }
+    // 全部需求先导入，再统一标注同标题疑似重复（可随标题变化重算；不删除任何行）。
+    await markDuplicateTitles(this.persistence, input.sourceConfigId);
     const result:SyncResult={batchId:input.batchId,status:failedCount===0?"succeeded":succeededCount===0?"failed":"partial_failure",totalCount:all.length,succeededCount,failedCount};
     await this.persistence.completeBatch(input.batchId,{...result,errorSummary:failedCount?`${failedCount} item(s) failed; inspect item results.`:null,completedAt:clock().toISOString()});return result;
   }

@@ -3,7 +3,7 @@
 // （05 手动同步、06 AI 分析、07 负责人与 Base 推送、08 调度重试审计）实际需要的操作。
 // 唯一性约束由 DDL 保证（见 domain/persistence.ts 注释），端口语义与之对齐。
 
-import type { AuditEventRecord, BasePushRunRecord, BatchState, AnalysisRunRecord, FunctionModuleEntry, ModuleDictionaryVersionRecord, PersonMappingRecord, PmSnapshotRecord, PipelineJobRecord, PipelineJobType, PriorityLevel, PriorityRuleVersionRecord, SourceConfigRecord, SourceSnapshotRecord, SyncBatchRecord, SyncItemAction, SyncItemRecord, SyncTrigger } from "../domain/persistence.js";
+import type { AuditEventRecord, BasePushRunRecord, BatchState, AnalysisRunRecord, FunctionModuleEntry, ModuleDictionaryVersionRecord, PersonMappingRecord, PmSnapshotRecord, PipelineJobRecord, PipelineJobType, PriorityLevel, PriorityRuleVersionRecord, SourceConfigRecord, SourceSnapshotRecord, SyncBatchRecord, SyncItemAction, SyncItemRecord, SyncTrigger, FeishuIdType } from "../domain/persistence.js";
 import type { AnalysisState, OwnerState, PullState, PushState } from "../domain/workflow.js";
 import type { ResolvedSourceConfigUpdate } from "../contracts/source.js";
 import type { RequirementManualOwner, RequirementRecord } from "../domain/persistence.js";
@@ -315,13 +315,20 @@ export interface RequirementQueryRepository {
   updateAnalysisState(requirementId: string, to: AnalysisState): Promise<void>;
   // 负责人落库：feishuUserId 来自 person_mappings，本表只推进 owner 状态
   setOwner(requirementId: string, feishuUserId: string | null, state: OwnerState): Promise<void>;
-  // TB 无执行人时的逐条人工负责人：写入需求本身并迁移到 manually_mapped（非法迁移抛 InvalidTransitionError）。
-  // 改派只替换当前负责人，保留 pushedFeishuUserId，直到下一次推送把新负责人写进 Base。
+  // 逐条人工负责人：写入需求本身并迁移到 manually_mapped（非法迁移抛 InvalidTransitionError）。
+  // 适用于所有需求（无论 TB 是否有执行人）；绝不再写 person_mappings。
   assignManualOwner(requirementId: string, owner: Omit<RequirementManualOwner, "pushedFeishuUserId">): Promise<void>;
   // 推送成功写入了人工负责人后记账；只在仍是同一负责人时生效，避免覆盖推送期间发生的改派。
   markManualOwnerPushed(requirementId: string, feishuUserId: string): Promise<void>;
-  // TB 负责人接管后清除逐条人工负责人。
+  // 清除逐条人工负责人（恢复 TB 默认负责人/空负责人）。
   clearManualOwner(requirementId: string): Promise<void>;
+  // 记录最近一次成功推送写入 Base 的负责人，用于下一次"负责人变更"判断。
+  markLastPushedOwner(requirementId: string, owner: { feishuUserId: string; feishuIdType: FeishuIdType } | null): Promise<void>;
+  // 疑似重复：查询同标题链接（仅详情使用）。
+  listDuplicates(requirementId: string): Promise<Array<{ id: string; title: string; teambitionRequirementId: string }>>;
+  // 标题重复检测的输入：当前来源全部需求（含已标记重复项）。
+  listTitleCandidates(sourceConfigId: string): Promise<Array<{ id: string; teambitionRequirementId: string; title: string; sourceCreatedAt: string | null; duplicateOfRequirementId: string | null }>>;
+  setDuplicateOf(requirementId: string, canonicalRequirementId: string | null): Promise<void>;
   setBaseRecord(requirementId: string, baseRecordId: string, pushedAt: string): Promise<void>;
   setPushState(requirementId: string, state: PushState): Promise<void>;
   /**

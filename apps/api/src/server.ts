@@ -8,6 +8,7 @@ import { PipelineJobWorker } from "./jobs/worker.js";
 import { SyncOrchestrator, shouldProcessSyncDownstream, type SyncJobRunner } from "./sync/service.js";
 import { TeambitionClient } from "./adapters/teambition/client.js";
 import { createDeepSeekProvider } from "./analysis/provider.js";
+import { analysisModelContext } from "./analysis/context.js";
 import { runAnalysis } from "./analysis/service.js";
 import { AnalysisRepositoryAdapter } from "./analysis/repository-adapter.js";
 import { buildPriorityRule } from "./analysis/priority-rule.js";
@@ -74,6 +75,8 @@ const syncJobRunner: SyncJobRunner | undefined = repositories ? async (job) => {
     const analysisCap = Number(process.env.RQSYS_MAX_ANALYSIS_PER_SYNC ?? 0);
     let queued = 0;
     for (const touched of persistence.touchedRequirements()) {
+      const current = await repositories.requirements.get(touched.id);
+      if (!current || current.duplicateOfRequirementId) continue;
       if (touched.analysisRequired) {
         if (analysisCap > 0 && queued >= analysisCap) continue;
         queued += 1;
@@ -95,6 +98,8 @@ const analysisJobHandler: ((job: { payload: Record<string, unknown> }) => Promis
   if (typeof requirementId !== "string") throw new Error("Invalid analysis job payload");
   const requirement = await repositories.requirements.get(requirementId);
   if (!requirement) throw new Error("Analysis requirement was not found");
+  // 疑似重复需求只展示、不分析；避免浪费模型调用和后续推送。
+  if (requirement.duplicateOfRequirementId) return;
   assertFixtureWorkAllowed({ sourceId: requirement.sourceConfigId, fixture: isSyntheticFixtureRequirement(requirement.teambitionRequirementId) }, fixtureEnvironment, new Date());
   const targetSubstantiveHash = job.payload.substantiveHash;
   if (typeof targetSubstantiveHash === "string" && targetSubstantiveHash !== requirement.substantiveHash) return;
@@ -109,7 +114,7 @@ const analysisJobHandler: ((job: { payload: Record<string, unknown> }) => Promis
   await repositories.requirements.updateAnalysisState(requirement.id, "running");
   const run = await runAnalysis({
     requirementId: requirement.id, sourceVersion: requirement.sourceVersion, sourcePersisted: true,
-    title: requirement.title, description: requirement.description ?? "", context: [requirement.scope, requirement.acceptanceCriteria].filter((value): value is string => Boolean(value)).join("\n\n"),
+    title: requirement.title, description: requirement.description ?? "", context: analysisModelContext(requirement),
     // 文本中可能出现的姓名（配置名单 + 需求 proposer/executor）一律掩码；用户 ID 不进 prompt
     piiMarkers: [...source.ownerNames, requirement.proposerName, requirement.executorName].filter((x): x is string => Boolean(x)),
     dictionary, priorityRule,

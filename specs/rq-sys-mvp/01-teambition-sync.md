@@ -23,7 +23,7 @@ Operators need a reliable weekly and manual import from one product-group Teambi
 - Weekly and manual triggers use the same pipeline and batch model. The batch records trigger source, actor where applicable, timestamps, counts, and errors.
 - Prefer a verified Teambition updated-time filter. If unavailable or unreliable, fetch the project set and compare stable IDs/content hashes.
 - Use project ID + Teambition requirement ID as the unique key in the application database and Feishu Base.
-- Teambition contains distinct requirement IDs whose title content is identical. Requirement identity stays project ID + requirement ID, but equivalent titles are duplicate source data: keep the earliest record (`created`, then requirement ID) in the pool and skip the others during import. Duplicates that were already imported are cleaned up on the application side; Feishu Base records are not deleted by the app.
+- Teambition contains distinct requirement IDs whose title content is identical. Requirement identity stays project ID + requirement ID: every record is imported, including duplicates. Requirements whose normalized title matches an earlier record (`created`, then requirement ID) are linked to it as suspected duplicates (`duplicate_of_requirement_id`). Suspected duplicates stay reviewable and linkable from the primary requirement detail page, but never enter the default requirement pool, AI analysis or Base push; nothing is deleted automatically and existing Base rows are left untouched.
 - Source-owned data in the current PRD: requirement ID, project/source, title, description, scope, acceptance criteria, proposer, executor/owner, source status, create/update times, source URL, and attachment references.
 - Attachments are linked as references only; attachment files and contents are not sent to the model.
 - Normalize the source response before writing. Preserve the original snapshot for traceability.
@@ -67,7 +67,8 @@ The Teambition adapter owns authentication/token refresh, pagination, rate limit
 5. Given one item fails, when the batch completes, then successful items remain committed, the item has an actionable error, and the batch reports partial failure.
 6. Given the operator retries that failed item, when the retry succeeds, then it updates the same requirement key and does not duplicate prior successful results.
 7. Given a repeated manual request with the same idempotency key, then it returns the original batch instead of starting a duplicate run.
-8. Given two Teambition records with different requirement IDs and an equivalent normalized title, when a sync runs, then only the earliest record enters the requirement pool and the other is not imported.
+8. Given two Teambition records with different requirement IDs and an equivalent normalized title, when a sync runs, then both are imported under their own IDs, the later one is linked to the earliest as a suspected duplicate, and the duplicate is excluded from the default pool, analysis and Base push.
+9. Given a suspected duplicate's title later becomes unique, when a sync runs, then the duplicate link is cleared and the requirement can re-enter the pool without changing its identity.
 
 ## Verification strategy
 

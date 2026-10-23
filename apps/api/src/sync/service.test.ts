@@ -15,13 +15,26 @@ const capturedPayloads: Record<string, unknown>[] = [];
 
 function harness(tasks: ReturnType<typeof task>[], failId?: string, pages?: Array<{ items: ReturnType<typeof task>[]; hasMore: boolean; nextCursor: string | null }>) {
   const calls: string[] = [];
+  const rows = new Map<string, { id: string; teambitionRequirementId: string; title: string; sourceCreatedAt: string | null; duplicateOfRequirementId: string | null }>();
   const source: SyncSourceReader = { async listRequirements(_config, cursor) { calls.push(`list:${cursor ?? "first"}`); return pages?.[cursor === "next" ? 1 : 0] ?? { items: tasks, hasMore: false, nextCursor: null }; } };
   const persistence: SyncPersistence = {
     async findRequirement(_source, id) { calls.push(`find:${id}`); return null; },
-    async upsertRequirement(req) { calls.push(`upsert:${req.sourceRequirementId}`); capturedPayloads.push(req.sourcePayload); if (req.sourceRequirementId === failId) throw new Error("raw provider secret"); return { id: `db-${req.sourceRequirementId}`, created: true }; },
+    async upsertRequirement(req) {
+      calls.push(`upsert:${req.sourceRequirementId}`); capturedPayloads.push(req.sourcePayload);
+      if (req.sourceRequirementId === failId) throw new Error("raw provider secret");
+      const id = `db-${req.sourceRequirementId}`;
+      rows.set(id, { id, teambitionRequirementId: req.sourceRequirementId, title: req.title, sourceCreatedAt: req.sourceCreatedAt ?? null, duplicateOfRequirementId: rows.get(id)?.duplicateOfRequirementId ?? null });
+      return { id, created: true };
+    },
     async appendSourceSnapshot(input) { calls.push(`snapshot:${input.requirementId}`); },
     async writeSyncItem(input) { calls.push(`item:${input.teambitionRequirementId}:${input.status}`); },
     async completeBatch(_batch, input) { calls.push(`complete:${input.status}:${input.totalCount}:${input.succeededCount}:${input.failedCount}`); },
+    async listTitleCandidates() { return [...rows.values()]; },
+    async setDuplicateOf(requirementId, canonicalRequirementId) {
+      const row = rows.get(requirementId);
+      if (row) row.duplicateOfRequirementId = canonicalRequirementId;
+      calls.push(`duplicate:${requirementId}->${canonicalRequirementId ?? "none"}`);
+    },
   };
   return { calls, source, persistence, orchestrator: new SyncOrchestrator(source, persistence, { now: () => new Date("2026-10-08T00:00:00.000Z"), id: () => "batch-1" }) };
 }
@@ -74,8 +87,8 @@ test("fetches all pages including archived tasks and deduplicates repeated IDs",
   assert.equal(h.calls.filter((call) => call.startsWith("upsert:one")).length, 1);
 });
 
-test("drops later TB records that share a normalized title, keeping the earliest one", async () => {
-  // TB 里存在 ID 不同、标题相同的重复需求；需求池只保留最早的一条，避免同一诉求重复流转。
+test("keeps every same-title TB record and links later ones as suspected duplicates", async () => {
+  // 标题只用于“疑似重复”提示，不改变需求身份：三条全部导入，晚出现的两条指向最早一条。
   const h = harness([
     task("later", "【Beta】 同一个诉求", { created: "2026-02-01T00:00:00.000Z" }),
     task("earlier", "【beta】  同一个诉求", { created: "2026-01-01T00:00:00.000Z" }),
@@ -83,28 +96,39 @@ test("drops later TB records that share a normalized title, keeping the earliest
   ]);
   const result = await h.orchestrator.run({ batchId: "batch-1", sourceConfigId: config.id, config });
   assert.equal(result.status, "succeeded");
-  assert.equal(result.totalCount, 2);
-  assert.equal(result.succeededCount, 2);
+  assert.equal(result.totalCount, 3);
+  assert.equal(result.succeededCount, 3);
+  assert.ok(h.calls.includes("upsert:later"));
   assert.ok(h.calls.includes("upsert:earlier"));
-  assert.equal(h.calls.includes("upsert:later"), false);
-  assert.equal(h.calls.some((call) => call.startsWith("item:later")), false);
-  assert.ok(h.calls.includes("complete:succeeded:2:2:0"));
+  assert.ok(h.calls.includes("item:later:succeeded"));
+  assert.ok(h.calls.includes("duplicate:db-later->db-earlier"));
+  assert.equal(h.calls.includes("duplicate:db-earlier->none"), false);
+  assert.equal(h.calls.some((call) => call.startsWith("duplicate:db-other")), false);
 });
 
-test("keeps blank titles and breaks created ties by requirement id", async () => {
+test("clears duplicate links when a title becomes unique again", async () => {
+  const h = harness([
+    task("a", "共同标题", { created: "2026-01-01T00:00:00.000Z" }),
+    task("b", "共同标题", { created: "2026-01-02T00:00:00.000Z" }),
+  ]);
+  await h.orchestrator.run({ batchId: "batch-1", sourceConfigId: config.id, config });
+  assert.ok(h.calls.includes("duplicate:db-b->db-a"));
+  // 下一次同步 B 改了标题：重复标记必须重算并清除，而不是永久停留在旧结论。
+  h.source.listRequirements = async () => ({ items: [task("a", "共同标题"), task("b", "独立标题")], hasMore: false, nextCursor: null });
+  await h.orchestrator.run({ batchId: "batch-2", sourceConfigId: config.id, config });
+  assert.ok(h.calls.includes("duplicate:db-b->none"));
+});
+
+test("blank titles are never marked as duplicates", async () => {
   const h = harness([
     task("b", "", { created: "2026-01-01T00:00:00.000Z" }),
     task("a", "  ", { created: "2026-01-01T00:00:00.000Z" }),
-    task("z", "重复标题", { created: "2026-01-01T00:00:00.000Z" }),
-    task("y", "重复标题", { created: "2026-01-01T00:00:00.000Z" }),
   ]);
   const result = await h.orchestrator.run({ batchId: "batch-1", sourceConfigId: config.id, config });
-  // 空标题不去重，两条都导入；重复标题按 created 相同、ID 升序保留 y（共 3 条）。
-  assert.equal(result.totalCount, 3);
+  assert.equal(result.totalCount, 2);
   assert.ok(h.calls.includes("upsert:a"));
   assert.ok(h.calls.includes("upsert:b"));
-  assert.ok(h.calls.includes("upsert:y"));
-  assert.equal(h.calls.includes("upsert:z"), false);
+  assert.equal(h.calls.some((call) => call.startsWith("duplicate:")), false);
 });
 
 test("does not expose unmapped provider custom fields in normalized payload", async () => {
@@ -131,6 +155,8 @@ test("source-only metadata updates remain recoverable by a later full sync", asy
     async appendSourceSnapshot() {},
     async writeSyncItem() {},
     async completeBatch() {},
+    async listTitleCandidates() { return []; },
+    async setDuplicateOf() {},
   };
   const orchestrator = new SyncOrchestrator(source, persistence);
   await orchestrator.run({ batchId: "first", sourceConfigId: config.id, config });

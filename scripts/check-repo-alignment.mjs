@@ -22,6 +22,7 @@ const SHARED = [
   "base/client.ts",
   "base/push-service.ts",
   "base/transport.ts",
+  "analysis/context.ts",
   "analysis/contract.ts",
   "analysis/priority-rule.ts",
   "analysis/provider.ts",

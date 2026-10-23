@@ -175,6 +175,8 @@ export function createBasePushService(deps: BasePushServiceDeps) {
     hadSuccessfulPush: boolean,
   ): Promise<PreviousPushOwner> => {
     if (!hadSuccessfulPush) return { kind: "none" };
+    // 以"上一次成功推送实际写进 Base 的人"为准；不要用当前映射反推历史（映射可能已被改派/全局改绑）。
+    if (req.lastPushedOwner?.feishuUserId) return { kind: "known", userId: req.lastPushedOwner.feishuUserId };
     const pushedManualOwner = owner?.perRequirement ? req.manualOwner?.pushedFeishuUserId ?? null : null;
     if (pushedManualOwner) return { kind: "known", userId: pushedManualOwner };
     if (!previousSource) return { kind: "unknown" };
@@ -219,9 +221,10 @@ export function createBasePushService(deps: BasePushServiceDeps) {
 
     let eventType: NotificationEventType | null = null;
     let fromUserId: string | null = null;
-    // 首次推送默认静默，避免批量回填刷屏；但如果负责人是人工分配的，
-    // 那是一次明确的人工动作，被分配的人必须收到通知，否则他不知道要做这件事。
-    const manuallyAssigned = Boolean(currentOwnerUserId) && input.owner?.matchMethod === "manual";
+    // 首次推送默认静默（D-12）。只有"这一条需求被人为指定了负责人"才通知被指定人；
+    // 自动匹配（哪怕底层映射是 manual）不算人工动作，否则某 TB 用户被分配过一次后，
+    // 他未来每条新需求首推都会刷通知。
+    const manuallyAssigned = Boolean(currentOwnerUserId) && Boolean(input.req.manualOwner?.feishuUserId);
     if (!input.hadSuccessfulPush && manuallyAssigned) {
       eventType = "owner_assigned";
     } else if (!input.hadSuccessfulPush) {
@@ -271,6 +274,13 @@ export function createBasePushService(deps: BasePushServiceDeps) {
   async function pushRequirementUnlocked(requirementId: string, idempotencyKey: string): Promise<PushOutcome> {
     const req = await deps.requirements.get(requirementId);
     if (!req) return { kind: "not_found" };
+    if (req.duplicateOfRequirementId) {
+      await deps.audit.append({
+        id: randomUUID(), actorId: deps.actorId, eventType: "base.push", entityType: "requirement", entityId: req.id,
+        result: "denied", safeDetails: { reason: "duplicate_requirement", sourceVersion: req.sourceVersion }, occurredAt: now().toISOString(),
+      });
+      return { kind: "conflict" };
+    }
     if (req.pipeline.pull !== "synced") return { kind: "conflict" };
 
     const previous = await deps.basePushes.findByIdempotencyKey(idempotencyKey);
@@ -285,12 +295,13 @@ export function createBasePushService(deps: BasePushServiceDeps) {
       : (req.executorName ? { normalizedName: normalizeOwnerName(req.executorName) } : {});
     const hasTbOwner = Boolean(ownerLookup.tbUserId || ownerLookup.normalizedName);
     const mapping = hasTbOwner ? await deps.people.resolveActive(req.sourceConfigId, ownerLookup) : null;
-    // TB 有执行人时以 TB 为准；TB 无执行人时才使用 Web 为这一条需求指定的负责人。
-    const manualOwner = hasTbOwner ? null : req.manualOwner ?? null;
-    const owner: CurrentOwner | null = mapping
-      ? { feishuUserId: mapping.feishuUserId, feishuIdType: mapping.feishuIdType, matchMethod: mapping.matchMethod, perRequirement: false }
-      : manualOwner
-        ? { feishuUserId: manualOwner.feishuUserId, feishuIdType: manualOwner.feishuIdType, matchMethod: "manual", perRequirement: true }
+    // 逐条人工负责人优先：单条改派只影响这一条，不影响同 TB 执行人的其他需求；
+    // TB 执行人映射保留为"默认负责人"，供恢复时使用。
+    const manualOwner = req.manualOwner ?? null;
+    const owner: CurrentOwner | null = manualOwner
+      ? { feishuUserId: manualOwner.feishuUserId, feishuIdType: manualOwner.feishuIdType, matchMethod: "manual", perRequirement: true }
+      : mapping
+        ? { feishuUserId: mapping.feishuUserId, feishuIdType: mapping.feishuIdType, matchMethod: mapping.matchMethod, perRequirement: false }
         : null;
     // 同一位人工负责人已写进 Base 时不再覆盖人员字段：PM 之后可能直接在 Base 里改过（Spec 03 AC5）。
     const baseOwner = owner && !(owner.perRequirement && manualOwner?.pushedFeishuUserId === owner.feishuUserId)
@@ -299,7 +310,7 @@ export function createBasePushService(deps: BasePushServiceDeps) {
 
     // 工单 14：TB 有负责人但未匹配时等待人工映射——映射前不推送、不误报已推送。
     // 审计结果 denied（result 枚举含 denied），worker 视为终态跳过而非重试。
-    if (!mapping && (req.executorUserId || req.executorName)) {
+    if (!owner && (req.executorUserId || req.executorName)) {
       await deps.audit.append({
         id: randomUUID(), actorId: deps.actorId, eventType: "base.push", entityType: "requirement", entityId: req.id,
         result: "denied", safeDetails: { reason: "owner_pending_mapping", sourceVersion: req.sourceVersion }, occurredAt: now().toISOString(),
@@ -409,8 +420,7 @@ export function createBasePushService(deps: BasePushServiceDeps) {
         if (req.pipeline.owner !== targetOwnerState) await deps.requirements.setOwner(req.id, owner.feishuUserId, targetOwnerState);
       }
       if (owner?.perRequirement && baseOwner) await deps.requirements.markManualOwnerPushed(req.id, owner.feishuUserId);
-      // TB 负责人已写进 Base：逐条人工负责人不再代表 Base 现状，清除以免 TB 再变空时回填旧人。
-      if (mapping && req.manualOwner) await deps.requirements.clearManualOwner(req.id);
+      await deps.requirements.markLastPushedOwner(req.id, owner ? { feishuUserId: owner.feishuUserId, feishuIdType: owner.feishuIdType } : null);
     } catch (error) {
       const failure = safeBaseFailure(error);
       try {

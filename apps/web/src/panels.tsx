@@ -9,13 +9,7 @@ import { checkScheduleHealth } from "./schedule";
 import { readRequirementDeepLink } from "./deep-link";
 import { emptyRequirementListFilters, readRequirementListFilters, requirementPoolUrl, type RequirementListFilters } from "./requirements-url";
 import { formatDateTime, requirementOwnerView, requirementSourceFacts, requirementTime, sortRequirementsForAttention } from "./requirement-view";
-import {
-  ApiError, addTeamPerson, bindTeamPersonFeishu, createSource, deleteTeamPerson, getBatch, getFunctionModules, getRequirement, listAudit, listBatches, listDictionaryVersions, listMappings, listRequirements, listTeamPeople, pushRequirement,
-  renameTeamPerson, saveFunctionModules,
-  retryAnalysis, retrySyncItem, searchFeishuUsers, setOwner, unbindTeamPersonFeishu, updateSource,
-  type AnalysisVersionSummary, type AuditEvent, type BatchDetail, type BatchSummary, type DictionaryVersion, type PersonMapping, type PublishStatus, type FeishuUserSelection,
-  type FeishuUserCandidate, type FunctionModuleEntry, type RequirementDetail, type RequirementSummary, type SourceConfig, type SourceConfigUpdate, type TeamPerson,
-} from "./api";
+import { ApiError, addTeamPerson, bindTeamPersonFeishu, createSource, deleteTeamPerson, getBatch, getFunctionModules, getRequirement, listAudit, listBatches, listDictionaryVersions, listMappings, listRequirements, listTeamPeople, pushRequirement, renameTeamPerson, saveFunctionModules, retryAnalysis, retrySyncItem, searchFeishuUsers, setOwner, unbindTeamPersonFeishu, updateSource, type AnalysisVersionSummary, type AuditEvent, type BatchDetail, type BatchSummary, type DictionaryVersion, type PersonMapping, type PublishStatus, type FeishuUserSelection, type FeishuUserCandidate, type FunctionModuleEntry, type RequirementDetail, type RequirementSummary, type SourceConfig, type SourceConfigUpdate, type TeamPerson, clearOwner } from "./api";
 import type { WorkbenchTab } from "./workbench-routing";
 
 export type LoadState = "loading" | "ready" | "error";
@@ -975,6 +969,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
         : "当前状态不可重试 Base 推送。";
   // 没有可重试项时也要给出一句明确的下一步说明，而不是留白。
   const guidance = [
+    detail.duplicateOf ? "该需求疑似同标题重复，仅保留供人工核对：不参与 AI 分析、Base 推送和负责人分配。" : "",
     detail.pipeline.push === "pushed" ? "该需求已推送完成，PM 在飞书多维表格继续处理；如需换人可在此变更负责人。" : "",
     pushRetryable ? (ownerMapped ? "Base 推送失败：可重试推送，也可变更负责人后重新排队。" : "Base 推送失败：请先分配负责人，再重试推送。") : "",
     analysisRetryable ? "AI 分析未完成，可在此重试分析。" : "",
@@ -1000,21 +995,36 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
         <div className="req-summary-copy">
           <h2 className="req-summary-title">{detail.title}</h2>
           <span className="req-summary-id">{detail.platformRequirementId ?? `REQ-${detail.sourceRequirementId.slice(0, 8)}`} · v{detail.sourceVersion}</span>
+          {detail.duplicateOf && <div className="req-duplicate-notice" role="note">
+            该需求疑似与主需求重复，已暂停分析与 Base 推送。<a href={`?requirement=${detail.duplicateOf}`}>查看主需求</a>
+          </div>}
+          {detail.duplicates && detail.duplicates.length > 0 && <div className="req-duplicate-notice" role="note">
+            发现 {detail.duplicates.length} 条同标题疑似重复需求：
+            {detail.duplicates.map((duplicate, index) => <span key={duplicate.id}>{index > 0 ? "、" : ""}<a href={`?requirement=${duplicate.id}`}>{duplicate.title}</a></span>)}
+            这些记录保留在系统中供人工核对，不参与分析、默认需求池和 Base 推送。
+          </div>}
         </div>
       </div>
       <div className="req-summary-meta">
-        <span className="req-owner-line"><span className="req-meta-label">负责人</span><OwnerBadge owner={owner} /></span>
+        <span className="req-owner-line">
+          <span className="req-meta-label">负责人</span><OwnerBadge owner={owner} />
+          {detail.manualOwner && <span className="req-owner-manual" title="只影响这一条需求，不会改动同 TB 执行人的其他需求">手动指定</span>}
+          {detail.manualOwner && <button className="req-owner-revert" disabled={busy} onClick={() => void onAct(async () => {
+            const result = await clearOwner(detail.id);
+            return `已恢复默认负责人（${pipelineLabel("owner", result.ownerState)}）${result.status === "queued" ? "，Base 推送已排队" : "；等待默认负责人映射"}`;
+          }, detail.id)}>恢复默认负责人</button>}
+        </span>
         <div className="req-stage-row" role="group" aria-label="处理状态">{stages.map(([stage, state]) => <StageBadge key={stage} stage={stage} state={state} />)}</div>
         <div className="req-summary-actions" role="group" aria-label="需求操作">
-          <HeroButton className="button button-primary button-small" aria-expanded={ownerPickerOpen} aria-controls={ownerEditorId} onPress={() => setOwnerPickerOpen((open) => !open)} isDisabled={busy}>分配 / 变更负责人</HeroButton>
-          <button className="button button-secondary button-small" onClick={() => void onAct(async () => { await retryAnalysis(detail.id); return "AI 分析重试已入队"; }, detail.id)} disabled={busy || !analysisRetryable} title={analysisRetryable ? "重新提交 AI 分析" : analysisDisabledReason}>重试 AI 分析</button>
-          <button className="button button-secondary button-small" onClick={() => void onAct(async () => { const result = await pushRequirement(detail.id); return result.status === "queued" ? "Base 推送重试已入队" : `推送状态：${result.status}`; }, detail.id)} disabled={busy || !pushRetryable} title={pushRetryable ? "重新提交 Base 推送" : pushDisabledReason}>重试 Base 推送</button>
+          <HeroButton className="button button-primary button-small" aria-expanded={ownerPickerOpen} aria-controls={ownerEditorId} onPress={() => setOwnerPickerOpen((open) => !open)} isDisabled={busy || Boolean(detail.duplicateOf)}>分配 / 变更负责人</HeroButton>
+          <button className="button button-secondary button-small" onClick={() => void onAct(async () => { await retryAnalysis(detail.id); return "AI 分析重试已入队"; }, detail.id)} disabled={busy || !analysisRetryable || Boolean(detail.duplicateOf)} title={detail.duplicateOf ? "疑似重复需求不参与分析" : analysisRetryable ? "重新提交 AI 分析" : analysisDisabledReason}>重试 AI 分析</button>
+          <button className="button button-secondary button-small" onClick={() => void onAct(async () => { const result = await pushRequirement(detail.id); return result.status === "queued" ? "Base 推送重试已入队" : `推送状态：${result.status}`; }, detail.id)} disabled={busy || !pushRetryable || Boolean(detail.duplicateOf)} title={detail.duplicateOf ? "疑似重复需求不推送 Base" : pushRetryable ? "重新提交 Base 推送" : pushDisabledReason}>重试 Base 推送</button>
           <HeroButton className="button button-secondary button-small" onPress={onRefresh} isDisabled={busy}><RefreshCw size={14} />刷新</HeroButton>
         </div>
       </div>
       <p className="detail-actionbar-hint">{guidance}</p>
       {ownerPickerOpen && <div className="detail-owner-editor" id={ownerEditorId}>
-        <p className="detail-actionbar-hint">从人员名单中选择负责人；保存后会覆盖当前负责人并重新排队 Base 推送。</p>
+        <p className="detail-actionbar-hint">只修改当前这一条需求的负责人，不会改动同 TB 执行人名下的其他需求或全局映射；保存后重新排队 Base 推送。{detail.manualOwner ? "点击「恢复默认负责人」可回到 TB 执行人映射。" : ""}</p>
         <FeishuUserPicker key={detail.id} disabled={busy} saveLabel={ownerSaveLabel} onMap={async (user) => {
           const ok = await onAct(async () => {
             const result = await setOwner(detail.id, { feishuUserId: user.feishuUserId, feishuIdType: user.feishuIdType, tbDisplayName: user.name });
@@ -1190,7 +1200,7 @@ export function MappingsPanel({ onRefresh }: { onRefresh: () => void }) {
     setBusy(true); setNotice(null);
     try {
       const result = await setOwner(targetId, { feishuUserId: user.feishuUserId, feishuIdType: user.feishuIdType, tbDisplayName: user.name });
-      setNotice(`${user.name} 映射已持久化（${result.ownerState}），Base 推送已入队。`);
+      setNotice(`${user.name} 已指定为这条需求的负责人（${result.ownerState}），Base 推送已入队。`);
       setTargetId(null);
       onRefresh(); await load();
     } catch (cause) { setNotice(errorText(cause)); }
@@ -1199,9 +1209,9 @@ export function MappingsPanel({ onRefresh }: { onRefresh: () => void }) {
   const matchMethodLabel: Record<PersonMapping["matchMethod"], string> = { tb_user_id: "TB 用户 ID", unique_name: "姓名唯一匹配", manual: "人工指定" };
 
   return <section className="panel requirements-panel">
-    <div className="panel-heading"><div><h2>负责人映射</h2><p>为待匹配负责人选择飞书用户；映射持久化成功后才会入队推送。</p></div><HeroButton className="button button-secondary button-small" onPress={() => { onRefresh(); void load(); }}><RefreshCw size={14} />刷新</HeroButton></div>
+    <div className="panel-heading"><div><h2>负责人映射</h2><p>为待匹配负责人逐条选择飞书用户；只影响选中的这一条需求，不会改写同 TB 执行人的其他需求。</p></div><HeroButton className="button button-secondary button-small" onPress={() => { onRefresh(); void load(); }}><RefreshCw size={14} />刷新</HeroButton></div>
     <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
-    {pending.length ? <div className="table-scroll"><table><thead><tr><th>需求</th><th>TB 负责人</th><th>操作</th></tr></thead><tbody>{pending.map((row) => <tr key={row.id}><td><div className="requirement-title"><span className="req-id">REQ-{row.sourceRequirementId}</span><strong>{row.title}</strong></div></td><td>待匹配</td><td>{targetId === row.id ? <div className="mapping-editor"><FeishuUserPicker disabled={busy} onMap={submit} saveLabel="保存" /><HeroButton className="button button-secondary button-small" onPress={() => setTargetId(null)} isDisabled={busy}>取消</HeroButton></div> : <HeroButton className="button button-secondary button-small" onPress={() => setTargetId(row.id)}>选择飞书用户</HeroButton>}</td></tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadState === "loading" ? "正在载入待匹配需求…" : "没有待匹配的负责人"}</strong><span>{loadState === "loading" ? "正在从本地 API 读取。" : "TB 无负责人需求可直接推送；未匹配需求会出现在这里等待人工映射。"}</span></div>}
+    {pending.length ? <div className="table-scroll"><table><thead><tr><th>需求</th><th>TB 负责人</th><th>操作</th></tr></thead><tbody>{pending.map((row) => <tr key={row.id}><td><div className="requirement-title"><span className="req-id">REQ-{row.sourceRequirementId}</span><strong>{row.title}</strong></div></td><td>待匹配</td><td>{targetId === row.id ? <div className="mapping-editor"><FeishuUserPicker disabled={busy} onMap={submit} saveLabel="保存" /><HeroButton className="button button-secondary button-small" onPress={() => setTargetId(null)} isDisabled={busy}>取消</HeroButton></div> : <HeroButton className="button button-secondary button-small" onPress={() => setTargetId(row.id)}>选择飞书用户</HeroButton>}</td></tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadState === "loading" ? "正在载入待匹配需求…" : "没有待匹配的负责人"}</strong><span>{loadState === "loading" ? "正在从本地 API 读取。" : "未匹配需求会出现在这里，等待为每一条需求单独指定负责人。"}</span></div>}
     {mappings.length > 0 && <div className="table-scroll"><table><thead><tr><th>TB 用户 / 姓名</th><th>飞书用户</th><th>匹配方式</th><th>更新时间</th></tr></thead><tbody>{mappings.map((m) => <tr key={m.id}><td>{m.teambitionDisplayName ?? m.teambitionUserId ?? "（仅姓名匹配占位）"}</td><td className="mono-cell">{m.feishuUserId}</td><td>{matchMethodLabel[m.matchMethod] ?? m.matchMethod}</td><td>{timeLabel(m.updatedAt)}</td></tr>)}</tbody></table></div>}
   </section>;
 }

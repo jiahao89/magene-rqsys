@@ -12,7 +12,7 @@ Operators need one place to configure and run synchronization, see each pipeline
 2. As a signed-in Feishu user, I want to start a manual run and see its batch progress, so that I can act without waiting for the schedule.
 3. As a signed-in Feishu user, I want to find a requirement by title, TB executor, batch, or state, so that I can quickly locate a person's requests, a failure, or an unmapped owner.
 4. As an operator, I want to inspect source facts, the latest AI result, owner state, push state, and errors together, so that I can decide the next operation.
-5. As an operator, I want to map an unresolved owner and retry an eligible failure, so that work can continue without duplicate records.
+5. As an operator, I want to assign an owner to one requirement (without changing anyone else's owner) and retry an eligible failure, so that work can continue without cross-requirement side effects or duplicate records.
 6. As a signed-in Feishu user, I want an audit view, so that configuration changes and manual actions are attributable.
 
 ## Pages and behavior
@@ -23,8 +23,8 @@ Operators need one place to configure and run synchronization, see each pipeline
 | Source settings | Configure one dedicated project, weekly schedule, and connection self-check; show credentials as valid/invalid only |
 | Requirement pool | Filter by title, maintained TB executor/person, batch, time, pull/AI/owner/push state; show independent stage states |
 | Sync records · batches | Show actor, trigger, times, counts, item actions, errors, and eligible retry controls |
-| Requirement detail | Show immutable source snapshot/version, latest AI suggestion/evidence, owner mapping, Base record link, and all pipeline states |
-| Team management · owner mapping | Select Feishu user for unresolved/duplicate name; save reusable mapping and trigger push (per-requirement assignment stays in the requirement pool) |
+| Requirement detail | Show immutable source snapshot/version, latest AI suggestion/evidence, owner (per-requirement manual owner marked, with a restore-default action), Base record link, all pipeline states, and a red suspected-duplicate notice with links to related requirement details |
+| Team management · owner mapping | Select a Feishu user for an unresolved requirement; saves a per-requirement owner and triggers a push. It never rewrites the TB-executor default mapping, so other requirements are unaffected. |
 | Function modules | CRUD module names and their responsible person; changes publish a new dictionary snapshot for future AI runs, without rewriting old analysis |
 | Team management · personnel | CRUD the product-group people list and bind each person to one Feishu account (the mapping the owner picker reads); renaming carries the binding, deleting deactivates it, a mapping row for the same account that never had a person name is adopted and labelled instead of blocking the bind, and a conflicting name shows an explicit state instead of guessing |
 | Priority rules | Manage calibrated priority rules; priority remains blank until a rule is published |
@@ -55,7 +55,8 @@ The removed local UI prototype had Dashboard, Pool, Sources, Preview, Batches, B
 - GET /api/requirements/{id}
 - GET/POST /api/people; PUT/DELETE /api/people/{name}; PUT/DELETE /api/people/{name}/feishu (bind/unbind the Feishu account used by the owner picker)
 - GET/PUT /api/modules
-- PUT /api/requirements/{id}/owner
+- PUT /api/requirements/{id}/owner (per-requirement owner; never writes a global mapping)
+- DELETE /api/requirements/{id}/owner (clear the per-requirement owner and restore the TB default)
 - POST /api/analysis/{id}/retry
 - GET /api/audit
 
@@ -71,6 +72,9 @@ All write responses return the resulting workflow state and a stable object iden
 6. Given no schedule or credentials are configured, then the page gives a safe, actionable configuration error without exposing secrets.
 7. Given the API is unavailable, then the UI shows a recoverable error and does not claim a workflow transition occurred.
 8. Given the requirement pool is paginated, then dashboard stage counts use persisted full-dataset aggregates and exclude synthetic acceptance fixtures.
+9. Given an operator assigns an owner to a requirement with a TB executor, then only that requirement's owner changes; other requirements of the same executor and the global mapping stay unchanged.
+10. Given an operator clears a per-requirement owner, then the requirement falls back to the TB-executor default mapping (or pending/no-owner) and a push is queued when a default exists.
+11. Given a requirement has suspected duplicates, then its detail shows a red notice with links to each duplicate detail; the duplicate detail shows a notice and offers no analysis/push/assignment actions.
 
 ## Design and accessibility
 

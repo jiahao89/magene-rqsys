@@ -31,7 +31,7 @@ specs/rq-sys-mvp/openapi.yaml  OpenAPI 3.1 契约
 |---|---|---|
 | `source_configs` | 单项目 TB 来源、需求类型、周计划、产品组人员名单（用于 Web 筛选、模块分工和人员→飞书账号绑定，不作为同步过滤条件）和字段映射 | project + requirement type 唯一；凭据不落库 |
 | `sync_batches` | 手动/定时批次、发起人、幂等键、汇总结果 | source + idempotency key 唯一 |
-| `requirements` | 当前规范化需求和 pull/AI/owner/push 独立状态；TB 无执行人时的逐条人工负责人（`manual_owner_*`，含最近写入 Base 的人工负责人，迁移 0006） | source + TB requirement ID 唯一 |
+| `requirements` | 当前规范化需求和 pull/AI/owner/push 独立状态；逐条人工负责人（`manual_owner_*`，优先于 TB 执行人映射，迁移 0006/0007）、最近一次成功推送的负责人（用于负责人变更事件）、同标题疑似重复指向（`duplicate_of_requirement_id`；重复项不进入默认池、不分析、不推送） | source + TB requirement ID 唯一 |
 | `sync_items` | 批次内逐条结果及错误 | batch + TB requirement ID 唯一 |
 | `source_snapshots` | 只追加来源版本和 allowlist payload | requirement + version 唯一 |
 | `analysis_runs` | 结构化 AI 输出、版本、provider/prompt/dictionary/rule provenance | requirement + analysis version 唯一 |
@@ -58,7 +58,8 @@ HTTP 路径与现有 Spec 保持一致，公共健康检查除外。所有业务
 | `GET /api/batches` / `GET /api/batches/{id}` | 批次和逐项进度 | 读取权限按项目授权 |
 | `POST /api/items/{id}/retry` | 重试失败项目 | 只重试失败阶段，复用源需求键 |
 | `GET /api/requirements` / `GET /api/requirements/{id}` | 需求池与详情 | 独立返回四阶段状态 |
-| `PUT /api/requirements/{id}/owner` | TB 有执行人：保存人工负责人映射；TB 无执行人：把负责人存到该需求本身（`requirements.manual_owner_*`，不写 person_mappings）；两者都入队推送 | 操作人和 mapping/负责人变更写审计 |
+| `PUT /api/requirements/{id}/owner` | 只把负责人存到该需求本身（`requirements.manual_owner_*`，永不写 person_mappings），入队推送；单条改派不影响同 TB 执行人的其他需求 | 操作人和负责人变更写审计 |
+| `DELETE /api/requirements/{id}/owner` | 清除逐条人工负责人，按 TB 执行人映射恢复默认负责人（或 pending/not_required），有默认负责人时入队推送 | 操作人和清除写审计 |
 | `PUT` / `DELETE /api/people/{name}/feishu` | 人员页维护到飞书账号的绑定 | 按规范化姓名维护活跃映射；不改写 TB/飞书，不改已推送 Base 行 |
 | `POST /api/analysis/{id}/retry` | 新建 AI 分析版本 | 不覆盖人工字段，不阻塞推送 |
 | `GET /api/audit` | 审计查询 | 不返回 token、联系方式或 provider 原始响应 |

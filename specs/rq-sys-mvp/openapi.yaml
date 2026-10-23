@@ -233,14 +233,15 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
   /api/requirements/{id}/owner:
     put:
-      summary: Save an operator-selected Feishu owner
+      summary: Save an operator-selected owner for this requirement only
       description: >-
-        When the Teambition requirement has an executor, the selection is saved as a reusable
-        person mapping for that executor. When Teambition has no executor, the selection is
-        stored on this requirement only (no person mapping is written), the owner state becomes
-        manually_mapped, and a Base push is queued; `tbDisplayName` is kept as the owner's
-        display name. Every assignment queues its own push, so reassigning back to a previous
-        person is pushed again.
+        The selection is stored on this requirement (manual_owner_*), never in person_mappings,
+        so assigning one requirement never rebinds the TB-executor default owner or affects any
+        other requirement. The owner state becomes manually_mapped and a Base push is queued;
+        `tbDisplayName` is kept as the owner's display name. The per-requirement owner takes
+        precedence over the TB-executor mapping and survives later source updates until the
+        operator clears it with DELETE. Every assignment queues its own push, so reassigning
+        back to a previous person is pushed again.
       parameters:
         - $ref: '#/components/parameters/Id'
       requestBody:
@@ -261,7 +262,22 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '409':
-          description: The selected Feishu account is already bound to another person, so the name-scoped mapping cannot be saved without first resolving that binding; or the requirement is not synced / its owner state does not allow a manual owner
+          description: The requirement is a suspected duplicate, is not synced, or its owner state does not allow a manual owner
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      summary: Clear the per-requirement manual owner and restore the TB default owner
+      description: >-
+        Clears manual_owner_*, resolves the current TB-executor mapping again, updates the owner
+        state (auto_mapped / pending_mapping / not_required) and queues a Base push when a default
+        owner exists (or when the requirement has no TB executor and becomes ownerless).
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200': { description: Manual owner cleared; Base push queued when a default owner exists }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: The requirement has no manual owner, is a suspected duplicate, or is not synced }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /api/requirements/{id}/push:
     post:
@@ -772,8 +788,29 @@ components:
         updatedAt: { type: string, format: date-time }
         sourceUrl: { type: string, nullable: true }
         lastPushedAt: { type: string, format: date-time, nullable: true }
-        # TB 有执行人时为映射的人员姓名；TB 无执行人时为 Web 为该需求指定的负责人姓名；解析不到为 null。
+        # 优先展示 Web 为该需求单独指定的负责人；否则为 TB 执行人映射的人员姓名；解析不到为 null。
         ownerName: { type: string, nullable: true }
+        # 该需求被单独指定的负责人（优先于 TB 执行人映射，且不影响其他需求）。
+        manualOwner:
+          type: [object, 'null']
+          properties:
+            feishuUserId: { type: string }
+            feishuIdType: { type: string, enum: [open_id, user_id, union_id] }
+            name: { type: [string, 'null'] }
+            assignedAt: { type: string, format: date-time }
+          required: [feishuUserId, feishuIdType, assignedAt]
+        # 同标题疑似重复时指向最早那条需求；列表默认不返回重复项。
+        duplicateOf: { type: [string, 'null'], format: uuid }
+        # 仅详情接口返回：以本需求为主记录的同标题重复项（供红色提示和详情链接）。
+        duplicates:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string, format: uuid }
+              title: { type: string }
+              teambitionRequirementId: { type: string }
+            required: [id, title, teambitionRequirementId]
         pipeline:
           type: object
           properties:
