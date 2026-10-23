@@ -208,7 +208,7 @@ export interface SyncItem {
 }
 
 export interface BatchDetail {
-  batchId: string;
+  id: string;
   status: string;
   triggerType?: string;
   actorId?: string | null;

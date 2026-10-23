@@ -14,10 +14,25 @@ import type { WorkbenchTab } from "./workbench-routing";
 
 export type LoadState = "loading" | "ready" | "error";
 
+const API_ERROR_TEXT: Record<string, string> = {
+  INTERNAL: "服务暂时不可用，请稍后重试。",
+  DEPENDENCY_UNAVAILABLE: "依赖服务暂不可用，请稍后重试。",
+  VALIDATION_FAILED: "请求参数不合法，请检查输入。",
+  NOT_FOUND: "请求的资源不存在或已被删除。",
+  CONFLICT: "当前状态不允许此操作，请刷新后重试。",
+  REQUEST_FAILED: "无法连接到 API 服务，请确认服务已启动后重试。",
+  SOURCE_NOT_ENABLED: "请先配置并启用一个数据源。",
+  UNAUTHORIZED: "登录已失效，请重新登录。",
+  FORBIDDEN: "没有权限执行此操作。",
+  INVALID_METRICS_RESPONSE: "统计响应格式不正确，请稍后重试。",
+};
+
 function errorText(cause: unknown): string {
   if (cause instanceof ApiError) {
     if (cause.status === 403) return `服务端拒绝了此操作（${cause.code}）。MVP 要求飞书登录；拒绝原因以服务端为准，工作台不会绕过。`;
-    return `${cause.message}（${cause.code}）`;
+    // 服务端已经给出中文可操作说明时直接使用；否则把稳定的错误码映射成中文，避免英文堆栈文案进入界面。
+    if (/[\u4e00-\u9fff]/.test(cause.message)) return cause.message;
+    return API_ERROR_TEXT[cause.code] ?? `操作失败（${cause.code}）。`;
   }
   return "操作失败：无法连接本地 API。";
 }
@@ -281,6 +296,7 @@ function FeishuAccountBinder({ personName, disabled, onSave, onCancel }: {
 
 export function PeoplePanel() {
   const [people, setPeople] = useState<TeamPerson[]>([]);
+  const [loadState, setLoadState] = useState<LoadState>("loading");
   const [draft, setDraft] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
@@ -290,8 +306,9 @@ export function PeoplePanel() {
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
-    try { setPeople(await listTeamPeople()); setLoadError(null); }
-    catch (cause) { setLoadError(errorText(cause)); }
+    setLoadState("loading");
+    try { setPeople(await listTeamPeople()); setLoadError(null); setLoadState("ready"); }
+    catch (cause) { setLoadError(errorText(cause)); setLoadState("error"); }
   }, []);
   useEffect(() => { void load(); }, [load]);
 
@@ -342,12 +359,14 @@ export function PeoplePanel() {
             {(person.feishuUserId || person.bindingConflict) && <DeleteConfirmation disabled={busy} triggerLabel="解除绑定" heading="解除飞书绑定" confirmLabel="确认解除" description={`解除「${person.name}」的飞书账号绑定？该人员名下需求的负责人映射将被清除，后续推送会停在待匹配负责人；已推送的 Base 记录不会被清除。`} onConfirm={() => void unbindFeishu(person.name)} />}{" "}
             <DeleteConfirmation disabled={busy} description={`删除人员“${person.name}”？相关功能模块将变为未分配，飞书账号绑定同时解除。`} onConfirm={() => void submit(() => deleteTeamPerson(person.name), "人员已删除，相关模块已解除分配。")} /></>}
       </td>
-    </tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadError ? "人员读取失败" : "暂无人员"}</strong><span>{loadError ? "检查 API 连接后刷新。" : "填写姓名并新增；数据源配置完成后可维护组内名单并绑定飞书账号。"}</span></div>}
+    </tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadState === "loading" ? "正在载入组内人员…" : loadError ? "人员读取失败" : "暂无人员"}</strong><span>{loadState === "loading" ? "正在从 API 读取人员名单。" : loadError ? "检查 API 连接后刷新。" : "填写姓名并新增；数据源配置完成后可维护组内名单并绑定飞书账号。"}</span></div>}
   </section>;
 }
 
 export function ModulesPanel() {
   const [version, setVersion] = useState(0);
+  const [loadState, setLoadState] = useState<LoadState>("loading");
+  const [formError, setFormError] = useState<string | null>(null);
   const [items, setItems] = useState<FunctionModuleEntry[]>([]);
   const [name, setName] = useState("");
   const [personName, setPersonName] = useState("");
@@ -375,10 +394,11 @@ export function ModulesPanel() {
   }, []);
 
   const load = useCallback(async () => {
+    setLoadState("loading");
     try {
       const [directory, roster] = await Promise.all([getFunctionModules(), listTeamPeople()]);
-      setVersion(directory.version); setItems(directory.items); setPeople(roster); setLoadError(null);
-    } catch (cause) { setLoadError(errorText(cause)); }
+      setVersion(directory.version); setItems(directory.items); setPeople(roster); setLoadError(null); setLoadState("ready");
+    } catch (cause) { setLoadError(errorText(cause)); setLoadState("error"); }
     await loadVersions();
   }, [loadVersions]);
   useEffect(() => { void load(); }, [load]);
@@ -387,7 +407,7 @@ export function ModulesPanel() {
     setBusy(true); setLoadError(null); setNotice(null);
     try {
       const result = await saveFunctionModules(version, next);
-      setVersion(result.version); setItems(result.items); setEditing(null); setEditName(""); setEditPerson("");
+      setVersion(result.version); setItems(result.items); setEditing(null); setEditName(""); setEditPerson(""); setFormError(null);
       setNotice(`已发布模块字典 v${result.version}，后续 AI 分析将使用新版本。`);
       await loadVersions();
     } catch (cause) {
@@ -396,16 +416,18 @@ export function ModulesPanel() {
     } finally { setBusy(false); }
   };
   const submitEdit = () => {
+    setFormError(null);
     const clean = editName.trim();
-    if (!clean) { setLoadError("请填写功能模块名称。"); return; }
-    if (items.some((candidate) => candidate.name.toLocaleLowerCase() === clean.toLocaleLowerCase() && candidate.name !== editing)) { setLoadError("功能模块名称不能重复。"); return; }
+    if (!clean) { setFormError("请填写功能模块名称。"); return; }
+    if (items.some((candidate) => candidate.name.toLocaleLowerCase() === clean.toLocaleLowerCase() && candidate.name !== editing)) { setFormError("功能模块名称不能重复。"); return; }
     void save(items.map((candidate) => candidate.name === editing ? { name: clean, personName: editPerson || null } : candidate));
   };
   const submit = () => {
+    setFormError(null);
     const clean = name.trim();
-    if (!clean) { setLoadError("请填写功能模块名称。"); return; }
+    if (!clean) { setFormError("请填写功能模块名称。"); return; }
     const duplicate = items.some((item) => item.name.toLocaleLowerCase() === clean.toLocaleLowerCase() && item.name !== editing);
-    if (duplicate) { setLoadError("功能模块名称不能重复。"); return; }
+    if (duplicate) { setFormError("功能模块名称不能重复。"); return; }
     const next = editing ? items.map((item) => item.name === editing ? { name: clean, personName: personName || null } : item) : [...items, { name: clean, personName: personName || null }];
     void save(next);
   };
@@ -413,8 +435,9 @@ export function ModulesPanel() {
   return <section className="panel requirements-panel">
     <div className="panel-heading"><div><h2>功能模块</h2><p>AI 仅从已发布的模块名称中选择；无法匹配时输出“无法识别”。每次保存生成一个新字典版本，且至少保留一个模块。</p></div><HeroButton className="button button-secondary button-small" onPress={() => void load()} isDisabled={busy}><RefreshCw size={14} />刷新</HeroButton></div>
     <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
+    {formError && <div className="field-error" role="alert">{formError}</div>}
     <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}><label className="field" style={{ flex: 1 }}><span>功能模块</span><HeroInput aria-label="功能模块名称" value={name} onChange={(event) => setName(event.target.value)} /></label><label className="field"><span>人员</span><select aria-label="模块责任人员" value={personName} onChange={(event) => setPersonName(event.target.value)}><option value="">未分配</option>{people.map((person) => <option key={person.name} value={person.name}>{person.name}</option>)}</select></label><HeroButton className="button button-primary button-small" onPress={submit} isDisabled={busy}>新增模块</HeroButton></div>
-    {items.length ? <div className="table-scroll"><table><thead><tr><th>功能模块</th><th>人员</th><th>操作</th></tr></thead><tbody>{items.map((item) => editing === item.name
+    {items.length ? <div className="table-scroll" tabIndex={0} role="region" aria-label="功能模块列表"><table><thead><tr><th>功能模块</th><th>人员</th><th>操作</th></tr></thead><tbody>{items.map((item) => editing === item.name
       ? <tr key={item.name} className="module-row is-editing">
           <td><input className="inline-input" aria-label="编辑功能模块名称" value={editName} onChange={(event) => setEditName(event.target.value)} autoFocus /></td>
           <td><select className="inline-input" aria-label="编辑模块责任人员" value={editPerson} onChange={(event) => setEditPerson(event.target.value)}><option value="">未分配</option>{people.map((person) => <option key={person.name} value={person.name}>{person.name}</option>)}</select></td>
@@ -424,7 +447,7 @@ export function ModulesPanel() {
           <td>{item.name}</td>
           <td>{item.personName ?? "未分配"}</td>
           <td><HeroButton className="button button-secondary button-small" onPress={() => beginEdit(item)} isDisabled={busy}>编辑</HeroButton> <DeleteConfirmation disabled={busy || items.length === 1} description={`删除功能模块“${item.name}”？`} onConfirm={() => void save(items.filter((candidate) => candidate.name !== item.name))} /></td>
-        </tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadError ? "模块字典读取失败" : "暂无功能模块"}</strong><span>{loadError ? "检查 API 连接后刷新。" : "新增模块后，AI 分析会使用最新的已发布字典。"}</span></div>}
+        </tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadState === "loading" ? "正在载入功能模块…" : loadError ? "模块字典读取失败" : "暂无功能模块"}</strong><span>{loadState === "loading" ? "正在从 API 读取已发布词典。" : loadError ? "检查 API 连接后刷新。" : "新增模块后，AI 分析会使用最新的已发布字典。"}</span></div>}
     <div className="subsection">
       <div className="panel-heading"><div><h3>词典版本历史</h3><p>每次保存生成一个新版本；仅最新发布版供 AI 分析使用。</p></div></div>
       {versionsError ? <div className="table-empty"><strong>版本历史读取失败</strong><span>{versionsError}</span></div> : versions.length ? <div className="table-scroll"><table><thead><tr><th>版本</th><th>状态</th><th>模块</th><th>创建时间</th><th>发布时间</th></tr></thead><tbody>{versions.map((d) => <tr key={d.version}><td className="mono-cell">v{d.version}</td><td><PublishStatusChip status={d.status} /></td><td>{d.entries.map((entry) => typeof entry === "string" ? entry : `${entry.name}（${entry.personName ?? "未分配"}）`).join("、")}</td><td>{timeLabel(d.createdAt)}</td><td>{d.publishedAt ? timeLabel(d.publishedAt) : "—"}</td></tr>)}</tbody></table></div> : <div className="table-empty"><strong>还没有词典版本</strong><span>保存一次模块字典后会生成首个已发布版本。</span></div>}
@@ -455,7 +478,10 @@ export function BatchesPanel({ onRefresh }: { onRefresh: () => void }) {
       setBatches((prev) => nextCursor ? [...prev, ...page.items] : page.items);
       setCursor(page.nextCursor);
       setLoadState("ready");
-    } catch (cause) { setLoadError(errorText(cause)); setLoadState("error"); }
+    } catch (cause) {
+      if (!nextCursor) { setBatches([]); setCursor(null); }
+      setLoadError(errorText(cause)); setLoadState("error");
+    }
   }, []);
   useEffect(() => { void load({ status: "", since: "", until: "" }, null); }, [load]);
 
@@ -471,8 +497,11 @@ export function BatchesPanel({ onRefresh }: { onRefresh: () => void }) {
       retryKeys.current.set(item.id, key);
       const result = await retrySyncItem(item.id, fetch, key);
       retryKeys.current.delete(item.id);
-      if (openBatch) { const refreshed = await getBatch(openBatch.batchId); setOpenBatch(refreshed); }
       onRefresh(); setNotice(`失败项已重新入队：批次 ${result.batchId}`);
+      if (openBatch) {
+        // 入队与刷新分开反馈：刷新失败不能覆盖“已入队”的成功结果。
+        try { setOpenBatch(await getBatch(openBatch.id)); } catch { /* keep the previous detail */ }
+      }
     } catch (cause) { setNotice(errorText(cause)); }
     finally { setBusy(false); }
   };
@@ -489,7 +518,7 @@ export function BatchesPanel({ onRefresh }: { onRefresh: () => void }) {
     </div></div>
     <StateBanner loadError={loadError ?? detailError} notice={notice} onCloseNotice={() => setNotice(null)} />
     {openBatch && <div className="config-source" style={{ flexDirection: "column", alignItems: "stretch" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><strong>批次 {openBatch.batchId}</strong><HeroButton className="button button-secondary button-small" onPress={() => setOpenBatch(null)}>收起</HeroButton></div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><strong>批次 {openBatch.id}</strong><HeroButton className="button button-secondary button-small" onPress={() => setOpenBatch(null)}>收起</HeroButton></div>
       <span>{stateChip(openBatch.status)} · 总数 {openBatch.totalCount} · 成功 {openBatch.succeededCount} · 失败 {openBatch.failedCount} · {openBatch.errorSummary ?? ""}</span>
       <div className="table-scroll"><table><thead><tr><th>源需求 ID</th><th>动作</th><th>状态</th><th>错误</th><th>操作</th></tr></thead><tbody>{openBatch.items.map((item) => <tr key={item.id}><td className="mono-cell">{item.teambitionRequirementId}</td><td>{item.action}</td><td><span className={`status-chip ${item.status === "failed" ? "status-danger" : "status-muted"}`}><span />{item.status === "failed" ? "失败" : "成功"}</span></td><td>{item.errorCode ?? "—"}</td><td>{item.status === "failed" && <HeroButton className="button button-secondary button-small" onPress={() => void retryItem(item)} isDisabled={busy}>重试</HeroButton>}</td></tr>)}</tbody></table></div>
     </div>}
@@ -662,7 +691,11 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
       setRows((prev) => nextCursor ? [...prev, ...page.items] : page.items);
       setCursor(page.nextCursor);
       setLoadState("ready");
-    } catch (cause) { setLoadError(errorText(cause)); setLoadState("error"); }
+    } catch (cause) {
+      // 首屏/筛选请求失败时不能继续展示上一批结果：否则用户会把旧行当成新筛选的结果。
+      if (!nextCursor) { setRows([]); setCursor(null); }
+      setLoadError(errorText(cause)); setLoadState("error");
+    }
   }, []);
 
   useEffect(() => {
@@ -949,14 +982,15 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
   ];
 
   // 操作可用性只取决于流水线状态；不可用时保留按钮并说明原因，避免「入口消失 = 不知道能做什么」。
-  const analysisRetryable = ["failed_retryable", "pending"].includes(detail.pipeline.analysis);
+  const analysisRetryable = ["failed_retryable", "pending", "analyzed"].includes(detail.pipeline.analysis);
+  const analysisActionLabel = detail.pipeline.analysis === "analyzed" ? "重新分析" : "重试 AI 分析";
   const pushRetryable = detail.pipeline.push === "failed";
   const ownerMapped = ["auto_mapped", "manually_mapped"].includes(detail.pipeline.owner);
   const ownerSaveLabel = detail.pipeline.owner === "pending_mapping" ? "保存负责人并入队推送" : ownerMapped ? "变更负责人并入队推送" : "分配负责人并入队推送";
   const analysisDisabledReason = detail.pipeline.analysis === "running"
     ? "AI 分析正在进行中，完成后可查看结果。"
     : detail.pipeline.analysis === "analyzed"
-      ? "AI 分析已完成，无需重试。"
+      ? "重新分析会基于当前已发布的词典/规则创建新版本。"
       : detail.pipeline.analysis === "failed"
         ? "该需求的分析失败不可自动重试，请检查源数据或联系管理员。"
         : "当前状态不可重试 AI 分析。";
@@ -969,7 +1003,6 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
         : "当前状态不可重试 Base 推送。";
   // 没有可重试项时也要给出一句明确的下一步说明，而不是留白。
   const guidance = [
-    detail.duplicateOf ? "该需求疑似同标题重复，仅保留供人工核对：不参与 AI 分析、Base 推送和负责人分配。" : "",
     detail.pipeline.push === "pushed" ? "该需求已推送完成，PM 在飞书多维表格继续处理；如需换人可在此变更负责人。" : "",
     pushRetryable ? (ownerMapped ? "Base 推送失败：可重试推送，也可变更负责人后重新排队。" : "Base 推送失败：请先分配负责人，再重试推送。") : "",
     analysisRetryable ? "AI 分析未完成，可在此重试分析。" : "",
@@ -996,12 +1029,12 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
           <h2 className="req-summary-title">{detail.title}</h2>
           <span className="req-summary-id">{detail.platformRequirementId ?? `REQ-${detail.sourceRequirementId.slice(0, 8)}`} · v{detail.sourceVersion}</span>
           {detail.duplicateOf && <div className="req-duplicate-notice" role="note">
-            该需求疑似与主需求重复，已暂停分析与 Base 推送。<a href={`?requirement=${detail.duplicateOf}`}>查看主需求</a>
+            该需求与另一条需求标题相同，仅作疑似重复提示；两条记录仍按各自的来源 ID 独立分析、分配和推送。<a href={`?requirement=${detail.duplicateOf}`}>查看另一条</a>
           </div>}
           {detail.duplicates && detail.duplicates.length > 0 && <div className="req-duplicate-notice" role="note">
             发现 {detail.duplicates.length} 条同标题疑似重复需求：
             {detail.duplicates.map((duplicate, index) => <span key={duplicate.id}>{index > 0 ? "、" : ""}<a href={`?requirement=${duplicate.id}`}>{duplicate.title}</a></span>)}
-            这些记录保留在系统中供人工核对，不参与分析、默认需求池和 Base 推送。
+            这些记录均独立保留，会按各自来源 ID 正常处理；请人工核对是否确为重复。
           </div>}
         </div>
       </div>
@@ -1016,9 +1049,9 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
         </span>
         <div className="req-stage-row" role="group" aria-label="处理状态">{stages.map(([stage, state]) => <StageBadge key={stage} stage={stage} state={state} />)}</div>
         <div className="req-summary-actions" role="group" aria-label="需求操作">
-          <HeroButton className="button button-primary button-small" aria-expanded={ownerPickerOpen} aria-controls={ownerEditorId} onPress={() => setOwnerPickerOpen((open) => !open)} isDisabled={busy || Boolean(detail.duplicateOf)}>分配 / 变更负责人</HeroButton>
-          <button className="button button-secondary button-small" onClick={() => void onAct(async () => { await retryAnalysis(detail.id); return "AI 分析重试已入队"; }, detail.id)} disabled={busy || !analysisRetryable || Boolean(detail.duplicateOf)} title={detail.duplicateOf ? "疑似重复需求不参与分析" : analysisRetryable ? "重新提交 AI 分析" : analysisDisabledReason}>重试 AI 分析</button>
-          <button className="button button-secondary button-small" onClick={() => void onAct(async () => { const result = await pushRequirement(detail.id); return result.status === "queued" ? "Base 推送重试已入队" : `推送状态：${result.status}`; }, detail.id)} disabled={busy || !pushRetryable || Boolean(detail.duplicateOf)} title={detail.duplicateOf ? "疑似重复需求不推送 Base" : pushRetryable ? "重新提交 Base 推送" : pushDisabledReason}>重试 Base 推送</button>
+          <HeroButton className="button button-primary button-small" aria-expanded={ownerPickerOpen} aria-controls={ownerEditorId} onPress={() => setOwnerPickerOpen((open) => !open)} isDisabled={busy}>分配 / 变更负责人</HeroButton>
+          <button className="button button-secondary button-small" onClick={() => void onAct(async () => { await retryAnalysis(detail.id); return "AI 分析重试已入队"; }, detail.id)} disabled={busy || !analysisRetryable} title={analysisRetryable ? "重新提交 AI 分析" : analysisDisabledReason}>{analysisActionLabel}</button>
+          <button className="button button-secondary button-small" onClick={() => void onAct(async () => { const result = await pushRequirement(detail.id); return result.status === "queued" ? "Base 推送重试已入队" : `推送状态：${result.status}`; }, detail.id)} disabled={busy || !pushRetryable} title={pushRetryable ? "重新提交 Base 推送" : pushDisabledReason}>重试 Base 推送</button>
           <HeroButton className="button button-secondary button-small" onPress={onRefresh} isDisabled={busy}><RefreshCw size={14} />刷新</HeroButton>
         </div>
       </div>
@@ -1069,7 +1102,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
         ? <div className="req-empty-state">
           <strong>尚未分析</strong>
           <span>{detail.pipeline.analysis === "running" ? "AI 分析正在进行中；完成后刷新查看结果。" : "该需求还没有可用的 AI 分析结果。"}</span>
-          <button className="button button-secondary button-small" onClick={() => void onAct(async () => { await retryAnalysis(detail.id); return "AI 分析重试已入队"; }, detail.id)} disabled={busy || !analysisRetryable} title={analysisRetryable ? "提交 AI 分析" : analysisDisabledReason}>触发 AI 分析</button>
+          <button className="button button-secondary button-small" onClick={() => void onAct(async () => { await retryAnalysis(detail.id); return "AI 分析重试已入队"; }, detail.id)} disabled={busy || !analysisRetryable} title={analysisRetryable ? "提交 AI 分析" : analysisDisabledReason}>{analysisActionLabel}</button>
         </div>
         : <div className="advice-grid">{adviceCards.map((card) => <HeroCard key={card.label} className="advice-card">
           <HeroCard.Content>
@@ -1169,6 +1202,8 @@ function auditResultLabel(result: AuditEvent["result"]) {
 
 export function MappingsPanel({ onRefresh }: { onRefresh: () => void }) {
   const [pending, setPending] = useState<RequirementSummary[]>([]);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [mappings, setMappings] = useState<PersonMapping[]>([]);
   const [targetId, setTargetId] = useState<string | null>(null);
   const [loadState, setLoadState] = useState<LoadState>("loading");
@@ -1176,24 +1211,27 @@ export function MappingsPanel({ onRefresh }: { onRefresh: () => void }) {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoadState("loading"); setLoadError(null);
+  const load = useCallback(async (nextCursor: string | null) => {
+    if (nextCursor) setLoadingMore(true); else setLoadState("loading");
+    setLoadError(null);
     const [pendingPage, mappingPage] = await Promise.allSettled([
-      listRequirements({ ownerState: "pending_mapping", limit: 25 }),
+      listRequirements({ ownerState: "pending_mapping", limit: 25, ...(nextCursor ? { cursor: nextCursor } : {}) }),
       listMappings(),
     ]);
     // 任一关键请求失败即进入错误态（自述的可恢复行为：不静默吞掉局部失败）
     if (pendingPage.status === "rejected" || mappingPage.status === "rejected") {
       const cause = pendingPage.status === "rejected" ? pendingPage.reason : mappingPage.status === "rejected" ? mappingPage.reason : null;
       setLoadError(cause instanceof ApiError ? errorText(cause) : "无法加载映射数据。");
-      setLoadState("error");
+      setLoadState("error"); setLoadingMore(false);
       return;
     }
-    setPending(pendingPage.value.items);
+    setPending((prev) => nextCursor ? [...prev, ...pendingPage.value.items] : pendingPage.value.items);
+    setCursor(pendingPage.value.nextCursor);
     setMappings(mappingPage.value);
     setLoadState("ready");
+    setLoadingMore(false);
   }, []);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(null); }, [load]);
 
   const submit = async (user: FeishuUserSelection) => {
     if (!targetId) return;
@@ -1202,16 +1240,17 @@ export function MappingsPanel({ onRefresh }: { onRefresh: () => void }) {
       const result = await setOwner(targetId, { feishuUserId: user.feishuUserId, feishuIdType: user.feishuIdType, tbDisplayName: user.name });
       setNotice(`${user.name} 已指定为这条需求的负责人（${result.ownerState}），Base 推送已入队。`);
       setTargetId(null);
-      onRefresh(); await load();
+      onRefresh(); await load(null);
     } catch (cause) { setNotice(errorText(cause)); }
     finally { setBusy(false); }
   };
   const matchMethodLabel: Record<PersonMapping["matchMethod"], string> = { tb_user_id: "TB 用户 ID", unique_name: "姓名唯一匹配", manual: "人工指定" };
 
   return <section className="panel requirements-panel">
-    <div className="panel-heading"><div><h2>负责人映射</h2><p>为待匹配负责人逐条选择飞书用户；只影响选中的这一条需求，不会改写同 TB 执行人的其他需求。</p></div><HeroButton className="button button-secondary button-small" onPress={() => { onRefresh(); void load(); }}><RefreshCw size={14} />刷新</HeroButton></div>
+    <div className="panel-heading"><div><h2>负责人映射</h2><p>为待匹配负责人逐条选择飞书用户；只影响选中的这一条需求，不会改写同 TB 执行人的其他需求。</p></div><HeroButton className="button button-secondary button-small" onPress={() => { onRefresh(); void load(null); }}><RefreshCw size={14} />刷新</HeroButton></div>
     <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
     {pending.length ? <div className="table-scroll"><table><thead><tr><th>需求</th><th>TB 负责人</th><th>操作</th></tr></thead><tbody>{pending.map((row) => <tr key={row.id}><td><div className="requirement-title"><span className="req-id">REQ-{row.sourceRequirementId}</span><strong>{row.title}</strong></div></td><td>待匹配</td><td>{targetId === row.id ? <div className="mapping-editor"><FeishuUserPicker disabled={busy} onMap={submit} saveLabel="保存" /><HeroButton className="button button-secondary button-small" onPress={() => setTargetId(null)} isDisabled={busy}>取消</HeroButton></div> : <HeroButton className="button button-secondary button-small" onPress={() => setTargetId(row.id)}>选择飞书用户</HeroButton>}</td></tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadState === "loading" ? "正在载入待匹配需求…" : "没有待匹配的负责人"}</strong><span>{loadState === "loading" ? "正在从本地 API 读取。" : "未匹配需求会出现在这里，等待为每一条需求单独指定负责人。"}</span></div>}
+    {cursor && <div style={{ display: "flex", justifyContent: "center", padding: "10px 0" }}><button className="button button-secondary button-small" disabled={loadingMore || busy} onClick={() => void load(cursor)}>{loadingMore ? "加载中…" : "加载更多待匹配需求"}</button></div>}
     {mappings.length > 0 && <div className="table-scroll"><table><thead><tr><th>TB 用户 / 姓名</th><th>飞书用户</th><th>匹配方式</th><th>更新时间</th></tr></thead><tbody>{mappings.map((m) => <tr key={m.id}><td>{m.teambitionDisplayName ?? m.teambitionUserId ?? "（仅姓名匹配占位）"}</td><td className="mono-cell">{m.feishuUserId}</td><td>{matchMethodLabel[m.matchMethod] ?? m.matchMethod}</td><td>{timeLabel(m.updatedAt)}</td></tr>)}</tbody></table></div>}
   </section>;
 }

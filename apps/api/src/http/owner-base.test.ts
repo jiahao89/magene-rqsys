@@ -69,13 +69,13 @@ test("clearing a per-requirement owner restores the TB default mapping and queue
   assert.equal((h.queued() as { jobType: string }).jobType, "base_push");
 });
 
-test("duplicate requirements reject owner assignment", async () => {
+test("a same-title hint does not block owner assignment", async () => {
   const h = deps();
   const repositories = h.dependencies.repositories as unknown as { requirements: Record<string, unknown> };
   const base = await (repositories.requirements.get as () => Promise<RequirementRecord | null>)();
   repositories.requirements.get = async () => ({ ...base!, duplicateOfRequirementId: "req-canonical" });
   const response = await handleApiRequest(new Request("http://localhost/api/requirements/req-1/owner", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ feishuUserId: "ou-user", feishuIdType: "open_id" }) }), h.dependencies);
-  assert.equal(response.status, 409);
+  assert.equal(response.status, 200);
 });
 
 test("manual mapping does not bypass pull state or push when requirement is missing", async () => {

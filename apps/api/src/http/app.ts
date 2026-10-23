@@ -400,7 +400,9 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const cursor = decodeRequirementCursor(parsed.data.cursor);
     const page = await repositories.requirements.search({ ...(parsed.data.q === undefined ? {} : { q: parsed.data.q }), ...(parsed.data.executorName === undefined ? {} : { executorName: parsed.data.executorName }), ...(parsed.data.pullState === undefined ? {} : { pullState: parsed.data.pullState }), ...(parsed.data.analysisState === undefined ? {} : { analysisState: parsed.data.analysisState }), ...(parsed.data.ownerState === undefined ? {} : { ownerState: parsed.data.ownerState }), ...(parsed.data.pushState === undefined ? {} : { pushState: parsed.data.pushState }), ...(parsed.data.batchId === undefined ? {} : { batchId: parsed.data.batchId }), ...(parsed.data.since === undefined ? {} : { since: parsed.data.since }), ...(parsed.data.until === undefined ? {} : { until: parsed.data.until }), limit: parsed.data.limit, ...(cursor === undefined ? {} : { cursor }) });
     // 列表一次取回全部有效映射再按 TB 用户查名，避免逐行查询。
-    const mappings = repositories.people ? await repositories.people.listActive(page.items[0]?.sourceConfigId ?? "") : [];
+    // 空页时不能把空字符串传给 uuid 列：PostgreSQL 会以 22P02 拒绝，接口变成 500。
+    const firstItem = page.items[0];
+    const mappings = repositories.people && firstItem ? await repositories.people.listActive(firstItem.sourceConfigId) : [];
     const nameByTbUser = new Map(mappings.filter((m) => m.teambitionUserId && m.teambitionDisplayName).map((m) => [m.teambitionUserId as string, m.teambitionDisplayName as string]));
     return json({
       items: page.items.map((item) => ({ ...requirementSearchDto(item), ownerName: manualOwnerName(item) ?? (item.executorUserId ? nameByTbUser.get(item.executorUserId) ?? null : null) })),
@@ -472,7 +474,7 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const req = await repositories.requirements.get(decodeURIComponent(analysisRetryMatch[1]!)); if (!req) return jsonError("NOT_FOUND");
     const latestAnalysis = await repositories.analyses?.latest(req.id) ?? null;
     const priorAnalysisVersion = latestAnalysis?.analysisVersion ?? 0;
-    let retryAllowed = ["pending", "failed_retryable"].includes(req.pipeline.analysis);
+    let retryAllowed = ["pending", "failed_retryable", "analyzed"].includes(req.pipeline.analysis);
     if (!retryAllowed && req.pipeline.analysis === "running") {
       // 崩溃残留：handler 已把状态置为 running，但作业已终态或从未入队。
       // 放行重试（配合状态机的 running→running 自迁移），否则该需求只能手工改库。
@@ -512,7 +514,6 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.people || !repositories.requirements || !repositories.jobs || !repositories.audit) return jsonError("DEPENDENCY_UNAVAILABLE");
     const req = await repositories.requirements.get(decodeURIComponent(ownerMatch[1]!)); if (!req) return jsonError("NOT_FOUND");
-    if (req.duplicateOfRequirementId) return jsonError("CONFLICT", "疑似重复需求不参与负责人分配。");
     if (req.pipeline.pull !== "synced") return jsonError("CONFLICT");
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
     const latestAnalysis = await repositories.analyses?.latest(req.id) ?? null;

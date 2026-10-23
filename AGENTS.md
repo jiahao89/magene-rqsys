@@ -5,6 +5,7 @@
 1. Read `CONTEXT.md`, `specs/rq-sys-mvp/README.md`, the relevant numbered Spec, and `specs/rq-sys-mvp/OPEN-DECISIONS.md` before changing behavior.
 2. Product scope is controlled by the current Feishu MVP PRD revision 60. The technical design is implementation guidance only where it does not conflict with that PRD.
 3. Tickets in `.scratch/rq-sys-mvp/issues/` are local drafts. Respect their dependency/status labels and target-environment evidence requirements.
+4. For approved V0.2 work, additionally read `specs/rq-sys-v0.2/README.md`, its relevant numbered Spec and `DECISIONS-AND-GATES.md`; use `.scratch/rq-sys-v0.2/issues/README.md` and its tickets. These explicit increments extend the MVP baseline; preserve MVP behavior outside that scope and check each ticket's blockers and execution gates.
 
 ## Current project layout
 

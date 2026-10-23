@@ -29,6 +29,17 @@ test("creates/upserts on the Teambition requirement ID, permits empty owner, and
   assert.equal(fake.row()?.fields["PM状态"], "已采纳");
 });
 
+test("findCurrentOwner reads the Base person field and identifies its ID type", async () => {
+  const client: BaseClient = {
+    async findByRequirementKey() { return { recordId: "record-1", fields: {} }; },
+    async readPmFields() { return { "执行人": [{ id: "ou_base_owner", name: "PM" }] }; },
+    async create() { throw new Error("unexpected create"); },
+    async update() { throw new Error("unexpected update"); },
+  };
+  const adapter = new FeishuBasePushAdapter(client, { requirementId: "TB需求ID", owner: "执行人", source: {}, ai: {}, pm: [] });
+  assert.deepEqual(await adapter.findCurrentOwner({ requirementId: "r" }), { userId: "ou_base_owner", idType: "open_id" });
+});
+
 test("snapshots before substantive update and only then resets PM status", async () => {
   const fake = fakeBase({ recordId: "existing", fields: { "TB项目ID": "p", "TB需求ID": "r", "标题": "Old", "PM状态": "已采纳", "PM确认模块": "M", "结构化备注": "Note" } });
   const snapshots: unknown[] = [];

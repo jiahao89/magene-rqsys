@@ -9,11 +9,13 @@
 ## Issue tracker
 
 - Work tickets are local Markdown drafts under `.scratch/rq-sys-mvp/issues/`; there is no configured GitHub issue tracker for this project. Treat statuses and dependency labels there as binding; before editing a shared ticket, reread its README and synchronize the ticket/README status with evidence.
+- For approved V0.2 work, use `.scratch/rq-sys-v0.2/issues/README.md` and its individual tickets. The user approved this breakdown on 2026-10-23. Preserve MVP ticket statuses; check each V0.2 ticket's blockers and execution gates before claiming it.
 - GitHub is used as the source repository, not as the issue tracker. `gh` is not installed; ordinary Git remote operations use the configured macOS credential helper.
 
 ## Domain documentation
 
 - Single-context domain docs live in `specs/rq-sys-mvp/`. Read `AGENTS.md`, `CONTEXT.md`, MVP README, the relevant numbered spec, OpenAPI, and OPEN-DECISIONS before behavior changes.
+- For V0.2 intake, source identity, analysis/audience, Base, or Beta changes, additionally read `specs/rq-sys-v0.2/README.md`, the relevant numbered spec, and `DECISIONS-AND-GATES.md`. The existing MVP OpenAPI remains the single API contract; extend it during implementation.
 - Follow the current PRD revision 60 and project invariants in `AGENTS.md`; distinguish local implementation from target Miaoda/Teambition/Feishu verification. Use “implemented, not verified in target environment” unless verified there.
 
 ## Development workflow

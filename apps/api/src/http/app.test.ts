@@ -187,6 +187,17 @@ test("batch and requirement list routes pass time, batch and stable cursor filte
  assert.equal(requirementResponse.status, 200);
  assert.deepEqual(requirementQuery, { batchId: batch.id, pullState: "synced", since: "2026-01-01T00:00:00Z", until: "2026-01-02T00:00:00Z", limit: 25 });
 });
+test("empty requirement search returns an empty page without querying mappings with an empty source id", async () => {
+ const d = makeDependencies();
+ let mappingQueries = 0;
+ d.repositories!.people = {
+  listActive: async (sourceConfigId: string) => { mappingQueries += 1; assert.notEqual(sourceConfigId, ""); return []; },
+ } as never;
+ const response = await handleApiRequest(new Request("http://localhost/api/requirements?q=no-such-requirement"), d);
+ assert.equal(response.status, 200);
+ assert.deepEqual(await response.json(), { items: [], nextCursor: null });
+ assert.equal(mappingQueries, 0);
+});
 test("lists audit events", async () => { const r = await handleApiRequest(new Request("http://localhost/api/audit?entityId=foo&limit=10"), makeDependencies()); assert.equal(r.status, 200); assert.deepEqual(await r.json(), { items: [auditEvent] }); });
 test("requirement detail returns the full analysis version history (spec 02 prior versions)", async () => {
   const r = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`), makeDependencies());

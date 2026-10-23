@@ -263,13 +263,11 @@ export function requirementSourceFacts(requirement: Pick<RequirementDetail, "sou
     description: firstText(source.description, mapped.description),
     proposerName: requirementProposerName(requirement),
     executorName: personName(source, raw, source.executorName, raw.executor_id ?? source.sourceExecutorId, "executorName"),
+    // 只展示状态名称；仅有 taskflow_status_id 时不把内部 ID 当成业务状态展示。
     tbStatus: firstText(
       source.tbStatusName,
       source.statusName,
       raw.taskflow_status_name,
-      source.taskflow_status_id,
-      raw.taskflow_status_id,
-      source.sourceStatusId,
     ),
     // 接口在顶层给出由任务 ID 推导的 TB 地址；原始 payload 里通常没有该字段。
     tbUrl: firstText(requirement.sourceUrl, source.sourceUrl, source.source_url, source.url),

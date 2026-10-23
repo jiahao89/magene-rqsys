@@ -34,6 +34,26 @@ const navigationGroups: { title: string; items: { label: Page; icon: typeof Gaug
 ];
 const pageTitles: Record<Page, string> = { Overview: "总览", Requirements: "需求池", Team: "团队管理", Modules: "功能模块", SyncRecords: "同步记录", Sources: "数据源与计划", Rules: "优先级规则", Guide: "使用指南" };
 
+const API_ERROR_TEXT: Record<string, string> = {
+  INTERNAL: "服务暂时不可用，请稍后重试。",
+  DEPENDENCY_UNAVAILABLE: "依赖服务暂不可用，请稍后重试。",
+  VALIDATION_FAILED: "请求参数不合法，请检查输入。",
+  NOT_FOUND: "请求的资源不存在或已被删除。",
+  CONFLICT: "当前状态不允许此操作，请刷新后重试。",
+  REQUEST_FAILED: "无法连接到 API 服务，请确认服务已启动后重试。",
+  SOURCE_NOT_ENABLED: "请先配置并启用一个数据源。",
+  UNAUTHORIZED: "登录已失效，请重新登录。",
+  FORBIDDEN: "没有权限执行此操作。",
+};
+
+function formatApiError(cause: unknown): string {
+  if (cause instanceof ApiError) {
+    if (/[\u4e00-\u9fff]/.test(cause.message)) return cause.message;
+    return API_ERROR_TEXT[cause.code] ?? `操作失败（${cause.code}）。`;
+  }
+  return "无法连接到本地 API。请启动 API 服务后重试。";
+}
+
 async function apiJson<T>(path: string): Promise<T> {
   const response = await fetch(path, { headers: { accept: "application/json" } });
   const body: unknown = await response.json().catch(() => null);
@@ -97,6 +117,7 @@ function App() {
   const [metrics, setMetrics] = useState<OverviewMetrics | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
   // 计划预测基于「本次数据读取完成的时刻」，避免渲染期间读取挂钟导致结果不稳定。
@@ -195,7 +216,7 @@ function App() {
       }
     } catch (cause) {
       setHealth("error");
-      setError(cause instanceof ApiError ? `${cause.message}（${cause.code}）` : "无法连接到本地 API。请启动 API 服务后重试。");
+      setError(formatApiError(cause));
     }
   }, []);
 
@@ -208,18 +229,26 @@ function App() {
   const handleRunSync = async (mode: SyncExecutionMode = "full_pipeline") => {
     const source = sources.find((item) => item.enabled);
     if (!source) { setNotice("请先配置并启用一个数据源。"); return; }
-    setBusy(true); setNotice(null);
+    setBusy(true); setNotice(null); setActionError(null);
     try {
       const result = await runSync(source, mode);
       setNotice(mode === "source_only" ? `仅同步源数据批次 ${result.batchId} 已提交；不会触发 AI、负责人匹配、Base 推送或通知` : `批次 ${result.batchId} 已提交`);
       await loadData();
     } catch (cause) {
-      setNotice(cause instanceof ApiError ? `${cause.message}（${cause.code}）` : "提交失败：无法连接本地 API。");
+      setActionError(formatApiError(cause));
     } finally { setBusy(false); }
   };
 
   const shownRequirements = requirements.filter((item) => item.title.toLowerCase().includes(query.toLowerCase()) || item.sourceRequirementId.includes(query));
   const latestBatch = batches[0];
+  // 运行中的批次需要可见进度：只在前端做有界轮询，终态/页面隐藏时停止。
+  useEffect(() => {
+    if (latestBatch?.status !== "running") return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void loadData();
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [latestBatch?.status, loadData]);
   const counts = { pull: metrics?.pullSynced ?? 0, analysis: metrics?.analysisAnalyzed ?? 0, owner: metrics?.ownerResolved ?? 0, push: metrics?.pushPushed ?? 0, failed: metrics?.failed ?? 0, pushFailed: metrics?.pushFailed ?? 0, pushPending: metrics?.pushPending ?? 0 };
   const total = metrics?.total ?? 0;
   const todoItems = [
@@ -250,10 +279,11 @@ function App() {
         <div className="content-area">
           <PanelErrorBoundary>
           {error && page === "Overview" && <div className="alert-banner" role="alert"><CircleAlert size={18} /><div><strong>服务暂不可用</strong><span>{error}</span></div><button className="button button-secondary button-small" onClick={() => void loadData()}><RefreshCw size={14} />重试连接</button></div>}
+          {actionError && <div className="alert-banner" role="alert"><CircleAlert size={18} /><div><strong>操作未完成</strong><span>{actionError}</span></div><button className="icon-button" aria-label="关闭提示" onClick={() => setActionError(null)}><X size={15} /></button></div>}
           {notice && <div className="notice-banner" role="status"><Check size={16} /><span>{notice}</span><button className="icon-button" aria-label="关闭提示" onClick={() => setNotice(null)}><X size={15} /></button></div>}
           {page === "Overview" && <>
             <section className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" />SYNC WORKBENCH</div><h1>工作流总览</h1><p>查看需求同步进度、分析状态与推送健康度。</p></div><div className="heading-actions"><button className="button button-secondary" onClick={() => void loadData()} disabled={health === "loading"}><RefreshCw size={15} className={health === "loading" ? "spin" : ""} />刷新</button><details className="advanced-actions"><summary className="button button-secondary">高级操作</summary><div className="advanced-actions-menu"><button className="button button-secondary button-small" title="只导入 Teambition 源数据；不触发 AI、负责人匹配、Base 推送或通知" onClick={() => void handleRunSync("source_only")} disabled={busy || health !== "ready"}>仅同步源数据</button></div></details><button className="button button-primary" onClick={() => void handleRunSync()} disabled={busy || health !== "ready"}><Play size={15} fill="currentColor" />{busy ? "提交中…" : "立即同步"}</button></div></section>
-            <section className="source-banner"><div className="source-leading"><span className="source-icon"><GitBranch size={17} /></span><div><span className="micro-label">当前同步来源</span><strong>{sources[0]?.projectName ?? (health === "loading" ? "正在加载配置…" : "尚未配置数据源")}</strong></div></div><div className="source-meta"><span className={`status-chip ${sources[0]?.enabled ? "status-live" : "status-muted"}`}><span />{sources[0]?.enabled ? "同步已启用" : "未启用"}</span><span className="source-meta-divider" /><span className="subtle-text">Teambition 项目</span></div><button className="text-link" onClick={() => setPage("Sources")}>管理来源 <ArrowRight size={14} /></button></section>
+            <section className="source-banner"><div className="source-leading"><span className="source-icon"><GitBranch size={17} /></span><div><span className="micro-label">当前同步来源</span><strong>{sources[0]?.projectName ?? (health === "loading" ? "正在加载配置…" : health === "error" ? "无法读取来源配置" : "尚未配置数据源")}</strong></div></div><div className="source-meta"><span className={`status-chip ${sources[0]?.enabled ? "status-live" : "status-muted"}`}><span />{sources[0]?.enabled ? "同步已启用" : "未启用"}</span><span className="source-meta-divider" /><span className="subtle-text">Teambition 项目</span></div><button className="text-link" onClick={() => setPage("Sources")}>管理来源 <ArrowRight size={14} /></button></section>
 
             <section className="section-block"><div className="section-heading"><div><h2>同步健康度</h2><p>四个处理阶段独立统计 · 不互相阻塞</p></div><button className="link-button" onClick={() => setPage("Requirements")}>查看需求池 <ArrowRight size={14} /></button></div>
               {/* 今日待办：把统计数字翻译成"该做什么"，并直接跳到对应筛选 */}
@@ -272,7 +302,7 @@ function App() {
 
             </section>
 
-            <div className="overview-grid"><section className="panel pipeline-panel"><div className="panel-heading"><div><h2>处理阶段</h2><p>需求处理状态一览</p></div><span className="pipeline-help" aria-label="阶段说明" title="拉取、AI 分析、负责人匹配和 Base 推送分别记录状态；AI 分析失败不会阻止推送。"><CircleHelp size={16} /></span></div><div className="pipeline-overview">{[
+            <div className="overview-grid"><section className="panel pipeline-panel"><div className="panel-heading"><div><h2>处理阶段</h2><p>需求处理状态一览</p></div><span className="pipeline-help" role="img" aria-label="阶段说明" title="拉取、AI 分析、负责人匹配和 Base 推送分别记录状态；AI 分析失败不会阻止推送。"><CircleHelp size={16} /></span></div><div className="pipeline-overview">{[
               { name: "拉取", detail: "从 Teambition 获取需求", value: counts.pull, color: "blue", icon: ArrowDownToLine },
               { name: "AI 分析", detail: "生成模块与维度建议", value: counts.analysis, color: "violet", icon: Sparkles },
               { name: "负责人匹配", detail: "关联 Feishu 用户", value: counts.owner, color: "amber", icon: Users },
@@ -283,7 +313,7 @@ function App() {
 
             <SchedulerHealthPanel schedule={sources[0]?.schedule} now={loadedAt} loadState={health} onConfigure={() => setPage("Sources")} />
 
-            <section className="panel requirements-panel"><div className="panel-heading requirements-heading"><div><h2>最近处理的需求</h2><p>每个阶段状态分别展示，分析失败不会隐藏已推送结果</p></div><div className="table-actions"><label className="search-box"><Search size={15} /><input aria-label="搜索需求" placeholder="搜索需求名称…" value={query} onChange={(event) => setQuery(event.target.value)} /></label><button className="button button-secondary button-small" onClick={() => setPage("Requirements")}>查看全部</button></div></div><RequirementsTable rows={shownRequirements.slice(0, 5)} loading={health === "loading"} /></section>
+            <section className="panel requirements-panel"><div className="panel-heading requirements-heading"><div><h2>最近处理的需求</h2><p>每个阶段状态分别展示，分析失败不会隐藏已推送结果</p></div><div className="table-actions"><label className="search-box"><Search size={15} /><input aria-label="搜索需求" placeholder="在当前已加载需求内搜索…" value={query} onChange={(event) => setQuery(event.target.value)} /></label><button className="button button-secondary button-small" onClick={() => setPage("Requirements")}>查看全部</button></div></div><RequirementsTable rows={shownRequirements.slice(0, 5)} loading={health === "loading"} /></section>
             <footer className="page-footer"><span>RQ-Sys MVP</span><span><ShieldCheck size={14} />状态由 API 返回；不展示飞书 PM 处理状态</span></footer>
           </>}
 
@@ -324,6 +354,7 @@ function parseScoringInput(text: string): Record<string, Record<string, number>>
 function RulesPanel() {
   const [rules, setRules] = useState<PriorityRuleVersion[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [thresholds, setThresholds] = useState({ p0: 4, p1: 3, p2: 2 });
@@ -333,14 +364,14 @@ function RulesPanel() {
   const load = useCallback(async () => {
     setLoadError(null);
     try { setRules(await listPriorityRules()); }
-    catch (cause) { setLoadError(cause instanceof ApiError ? `${cause.message}（${cause.code}）` : "无法加载规则配置。"); }
+    catch (cause) { setLoadError(formatApiError(cause)); }
   }, []);
   useEffect(() => { void load(); }, [load]);
 
   const withFeedback = async (action: () => Promise<string>) => {
-    setBusy(true); setNotice(null);
+    setBusy(true); setNotice(null); setActionError(null);
     try { setNotice(await action()); await load(); }
-    catch (cause) { setNotice(cause instanceof ApiError ? `${cause.message}（${cause.code}）` : "操作失败：无法连接本地 API。"); }
+    catch (cause) { setActionError(formatApiError(cause)); }
     finally { setBusy(false); }
   };
   const handleCreateRule = () => withFeedback(async () => {
@@ -357,6 +388,7 @@ function RulesPanel() {
   return <section className="panel requirements-panel">
       <div className="panel-heading"><div><h2>优先级规则</h2><p>规则版本经历史案例校准；发布前需求优先级保持为空。</p></div><button className="button button-secondary button-small" onClick={() => void load()} disabled={busy}><RefreshCw size={14} />刷新</button></div>
       {loadError && <div className="alert-banner" role="alert"><CircleAlert size={18} /><div><strong>配置加载失败</strong><span>{loadError}</span></div></div>}
+      {actionError && <div className="alert-banner" role="alert"><CircleAlert size={18} /><div><strong>操作未完成</strong><span>{actionError}</span></div><button className="button button-secondary button-small" onClick={() => setActionError(null)}>关闭</button></div>}
       {notice && <div className="notice-banner" role="status"><Check size={16} /><span>{notice}</span><button className="icon-button" aria-label="关闭提示" onClick={() => setNotice(null)}><X size={15} /></button></div>}
       <details className="advanced-settings">
         <summary>高级设置：创建规则草稿（U/M/S/C 评分映射与校准证据）</summary>

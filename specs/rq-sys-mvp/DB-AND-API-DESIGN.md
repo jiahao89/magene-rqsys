@@ -31,7 +31,7 @@ specs/rq-sys-mvp/openapi.yaml  OpenAPI 3.1 契约
 |---|---|---|
 | `source_configs` | 单项目 TB 来源、需求类型、周计划、产品组人员名单（用于 Web 筛选、模块分工和人员→飞书账号绑定，不作为同步过滤条件）和字段映射 | project + requirement type 唯一；凭据不落库 |
 | `sync_batches` | 手动/定时批次、发起人、幂等键、汇总结果 | source + idempotency key 唯一 |
-| `requirements` | 当前规范化需求和 pull/AI/owner/push 独立状态；逐条人工负责人（`manual_owner_*`，优先于 TB 执行人映射，迁移 0006/0007）、最近一次成功推送的负责人（用于负责人变更事件）、同标题疑似重复指向（`duplicate_of_requirement_id`；重复项不进入默认池、不分析、不推送） | source + TB requirement ID 唯一 |
+| `requirements` | 当前规范化需求和 pull/AI/owner/push 独立状态；逐条人工负责人（`manual_owner_*`，优先于 TB 执行人映射，迁移 0006/0007）、最近一次成功推送的负责人（用于负责人变更事件）、同标题疑似重复提示（`duplicate_of_requirement_id`；仅提示，不自动隔离、不删除，仍按自身来源 ID 处理） | source + TB requirement ID 唯一 |
 | `sync_items` | 批次内逐条结果及错误 | batch + TB requirement ID 唯一 |
 | `source_snapshots` | 只追加来源版本和 allowlist payload | requirement + version 唯一 |
 | `analysis_runs` | 结构化 AI 输出、版本、provider/prompt/dictionary/rule provenance | requirement + analysis version 唯一 |

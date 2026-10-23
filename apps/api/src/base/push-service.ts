@@ -10,7 +10,7 @@
 // - 被 Base 单选项拒绝的取值不伪造降级值，但也不静默丢弃：记入推送结果的 omittedFields 与审计。
 // - PM 快照仅在源版本新于上次推送时读取保存（实质变化协议）。
 // - 通知收件人（PM 最终确认）：first_push → PM Leader；负责人事件 → 新负责人；
-//   substantive_update / ai_retry_success → 当前负责人，无负责人时 PM Leader；提出人不通知。
+//   substantive_update / ai_retry_success → Base 当前负责人 / 应用当前负责人，均无时 PM Leader；提出人不通知。
 
 import { randomUUID } from "node:crypto";
 import type { RequirementQueryRepository, PersonMappingRepository, BasePushRunRepository, AuditEventRepository, AnalysisRunRepository, SourceSnapshotRepository } from "../application/repositories.js";
@@ -204,6 +204,10 @@ export function createBasePushService(deps: BasePushServiceDeps) {
     hadSuccessfulPush: boolean;
     substantiveChanged: boolean;
     latestAnalysis: AnalysisRunRecord | null;
+    /** 本次是否会写 Base 负责人；会写时以应用负责人为准，不读 Base 旧值。 */
+    willWriteOwner: boolean;
+    /** 惰性读取 Base 行当前保留的负责人；只在确实需要收件人判定时调用，避免每次推送多读两次 Base。 */
+    resolveBaseOwner: () => Promise<{ userId: string; idType: FeishuIdType } | null>;
   }): Promise<PushNotification | undefined> => {
     const currentOwnerUserId = input.owner?.feishuUserId ?? null;
     const previousOwner = await resolvePreviousPushOwner(input.req, input.owner, input.previousSource, input.hadSuccessfulPush);
@@ -247,17 +251,26 @@ export function createBasePushService(deps: BasePushServiceDeps) {
     if (eventType === "first_push") return undefined;
 
     const ownerEvent = eventType === "owner_assigned" || eventType === "owner_changed";
+    // Base 行里的负责人可能是 PM 直接改的；读取失败不阻断推送，只回落到应用侧负责人/PM Leader。
+    let baseOwner: { userId: string; idType: FeishuIdType } | null = null;
+    // 只在本次不覆盖 Base 负责人时读取旧值；会覆盖时以应用负责人为准，避免通知一个即将被替换的人。
+    if (!ownerEvent && !input.willWriteOwner) {
+      try { baseOwner = await input.resolveBaseOwner(); } catch { baseOwner = null; }
+    }
     // 产品最终确认的收件人规则：
     //   first_push → 静默（不写通知字段）；
     //   负责人事件 → 新的当前负责人；
-    //   substantive_update / ai_retry_success → 当前负责人，无负责人时回落 PM Leader。
+    //   substantive_update / ai_retry_success → Base 保留的当前负责人，其次应用当前负责人，均无时回落 PM Leader。
     // 同时给出收件人的 ID 类型：负责人映射可能是 open_id，而 PM Leader 是 user_id；
     // 一次 Base 请求只能有一个 user_id_type，服务层必须显式声明，client 不能替它猜。
     const ownerIdType = input.owner?.feishuIdType ?? null;
     const ownerRecipient = currentOwnerUserId && ownerIdType ? { userId: currentOwnerUserId, idType: ownerIdType } : null;
+    // Base 中 PM 手工保留下来的负责人优先于应用侧映射：内容变更/AI 重试成功时，
+    // 通知必须发给 Base 当前负责人，而不是因为应用侧没有映射就回落 PM Leader。
+    const baseRecipient = baseOwner ? { userId: baseOwner.userId, idType: baseOwner.idType } : null;
     const pmLeaderRecipient = pmLeaderUserId ? { userId: pmLeaderUserId, idType: "user_id" as const } : null;
-    // first_push 已在上方静默返回，这里只剩负责人事件与"负责人优先、PM Leader 兜底"两类。
-    const recipient = ownerEvent ? ownerRecipient : (ownerRecipient ?? pmLeaderRecipient);
+    // first_push 已在上方静默返回，这里只剩负责人事件与"Base/应用负责人优先、PM Leader 兜底"两类。
+    const recipient = ownerEvent ? ownerRecipient : (baseRecipient ?? ownerRecipient ?? pmLeaderRecipient);
     if (!recipient) return undefined;
     // 事件ID 确定性：同一事件重复推送得到同一个 ID，Base 自动化据此不重复发送。
     // 负责人事件追加 from/to，区分 A→B 与空→A 等不同事件。
@@ -274,13 +287,6 @@ export function createBasePushService(deps: BasePushServiceDeps) {
   async function pushRequirementUnlocked(requirementId: string, idempotencyKey: string): Promise<PushOutcome> {
     const req = await deps.requirements.get(requirementId);
     if (!req) return { kind: "not_found" };
-    if (req.duplicateOfRequirementId) {
-      await deps.audit.append({
-        id: randomUUID(), actorId: deps.actorId, eventType: "base.push", entityType: "requirement", entityId: req.id,
-        result: "denied", safeDetails: { reason: "duplicate_requirement", sourceVersion: req.sourceVersion }, occurredAt: now().toISOString(),
-      });
-      return { kind: "conflict" };
-    }
     if (req.pipeline.pull !== "synced") return { kind: "conflict" };
 
     const previous = await deps.basePushes.findByIdempotencyKey(idempotencyKey);
@@ -377,6 +383,10 @@ export function createBasePushService(deps: BasePushServiceDeps) {
         req, owner, previousSource,
         hadSuccessfulPush: Boolean(lastSuccessfulPush),
         substantiveChanged, latestAnalysis,
+        willWriteOwner: Boolean(baseOwner),
+        resolveBaseOwner: async () => lastSuccessfulPush
+          ? (await deps.base.findCurrentOwner?.({ requirementId: req.teambitionRequirementId })) ?? null
+          : null,
       });
       const sourceCreatedAt = req.sourceCreatedAt ? Date.parse(req.sourceCreatedAt) : Number.NaN;
       pushedResult = await deps.base.push({

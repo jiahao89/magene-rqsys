@@ -125,6 +125,22 @@ export interface BasePushResult {
   omittedFields: OmittedField[];
 }
 
+/** 从 Base 人员字段值解析出可用于通知的飞书用户 ID 与类型；无法识别时返回 null。 */
+function baseUserFieldValue(value: unknown): { userId: string; idType: "open_id" | "user_id" | "union_id" } | null {
+  const first = Array.isArray(value) ? value[0] : value;
+  const rawId = first && typeof first === "object"
+    ? (first as { id?: unknown }).id
+    : first;
+  if (typeof rawId !== "string") return null;
+  const id = rawId.trim();
+  if (!id) return null;
+  const idType = id.startsWith("ou_") ? "open_id" as const
+    : id.startsWith("on_") ? "union_id" as const
+      : /^[0-9a-f]{32}$/i.test(id) ? "user_id" as const
+        : null;
+  return idType ? { userId: id, idType } : null;
+}
+
 export class FeishuBasePushAdapter {
   constructor(private readonly client: BaseClient, private readonly fields: BaseFieldMap, private readonly snapshots?: PmSnapshotWriter) {}
 
@@ -134,6 +150,17 @@ export class FeishuBasePushAdapter {
    */
   private selectValue(fieldName: string, value: string): string | string[] {
     return this.fields.multiSelect?.[fieldName] === true ? [value] : value;
+  }
+
+  /**
+   * 只读当前 Base 行的人员字段，用于通知收件人判定。
+   * 不用于覆盖写入：应用仍按自身负责人规则决定是否改 Base；读取失败由调用方兜底。
+   */
+  async findCurrentOwner(key: BaseRequirementKey): Promise<{ userId: string; idType: "open_id" | "user_id" | "union_id" } | null> {
+    const record = await this.client.findByRequirementKey(key);
+    if (!record) return null;
+    const fields = await this.client.readPmFields(record.recordId);
+    return baseUserFieldValue(fields[this.fields.owner]);
   }
 
   async push(input: BasePushInput): Promise<BasePushResult> {

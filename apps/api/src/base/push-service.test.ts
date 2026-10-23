@@ -69,6 +69,7 @@ function makeHarness(options: {
   latestAnalysis?: AnalysisRunRecord | null;
   pmLeaderUserId?: string | null;
   webBaseUrl?: string;
+  baseOwner?: { userId: string; idType: "open_id" | "user_id" | "union_id" } | null;
   withLock?: boolean;
 } = {}) {
   const auditEvents: { eventType: string; result: string; safeDetails: Record<string, unknown> }[] = [];
@@ -129,7 +130,7 @@ function makeHarness(options: {
     } as never,
     sourceSnapshots: { getAtVersion: async () => options.sourceSnapshot ?? null } as never,
     audit: { append: async (event: { eventType: string; result: string; safeDetails: Record<string, unknown> }) => { calls.push("audit"); auditEvents.push(event); } } as never,
-    base: { push: async (input: CapturedPushInput) => { calls.push("base"); baseInput = input; if (options.pushError) throw options.pushError; return { recordId: "record-2", created: false, omittedFields: options.omittedFields ?? [] }; } } as unknown as FeishuBasePushAdapter,
+    base: { push: async (input: CapturedPushInput) => { calls.push("base"); baseInput = input; if (options.pushError) throw options.pushError; return { recordId: "record-2", created: false, omittedFields: options.omittedFields ?? [] }; }, findCurrentOwner: async () => options.baseOwner ?? null } as unknown as FeishuBasePushAdapter,
     sourceProjectId: "verified-source-project",
     baseFields: { projectId: "project", requirementId: "requirement", owner: "owner", source: {}, ai: {}, pm: ["PM状态"] },
     actorId: "operator-1",
@@ -313,6 +314,23 @@ test("reads the deep-link base from RQSYS_WEB_BASE_URL and trims a trailing slas
   }
 });
 
+test("a substantive change notifies the Base-preserved owner when the app has no mapping", async () => {
+  // PM 可能直接在 Base 里改负责人；应用侧没有映射时不能因此回落 PM Leader。
+  const req = requirement({ pipeline: { pull: "synced", analysis: "analyzed", owner: "not_required", push: "pending" } });
+  const h = makeHarness({
+    req,
+    lastSuccessful: pushRun({ sourceVersion: 1 }),
+    sourceSnapshot: { id: "snapshot-1", requirementId: req.id, sourceVersion: 1, sourceHash: "hash-v1", substantiveHash: "substantive-v1", payload: {}, isSubstantiveChange: false, capturedAt: "2026-10-08T00:00:00.000Z" },
+    baseOwner: { userId: "ou-base-owner", idType: "open_id" },
+    pmLeaderUserId: PM_LEADER_USER_ID,
+  });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.equal(h.baseInput?.notification?.eventType, "需求内容变更");
+  assert.equal(h.baseInput?.notification?.recipientUserId, "ou-base-owner");
+  assert.equal(h.baseInput?.notification?.recipientIdType, "open_id");
+});
+
 test("a substantive change notifies the current owner with substantive_update", async () => {
   const req = requirement({ executorUserId: "tb-owner", executorName: "Owner" });
   const h = makeHarness({
@@ -463,12 +481,12 @@ test("owner switch from the last pushed manual owner to the TB mapping produces 
   assert.match(h.baseInput?.notification?.eventId ?? "", /u-assignee.*ou-owner/);
 });
 
-test("suspected duplicates can never be pushed to Base", async () => {
+test("a same-title hint does not block Base push", async () => {
   const req = requirement({ duplicateOfRequirementId: "req-canonical" });
   const h = makeHarness({ req });
   const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
-  assert.equal(result.kind, "conflict");
-  assert.equal(h.calls.includes("base"), false);
+  assert.equal(result.kind, "pushed");
+  assert.equal(h.calls.includes("base"), true);
 });
 
 test("a repeated no-change sync is silent and writes no notification fields", async () => {

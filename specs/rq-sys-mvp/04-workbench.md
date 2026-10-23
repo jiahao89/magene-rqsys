@@ -74,7 +74,7 @@ All write responses return the resulting workflow state and a stable object iden
 8. Given the requirement pool is paginated, then dashboard stage counts use persisted full-dataset aggregates and exclude synthetic acceptance fixtures.
 9. Given an operator assigns an owner to a requirement with a TB executor, then only that requirement's owner changes; other requirements of the same executor and the global mapping stay unchanged.
 10. Given an operator clears a per-requirement owner, then the requirement falls back to the TB-executor default mapping (or pending/no-owner) and a push is queued when a default exists.
-11. Given a requirement has suspected duplicates, then its detail shows a red notice with links to each duplicate detail; the duplicate detail shows a notice and offers no analysis/push/assignment actions.
+11. Given a requirement has suspected duplicates, then its detail shows a red notice with links to each duplicate detail; the duplicate detail shows the same hint but keeps analysis/push/assignment actions scoped to that record.
 
 ## Design and accessibility
 

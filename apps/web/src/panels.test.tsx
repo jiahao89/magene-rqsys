@@ -122,7 +122,7 @@ describe("BatchesPanel (ticket 16)", () => {
       const path = typeof input === "string" ? input : new Request(input).url;
       if (path === "/api/batches/batch-1") {
         return jsonOk({
-          batchId: "batch-1", status: "partial_failure", totalCount: 2, succeededCount: 1, failedCount: 1, items: [
+          id: "batch-1", status: "partial_failure", totalCount: 2, succeededCount: 1, failedCount: 1, items: [
             { id: "item-ok", requirementId: null, teambitionRequirementId: "tb-ok", action: "created", status: "succeeded", errorCode: null, errorDetail: null, startedAt: "2026-10-09T00:00:00.000Z", completedAt: "2026-10-09T00:00:01.000Z" },
             { id: "item-bad", requirementId: null, teambitionRequirementId: "tb-bad", action: "created", status: "failed", errorCode: "source_item_failed", errorDetail: "Requirement could not be synchronized", startedAt: "2026-10-09T00:00:00.000Z", completedAt: "2026-10-09T00:00:01.000Z" },
           ],
@@ -418,7 +418,7 @@ describe("RequirementsPanel (ticket 17)", () => {
 
     expect(screen.getByText("尚未分析")).toBeInTheDocument();
     expect(screen.queryByText("模块建议")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "触发 AI 分析" }));
+    fireEvent.click(within(screen.getByRole("group", { name: "需求操作" })).getByRole("button", { name: "重试 AI 分析" }));
     expect(await screen.findByText("AI 分析重试已入队")).toBeInTheDocument();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/analysis/req-1/retry", expect.objectContaining({ method: "POST" })));
   });
@@ -441,9 +441,9 @@ describe("RequirementsPanel (ticket 17)", () => {
     const actions = within(await screen.findByRole("group", { name: "需求操作" }));
 
     expect(actions.getByRole("button", { name: "分配 / 变更负责人" })).toBeEnabled();
-    const retryAnalysis = actions.getByRole("button", { name: "重试 AI 分析" });
-    expect(retryAnalysis).toBeDisabled();
-    expect(retryAnalysis).toHaveAttribute("title", "AI 分析已完成，无需重试。");
+    const retryAnalysis = actions.getByRole("button", { name: "重新分析" });
+    expect(retryAnalysis).toBeEnabled();
+    expect(retryAnalysis.getAttribute("title")).toBe("重新提交 AI 分析");
     const retryPush = actions.getByRole("button", { name: "重试 Base 推送" });
     expect(retryPush).toBeDisabled();
     expect(retryPush.getAttribute("title")).toContain("无需重试");

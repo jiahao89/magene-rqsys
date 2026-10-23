@@ -76,7 +76,7 @@ const syncJobRunner: SyncJobRunner | undefined = repositories ? async (job) => {
     let queued = 0;
     for (const touched of persistence.touchedRequirements()) {
       const current = await repositories.requirements.get(touched.id);
-      if (!current || current.duplicateOfRequirementId) continue;
+      if (!current) continue;
       if (touched.analysisRequired) {
         if (analysisCap > 0 && queued >= analysisCap) continue;
         queued += 1;
@@ -98,8 +98,6 @@ const analysisJobHandler: ((job: { payload: Record<string, unknown> }) => Promis
   if (typeof requirementId !== "string") throw new Error("Invalid analysis job payload");
   const requirement = await repositories.requirements.get(requirementId);
   if (!requirement) throw new Error("Analysis requirement was not found");
-  // 疑似重复需求只展示、不分析；避免浪费模型调用和后续推送。
-  if (requirement.duplicateOfRequirementId) return;
   assertFixtureWorkAllowed({ sourceId: requirement.sourceConfigId, fixture: isSyntheticFixtureRequirement(requirement.teambitionRequirementId) }, fixtureEnvironment, new Date());
   const targetSubstantiveHash = job.payload.substantiveHash;
   if (typeof targetSubstantiveHash === "string" && targetSubstantiveHash !== requirement.substantiveHash) return;

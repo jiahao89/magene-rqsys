@@ -221,6 +221,8 @@ tbody tr:hover { background: var(--rq-surface-row-hover); }
 .alert-banner strong { font-size: var(--rq-font-caption); font-weight: 620; }
 .alert-banner span { color: #9e6968; font-size: var(--rq-font-caption); }
 .alert-banner .button { margin-left: auto; }
+.field-error { margin: -4px 0 10px; color: var(--rq-danger); font-size: var(--rq-font-caption); font-weight: 600; }
+html[data-theme="dark"] .field-error { color: var(--rq-danger); }
 .notice-banner { border-color: #d9ebdf; color: #36815d; background: #f4faf6; }
 .notice-banner span { flex: 1; color: #4a8062; font-size: var(--rq-font-caption); }
 .notice-banner .icon-button { color: #6d927d; }
@@ -459,6 +461,10 @@ tbody tr:hover { background: var(--rq-surface-row-hover); }
 
 /* 暗色：新增表面、TB 徽标、负责人与建议卡片。 */
 html[data-theme="dark"] .req-detail-summary { background: var(--rq-surface); border-color: var(--rq-border); box-shadow: 0 6px 14px -12px #000; }
+html[data-theme="dark"] .req-duplicate-notice { background: var(--rq-danger-surface); border-color: var(--rq-danger-border-on-dark); border-left-color: var(--rq-danger-on-dark); color: var(--rq-danger-on-dark); }
+html[data-theme="dark"] .req-duplicate-notice a { color: var(--rq-accent-text); }
+html[data-theme="dark"] .req-owner-manual { border-color: var(--rq-danger-border-on-dark); background: var(--rq-danger-surface); color: var(--rq-danger-on-dark); }
+html[data-theme="dark"] .req-owner-revert { color: var(--rq-accent-text); }
 html[data-theme="dark"] .req-section { border-color: var(--rq-divider); }
 html[data-theme="dark"] .req-summary-title,
 html[data-theme="dark"] .req-section-head h3,
@@ -494,6 +500,12 @@ html[data-theme="dark"] .req-empty-state { background: var(--rq-surface-subtle);
   --rq-accent-text: #2458ca;
   --rq-danger: #c64d4c;
   --rq-field: #fff;
+  /* 旧规则仍在用的 5 个 token：补齐后亮/暗主题不再回落到亮色字面量。 */
+  --rq-text: #1d2433;
+  --rq-text-secondary: #575f6c;
+  --rq-text-tertiary: #667085;
+  --rq-surface-muted: #f7f8fa;
+  --rq-border-subtle: #f0f2f5;
 
   /* 审计补齐的调色板 token：取值与原字面量完全一致，规则内不再散落 hex。
      只收敛「复用」与「语义」颜色；仅出现一次的一次性色值保留在规则内——
@@ -556,6 +568,11 @@ html[data-theme="dark"] {
   --rq-accent-text: #a9c4ff;
   --rq-danger: #ffb4ad;
   --rq-field: #151a22;
+  --rq-text: var(--rq-foreground);
+  --rq-text-secondary: #b8c2d0;
+  --rq-text-tertiary: #a1abba;
+  --rq-surface-muted: var(--rq-surface-subtle);
+  --rq-border-subtle: var(--rq-divider-subtle);
   /* U4：补齐文字/描边/状态 token 的暗色值。此前只定义了 11 个 token，
      导致所有使用 --rq-text-* 系列的规则在暗色下沿用亮色深字（对比度最低 1.78）。 */
   --rq-note-text: #b5a077;
@@ -712,7 +729,7 @@ html[data-theme="dark"] .field input[type="checkbox"] { accent-color: var(--rq-a
 @media (min-width: 1500px) { .content-area { padding-top: 37px; } .metric-card { padding: 17px; } }
 @media (max-width: 1120px) { .content-area { padding-right: 24px; padding-left: 24px; } .sidebar { width: 215px; } .main-area { margin-left: 215px; } .metric-grid { gap: 9px; } .metric-card { padding: 12px 10px 9px; } .overview-grid { grid-template-columns: 1fr 1fr; gap: 10px; } .pipeline-progress { width: 72px; } .progress-track { width: 70px; } }
 @media (max-width: 860px) { .sidebar { width: 64px; align-items: center; padding: 15px 8px 10px; } .brand { padding: 0; } .brand-name,.brand-edition,.workspace-copy,.workspace-switch > svg,.nav-label,.nav-item span,.side-help > div:nth-child(2),.side-help > svg,.user-copy,.profile-menu { display: none; } .workspace-switch { margin: 24px 0 18px; padding: 7px; border: 0; } .main-nav { width: 100%; align-items: center; } .nav-item { width: 42px; justify-content: center; padding: 0; } .nav-item.active::before { left: 0; } .side-help { padding: 12px 0; } .main-area { margin-left: 64px; } .topbar { padding: 0 20px; } .content-area { padding: 24px 20px 14px; } .source-leading { min-width: auto; } .overview-grid { grid-template-columns: 1fr; } .metric-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
-@media (max-width: 560px) { .topbar { height: 50px; padding: 0 13px; } .topbar-actions { gap: 4px; } .topbar-actions > .icon-button { display: none; } .content-area { padding: 21px 13px 12px; } .page-heading { align-items: flex-start; flex-direction: column; gap: 13px; margin-bottom: 16px; } .heading-actions { align-self: stretch; } .heading-actions .button { flex: 1; } .page-heading h1 { font-size: 21px; } .source-banner { flex-wrap: wrap; gap: 9px; padding: 10px; } .source-leading { flex-basis: calc(100% - 5px); } .source-meta { flex: 1; } .source-banner > .text-link { margin-left: auto; } .section-block { margin-top: 19px; } .metric-grid { gap: 8px; } .metric-card { padding: 11px 9px 8px; } .metric-context { font-size: var(--rq-font-caption); } .metric-value-row strong { font-size: 23px; } .metric-foot { font-size: var(--rq-font-caption); } .panel { padding: 12px; } .requirements-panel { padding: 12px 0 0; } .requirements-heading { align-items: flex-start; flex-direction: column; } .table-actions { width: 100%; } .search-box { flex: 1; } .search-box input { width: 100%; min-width: 50px; } .search-box kbd { display: none; } .page-footer { align-items: flex-start; flex-direction: column; margin-top: 12px; } .pipeline-progress { width: 68px; } .progress-track { width: 66px; } }
+@media (max-width: 560px) { .topbar { height: 50px; padding: 0 13px; } .topbar-actions { gap: 4px; } .topbar-actions > .icon-button:not([aria-label="帮助"]) { display: none; } .content-area { padding: 21px 13px 12px; } .page-heading { align-items: flex-start; flex-direction: column; gap: 13px; margin-bottom: 16px; } .heading-actions { align-self: stretch; } .heading-actions .button { flex: 1; } .page-heading h1 { font-size: 21px; } .source-banner { flex-wrap: wrap; gap: 9px; padding: 10px; } .source-leading { flex-basis: calc(100% - 5px); } .source-meta { flex: 1; } .source-banner > .text-link { margin-left: auto; } .section-block { margin-top: 19px; } .metric-grid { gap: 8px; } .metric-card { padding: 11px 9px 8px; } .metric-context { font-size: var(--rq-font-caption); } .metric-value-row strong { font-size: 23px; } .metric-foot { font-size: var(--rq-font-caption); } .panel { padding: 12px; } .requirements-panel { padding: 12px 0 0; } .requirements-heading { align-items: flex-start; flex-direction: column; } .table-actions { width: 100%; } .search-box { flex: 1; } .search-box input { width: 100%; min-width: 50px; } .search-box kbd { display: none; } .page-footer { align-items: flex-start; flex-direction: column; margin-top: 12px; } .pipeline-progress { width: 68px; } .progress-track { width: 66px; } }
 
 /* ---------- 使用指南 ---------- */
 .guide-panel { max-width: 980px; }
@@ -885,7 +902,7 @@ html[data-theme="dark"] .field input[type="checkbox"] { accent-color: var(--rq-a
 .toolbar-field > span { font-size: 11px; color: var(--rq-text-tertiary, #818b9a); }
 .toolbar-field input, .toolbar-field select {
   min-height: 32px; height: 32px; font-size: 13px; padding: 0 10px;
-  border-radius: 8px; background: #fff;
+  border-radius: 8px; background: var(--rq-field, #fff);
 }
 .toolbar-field input { width: 190px; }
 .toolbar-field select { min-width: 140px; }
@@ -913,7 +930,7 @@ html[data-theme="dark"] .field input[type="checkbox"] { accent-color: var(--rq-a
 .qfield { display: inline-flex; align-items: center; margin: 0; }
 .qfield > input, .qfield > select {
   height: 34px; font-size: 13px; padding: 0 12px; border-radius: 8px;
-  border: 1px solid var(--rq-border, #dcdfe6); background: #fff; color: var(--rq-text, #1f2329);
+  border: 1px solid var(--rq-border, #dcdfe6); background: var(--rq-field, #fff); color: var(--rq-text, #1f2329);
   transition: border-color .15s, box-shadow .15s;
 }
 .qfield > input:focus, .qfield > select:focus {
@@ -935,7 +952,7 @@ html[data-theme="dark"] .field input[type="checkbox"] { accent-color: var(--rq-a
 .qmore-body {
   position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; min-width: 300px;
   display: flex; flex-direction: column; gap: 8px; padding: 12px;
-  background: #fff; border: 1px solid var(--rq-border, #e8eaee); border-radius: 10px;
+  background: var(--rq-field, #fff); border: 1px solid var(--rq-border, #e8eaee); border-radius: 10px;
   box-shadow: 0 8px 24px rgba(31,35,41,.12);
 }
 .qmore-body .qfield > input, .qmore-body .qfield > select { width: 100%; }
@@ -1076,7 +1093,7 @@ html[data-theme="dark"] .nav-item.is-active::before { background: var(--rq-accen
 .module-row.is-editing td { padding-top: 7px; padding-bottom: 7px; }
 .inline-input {
   width: 100%; min-width: 140px; height: 32px; padding: 0 10px; font-size: 13px;
-  border: 1px solid #3b82f6; border-radius: 7px; background: #fff; color: var(--rq-text, #1f2329);
+  border: 1px solid #3b82f6; border-radius: 7px; background: var(--rq-field, #fff); color: var(--rq-text, #1f2329);
   outline: none; box-shadow: 0 0 0 3px rgba(59,130,246,.12);
 }
 .module-row.is-editing td button { margin-right: 4px; }
@@ -1098,10 +1115,10 @@ html[data-theme="dark"] .nav-item.is-active::before { background: var(--rq-accen
 }
 
 /* ---------- 移动端溢出与吸顶高度（P2-5） ---------- */
-html, body, #root, .app-shell { max-width: 100%; overflow-x: hidden; }
+html, body, #root, .app-shell { max-width: 100%; overflow-x: clip; }
 .main-area, .content-area { min-width: 0; max-width: 100%; }
 .panel, .req-detail-page { min-width: 0; max-width: 100%; }
-.table-scroll { max-width: 100%; overflow-x: auto; }
+.table-scroll { position: relative; max-width: 100%; overflow-x: auto; }
 @media (max-width: 860px) {
   /* 手机端不再固定列宽，避免整页被撑到 700px 以上 */
   .req-list { min-width: 0; table-layout: auto; }

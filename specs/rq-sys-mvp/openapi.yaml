@@ -262,7 +262,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '409':
-          description: The requirement is a suspected duplicate, is not synced, or its owner state does not allow a manual owner
+          description: The requirement is not synced, or its owner state does not allow a manual owner
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
     delete:
       summary: Clear the per-requirement manual owner and restore the TB default owner
@@ -277,7 +277,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { description: The requirement has no manual owner, is a suspected duplicate, or is not synced }
+        '409': { description: The requirement has no manual owner, or is not synced }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /api/requirements/{id}/push:
     post:
@@ -799,7 +799,7 @@ components:
             name: { type: [string, 'null'] }
             assignedAt: { type: string, format: date-time }
           required: [feishuUserId, feishuIdType, assignedAt]
-        # 同标题疑似重复时指向最早那条需求；列表默认不返回重复项。
+        # 同标题疑似重复时指向最早那条需求，仅作提示；列表仍返回。
         duplicateOf: { type: [string, 'null'], format: uuid }
         # 仅详情接口返回：以本需求为主记录的同标题重复项（供红色提示和详情链接）。
         duplicates:
