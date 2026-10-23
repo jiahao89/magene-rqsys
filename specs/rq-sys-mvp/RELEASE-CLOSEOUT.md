@@ -153,3 +153,12 @@ root API290/290、Web45/45；Miaoda路由/适配器87/87；两仓类型/生产�
 发布：release `7698260964638756088`（commit `b546474`），`error_logs=[]`。本地 API 327/327、app 91/91、类型/构建/对齐全绿。
 
 **仍未清理（需授权）**：应用库 3 条 `rqsys-fixture-*` 合成需求（2026-10-15/16 安全测试遗留）；正式 Base 5 条缺 TB 主键的孤儿行（`rec28lD1lhK*`，性质未确认，按设计不擅自删除）。
+
+### 单条负责人 / 疑似重复 / 通知修正（2026-10-23）
+
+- 单条指派改为只写 `requirements.manual_owner_*`，永不改写 `person_mappings`；解析顺序「逐条人工负责人 > TB 执行人映射 > 空」。新增 `DELETE /api/requirements/{id}/owner` 恢复默认负责人。
+- 首推通知：自动匹配（含底层 manual 映射）保持静默；只有本条需求被人为指定才通知。新增 `last_pushed_owner_*`，负责人变更事件以最后一次成功推送的实际负责人为准；已从 Base 回填 245 条。
+- 同标题重复：全部导入并标记 `duplicate_of_requirement_id`，重复项不进入默认池、不分析、不推送、不改 Base；详情页红色提示 + 详情链接。
+- Base `AI优先级建议` 增加 P3，`BASE_FIELDS_JSON` priority 更新为 P0–P3。
+- 发布：release `7699766681938496751`（commit `3a1e4fa`），`error_logs=[]`；迁移 0007 经 dev→online 发布。发布后全量同步 315/315，27 条疑似重复入库且未推送，默认池 288、Base 仍 288，0 排队任务、0 错误日志。
+- 未在目标环境做真实单条指派（避免无关通知）；本地 API 395、web 79、app 106、类型/构建/对齐全绿。
