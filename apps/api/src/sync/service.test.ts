@@ -66,6 +66,16 @@ test("keeps successful items committed and safely completes a partial-failure ba
   assert.ok(h.calls.includes("complete:partial_failure:2:1:1"));
 });
 
+test("a sync-item write failure is reported as one failed item without re-running the batch", async () => {
+  const h = harness([task("good", "Good"), task("bad", "Bad")]);
+  h.persistence.writeSyncItem = async (input) => { if (input.teambitionRequirementId === "bad") throw new Error("item table unavailable"); };
+  const result = await h.orchestrator.run({ batchId: "batch-1", sourceConfigId: config.id, config });
+  assert.equal(result.status, "partial_failure");
+  assert.equal(result.succeededCount, 1);
+  assert.equal(result.failedCount, 1);
+  assert.ok(h.calls.includes("complete:partial_failure:2:1:1"));
+});
+
 test("marks a source-list failure as a failed batch", async () => {
   const h = harness([]);
   h.source.listRequirements = async () => { throw new Error("credential leaked"); };
