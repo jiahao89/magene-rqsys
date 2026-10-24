@@ -11,7 +11,7 @@ const PREVIOUS_OWNER_TB_ID = "tb-owner-previous";
 const PM_LEADER_USER_ID = "0123456789abcdef0123456789abcdef";
 
 const requirement = (overrides: Partial<RequirementRecord> = {}): RequirementRecord => ({
-  id: "req-1", platformRequirementId: "RQ-000001", sourceType: "teambition", sourceChannel: null, sourceConfigId: "source-1", teambitionRequirementId: "tb-1", teambitionUniqueId: null,
+  id: "req-1", platformRequirementId: "RQ-000001", sourceType: "teambition", sourceChannel: null, productModel: null, requirementType: null, constraintNotes: null, supplementUrl: null, sourceConfigId: "source-1", teambitionRequirementId: "tb-1", teambitionUniqueId: null,
   title: "Need", description: "Description", scope: null, acceptanceCriteria: null,
   proposerUserId: null, proposerName: null, executorUserId: null, executorName: null,
   sourceStatusId: null, sourceCreatedAt: null, sourceUpdatedAt: null, sourceUrl: null,

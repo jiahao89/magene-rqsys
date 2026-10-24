@@ -62,6 +62,10 @@ function requirementDto(req: RequirementRecord, analysis: Record<string, unknown
     // V02-T02 加法：来源类型（teambition/web_manual）与业务渠道；TB 显示不变，手工预留已收录语义。
     sourceType: req.sourceType,
     sourceChannel: req.sourceChannel,
+    productModel: req.productModel,
+    requirementType: req.requirementType,
+    constraintNotes: req.constraintNotes,
+    supplementUrl: req.supplementUrl,
     platformRequirementId: req.platformRequirementId ?? null,
     title: req.title,
     description: req.description,
@@ -414,7 +418,7 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
       return json({ requirementId: existing.id, platformRequirementId: existing.platformRequirementId, sourceType: "web_manual", status: "collected" }, 200);
     }
     try {
-      const created = await repositories.requirements.createManualRequirement({ idempotencyKey: key.data, actorId: auth.actor.id, requestHash, title: parsedBody.data.title, description: parsedBody.data.description, sourceChannel: parsedBody.data.sourceChannel });
+      const created = await repositories.requirements.createManualRequirement({ idempotencyKey: key.data, actorId: auth.actor.id, requestHash, title: parsedBody.data.title, description: parsedBody.data.description, sourceChannel: parsedBody.data.sourceChannel, ...(parsedBody.data.productModel ? { productModel: parsedBody.data.productModel } : {}), ...(parsedBody.data.requirementType ? { requirementType: parsedBody.data.requirementType } : {}), ...(parsedBody.data.constraintNotes ? { constraintNotes: parsedBody.data.constraintNotes } : {}), ...(parsedBody.data.supplementUrl ? { supplementUrl: parsedBody.data.supplementUrl } : {}) });
       return json({ requirementId: created.requirementId, platformRequirementId: created.platformRequirementId, sourceType: "web_manual", status: "collected" }, created.replay ? 200 : 201);
     } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
   }

@@ -278,6 +278,10 @@ export interface RequirementSummary {
   sourceRequirementId: string | null;
   sourceType: "teambition" | "web_manual";
   sourceChannel: string | null;
+  productModel: string | null;
+  requirementType: string | null;
+  constraintNotes: string | null;
+  supplementUrl: string | null;
   title: string;
   sourceVersion: number;
   pipeline: { pull: string; analysis: string; owner: RequirementOwnerState; push: string };
@@ -308,6 +312,10 @@ export interface RequirementDetail {
   sourceRequirementId: string | null;
   sourceType: "teambition" | "web_manual";
   sourceChannel: string | null;
+  productModel: string | null;
+  requirementType: string | null;
+  constraintNotes: string | null;
+  supplementUrl: string | null;
   title: string;
   sourceVersion: number;
   pipeline: { pull: string; analysis: string; owner: RequirementOwnerState; push: string };
@@ -393,6 +401,7 @@ export interface IntakeResult {
 }
 export const REQUIREMENT_INTAKE_CHANNELS = ["销售", "售后", "电商", "运营/用研", "终端用户", "产品/研发/测试"] as const;
 // 同一次提交（含失败重试）复用同一幂等键；成功后由表单重新生成（V02-T04-AC03）。
-export function createRequirement(input: { title: string; description: string; sourceChannel: string }, fetcher: typeof fetch = fetch, idempotencyKey: string = crypto.randomUUID()): Promise<IntakeResult> {
+export function createRequirement(input: { title: string; description: string; sourceChannel: string; productModel?: string | null; requirementType?: string | null; constraintNotes?: string | null; supplementUrl?: string | null }, fetcher: typeof fetch = fetch, idempotencyKey: string = crypto.randomUUID()): Promise<IntakeResult> {
   return postJson<IntakeResult>("/api/requirements", input, fetcher, { "Idempotency-Key": idempotencyKey });
 }
+export const REQUIREMENT_INTAKE_TYPES = ["新增功能", "功能扩展", "体验优化", "性能优化", "质量修复", "安全合规", "成本效率", "技术治理"] as const;

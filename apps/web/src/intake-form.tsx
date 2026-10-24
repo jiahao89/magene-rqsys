@@ -2,13 +2,17 @@
 // 只必填标题/描述/渠道；四段提示是 placeholder 引导，不是四个必填项（PRD 3.2）。
 // 幂等键在同一次提交意图内复用（失败重试不换键），成功或重新展开表单后重置。
 import { useRef, useState } from "react";
-import { ApiError, REQUIREMENT_INTAKE_CHANNELS, createRequirement } from "./api";
+import { ApiError, REQUIREMENT_INTAKE_CHANNELS, REQUIREMENT_INTAKE_TYPES, createRequirement } from "./api";
 
 export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) => void }) {
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [channel, setChannel] = useState<string>("");
+  const [productModel, setProductModel] = useState("");
+  const [requirementType, setRequirementType] = useState("");
+  const [constraintNotes, setConstraintNotes] = useState("");
+  const [supplementUrl, setSupplementUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const idempotencyKey = useRef<string>(crypto.randomUUID());
@@ -18,7 +22,7 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
   }
 
   const reset = () => {
-    setTitle(""); setDescription(""); setChannel(""); setError(null);
+    setTitle(""); setDescription(""); setChannel(""); setProductModel(""); setRequirementType(""); setConstraintNotes(""); setSupplementUrl(""); setError(null);
     idempotencyKey.current = crypto.randomUUID();
   };
 
@@ -26,7 +30,13 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
     if (!title.trim() || !description.trim() || !channel) { setError("请填写标题、需求描述，并选择来源渠道。"); return; }
     setBusy(true); setError(null);
     try {
-      const created = await createRequirement({ title: title.trim(), description: description.trim(), sourceChannel: channel }, undefined, idempotencyKey.current);
+      const created = await createRequirement({
+        title: title.trim(), description: description.trim(), sourceChannel: channel,
+        ...(productModel.trim() ? { productModel: productModel.trim() } : {}),
+        ...(requirementType ? { requirementType: requirementType as (typeof REQUIREMENT_INTAKE_TYPES)[number] } : {}),
+        ...(constraintNotes.trim() ? { constraintNotes: constraintNotes.trim() } : {}),
+        ...(supplementUrl.trim() ? { supplementUrl: supplementUrl.trim() } : {}),
+      }, undefined, idempotencyKey.current);
       reset();
       setOpen(false);
       onCreated(created.requirementId);
@@ -47,6 +57,25 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
         <option value="">请选择</option>
         {REQUIREMENT_INTAKE_CHANNELS.map((item) => <option key={item} value={item}>{item}</option>)}
       </select>
+    </label>
+    <label className="field">
+      <span>产品/型号</span>
+      <input aria-label="关联产品或型号" placeholder="选填，如码表 C606" value={productModel} onChange={(event) => setProductModel(event.target.value)} disabled={busy} />
+    </label>
+    <label className="field">
+      <span>需求类型</span>
+      <select aria-label="需求类型" value={requirementType} onChange={(event) => setRequirementType(event.target.value)} disabled={busy}>
+        <option value="">未选择</option>
+        {REQUIREMENT_INTAKE_TYPES.map((item) => <option key={item} value={item}>{item}</option>)}
+      </select>
+    </label>
+    <label className="field" style={{ flexBasis: "100%" }}>
+      <span>边界/限制</span>
+      <textarea aria-label="边界或限制" rows={2} placeholder="选填：兼容性、法规、成本、上市时间等已知约束；未知留空" value={constraintNotes} onChange={(event) => setConstraintNotes(event.target.value)} disabled={busy} />
+    </label>
+    <label className="field" style={{ flexBasis: "100%" }}>
+      <span>来源链接</span>
+      <input aria-label="来源链接" type="url" placeholder="选填：原始反馈或工单链接（http/https）" value={supplementUrl} onChange={(event) => setSupplementUrl(event.target.value)} disabled={busy} />
     </label>
     <label className="field" style={{ flexBasis: "100%" }}>
       <span>需求描述 *</span>

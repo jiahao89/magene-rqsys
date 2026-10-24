@@ -244,6 +244,10 @@ paths:
                 title: { type: string, minLength: 1, maxLength: 200 }
                 description: { type: string, minLength: 1, maxLength: 20000 }
                 sourceChannel: { type: string, enum: [销售, 售后, 电商, 运营/用研, 终端用户, 产品/研发/测试] }
+                productModel: { type: string, maxLength: 100, nullable: true }
+                requirementType: { type: string, nullable: true }
+                constraintNotes: { type: string, maxLength: 2000, nullable: true }
+                supplementUrl: { type: string, maxLength: 500, format: uri, nullable: true }
       responses:
         '201':
           description: Requirement collected; analysis and push will proceed asynchronously.
@@ -821,7 +825,16 @@ components:
       type: object
       properties:
         id: { type: string, format: uuid }
-        sourceRequirementId: { type: string }
+        sourceRequirementId: { type: string, nullable: true }
+        # V02-T02 加法：来源类型与业务来源渠道；TB 行 sourceRequirementId 必有，手工行为空。
+        # （T02 时该段遗漏未落库，2026-10-25 随 T05 补齐。）
+        sourceType: { type: string, enum: [teambition, web_manual] }
+        sourceChannel: { type: string, nullable: true }
+        # V02-T05：手工精简上下文（全部可空；未知留空，不自动补造）。
+        productModel: { type: string, nullable: true }
+        requirementType: { type: string, nullable: true }
+        constraintNotes: { type: string, nullable: true }
+        supplementUrl: { type: string, nullable: true }
         # RQ-Sys 展示用连续编号（RQ-000001）；迁移未执行时为 null。
         platformRequirementId: { type: string, nullable: true }
         title: { type: string }

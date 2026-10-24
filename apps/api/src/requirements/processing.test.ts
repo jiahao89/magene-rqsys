@@ -26,7 +26,7 @@ test("pii markers cover roster plus proposer and executor without duplicates or 
 function makeRequirement(id: string): RequirementRecord {
   return {
     id, platformRequirementId: "RQ-000001", sourceType: "teambition", sourceChannel: null, sourceConfigId: "source-1", teambitionRequirementId: `tb-${id}`, teambitionUniqueId: null,
-    title: "需要报表", description: "用户张三希望导出报表", scope: "码表", acceptanceCriteria: null,
+    title: "需要报表", description: "用户张三希望导出报表", scope: "码表", acceptanceCriteria: null, productModel: "码表 C606", constraintNotes: "需兼容旧表带", requirementType: "体验优化", supplementUrl: "https://example.com/t/1?token=secret",
     proposerUserId: null, proposerName: "张三", executorUserId: null, executorName: null,
     sourceStatusId: null, sourceCreatedAt: null, sourceUpdatedAt: null, sourceUrl: null, attachmentRefs: [], sourceCustomFields: [], sourcePayload: {},
     sourceHash: "h", substantiveHash: "s1", sourceVersion: 1, latestBatchId: null, baseRecordId: null, lastPushedAt: null,
@@ -123,6 +123,11 @@ test("handleAnalysisJob masks roster and requester names before the model call a
   assert.deepEqual([...input.piiMarkers].sort(), ["张三", "李四", "王五"].sort());
   assert.equal(input.title.includes("张三"), false);
   assert.equal(input.dictionary.modules.join(), "报表分析");
+  // V02-T05-AC05：批准上下文（产品/边界）进入模型输入；需求类型与来源链接（敏感参数）不发送。
+  assert.equal(input.context.includes("码表 C606"), true);
+  assert.equal(input.context.includes("需兼容旧表带"), true);
+  assert.equal(input.context.includes("体验优化"), false);
+  assert.equal(input.context.includes("example.com"), false);
   assert.deepEqual(h.analysisStates, ["running", "analyzed"]);
   // 终态推进：AI 不是推送门槛，分析完成后立即入队 base_push（无负责人 → not_required 路径）。
   const pushes = ofJobType(h.enqueued, "base_push");

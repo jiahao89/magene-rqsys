@@ -285,6 +285,10 @@ export interface RequirementQueryRepository {
     title: string;
     description: string | null;
     sourceChannel: string;
+    productModel?: string | null;
+    requirementType?: string | null;
+    constraintNotes?: string | null;
+    supplementUrl?: string | null;
   }): Promise<{ requirementId: string; platformRequirementId: string; replay: boolean }>;
   getPipelineCounts(): Promise<{
     total: number;
