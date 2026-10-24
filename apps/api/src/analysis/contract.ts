@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { REQUIREMENT_INTAKE_TYPES } from "../contracts/pipeline.js";
 
 export interface AnalysisDictionary {
   version: number;
@@ -61,6 +62,14 @@ export function buildAnalysisRequest(input: AnalysisRequestInput): SafeAnalysisR
   };
 }
 
+// V02-T08：六层人群固定枚举（PRD 2.2）；不建第七层，地区/产品线是其它上下文。
+export const AUDIENCE_LEVELS = ["L1", "L2", "L3", "L4", "L5", "L6"] as const;
+export type AudienceLevel = (typeof AUDIENCE_LEVELS)[number];
+export const AUDIENCE_LEVEL_NAMES: Record<AudienceLevel, string> = {
+  L1: "职业级 Pro", L2: "竞技级 Racing", L3: "爱好者/专业入门 Enthusiast",
+  L4: "健身锻炼 Fitness", L5: "休闲娱乐 Recreation", L6: "通勤代步 Commuter",
+};
+
 const EvidenceList = z.array(z.string().min(1));
 const RecommendationSchema = z.object({
   recommendation: z.string().min(1),
@@ -79,6 +88,10 @@ const AnalysisSchema = z.object({
   missing_inputs: z.array(z.string()),
   blind_spots: z.array(z.string()),
   priority: z.enum(["P0", "P1", "P2", "P3"]).nullable(),
+  // V02-T08：受控需求类型建议（不覆盖人工录入值）与 0..n 条 L1-L6 人群建议。
+  // 缺省 null / [] 表示模型未给出——展示层呈现"待判断"，不推断"不适用"。
+  typeSuggestion: z.enum(REQUIREMENT_INTAKE_TYPES).nullable().default(null),
+  audience: z.array(z.object({ level: z.enum(AUDIENCE_LEVELS), reason: z.string().min(1), evidence: EvidenceList })).default([]),
 }).strict();
 
 export type ValidatedAnalysis = z.infer<typeof AnalysisSchema>;
@@ -101,6 +114,7 @@ export function validateAnalysisOutput(
     ...result.evidence,
     ...Object.values(result.recommendations).flatMap((item) => item.evidence),
     ...result.facts.map((item) => item.evidence),
+    ...result.audience.flatMap((item) => item.evidence),
   ];
   if (evidence.some((quote) => !sourceText.includes(quote))) throw new Error("Analysis evidence does not occur in source text");
   // facts 声称是"源文事实"：同样必须能在源文里找到，防止需求正文里的提示注入

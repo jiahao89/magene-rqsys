@@ -24,7 +24,7 @@ const successfulResult: NonNullable<AnalysisRun["result"]> = {
     technology: { recommendation: "待评估", rationale: "细节不足", evidence: [], missing_evidence: true },
   },
   facts: [{ text: "用户需要查询", evidence: "支持查询" }], inferences: [{ text: "可能提升效率", ai_inference: true }],
-  missing_inputs: [], blind_spots: [], priority: null,
+  missing_inputs: [], blind_spots: [], typeSuggestion: null, audience: [], priority: null,
 };
 
 test("analysis repository adapter appends then completes a separate durable analysis version", async () => {

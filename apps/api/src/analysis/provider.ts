@@ -4,7 +4,7 @@ import { buildAnalysisRequest, type AnalysisDictionary, type AnalysisPriorityRul
 const DEFAULT_BASE_URL = "https://api.deepseek.com";
 const DEFAULT_MODEL = "deepseek-flash";
 const DEFAULT_TIMEOUT_MS = 20_000;
-const DEFAULT_PROMPT_VERSION = "rq-analysis-v2";
+const DEFAULT_PROMPT_VERSION = "rq-analysis-v3";
 const ENDPOINT = "/chat/completions";
 const MAX_EVIDENCE_SEGMENT_LENGTH = 240;
 
@@ -111,6 +111,13 @@ function resolveEvidenceReferences(value: unknown, segments: EvidenceSegment[]):
       return [key, "evidence" in recommendation ? { ...recommendation, evidence: resolveList(recommendation.evidence) } : recommendation];
     }));
   }
+  if (Array.isArray(source.audience)) {
+    result.audience = source.audience.map((item) => {
+      if (typeof item !== "object" || item === null || Array.isArray(item)) return item;
+      const suggestion = item as Record<string, unknown>;
+      return "evidence" in suggestion ? { ...suggestion, evidence: resolveList(suggestion.evidence) } : suggestion;
+    });
+  }
   if (Array.isArray(source.facts)) {
     result.facts = source.facts.map((fact) => {
       if (typeof fact !== "object" || fact === null || Array.isArray(fact)) return fact;
@@ -142,9 +149,12 @@ function prompt(request: SafeAnalysisRequest, segments: EvidenceSegment[]): stri
       missing_inputs: ["缺失信息"],
       blind_spots: ["分析盲点"],
       priority: null,
+      typeSuggestion: "新增功能|功能扩展|体验优化|性能优化|质量修复|安全合规|成本效率|技术治理|null",
+      audience: [{ level: "L1|L2|L3|L4|L5|L6", reason: "为什么适用该人群", evidence: ["T1"] }],
     }, null, 2),
       "Constraints: evidence fields must contain only IDs from the source segments below, never quote text; overall evidence must include at least one ID when source segments exist; missing_evidence is a boolean and true requires an empty evidence array; every inference must have ai_inference: true; facts only record statements present in the source text; priority must always be null because the server applies any published calibrated rule deterministically.",
     `Controlled modules: ${JSON.stringify(request.dictionary.modules)}. Choose one exact listed module only when the requirement clearly matches it; otherwise set module to exactly 无法识别.`,
+    `Audience levels are fixed: L1=职业级 Pro, L2=竞技级 Racing, L3=爱好者/专业入门 Enthusiast, L4=健身锻炼 Fitness, L5=休闲娱乐 Recreation, L6=通勤代步 Commuter. Suggest audience entries only when the source text supports them (each with reason and evidence IDs); use an empty array when evidence is insufficient — never invent a seventh level and never infer that an unmentioned level is unsuitable. typeSuggestion must be one of the eight fixed categories or null.`,
     `Published priority rule: ${JSON.stringify(request.priorityRule)}.`,
     `Source evidence segments (cite their IDs exactly; the server resolves each ID to the exact original excerpt): ${JSON.stringify(segments)}`,
   ].join("\n");

@@ -13,7 +13,7 @@ const base = {
   facts: [],
   inferences: [],
   missing_inputs: [],
-  blind_spots: [],
+  blind_spots: [], typeSuggestion: null, audience: [],
   priority: null,
 };
 

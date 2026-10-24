@@ -22,6 +22,8 @@ const validResult = {
   missing_inputs: ["目标用户"],
   blind_spots: ["业务价值待确认"],
   priority: null,
+  typeSuggestion: null,
+  audience: [],
 };
 
 function serviceInput(overrides: Partial<AnalysisServiceInput> = {}): AnalysisServiceInput {
@@ -204,4 +206,25 @@ test("outbound model payload carries no names, user IDs, contacts, credentials o
   for (const secret of ["张三", "李四", "aabbccddeeff001122334455", "lee@corp.cn", "13911112222", "110101199003078515", "身份证背面照片内容", "sk-test-secret"]) {
     assert.equal(outbound.includes(secret), false, `outbound payload must not contain ${secret}`);
   }
+});
+
+test("V02-T08 audience contract: defaults, controlled levels, source-bound evidence", async () => {
+  const { validateAnalysisOutput } = await import("./contract.js");
+  const options = { dictionary: { version: 1, modules: ["基础数据"] }, priorityRule: null, sourceText: "标题\n支持查询和筛选\n上下文" };
+  // 旧输出缺新字段：解析为待判断，不失败（AC04）
+  const legacy = { ...validResult, typeSuggestion: undefined, audience: undefined };
+  const parsedLegacy = validateAnalysisOutput(legacy as Record<string, unknown>, options);
+  assert.equal(parsedLegacy.typeSuggestion, null);
+  assert.deepEqual(parsedLegacy.audience, []);
+  // 受控层枚举：L7 拒绝
+  assert.throws(() => validateAnalysisOutput({ ...validResult, audience: [{ level: "L7", reason: "r", evidence: ["支持查询和筛选"] }] }, options), /audience/);
+  // 人群证据必须是源文子串（AC08 伪造证据进入可重试失败）
+  assert.throws(() => validateAnalysisOutput({ ...validResult, audience: [{ level: "L2", reason: "提到竞技", evidence: ["源文没有这句话"] }] }, options), /evidence does not occur/);
+  // 合法人群建议通过
+  const ok = validateAnalysisOutput({ ...validResult, audience: [{ level: "L2", reason: "提到竞技训练", evidence: ["支持查询和筛选"] }] }, options);
+  assert.equal(ok.audience.length, 1);
+  // 类型建议受控：未知类别拒绝
+  assert.throws(() => validateAnalysisOutput({ ...validResult, typeSuggestion: "未知类别" }, options));
+  const typed = validateAnalysisOutput({ ...validResult, typeSuggestion: "体验优化" }, options);
+  assert.equal(typed.typeSuggestion, "体验优化");
 });

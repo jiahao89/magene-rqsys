@@ -41,7 +41,7 @@ function analyzedResult(): ValidatedAnalysis {
   return {
     module: "报表分析", confidence: "中", confidence_reason: "r", evidence: ["需要报表"],
     recommendations: { user: dimension, market: dimension, business: dimension, technology: dimension },
-    facts: [], inferences: [], missing_inputs: [], blind_spots: [], priority: null,
+    facts: [], inferences: [], missing_inputs: [], blind_spots: [], typeSuggestion: null, audience: [], priority: null,
   };
 }
 

@@ -571,6 +571,9 @@ interface AnalysisStructured {
   module?: unknown; priority?: unknown; confidence?: unknown; confidence_reason?: unknown;
   evidence?: unknown; facts?: unknown; inferences?: unknown; missing_inputs?: unknown; blind_spots?: unknown;
   recommendations?: Partial<Record<"user" | "market" | "business" | "technology", AnalysisRecommendation>>;
+  // V02-T08：可选新字段，旧分析缺失时为 undefined（展示“未提供”）。
+  typeSuggestion?: unknown;
+  audience?: unknown;
 }
 
 function analysisText(value: unknown): string | null {
@@ -970,8 +973,20 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
     ["C · 技术", structured.recommendations?.technology],
   ] as const;
   interface AdviceCard { label: string; conclusion: string; rationale?: string | null; evidence?: string[]; missing?: boolean }
+  // V02-T08：六层人群与类型建议；旧分析缺字段 → 未提供/待判断，不推断“不适用”。
+  const AUDIENCE_NAMES: Record<string, string> = { L1: "L1 职业级 Pro", L2: "L2 竞技级 Racing", L3: "L3 爱好者/专业入门", L4: "L4 健身锻炼", L5: "L5 休闲娱乐", L6: "L6 通勤代步" };
+  const audienceItems = Array.isArray(structured.audience)
+    ? (structured.audience as { level?: unknown; reason?: unknown }[]).filter((item) => typeof item.level === "string")
+    : null;
+  const typeSuggestion = analysisText(structured.typeSuggestion);
   const adviceCards: AdviceCard[] = [
     { label: "模块建议", conclusion: analysisText(structured.module) ?? "—" },
+    { label: "类型建议", conclusion: typeSuggestion ?? (structured.typeSuggestion === undefined ? "未提供（旧版本分析）" : "待判断") },
+    {
+      label: "适用人群建议",
+      conclusion: audienceItems === null ? "未提供（旧版本分析）" : audienceItems.length ? audienceItems.map((item) => AUDIENCE_NAMES[String(item.level)] ?? String(item.level)).join("、") : "待判断",
+      rationale: audienceItems === null ? null : audienceItems.map((item) => `${AUDIENCE_NAMES[String(item.level)] ?? item.level}：${typeof item.reason === "string" ? item.reason : ""}`).join("；") || null,
+    },
     { label: "优先级建议", conclusion: analysisText(structured.priority) ?? "空（未发布有效校准规则时保持为空）" },
     { label: "置信度", conclusion: analysisText(structured.confidence) ?? "—", rationale: analysisText(structured.confidence_reason) },
     ...dimensionRecommendations.map(([label, result]) => ({
