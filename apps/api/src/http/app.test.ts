@@ -10,7 +10,7 @@ const source: SourceConfigRecord = { id: "11111111-1111-4111-8111-111111111111",
 const batch: SyncBatchRecord = { id: "22222222-2222-4222-8222-222222222222", sourceConfigId: source.id, triggerType: "manual", actorId: "actor-1", idempotencyKey: "request-key-0001", status: "running", startedAt: "2026-10-08T00:00:00.000Z", completedAt: null, totalCount: 0, succeededCount: 0, failedCount: 0, errorSummary: null, createdAt: "2026-10-08T00:00:00.000Z" };
 const item: SyncItemRecord = { id: "33333333-3333-4333-8333-333333333333", batchId: batch.id, requirementId: null, teambitionRequirementId: "tb-1", action: "created", status: "succeeded", errorCode: null, errorDetail: null, startedAt: "2026-10-08T00:00:00.000Z", completedAt: "2026-10-08T00:00:00.000Z" };
 const auditEvent: AuditEventRecord = { id: "44444444-4444-4444-8444-444444444444", actorId: "actor-1", eventType: "sync.requested", entityType: "sync_batch", entityId: batch.id, result: "succeeded", safeDetails: {}, occurredAt: "2026-10-08T00:00:00.000Z" };
-const requirement = { id: "66666666-6666-4666-8666-666666666666", platformRequirementId: "RQ-000001", sourceType: "teambition", sourceChannel: null, productModel: null, requirementType: null, constraintNotes: null, supplementUrl: null, sourceConfigId: source.id, teambitionRequirementId: "tb-1", teambitionUniqueId: null, title: "Need", description: null, scope: null, acceptanceCriteria: null, proposerUserId: null, proposerName: null, executorUserId: null, executorName: null, sourceStatusId: null, sourceCreatedAt: null, sourceUpdatedAt: null, sourceUrl: null, attachmentRefs: [], sourceCustomFields: [], sourcePayload: {}, sourceHash: "h", substantiveHash: "s", sourceVersion: 1, latestBatchId: batch.id, baseRecordId: null, lastPushedAt: null, pipeline: { pull: "synced", analysis: "analyzed", owner: "not_required", push: "pending" }, firstSeenAt: "2026-10-08T00:00:00.000Z", lastSeenAt: "2026-10-08T00:00:00.000Z", createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z" };
+const requirement = { id: "66666666-6666-4666-8666-666666666666", platformRequirementId: "RQ-000001", sourceType: "teambition", sourceChannel: null, productModel: null, requirementType: null, constraintNotes: null, supplementUrl: null, intakeModule: null, sourceConfigId: source.id, teambitionRequirementId: "tb-1", teambitionUniqueId: null, title: "Need", description: null, scope: null, acceptanceCriteria: null, proposerUserId: null, proposerName: null, executorUserId: null, executorName: null, sourceStatusId: null, sourceCreatedAt: null, sourceUpdatedAt: null, sourceUrl: null, attachmentRefs: [], sourceCustomFields: [], sourcePayload: {}, sourceHash: "h", substantiveHash: "s", sourceVersion: 1, latestBatchId: batch.id, baseRecordId: null, lastPushedAt: null, pipeline: { pull: "synced", analysis: "analyzed", owner: "not_required", push: "pending" }, firstSeenAt: "2026-10-08T00:00:00.000Z", lastSeenAt: "2026-10-08T00:00:00.000Z", createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z" };
 const analysisRun = { id: "run-1", requirementId: source.id, sourceVersion: 1, analysisVersion: 2, status: "analyzed", moduleSuggestion: "报表分析", confidence: "medium", confidenceReason: "理由", priority: "P1", structuredResult: null, provider: "deepseek", model: "m", promptVersion: "p", moduleDictionaryVersion: 1, priorityRuleVersionId: null, safeErrorCode: null, safeErrorSummary: null, startedAt: "2026-10-08T00:00:00.000Z", completedAt: "2026-10-08T00:00:01.000Z" };
 function makeDependencies(actor: { id: string } = { id: "actor-1" }): ApiDependencies {
  const batches: SyncBatchRecord[] = [];
@@ -261,12 +261,13 @@ test("V02-T04 web manual intake: server-side actor, idempotent replay, payload-b
   const createdInputs: Array<{ actorId: string; requestHash: string; title: string }> = [];
   const requirements = d.repositories!.requirements as unknown as Record<string, unknown>;
   requirements.findIntakeReceipt = async (key: string) => receipts.get(key) ?? null;
+  (d.repositories as unknown as Record<string, unknown>).dictionaries = { list: async () => [{ version: 3, status: "published", entries: [{ name: "报表分析", personName: "贾浩" }] }] };
   requirements.createManualRequirement = async (input: { idempotencyKey: string; requestHash: string; actorId: string; title: string }) => {
     createdInputs.push(input);
     receipts.set(input.idempotencyKey, { requestHash: input.requestHash, requirementId: requirement.id, actorId: input.actorId });
     return { requirementId: requirement.id, platformRequirementId: "RQ-000001", replay: false };
   };
-  const body = JSON.stringify({ title: "售后反馈", description: "用户希望导出报表", sourceChannel: "售后", productModel: "码表 C606", requirementType: "体验优化", constraintNotes: "需兼容旧表带", supplementUrl: "https://example.com/ticket/1" });
+  const body = JSON.stringify({ title: "售后反馈", description: "用户希望导出报表", sourceChannel: "售后", productModel: "码表 C606", requirementType: "体验优化", constraintNotes: "需兼容旧表带", supplementUrl: "https://example.com/ticket/1", intakeModule: "报表分析", owner: { feishuUserId: "u-assignee", feishuIdType: "user_id", tbDisplayName: "贾浩" } });
   const post = (payload: string, key = "intake-key-123") => new Request("http://localhost/api/requirements", { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": key }, body: payload });
   const first = await handleApiRequest(post(body), d);
   assert.equal(first.status, 201);
@@ -279,6 +280,9 @@ test("V02-T04 web manual intake: server-side actor, idempotent replay, payload-b
   // V02-T05：可选上下文原样传递，未知留空
   assert.equal((createdInputs[0] as unknown as { productModel?: string }).productModel, "码表 C606");
   assert.equal((createdInputs[0] as unknown as { requirementType?: string }).requirementType, "体验优化");
+  // V02-T06：受控词典模块与需求级负责人原样传递（不写 TB 人员映射）
+  assert.equal((createdInputs[0] as unknown as { intakeModule?: string }).intakeModule, "报表分析");
+  assert.deepEqual((createdInputs[0] as unknown as { owner?: unknown }).owner, { feishuUserId: "u-assignee", feishuIdType: "user_id", name: "贾浩" });
   // 同键同内容重放：200 同一需求，不再创建（AC03/AC07）
   const replay = await handleApiRequest(post(body), d);
   assert.equal(replay.status, 200);
@@ -293,6 +297,7 @@ test("V02-T04 intake rejects a missing idempotency key, an unknown channel, or a
   const requirements = d.repositories!.requirements as unknown as Record<string, unknown>;
   requirements.findIntakeReceipt = async () => null;
   requirements.createManualRequirement = async () => { throw new Error("must not create"); };
+  (d.repositories as unknown as Record<string, unknown>).dictionaries = { list: async () => [{ version: 3, status: "published", entries: [{ name: "报表分析", personName: null }] }] };
   const noKey = await handleApiRequest(new Request("http://localhost/api/requirements", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "t", description: "d", sourceChannel: "售后" }) }), d);
   assert.equal(noKey.status, 400);
   const badChannel = await handleApiRequest(new Request("http://localhost/api/requirements", { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": "intake-key-456" }, body: JSON.stringify({ title: "t", description: "d", sourceChannel: "未知渠道" }) }), d);
@@ -303,4 +308,6 @@ test("V02-T04 intake rejects a missing idempotency key, an unknown channel, or a
   assert.equal(badUrl.status, 400);
   const badType = await handleApiRequest(new Request("http://localhost/api/requirements", { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": "intake-key-459" }, body: JSON.stringify({ title: "t", description: "d", sourceChannel: "售后", requirementType: "未知类型" }) }), d);
   assert.equal(badType.status, 400);
+  const unknownModule = await handleApiRequest(new Request("http://localhost/api/requirements", { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": "intake-key-460" }, body: JSON.stringify({ title: "t", description: "d", sourceChannel: "售后", intakeModule: "不存在的模块" }) }), d);
+  assert.equal(unknownModule.status, 400);
 });

@@ -7,7 +7,7 @@ import { createAnalysisAdvancer, type AdvanceDeps } from "./advance.js";
 import { createBasePushService, type BasePushServiceDeps } from "../base/push-service.js";
 
 function requirement(overrides: Partial<RequirementRecord> = {}): RequirementRecord {
-  return { id: "req-1", platformRequirementId: "RQ-000001", sourceType: "teambition", sourceChannel: null, productModel: null, requirementType: null, constraintNotes: null, supplementUrl: null, sourceConfigId: "source-1", teambitionRequirementId: "tb-1", teambitionUniqueId: null, title: "Need", description: null, scope: null, acceptanceCriteria: null, proposerUserId: null, proposerName: null, executorUserId: null, executorName: null, sourceStatusId: null, sourceCreatedAt: null, sourceUpdatedAt: null, sourceUrl: null, attachmentRefs: [], sourceCustomFields: [], sourcePayload: {}, sourceHash: "h", substantiveHash: "s", sourceVersion: 1, latestBatchId: null, baseRecordId: null, lastPushedAt: null, pipeline: { pull: "synced", analysis: "analyzed", owner: "pending_mapping", push: "pending" }, firstSeenAt: "2026-10-09T00:00:00.000Z", lastSeenAt: "2026-10-09T00:00:00.000Z", createdAt: "2026-10-09T00:00:00.000Z", updatedAt: "2026-10-09T00:00:00.000Z", ...overrides };
+  return { id: "req-1", platformRequirementId: "RQ-000001", sourceType: "teambition", sourceChannel: null, productModel: null, requirementType: null, constraintNotes: null, supplementUrl: null, intakeModule: null, sourceConfigId: "source-1", teambitionRequirementId: "tb-1", teambitionUniqueId: null, title: "Need", description: null, scope: null, acceptanceCriteria: null, proposerUserId: null, proposerName: null, executorUserId: null, executorName: null, sourceStatusId: null, sourceCreatedAt: null, sourceUpdatedAt: null, sourceUrl: null, attachmentRefs: [], sourceCustomFields: [], sourcePayload: {}, sourceHash: "h", substantiveHash: "s", sourceVersion: 1, latestBatchId: null, baseRecordId: null, lastPushedAt: null, pipeline: { pull: "synced", analysis: "analyzed", owner: "pending_mapping", push: "pending" }, firstSeenAt: "2026-10-09T00:00:00.000Z", lastSeenAt: "2026-10-09T00:00:00.000Z", createdAt: "2026-10-09T00:00:00.000Z", updatedAt: "2026-10-09T00:00:00.000Z", ...overrides };
 }
 const mapping = { id: "map-1", sourceConfigId: "source-1", teambitionUserId: "tb-user", teambitionDisplayName: "Ada", normalizedName: "ada", feishuUserId: "ou-user", feishuIdType: "open_id" as const, matchMethod: "auto" as const, active: true, createdBy: null, createdAt: "2026-10-09T00:00:00.000Z", updatedAt: "2026-10-09T00:00:00.000Z" };
 
@@ -58,7 +58,7 @@ test("TB 有负责人且映射唯一：分析失败终态也入队推送（AI �
 test("单条人工负责人优先：TB 执行人未匹配映射也照常推送", async () => {
   const fixture = makeAdvanceFixture(requirement({
     executorUserId: "tb-user",
-    manualOwner: { feishuUserId: "u-assignee", feishuIdType: "user_id", name: "毕梓浩", assignedBy: "operator", assignedAt: "2026-10-09T00:00:00.000Z", pushedFeishuUserId: null },
+    manualOwner: { feishuUserId: "u-assignee", feishuIdType: "user_id", name: "毕梓浩", assignedBy: "operator", assignedAt: "2026-10-09T00:00:00.000Z", pushedFeishuUserId: null, assignmentVersion: 1 },
     pipeline: { pull: "synced", analysis: "analyzed", owner: "manually_mapped", push: "pending" },
   }), false);
   const advance = createAnalysisAdvancer(fixture);
@@ -170,7 +170,7 @@ test("TB 无负责人：先 not_required 再空负责人推送，且新源版本
 });
 
 test("无 TB 负责人但已在 Web 指定负责人：分析终态后保持 manually_mapped 并入队推送", async () => {
-  const manualOwner = { feishuUserId: "u-assignee", feishuIdType: "user_id" as const, name: "毕梓浩", assignedBy: "operator", assignedAt: "2026-10-09T00:00:00.000Z", pushedFeishuUserId: null };
+  const manualOwner = { feishuUserId: "u-assignee", feishuIdType: "user_id" as const, name: "毕梓浩", assignedBy: "operator", assignedAt: "2026-10-09T00:00:00.000Z", pushedFeishuUserId: null, assignmentVersion: 1 };
   for (const owner of ["pending_mapping", "not_required"] as const) {
     const fixture = makeAdvanceFixture(requirement({ manualOwner, pipeline: { pull: "synced", analysis: "analyzed", owner, push: "pending" } }), false);
     const advance = createAnalysisAdvancer(fixture);

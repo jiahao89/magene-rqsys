@@ -66,6 +66,7 @@ function requirementDto(req: RequirementRecord, analysis: Record<string, unknown
     requirementType: req.requirementType,
     constraintNotes: req.constraintNotes,
     supplementUrl: req.supplementUrl,
+    intakeModule: req.intakeModule,
     platformRequirementId: req.platformRequirementId ?? null,
     title: req.title,
     description: req.description,
@@ -78,7 +79,7 @@ function requirementDto(req: RequirementRecord, analysis: Record<string, unknown
     source: req.sourcePayload,
     analysis,
     baseRecordId: req.baseRecordId,
-    manualOwner: req.manualOwner ? { feishuUserId: req.manualOwner.feishuUserId, feishuIdType: req.manualOwner.feishuIdType, name: req.manualOwner.name, assignedAt: req.manualOwner.assignedAt } : null,
+    manualOwner: req.manualOwner ? { feishuUserId: req.manualOwner.feishuUserId, feishuIdType: req.manualOwner.feishuIdType, name: req.manualOwner.name, assignedAt: req.manualOwner.assignedAt, assignmentVersion: req.manualOwner.assignmentVersion } : null,
     duplicateOf: req.duplicateOfRequirementId ?? null,
     analyses,
   };
@@ -406,9 +407,15 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     // V02-T04：Web 手工收录。actor、时间、来源类型与平台编号都由服务端生成；
     // 同幂等键同内容返回原结果，同键不同内容明确冲突（AC02/AC03）。
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.requirements || !repositories.audit) return jsonError("DEPENDENCY_UNAVAILABLE");
+    if (!repositories?.requirements || !repositories.audit || !repositories.dictionaries) return jsonError("DEPENDENCY_UNAVAILABLE");
     const key = SyncIdempotencyHeaderSchema.safeParse(request.headers.get("Idempotency-Key")); if (!key.success) return jsonError("VALIDATION_FAILED");
     const parsedBody = RequirementIntakeSchema.safeParse(await request.json().catch(() => null)); if (!parsedBody.success) return jsonError("VALIDATION_FAILED");
+    // 录入模块必须来自已发布词典（G-MODULE：Web 录入模块与 AI 建议分开，但同源受控）。
+    if (parsedBody.data.intakeModule) {
+      const published = (await repositories.dictionaries.list()).find((version) => version.status === "published");
+      const names = (published?.entries ?? []).map((entry) => typeof entry === "string" ? entry : String((entry as { name?: unknown }).name ?? entry));
+      if (!names.includes(parsedBody.data.intakeModule)) return jsonError("VALIDATION_FAILED", "功能模块不在已发布词典中。");
+    }
     const requestHash = createHash("sha256").update(stableJson(parsedBody.data)).digest("hex");
     const receipt = await repositories.requirements.findIntakeReceipt(key.data);
     if (receipt) {
@@ -418,7 +425,7 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
       return json({ requirementId: existing.id, platformRequirementId: existing.platformRequirementId, sourceType: "web_manual", status: "collected" }, 200);
     }
     try {
-      const created = await repositories.requirements.createManualRequirement({ idempotencyKey: key.data, actorId: auth.actor.id, requestHash, title: parsedBody.data.title, description: parsedBody.data.description, sourceChannel: parsedBody.data.sourceChannel, ...(parsedBody.data.productModel ? { productModel: parsedBody.data.productModel } : {}), ...(parsedBody.data.requirementType ? { requirementType: parsedBody.data.requirementType } : {}), ...(parsedBody.data.constraintNotes ? { constraintNotes: parsedBody.data.constraintNotes } : {}), ...(parsedBody.data.supplementUrl ? { supplementUrl: parsedBody.data.supplementUrl } : {}) });
+      const created = await repositories.requirements.createManualRequirement({ idempotencyKey: key.data, actorId: auth.actor.id, requestHash, title: parsedBody.data.title, description: parsedBody.data.description, sourceChannel: parsedBody.data.sourceChannel, ...(parsedBody.data.productModel ? { productModel: parsedBody.data.productModel } : {}), ...(parsedBody.data.requirementType ? { requirementType: parsedBody.data.requirementType } : {}), ...(parsedBody.data.constraintNotes ? { constraintNotes: parsedBody.data.constraintNotes } : {}), ...(parsedBody.data.supplementUrl ? { supplementUrl: parsedBody.data.supplementUrl } : {}), ...(parsedBody.data.intakeModule ? { intakeModule: parsedBody.data.intakeModule } : {}), ...(parsedBody.data.owner ? { owner: { feishuUserId: parsedBody.data.owner.feishuUserId, feishuIdType: parsedBody.data.owner.feishuIdType, ...(parsedBody.data.owner.tbDisplayName ? { name: parsedBody.data.owner.tbDisplayName } : {}) } } : {}) });
       return json({ requirementId: created.requirementId, platformRequirementId: created.platformRequirementId, sourceType: "web_manual", status: "collected" }, created.replay ? 200 : 201);
     } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
   }

@@ -11,7 +11,7 @@ const PREVIOUS_OWNER_TB_ID = "tb-owner-previous";
 const PM_LEADER_USER_ID = "0123456789abcdef0123456789abcdef";
 
 const requirement = (overrides: Partial<RequirementRecord> = {}): RequirementRecord => ({
-  id: "req-1", platformRequirementId: "RQ-000001", sourceType: "teambition", sourceChannel: null, productModel: null, requirementType: null, constraintNotes: null, supplementUrl: null, sourceConfigId: "source-1", teambitionRequirementId: "tb-1", teambitionUniqueId: null,
+  id: "req-1", platformRequirementId: "RQ-000001", sourceType: "teambition", sourceChannel: null, productModel: null, requirementType: null, constraintNotes: null, supplementUrl: null, intakeModule: null, sourceConfigId: "source-1", teambitionRequirementId: "tb-1", teambitionUniqueId: null,
   title: "Need", description: "Description", scope: null, acceptanceCriteria: null,
   proposerUserId: null, proposerName: null, executorUserId: null, executorName: null,
   sourceStatusId: null, sourceCreatedAt: null, sourceUpdatedAt: null, sourceUrl: null,
@@ -670,7 +670,7 @@ test("the requirement advisory lock serializes concurrent pushes and prevents a 
 // ---- 无 TB 负责人时 Web 逐条指定的负责人（Spec 03：空负责人推送后再分配 → 通知新负责人；不得被同步抹掉）----
 const manualOwner = (overrides: Partial<NonNullable<RequirementRecord["manualOwner"]>> = {}): NonNullable<RequirementRecord["manualOwner"]> => ({
   feishuUserId: "u-assignee", feishuIdType: "user_id", name: "毕梓浩", assignedBy: "operator-1",
-  assignedAt: "2026-10-09T12:00:00.000Z", pushedFeishuUserId: null, ...overrides,
+  assignedAt: "2026-10-09T12:00:00.000Z", pushedFeishuUserId: null, assignmentVersion: 1, ...overrides,
 });
 
 test("a hand-picked owner on a requirement without a TB owner is written to Base and notified on the first push", async () => {

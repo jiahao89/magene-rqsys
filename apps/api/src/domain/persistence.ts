@@ -83,6 +83,8 @@ export interface RequirementRecord {
   requirementType: RequirementType | null;
   constraintNotes: string | null;
   supplementUrl: string | null;
+  /** V02-T06：Web 录入的受控词典模块（与 AI 建议/Base PM 确认模块分开）。 */
+  intakeModule: string | null;
   sourceConfigId: string | null;
   teambitionRequirementId: string | null;
   teambitionUniqueId: number | null; // 仅展示用，不参与去重
@@ -138,6 +140,8 @@ export interface RequirementManualOwner {
   assignedBy: string | null;
   assignedAt: string;
   pushedFeishuUserId: string | null;
+  /** 每次显式分配/改派递增（V02-T06）；事件按分配版本+身份去重。 */
+  assignmentVersion: number;
 }
 
 // sync_items：批次内逐条结果及错误。

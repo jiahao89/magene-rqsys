@@ -248,6 +248,15 @@ paths:
                 requirementType: { type: string, nullable: true }
                 constraintNotes: { type: string, maxLength: 2000, nullable: true }
                 supplementUrl: { type: string, maxLength: 500, format: uri, nullable: true }
+                intakeModule: { type: string, maxLength: 100, nullable: true, description: Must exist in the published module dictionary. }
+                owner:
+                  type: object
+                  nullable: true
+                  required: [feishuUserId, feishuIdType]
+                  properties:
+                    feishuUserId: { type: string, maxLength: 64 }
+                    feishuIdType: { type: string, enum: [open_id, user_id, union_id] }
+                    tbDisplayName: { type: string, maxLength: 100, nullable: true }
       responses:
         '201':
           description: Requirement collected; analysis and push will proceed asynchronously.
@@ -835,6 +844,7 @@ components:
         requirementType: { type: string, nullable: true }
         constraintNotes: { type: string, nullable: true }
         supplementUrl: { type: string, nullable: true }
+        intakeModule: { type: string, nullable: true, description: Web-entered module from the controlled dictionary (G-MODULE). }
         # RQ-Sys 展示用连续编号（RQ-000001）；迁移未执行时为 null。
         platformRequirementId: { type: string, nullable: true }
         title: { type: string }

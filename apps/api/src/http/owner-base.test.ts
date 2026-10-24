@@ -4,7 +4,7 @@ import { handleApiRequest, type ApiDependencies, type ApiRepositories } from "./
 import type { PersonMappingRecord, RequirementRecord } from "../domain/persistence.js";
 import type { FeishuBasePushAdapter } from "../base/client.js";
 
-const requirement: RequirementRecord = { id: "req-1", platformRequirementId: "RQ-000001", sourceType: "teambition", sourceChannel: null, productModel: null, requirementType: null, constraintNotes: null, supplementUrl: null, sourceConfigId: "source-1", teambitionRequirementId: "tb-1", teambitionUniqueId: null, title: "Need", description: null, scope: null, acceptanceCriteria: null, proposerUserId: null, proposerName: null, executorUserId: "tb-user", executorName: "Ada", sourceStatusId: null, sourceCreatedAt: null, sourceUpdatedAt: null, sourceUrl: null, attachmentRefs: [], sourceCustomFields: [], sourcePayload: {}, sourceHash: "h", substantiveHash: "s", sourceVersion: 1, latestBatchId: null, baseRecordId: null, lastPushedAt: null, pipeline: { pull: "synced", analysis: "failed_retryable", owner: "pending_mapping", push: "pending" }, firstSeenAt: "2026-10-08T00:00:00.000Z", lastSeenAt: "2026-10-08T00:00:00.000Z", createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z" };
+const requirement: RequirementRecord = { id: "req-1", platformRequirementId: "RQ-000001", sourceType: "teambition", sourceChannel: null, productModel: null, requirementType: null, constraintNotes: null, supplementUrl: null, intakeModule: null, sourceConfigId: "source-1", teambitionRequirementId: "tb-1", teambitionUniqueId: null, title: "Need", description: null, scope: null, acceptanceCriteria: null, proposerUserId: null, proposerName: null, executorUserId: "tb-user", executorName: "Ada", sourceStatusId: null, sourceCreatedAt: null, sourceUpdatedAt: null, sourceUrl: null, attachmentRefs: [], sourceCustomFields: [], sourcePayload: {}, sourceHash: "h", substantiveHash: "s", sourceVersion: 1, latestBatchId: null, baseRecordId: null, lastPushedAt: null, pipeline: { pull: "synced", analysis: "failed_retryable", owner: "pending_mapping", push: "pending" }, firstSeenAt: "2026-10-08T00:00:00.000Z", lastSeenAt: "2026-10-08T00:00:00.000Z", createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z" };
 
 function deps() {
   const actions: string[] = [];
@@ -58,7 +58,7 @@ test("clearing a per-requirement owner restores the TB default mapping and queue
     requirements: Record<string, unknown>;
   };
   const base = await (repositories.requirements.get as () => Promise<RequirementRecord | null>)();
-  repositories.requirements.get = async () => ({ ...base!, manualOwner: { feishuUserId: "u-assignee", feishuIdType: "user_id", name: "毕梓浩", assignedBy: "operator", assignedAt: "2026-10-09T00:00:00.000Z", pushedFeishuUserId: null } });
+  repositories.requirements.get = async () => ({ ...base!, manualOwner: { feishuUserId: "u-assignee", feishuIdType: "user_id", name: "毕梓浩", assignedBy: "operator", assignedAt: "2026-10-09T00:00:00.000Z", pushedFeishuUserId: null, assignmentVersion: 1 } });
   repositories.requirements.clearManualOwner = async () => { cleared = true; };
   repositories.requirements.setOwner = async (_id: string, _owner: string | null, state: string) => { ownerState = state; };
   const response = await handleApiRequest(new Request("http://localhost/api/requirements/req-1/owner", { method: "DELETE" }), h.dependencies);
@@ -149,7 +149,7 @@ test("the requirement detail shows the per-requirement owner picked for a no-TB-
   const h = unownedDeps("manually_mapped");
   const repositories = h.dependencies.repositories as unknown as { requirements: Record<string, unknown> };
   const base = await (repositories.requirements.get as () => Promise<RequirementRecord>)();
-  repositories.requirements.get = async () => ({ ...base, manualOwner: { feishuUserId: "u-assignee", feishuIdType: "user_id", name: "毕梓浩", assignedBy: "operator", assignedAt: "2026-10-09T00:00:00.000Z", pushedFeishuUserId: null } });
+  repositories.requirements.get = async () => ({ ...base, manualOwner: { feishuUserId: "u-assignee", feishuIdType: "user_id", name: "毕梓浩", assignedBy: "operator", assignedAt: "2026-10-09T00:00:00.000Z", pushedFeishuUserId: null, assignmentVersion: 1 } });
   const response = await handleApiRequest(new Request("http://localhost/api/requirements/req-1"), h.dependencies);
   assert.equal(response.status, 200);
   assert.equal((await response.json() as { ownerName: string | null }).ownerName, "毕梓浩");
@@ -162,7 +162,7 @@ test("clearing a manual owner on a manually-mapped requirement bridges to auto_m
   const calls: string[] = [];
   const repositories = h.dependencies.repositories as unknown as { requirements: Record<string, unknown> };
   const base = await (repositories.requirements.get as () => Promise<RequirementRecord | null>)();
-  repositories.requirements.get = async () => ({ ...base!, pipeline: { ...base!.pipeline, owner: "manually_mapped" }, manualOwner: { feishuUserId: "u-assignee", feishuIdType: "user_id", name: "毕梓浩", assignedBy: "operator", assignedAt: "2026-10-09T00:00:00.000Z", pushedFeishuUserId: null } });
+  repositories.requirements.get = async () => ({ ...base!, pipeline: { ...base!.pipeline, owner: "manually_mapped" }, manualOwner: { feishuUserId: "u-assignee", feishuIdType: "user_id", name: "毕梓浩", assignedBy: "operator", assignedAt: "2026-10-09T00:00:00.000Z", pushedFeishuUserId: null, assignmentVersion: 1 } });
   repositories.requirements.clearManualOwner = async () => { calls.push("cleared"); };
   repositories.requirements.setOwner = async (_id: string, owner: string | null, state: string) => { calls.push(`owner:${owner ?? "none"}:${state}`); };
   const response = await handleApiRequest(new Request("http://localhost/api/requirements/req-1/owner", { method: "DELETE" }), h.dependencies);
@@ -176,7 +176,7 @@ test("clearing a manual owner on a requirement without TB executor transitions t
   const calls: string[] = [];
   const repositories = h.dependencies.repositories as unknown as { requirements: Record<string, unknown> };
   const base = await (repositories.requirements.get as () => Promise<RequirementRecord | null>)();
-  repositories.requirements.get = async () => ({ ...base!, executorUserId: null, executorName: null, pipeline: { ...base!.pipeline, owner: "manually_mapped" }, manualOwner: { feishuUserId: "u-assignee", feishuIdType: "user_id", name: "毕梓浩", assignedBy: "operator", assignedAt: "2026-10-09T00:00:00.000Z", pushedFeishuUserId: null } });
+  repositories.requirements.get = async () => ({ ...base!, executorUserId: null, executorName: null, pipeline: { ...base!.pipeline, owner: "manually_mapped" }, manualOwner: { feishuUserId: "u-assignee", feishuIdType: "user_id", name: "毕梓浩", assignedBy: "operator", assignedAt: "2026-10-09T00:00:00.000Z", pushedFeishuUserId: null, assignmentVersion: 1 } });
   repositories.requirements.clearManualOwner = async () => { calls.push("cleared"); };
   repositories.requirements.setOwner = async (_id: string, _owner: string | null, state: string) => { calls.push(`owner:${state}`); };
   const response = await handleApiRequest(new Request("http://localhost/api/requirements/req-1/owner", { method: "DELETE" }), h.dependencies);

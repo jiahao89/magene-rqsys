@@ -1,8 +1,8 @@
 // V02-T04：需求池「新建需求」表单（Web 手工收录，web_manual）。
 // 只必填标题/描述/渠道；四段提示是 placeholder 引导，不是四个必填项（PRD 3.2）。
 // 幂等键在同一次提交意图内复用（失败重试不换键），成功或重新展开表单后重置。
-import { useRef, useState } from "react";
-import { ApiError, REQUIREMENT_INTAKE_CHANNELS, REQUIREMENT_INTAKE_TYPES, createRequirement } from "./api";
+import { useEffect, useRef, useState } from "react";
+import { ApiError, REQUIREMENT_INTAKE_CHANNELS, REQUIREMENT_INTAKE_TYPES, createRequirement, getFunctionModules } from "./api";
 
 export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) => void }) {
   const [open, setOpen] = useState(false);
@@ -16,13 +16,21 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const idempotencyKey = useRef<string>(crypto.randomUUID());
+  const [modules, setModules] = useState<Array<{ name: string; personName: string | null }>>([]);
+  const [intakeModule, setIntakeModule] = useState("");
+  // 受控词典模块（G-MODULE）：只提供已发布选项；模块责任人仅作候选提示，不自动分配。
+  useEffect(() => {
+    if (!open) return;
+    void getFunctionModules().then((directory) => setModules(directory.items)).catch(() => setModules([]));
+  }, [open]);
+  const moduleCandidate = modules.find((item) => item.name === intakeModule)?.personName ?? null;
 
   if (!open) {
     return <div className="toolbar-actions"><button className="button button-primary button-small" onClick={() => { setOpen(true); setError(null); }}>新建需求</button></div>;
   }
 
   const reset = () => {
-    setTitle(""); setDescription(""); setChannel(""); setProductModel(""); setRequirementType(""); setConstraintNotes(""); setSupplementUrl(""); setError(null);
+    setTitle(""); setDescription(""); setChannel(""); setProductModel(""); setRequirementType(""); setConstraintNotes(""); setSupplementUrl(""); setIntakeModule(""); setError(null);
     idempotencyKey.current = crypto.randomUUID();
   };
 
@@ -36,6 +44,7 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
         ...(requirementType ? { requirementType: requirementType as (typeof REQUIREMENT_INTAKE_TYPES)[number] } : {}),
         ...(constraintNotes.trim() ? { constraintNotes: constraintNotes.trim() } : {}),
         ...(supplementUrl.trim() ? { supplementUrl: supplementUrl.trim() } : {}),
+        ...(intakeModule ? { intakeModule } : {}),
       }, undefined, idempotencyKey.current);
       reset();
       setOpen(false);
@@ -69,6 +78,14 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
         {REQUIREMENT_INTAKE_TYPES.map((item) => <option key={item} value={item}>{item}</option>)}
       </select>
     </label>
+    <label className="field">
+      <span>功能模块</span>
+      <select aria-label="功能模块（录入）" value={intakeModule} onChange={(event) => setIntakeModule(event.target.value)} disabled={busy}>
+        <option value="">未选择</option>
+        {modules.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}
+      </select>
+    </label>
+    {moduleCandidate && <span className="status-hint" style={{ flexBasis: "100%" }}>该模块责任人：{moduleCandidate}（候选提示；负责人在创建后的详情里确认分配）</span>}
     <label className="field" style={{ flexBasis: "100%" }}>
       <span>边界/限制</span>
       <textarea aria-label="边界或限制" rows={2} placeholder="选填：兼容性、法规、成本、上市时间等已知约束；未知留空" value={constraintNotes} onChange={(event) => setConstraintNotes(event.target.value)} disabled={busy} />

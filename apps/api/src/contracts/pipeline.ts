@@ -82,4 +82,11 @@ export const RequirementIntakeSchema = z.strictObject({
   requirementType: z.enum(REQUIREMENT_INTAKE_TYPES).nullish(),
   constraintNotes: z.string().trim().max(2_000).nullish(),
   supplementUrl: z.string().trim().url().max(500).nullish(),
+  // V02-T06：受控词典模块（服务端对照已发布词典校验）与可选需求级负责人（D-12：人工分配首推通知被分配人）。
+  intakeModule: z.string().trim().min(1).max(100).nullish(),
+  owner: z.strictObject({
+    feishuUserId: z.string().trim().min(1).max(64),
+    feishuIdType: z.enum(["open_id", "user_id", "union_id"]),
+    tbDisplayName: z.string().trim().max(100).nullish(),
+  }).nullish(),
 });

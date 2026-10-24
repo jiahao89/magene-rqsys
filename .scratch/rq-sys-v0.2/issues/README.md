@@ -17,8 +17,8 @@
 | V02-T02 | [扩展统一来源身份并读回现有TB记录](02-unified-source-expand.md) | implemented-local | 01 | 核心 |
 | V02-T03 | [按平台编号复用Base旧TB行并安全切换](03-platform-base-key.md) | implemented-local | 02 | 核心 |
 | V02-T04 | [最小新建需求贯通AI与Base](04-manual-intake-minimal.md) | implemented-local | 03 | 核心 |
-| V02-T05 | [补齐精简需求上下文并展示来源](05-manual-definition-context.md) | ready-for-agent | 04 | 核心 |
-| V02-T06 | [需求级选择模块与负责人并通知分配人](06-direct-owner-and-module.md) | ready-for-agent | 04 | 核心 |
+| V02-T05 | [补齐精简需求上下文并展示来源](05-manual-definition-context.md) | implemented-local | 04 | 核心 |
+| V02-T06 | [需求级选择模块与负责人并通知分配人](06-direct-owner-and-module.md) | implemented-local | 04 | 核心 |
 | V02-T07 | [手工编辑需求保留版本并安全更新Base](07-manual-edit-versioning.md) | ready-for-agent | 04 | 核心 |
 | V02-T08 | [主AI增加需求类型与六层人群建议](08-analysis-audience-contract.md) | ready-for-agent | 02 | 核心 |
 | V02-T09 | [PM修改人群并保留人工确认](09-audience-confirmation.md) | ready-for-agent | 08 | 核心 |
@@ -34,7 +34,7 @@
 
 ## 当前可领取的前沿
 
-- **05/06/07**：精简上下文、需求级模块/负责人、手工编辑版本化（04 已于 2026-10-25 implemented-local：POST 收录+事务化审计/回执+两端表单，两仓全量验证；目标链路验收按 16）。
+- **07**：手工编辑版本化（05/06 已于 2026-10-25 implemented-local：精简上下文入库进安全输入、需求级模块/负责人+分配版本，两仓全量验证；目标链路验收按 16）。
 - **15** 已于 2026-10-23 实现为"同标题仅提示、独立处理"（implemented-local；AC04 计数拆分与 AC06 联合回归待后续票补齐，正式结论汇合到 16）。
 - **10** 规则确认包已备（见票内链接）；新算法实施仍等待 PM Leader 确认输入、公式、阈值和校准案例。
 - 02完成后，08、11、13可与03→04分支独立推进；实际开发先协调共享契约和仓储的文件归属。

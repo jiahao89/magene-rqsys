@@ -5,7 +5,7 @@ import { createSourceMetadataAdvancer, type AdvanceDeps } from "./advance.js";
 
 function requirement(overrides: Partial<RequirementRecord> = {}): RequirementRecord {
   return {
-    id: "req-1", platformRequirementId: "RQ-000001", sourceType: "teambition", sourceChannel: null, productModel: null, requirementType: null, constraintNotes: null, supplementUrl: null, sourceConfigId: "source-1", teambitionRequirementId: "tb-1", teambitionUniqueId: null,
+    id: "req-1", platformRequirementId: "RQ-000001", sourceType: "teambition", sourceChannel: null, productModel: null, requirementType: null, constraintNotes: null, supplementUrl: null, intakeModule: null, sourceConfigId: "source-1", teambitionRequirementId: "tb-1", teambitionUniqueId: null,
     title: "Need", description: null, scope: null, acceptanceCriteria: null,
     proposerUserId: null, proposerName: null, executorUserId: "tb-new", executorName: "New Owner",
     sourceStatusId: "status", sourceCreatedAt: null, sourceUpdatedAt: null, sourceUrl: null,
@@ -66,7 +66,7 @@ test("metadata-only source update preserves an existing manual owner selection",
 });
 
 test("metadata-only sync of a no-TB-owner requirement keeps the owner picked in Web", async () => {
-  const manualOwner = { feishuUserId: "u-assignee", feishuIdType: "user_id" as const, name: "毕梓浩", assignedBy: "operator", assignedAt: "2026-10-09T00:00:00Z", pushedFeishuUserId: "u-assignee" };
+  const manualOwner = { feishuUserId: "u-assignee", feishuIdType: "user_id" as const, name: "毕梓浩", assignedBy: "operator", assignedAt: "2026-10-09T00:00:00Z", pushedFeishuUserId: "u-assignee", assignmentVersion: 1 };
   for (const owner of ["pending_mapping", "not_required", "manually_mapped"] as const) {
     const h = harness(requirement({ executorUserId: null, executorName: null, manualOwner, pipeline: { pull: "synced", analysis: "analyzed", owner, push: "pending" } }), null);
     assert.equal(await h.advance("req-1", "operator", 1), "queued");

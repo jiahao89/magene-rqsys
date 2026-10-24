@@ -289,6 +289,8 @@ export interface RequirementQueryRepository {
     requirementType?: string | null;
     constraintNotes?: string | null;
     supplementUrl?: string | null;
+    intakeModule?: string | null;
+    owner?: { feishuUserId: string; feishuIdType: "open_id" | "user_id" | "union_id"; name?: string | null };
   }): Promise<{ requirementId: string; platformRequirementId: string; replay: boolean }>;
   getPipelineCounts(): Promise<{
     total: number;
@@ -331,7 +333,7 @@ export interface RequirementQueryRepository {
   setOwner(requirementId: string, feishuUserId: string | null, state: OwnerState): Promise<void>;
   // 逐条人工负责人：写入需求本身并迁移到 manually_mapped（非法迁移抛 InvalidTransitionError）。
   // 适用于所有需求（无论 TB 是否有执行人）；绝不再写 person_mappings。
-  assignManualOwner(requirementId: string, owner: Omit<RequirementManualOwner, "pushedFeishuUserId">): Promise<void>;
+  assignManualOwner(requirementId: string, owner: Omit<RequirementManualOwner, "pushedFeishuUserId" | "assignmentVersion">): Promise<void>;
   // 推送成功写入了人工负责人后记账；只在仍是同一负责人时生效，避免覆盖推送期间发生的改派。
   markManualOwnerPushed(requirementId: string, feishuUserId: string): Promise<void>;
   // 清除逐条人工负责人（恢复 TB 默认负责人/空负责人）。

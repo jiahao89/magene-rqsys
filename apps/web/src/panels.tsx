@@ -1096,8 +1096,9 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
           <div><dt><TbFieldLabel>更新时间</TbFieldLabel></dt><dd><SourceValue value={updatedAt ?? facts.updatedAt} emptyHint="Teambition 未提供该字段" /></dd></div>
         </dl>
       </div>
-      {(detail.productModel || detail.requirementType || detail.constraintNotes || detail.supplementUrl) ? (
+      {(detail.intakeModule || detail.productModel || detail.requirementType || detail.constraintNotes || detail.supplementUrl) ? (
         <dl className="req-source-grid" aria-label="录入上下文">
+          {detail.intakeModule ? <div><dt>模块（录入）</dt><dd>{detail.intakeModule}</dd></div> : null}
           {detail.productModel ? <div><dt>产品/型号</dt><dd>{detail.productModel}</dd></div> : null}
           {detail.requirementType ? <div><dt>需求类型（录入）</dt><dd>{detail.requirementType}</dd></div> : null}
           {detail.constraintNotes ? <div><dt>边界/限制</dt><dd>{detail.constraintNotes}</dd></div> : null}
