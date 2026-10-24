@@ -27,6 +27,7 @@ import { createAnalysisAdvancer, createSourceMetadataAdvancer } from "../pipelin
 import { createBasePushService, type BasePushServiceDeps } from "../base/push-service.js";
 import { basePushIdempotencyKey } from "../jobs/idempotency.js";
 import { assertFixtureWorkAllowed, isSyntheticFixtureRequirement } from "../sync/test-fixture.js";
+import { KANO_PROMPT_VERSION, buildKanoRequest, createDeepSeekKanoProvider, kanoPrompt, validateKanoReport, KanoProviderError } from "../beta/kano.js";
 import type { FeishuBasePushAdapter } from "../base/client.js";
 
 /** 同步批次触及的需求（来自 sync persistence；手工收录在 V02-T04 起复用同一形状）。 */
@@ -61,6 +62,8 @@ export interface RequirementWorkflowDeps {
   analysisEnqueueCap?: number | undefined;
   /** 诊断日志出口（默认 stderr）：“外部写成功但本地记账失败”等信号经此落地。 */
   log?: ((line: string) => void) | undefined;
+  /** V02-T14：Kano Beta provider；缺省按环境构造 DeepSeek（测试注入受控实现）。 */
+  createKanoProvider?: (() => import("../beta/kano.js").KanoProvider) | undefined;
 }
 
 /**
@@ -155,6 +158,38 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
       await deps.repositories.requirements.updateAnalysisState(requirement.id, run.status === "analyzed" ? "analyzed" : "failed_retryable");
       // 工单 14：首次分析进入可见终态后继续负责人处理与 Base 推送——AI 不是推送门槛。
       await advanceAfterAnalysis(requirement.id, run.status === "analyzed" ? "analyzed" : "failed_retryable", typeof job.payload.actorId === "string" ? job.payload.actorId : null, run.analysisVersion);
+    },
+
+    /** V02-T14：kano_run 作业体。手动运行、输入快照来自 kano_runs 行；失败落 run.failed 且作业按成功
+     *  结算（不自动重试，绝不触碰主分析/推送/通知状态）；用户手动重跑生成新版本。 */
+    async handleKanoRunJob(job: { payload: Record<string, unknown> }): Promise<void> {
+      const runId = job.payload.kanoRunId;
+      if (typeof runId !== "string") throw new Error("Invalid kano_run job payload");
+      const run = await deps.repositories.requirements.getKanoRun?.(runId);
+      if (!run || run.status !== "running") return;
+      const requirement = await deps.repositories.requirements.get(run.requirementId);
+      if (!requirement) throw new Error("Kano requirement was not found");
+      const evidence = ((await deps.repositories.requirements.listKanoEvidence?.() ?? []).find((version) => version.version === run.evidenceVersion)) ?? null;
+      // 输入门禁：资料必须仍是 approved 且未标记 PII（导入后被退休/标记的版本不再可用）。
+      if (!evidence || evidence.status !== "approved" || evidence.piiFlagged) {
+        await deps.repositories.requirements.failKanoRun?.(runId, "KANO_EVIDENCE_UNAVAILABLE", "选定资料版本不可用（未批准或含未脱敏内容）。");
+        return;
+      }
+      const provider = (deps.createKanoProvider ?? (() => createDeepSeekKanoProvider()))();
+      try {
+        const raw = await provider.run(kanoPrompt(buildKanoRequest(
+          { title: requirement.title, description: requirement.description, audienceTags: requirement.audienceTags, audienceConfirmed: requirement.audienceConfirmed },
+          { version: evidence.version, title: evidence.title, summary: evidence.summary, evidenceFragments: evidence.evidenceFragments, coverageNotes: evidence.coverageNotes, knownAudiences: evidence.knownAudiences },
+        )));
+        const report = validateKanoReport(raw, { version: evidence.version, title: evidence.title, summary: evidence.summary, evidenceFragments: evidence.evidenceFragments, coverageNotes: evidence.coverageNotes, knownAudiences: evidence.knownAudiences });
+        // 报告层永远标记 AI 假设（待验证）；PM 复核是独立动作，不在此实现。
+        await deps.repositories.requirements.completeKanoRun?.(runId, { ...report, researchStatus: "AI假设（待验证）", promptVersion: run.promptVersion, evidenceVersion: run.evidenceVersion }, provider.model);
+      } catch (error) {
+        const code = error instanceof KanoProviderError ? `KANO_${error.code.toUpperCase()}` : error instanceof Error && error.name === "ZodError" ? "KANO_INVALID_OUTPUT" : "KANO_FAILED";
+        const summary = error instanceof KanoProviderError ? error.message : "Kano run failed; manual retry is available.";
+        await deps.repositories.requirements.failKanoRun?.(runId, code, summary);
+        // 作业按成功结算：Beta 失败不自动重试、不饿死主流程（AC02/AC07）。
+      }
     },
 
     /** base_push 作业体：夹具守卫与版本守卫后经推送服务幂等执行；记账失败不重推外部。 */

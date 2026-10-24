@@ -157,6 +157,7 @@ const worker = repositories ? new PipelineJobWorker({
   handlers: {
     ...(analysisJobHandler ? { analysis: analysisJobHandler } : {}),
     ...(basePushJobHandler ? { base_push: basePushJobHandler } : {}),
+      ...(requirementWorkflow ? { kano_run: async (job: { payload: Record<string, unknown> }) => { await requirementWorkflow.handleKanoRunJob(job); } } : {}),
   },
   workerId: process.env.WORKER_ID ?? "local-worker",
   // 租约 120s + worker 心跳续约（每 1/3 租约时长）。此前 30s 且无心跳：

@@ -6,7 +6,7 @@ import { computeBackoffMs, isRetryable } from "../retry/policy.js";
 import { classifyJobError } from "./classify-error.js";
 
 // jobType → 重试策略阶段映射（复用 retry/policy.ts 的阶段退避）
-const STAGE_FOR_JOB_TYPE = { sync: "pull", analysis: "analysis", base_push: "push" } as const;
+const STAGE_FOR_JOB_TYPE = { sync: "pull", analysis: "analysis", base_push: "push", kano_run: "analysis" } as const;
 
 export interface PipelineJobWorkerOptions {
   jobs: PipelineJobRepository;

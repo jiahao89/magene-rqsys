@@ -177,6 +177,38 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '409': { description: Item is not retryable }
+  /api/requirements/{id}/kano-runs:
+    post:
+      summary: Trigger a manual Kano hypothesis run (V02-T14)
+      description: >-
+        Manual-only trigger pinning the requirement source version, audience confirmation state and
+        the selected approved evidence version; one active run per requirement; queued on the
+        isolated kano_run job type whose failures never touch main pipeline states.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [evidenceVersion]
+              properties:
+                evidenceVersion: { type: integer, minimum: 1 }
+      responses:
+        '202': { description: Run queued (runVersion returned). }
+        '400': { $ref: '#/components/responses/Validation' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Evidence not approved/PII-flagged, or an active run already exists. }
+        '503': { $ref: '#/components/responses/DependencyUnavailable' }
+    get:
+      summary: List Kano runs with staleness flags (V02-T14)
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200': { description: Run history; entries carry staleInputs when pinned inputs lag current versions. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
   /api/kano/evidence:
     get:
       summary: List Kano evidence versions (V02-T13)

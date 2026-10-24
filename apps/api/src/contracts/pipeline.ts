@@ -129,3 +129,7 @@ export const KanoEvidenceImportSchema = z.strictObject({
   knownScenes: z.string().trim().max(500).nullish(),
   interviewDate: z.string().trim().max(40).nullish(),
 });
+// V02-T14：手动触发 Kano 假设报告。资料版本必须是已批准且未标记 PII 的版本。
+export const KanoRunRequestSchema = z.strictObject({
+  evidenceVersion: z.number().int().min(1),
+});

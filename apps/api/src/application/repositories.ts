@@ -3,7 +3,7 @@
 // （05 手动同步、06 AI 分析、07 负责人与 Base 推送、08 调度重试审计）实际需要的操作。
 // 唯一性约束由 DDL 保证（见 domain/persistence.ts 注释），端口语义与之对齐。
 
-import type { AuditEventRecord, BasePushRunRecord, BatchState, AnalysisRunRecord, FunctionModuleEntry, ModuleDictionaryVersionRecord, PersonMappingRecord, PmSnapshotRecord, PipelineJobRecord, PipelineJobType, PriorityLevel, PriorityRuleVersionRecord, SourceConfigRecord, SourceSnapshotRecord, SyncBatchRecord, SyncItemAction, SyncItemRecord, SyncTrigger, FeishuIdType, AudienceLevel, RiceDraftRecord, KanoEvidenceVersion } from "../domain/persistence.js";
+import type { AuditEventRecord, BasePushRunRecord, BatchState, AnalysisRunRecord, FunctionModuleEntry, ModuleDictionaryVersionRecord, PersonMappingRecord, PmSnapshotRecord, PipelineJobRecord, PipelineJobType, PriorityLevel, PriorityRuleVersionRecord, SourceConfigRecord, SourceSnapshotRecord, SyncBatchRecord, SyncItemAction, SyncItemRecord, SyncTrigger, FeishuIdType, AudienceLevel, RiceDraftRecord, KanoEvidenceVersion, KanoRunRecord } from "../domain/persistence.js";
 import type { AnalysisState, OwnerState, PullState, PushState } from "../domain/workflow.js";
 import type { ResolvedSourceConfigUpdate } from "../contracts/source.js";
 import type { RequirementManualOwner, RequirementRecord } from "../domain/persistence.js";
@@ -279,6 +279,13 @@ export interface RequirementQueryRepository {
 
 
 
+
+  // V02-T14：Kano Beta 运行。独立版本/状态；失败不触碰主流程（AC07）。
+  listKanoRuns(requirementId: string): Promise<KanoRunRecord[]>;
+  getKanoRun(id: string): Promise<KanoRunRecord | null>;
+  createKanoRun(input: { requirementId: string; sourceVersion: number; audienceSnapshot: { tags: string[]; confirmed: boolean }; evidenceVersion: number; promptVersion: string; createdBy: string }): Promise<{ outcome: "created"; run: KanoRunRecord } | { outcome: "active_run_exists" }>;
+  completeKanoRun(id: string, result: unknown, model: string | null): Promise<KanoRunRecord | null>;
+  failKanoRun(id: string, safeErrorCode: string, safeErrorSummary: string): Promise<KanoRunRecord | null>;
   // V02-T13：Kano 资料版本。导入不可变（更新=新版本）；仅 approved 且未标记 PII 的版本可作模型输入。
   listKanoEvidence(): Promise<KanoEvidenceVersion[]>;
   createKanoEvidence(input: {

@@ -1,6 +1,6 @@
 # RQ-Sys V0.2 Tickets
 
-> 拆分已于2026-10-23由用户确认并发布至本地tracker。共18张Ticket；核心链路 01-07 与 15 已 implemented-local（2026-10-24/25，两仓验证），其余（08/09/11/13/14 及门槛票 10/12/16-18）见各行状态。
+> 拆分已于2026-10-23由用户确认并发布至本地tracker。共18张Ticket；除门槛票（10/12/16-18）外全部 implemented-local（2026-10-24/25，两仓验证）。
 
 ## 使用方式
 
@@ -26,7 +26,7 @@
 | V02-T11 | [详情Beta入口保存RICE人工草稿](11-rice-beta-draft.md) | implemented-local | 02 | Beta |
 | V02-T12 | [RICE按获批量纲计算并保留版本](12-rice-configured-score.md) | ready-for-agent | 11 | Beta |
 | V02-T13 | [Kano选择获批访谈资料版本](13-kano-evidence-snapshots.md) | implemented-local | 02 | Beta |
-| V02-T14 | [手动Kano生成证据化假设报告](14-kano-report.md) | ready-for-agent | 08、13 | Beta |
+| V02-T14 | [手动Kano生成证据化假设报告](14-kano-report.md) | implemented-local | 08、13 | Beta |
 | V02-T15 | [对齐同标题不同TB ID的保留规则](15-source-id-invariant.md) | implemented-local | — | 核心 |
 | V02-T16 | [核心V0.2兼容迁移与目标验收](16-core-target-acceptance.md) | ready-for-agent | 05、06、07、09、15 | 验收 |
 | V02-T17 | [RICE与Kano Beta独立目标验收](17-beta-target-acceptance.md) | ready-for-agent | 12、14、16 | 验收 |
@@ -34,7 +34,7 @@
 
 ## 当前可领取的前沿
 
-- **核心链路 01-09 与 15 全部 implemented-local（2026-10-24/25）**。剩余：Beta 票 14（依赖 08✓/13✓ 已就绪）；12/18 等 G-RICE 量纲确认；10 算法等 PM Leader 确认（确认包已备）；16-18 目标迁移/发布/验收需授权。
+- **核心链路 01-09 与 15 全部 implemented-local（2026-10-24/25）**。**工程可开发票已全部完成（01-09、11、13-15 + 10 确认包）**。剩余均为门槛票：12/18 等 G-RICE 量纲确认；10 算法等 PM Leader 确认；16-18 目标迁移/发布/验收需用户授权（迁移链 0008–0016 已备）。
 - **15** 已于 2026-10-23 实现为"同标题仅提示、独立处理"（implemented-local；AC04 计数拆分与 AC06 联合回归待后续票补齐，正式结论汇合到 16）。
 - **10** 规则确认包已备（见票内链接）；新算法实施仍等待 PM Leader 确认输入、公式、阈值和校准案例。
 - 02完成后，08、11、13可与03→04分支独立推进；实际开发先协调共享契约和仓储的文件归属。

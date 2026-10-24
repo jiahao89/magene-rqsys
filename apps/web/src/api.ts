@@ -458,3 +458,23 @@ export interface KanoEvidenceVersionDto {
 export function listKanoEvidence(fetcher: typeof fetch = fetch): Promise<{ items: KanoEvidenceVersionDto[] }> {
   return requestJson<{ items: KanoEvidenceVersionDto[] }>("/api/kano/evidence", fetcher);
 }
+export interface KanoCapability {
+  capability: string; audience: string | null;
+  positiveQuestion: string; negativeQuestion: string;
+  simulatedLeaning: { option: string; rationale: string };
+  candidateType: string; explanation: string; evidence: string[]; conflicts?: string[];
+}
+export interface KanoRunDto {
+  id: string; requirementId: string; runVersion: number; status: "running" | "succeeded" | "failed";
+  sourceVersion: number; audienceSnapshot: { tags: string[]; confirmed: boolean }; evidenceVersion: number;
+  promptVersion: string; model: string | null;
+  result: { capabilities: KanoCapability[]; gaps: string[]; confidence: string; confidenceReason: string; researchStatus?: string; evidenceVersion?: number } | null;
+  safeErrorCode: string | null; safeErrorSummary: string | null;
+  createdBy: string; createdAt: string; completedAt: string | null; staleInputs?: boolean;
+}
+export function triggerKanoRun(id: string, evidenceVersion: number, fetcher: typeof fetch = fetch): Promise<{ requirementId: string; runVersion: number; status: string }> {
+  return postJson(`/api/requirements/${id}/kano-runs`, { evidenceVersion }, fetcher);
+}
+export function listKanoRuns(id: string, fetcher: typeof fetch = fetch): Promise<{ items: KanoRunDto[] }> {
+  return requestJson<{ items: KanoRunDto[] }>(`/api/requirements/${id}/kano-runs`, fetcher);
+}

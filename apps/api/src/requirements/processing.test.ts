@@ -164,3 +164,59 @@ test("handleBasePushJob drops jobs whose source version no longer matches", asyn
   await workflow.handleBasePushJob({ payload: { requirementId: "req-1", sourceVersion: 99 } });
   // 未触碰外部 Base、未抛错：版本守卫直接返回。
 });
+
+test("V02-T14 handleKanoRunJob completes a run via a controlled provider and isolates the main pipeline", async () => {
+  const h = harness();
+  const kanoRuns = new Map<string, { id: string; status: string; requirementId: string; evidenceVersion: number; sourceVersion: number }>([["run-1", { id: "run-1", status: "running", requirementId: "req-1", evidenceVersion: 2, sourceVersion: 1 }]]);
+  const evidenceVersions = [{ id: "ev-1", version: 2, title: "t", summary: "s", evidenceFragments: [{ ref: "S1", text: "x" }], coverageNotes: null, knownAudiences: [], knownScenes: null, interviewDate: null, sourceUrl: null, sourceSection: null, status: "approved", piiFlagged: false, createdBy: "m", createdAt: "2026-10-25T00:00:00.000Z", approvedBy: null, approvedAt: null }];
+  const deps = {
+    ...h.deps,
+    createKanoProvider: () => ({
+      model: "stub-kano",
+      async run() {
+        return { capabilities: [{ capability: "训练计划导出", audience: "L2", positiveQuestion: "p", negativeQuestion: "n", simulatedLeaning: { option: "喜欢", rationale: "r" }, candidateType: "期望型", explanation: "e", evidence: ["S1"] }], gaps: [], confidence: "中", confidenceReason: "r" };
+      },
+    }),
+    repositories: {
+      ...h.deps.repositories,
+      requirements: {
+        ...h.deps.repositories.requirements,
+        getKanoRun: async (id: string) => kanoRuns.get(id) ? { id, requirementId: "req-1", runVersion: 1, status: kanoRuns.get(id)!.status, sourceVersion: 1, audienceSnapshot: { tags: [], confirmed: false }, evidenceVersion: 2, promptVersion: "rq-kano-v1", model: null, result: null, safeErrorCode: null, safeErrorSummary: null, createdBy: "op", createdAt: "2026-10-25T00:00:00.000Z", completedAt: null } : null,
+        listKanoEvidence: async () => evidenceVersions,
+        completeKanoRun: async (id: string) => { kanoRuns.set(id, { id, status: "succeeded", requirementId: "req-1", evidenceVersion: 2, sourceVersion: 1 }); return null; },
+        failKanoRun: async (id: string) => { kanoRuns.set(id, { id, status: "failed", requirementId: "req-1", evidenceVersion: 2, sourceVersion: 1 }); return null; },
+      },
+    } as never,
+  };
+  const workflow = createRequirementWorkflow(deps);
+  await workflow.handleKanoRunJob({ payload: { kanoRunId: "run-1", requirementId: "req-1" } });
+  assert.equal(kanoRuns.get("run-1")?.status, "succeeded");
+  // 主流程隔离：不产生主分析/推送作业，不改需求分析状态（AC07）
+  assert.equal(ofJobType(h.enqueued, "analysis").length, 0);
+  assert.equal(ofJobType(h.enqueued, "base_push").length, 0);
+  assert.deepEqual(h.analysisStates, []);
+});
+
+test("V02-T14 handleKanoRunJob fails safely on invalid provider output without retrying", async () => {
+  const h = harness();
+  const statuses = new Map<string, string>([["run-2", "running"]]);
+  const evidenceVersions = [{ id: "ev-1", version: 2, title: "t", summary: "s", evidenceFragments: [{ ref: "S1", text: "x" }], coverageNotes: null, knownAudiences: [], knownScenes: null, interviewDate: null, sourceUrl: null, sourceSection: null, status: "approved", piiFlagged: false, createdBy: "m", createdAt: "2026-10-25T00:00:00.000Z", approvedBy: null, approvedAt: null }];
+  const deps = {
+    ...h.deps,
+    createKanoProvider: () => ({ model: "stub-kano", async run() { return { bogus: true }; } }),
+    repositories: {
+      ...h.deps.repositories,
+      requirements: {
+        ...h.deps.repositories.requirements,
+        getKanoRun: async (id: string) => ({ id, requirementId: "req-1", runVersion: 2, status: statuses.get(id) ?? "running", sourceVersion: 1, audienceSnapshot: { tags: [], confirmed: false }, evidenceVersion: 2, promptVersion: "rq-kano-v1", model: null, result: null, safeErrorCode: null, safeErrorSummary: null, createdBy: "op", createdAt: "2026-10-25T00:00:00.000Z", completedAt: null }),
+        listKanoEvidence: async () => evidenceVersions,
+        completeKanoRun: async () => null,
+        failKanoRun: async (id: string, code: string) => { statuses.set(id, "failed"); (deps as { lastCode?: string }).lastCode = code; return null; },
+      },
+    } as never,
+  };
+  const workflow = createRequirementWorkflow(deps);
+  await workflow.handleKanoRunJob({ payload: { kanoRunId: "run-2" } });
+  assert.equal(statuses.get("run-2"), "failed");
+  // 作业本身按成功结算（不抛错 → worker 不自动重试）
+});

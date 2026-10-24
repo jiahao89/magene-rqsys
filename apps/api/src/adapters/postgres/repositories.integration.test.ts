@@ -10,7 +10,7 @@ import { createBasePushService } from "../../base/push-service.js";
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),"../../../../../");
 async function getDatabaseUrl(){if(process.env.DATABASE_URL)return process.env.DATABASE_URL;const env=await readFile(resolve(root,".env"),"utf8").catch(()=>"");const value=env.match(/^DATABASE_URL=(.+)$/m)?.[1]?.trim();if(!value)throw new Error("PostgreSQL integration tests require DATABASE_URL in environment or repo .env");return value;}
-async function setup(){const connectionString=await getDatabaseUrl();const admin=new Pool({connectionString,connectionTimeoutMillis:5000});const schema=`rq_test_${randomUUID().replaceAll("-","")}`;await admin.query(`CREATE SCHEMA "${schema}"`);const pool=new Pool({connectionString,options:`-c search_path=${schema}`,max:5});try{const sql=await readFile(resolve(root,"database/migrations/0001_initial.sql"),"utf8");await pool.query(sql);const next=await readFile(resolve(root,"database/migrations/0002_single_source_config.sql"),"utf8");await pool.query(next);const platformId=await readFile(resolve(root,"database/migrations/0004_platform_requirement_id.sql"),"utf8");await pool.query(platformId);const platformIdBackfill=await readFile(resolve(root,"database/migrations/0005_platform_requirement_id_backfill.sql"),"utf8");await pool.query(platformIdBackfill);const manualOwner=await readFile(resolve(root,"database/migrations/0006_requirement_manual_owner.sql"),"utf8");await pool.query(manualOwner);const ownerAndDuplicates=await readFile(resolve(root,"database/migrations/0007_requirement_owner_conflict_duplicates.sql"),"utf8");await pool.query(ownerAndDuplicates);const nameFix=await readFile(resolve(root,"database/migrations/0008_fix_team_directory_name.sql"),"utf8");await pool.query(nameFix);const sourceExpand=await readFile(resolve(root,"database/migrations/0009_extend_requirement_source.sql"),"utf8");await pool.query(sourceExpand);const defContext=await readFile(resolve(root,"database/migrations/0010_manual_definition_context.sql"),"utf8");await pool.query(defContext);const intakeModuleOwner=await readFile(resolve(root,"database/migrations/0011_requirement_intake_module_owner.sql"),"utf8");await pool.query(intakeModuleOwner);const editReceipts=await readFile(resolve(root,"database/migrations/0012_manual_edit_receipts.sql"),"utf8");await pool.query(editReceipts);const audience=await readFile(resolve(root,"database/migrations/0013_requirement_audience.sql"),"utf8");await pool.query(audience);const rice=await readFile(resolve(root,"database/migrations/0014_rice_drafts.sql"),"utf8");await pool.query(rice);const kano=await readFile(resolve(root,"database/migrations/0015_kano_evidence_versions.sql"),"utf8");await pool.query(kano);return{pool,admin,schema,repos:new PostgresRepositories(pool as never)};}catch(error){await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();throw error;}}
+async function setup(){const connectionString=await getDatabaseUrl();const admin=new Pool({connectionString,connectionTimeoutMillis:5000});const schema=`rq_test_${randomUUID().replaceAll("-","")}`;await admin.query(`CREATE SCHEMA "${schema}"`);const pool=new Pool({connectionString,options:`-c search_path=${schema}`,max:5});try{const sql=await readFile(resolve(root,"database/migrations/0001_initial.sql"),"utf8");await pool.query(sql);const next=await readFile(resolve(root,"database/migrations/0002_single_source_config.sql"),"utf8");await pool.query(next);const platformId=await readFile(resolve(root,"database/migrations/0004_platform_requirement_id.sql"),"utf8");await pool.query(platformId);const platformIdBackfill=await readFile(resolve(root,"database/migrations/0005_platform_requirement_id_backfill.sql"),"utf8");await pool.query(platformIdBackfill);const manualOwner=await readFile(resolve(root,"database/migrations/0006_requirement_manual_owner.sql"),"utf8");await pool.query(manualOwner);const ownerAndDuplicates=await readFile(resolve(root,"database/migrations/0007_requirement_owner_conflict_duplicates.sql"),"utf8");await pool.query(ownerAndDuplicates);const nameFix=await readFile(resolve(root,"database/migrations/0008_fix_team_directory_name.sql"),"utf8");await pool.query(nameFix);const sourceExpand=await readFile(resolve(root,"database/migrations/0009_extend_requirement_source.sql"),"utf8");await pool.query(sourceExpand);const defContext=await readFile(resolve(root,"database/migrations/0010_manual_definition_context.sql"),"utf8");await pool.query(defContext);const intakeModuleOwner=await readFile(resolve(root,"database/migrations/0011_requirement_intake_module_owner.sql"),"utf8");await pool.query(intakeModuleOwner);const editReceipts=await readFile(resolve(root,"database/migrations/0012_manual_edit_receipts.sql"),"utf8");await pool.query(editReceipts);const audience=await readFile(resolve(root,"database/migrations/0013_requirement_audience.sql"),"utf8");await pool.query(audience);const rice=await readFile(resolve(root,"database/migrations/0014_rice_drafts.sql"),"utf8");await pool.query(rice);const kano=await readFile(resolve(root,"database/migrations/0015_kano_evidence_versions.sql"),"utf8");await pool.query(kano);const kanoRunsMig=await readFile(resolve(root,"database/migrations/0016_kano_runs.sql"),"utf8");await pool.query(kanoRunsMig);return{pool,admin,schema,repos:new PostgresRepositories(pool as never)};}catch(error){await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();throw error;}}
 async function cleanup(ctx:{pool:Pool;admin:Pool;schema:string}){await ctx.pool.end();await ctx.admin.query(`DROP SCHEMA "${ctx.schema}" CASCADE`);await ctx.admin.end();}
 const config={projectId:"tb-project",projectName:"Product",requirementTypeId:"req-type",enabled:true,schedule:{enabled:true,weekday:1,time:"09:30",timezone:"Asia/Shanghai"},ownerNames:["PM Owner"],fieldMap:{description:"cf-description"}};
 function requirementWrite(sourceConfigId:string, latestBatchId:string, overrides:Partial<import("./repositories.js").RequirementRowWrite>={}) {
@@ -439,5 +439,38 @@ test("V02-T13 Kano evidence: import, PII flag blocks approval, clean approve, im
     assert.equal((await ctx.repos.requirements.listKanoEvidence()).find((v)=>v.id===clean.id)?.summary,"多名竞技与爱好者用户关注训练计划的准确性与完成度分析。");
     // 未知批准目标
     assert.equal((await ctx.repos.requirements.approveKanoEvidence("00000000-0000-4000-8000-000000000000","a")).outcome,"not_found");
+  }finally{await cleanup(ctx);}
+});
+
+test("V02-T14 Kano runs: versioned create with active guard, job+audit in txn, lifecycle states",async()=>{
+  const ctx=await setup();
+  try{
+    const manual=await ctx.repos.requirements.createManualRequirement({idempotencyKey:"kano-m-1",actorId:"a1",requestHash:"1".repeat(64),title:"训练计划诉求",description:"竞技用户需要训练计划",sourceChannel:"运营/用研"});
+    const evidence=await ctx.repos.requirements.createKanoEvidence({title:"合成总结",summary:"竞技用户重视训练完成度分析。",evidenceFragments:[{ref:"S1",text:"竞技用户重视训练完成度分析"}],createdBy:"maintainer"});
+    await ctx.repos.requirements.approveKanoEvidence(evidence.id,"approver");
+    // 创建：v1 + kano_run 作业 + 审计，同事务
+    const created=await ctx.repos.requirements.createKanoRun({requirementId:manual.requirementId,sourceVersion:1,audienceSnapshot:{tags:["L2"],confirmed:true},evidenceVersion:evidence.version,promptVersion:"rq-kano-v1",createdBy:"pm-1"});
+    assert.equal(created.outcome,"created");
+    assert.equal(created.run.runVersion,1);
+    assert.equal(created.run.status,"running");
+    const job=await ctx.repos.jobs.findByDedupeKey(`kano:${manual.requirementId}:rv1`);
+    assert.equal(job?.jobType,"kano_run");
+    // 活动运行守卫：running 期间拒绝再次创建（AC02）
+    assert.equal((await ctx.repos.requirements.createKanoRun({requirementId:manual.requirementId,sourceVersion:1,audienceSnapshot:{tags:[],confirmed:false},evidenceVersion:evidence.version,promptVersion:"rq-kano-v1",createdBy:"pm-1"})).outcome,"active_run_exists");
+    // 完成 → succeeded；显式重跑生成 v2
+    const done=await ctx.repos.requirements.completeKanoRun(created.run.id,{capabilities:[],gaps:[],confidence:"中",confidenceReason:"r"},"stub");
+    assert.equal(done?.status,"succeeded");
+    const rerun=await ctx.repos.requirements.createKanoRun({requirementId:manual.requirementId,sourceVersion:1,audienceSnapshot:{tags:["L2"],confirmed:true},evidenceVersion:evidence.version,promptVersion:"rq-kano-v1",createdBy:"pm-1"});
+    assert.equal(rerun.outcome,"created");
+    assert.equal(rerun.run.runVersion,2);
+    // 失败路径
+    const failed=await ctx.repos.requirements.failKanoRun(rerun.run.id,"KANO_INVALID_OUTPUT","invalid");
+    assert.equal(failed?.status,"failed");
+    // 主流程隔离：需求流水线未动，kano 作业与主作业命名空间分离
+    const row=await ctx.repos.requirements.get(manual.requirementId);
+    assert.equal(row?.pipeline.analysis,"pending");
+    assert.equal(row?.pipeline.push,"pending");
+    const events=await ctx.repos.audit.search({entityId:manual.requirementId,limit:30});
+    assert.equal(events.filter((event)=>event.eventType==="kano.run_requested").length,2);
   }finally{await cleanup(ctx);}
 });

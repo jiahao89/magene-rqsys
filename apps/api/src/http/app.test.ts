@@ -401,3 +401,27 @@ test("V02-T13 Kano evidence routes: import validates, approve rejects flagged ma
   const approve = await handleApiRequest(new Request("http://localhost/api/kano/evidence/ev-1/approve", { method: "POST" }), d);
   assert.equal(approve.status, 409);
 });
+
+test("V02-T14 Kano run routes: trigger guards and stale flags", async () => {
+  const d = makeDependencies();
+  const requirements = d.repositories!.requirements as unknown as Record<string, unknown>;
+  requirements.listKanoEvidence = async () => [
+    { id: "ev-ok", version: 2, title: "t", sourceUrl: null, sourceSection: null, summary: "s", evidenceFragments: [], coverageNotes: null, knownAudiences: [], knownScenes: null, interviewDate: null, status: "approved", piiFlagged: false, createdBy: "m", createdAt: "2026-10-25T00:00:00.000Z", approvedBy: null, approvedAt: null },
+    { id: "ev-draft", version: 3, title: "t", sourceUrl: null, sourceSection: null, summary: "s", evidenceFragments: [], coverageNotes: null, knownAudiences: [], knownScenes: null, interviewDate: null, status: "draft", piiFlagged: false, createdBy: "m", createdAt: "2026-10-25T00:00:00.000Z", approvedBy: null, approvedAt: null },
+  ];
+  let active = false;
+  requirements.createKanoRun = async () => active ? { outcome: "active_run_exists" } : { outcome: "created", run: { id: "run-1", runVersion: 1 } };
+  requirements.listKanoRuns = async () => [{ id: "run-1", requirementId: requirement.id, runVersion: 1, status: "succeeded", sourceVersion: 1, audienceSnapshot: { tags: [], confirmed: false }, evidenceVersion: 2, promptVersion: "rq-kano-v1", model: null, result: null, safeErrorCode: null, safeErrorSummary: null, createdBy: "actor-1", createdAt: "2026-10-25T00:00:00.000Z", completedAt: null }];
+  const post = (evidenceVersion: number) => new Request(`http://localhost/api/requirements/${requirement.id}/kano-runs`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ evidenceVersion }) });
+  const draft = await handleApiRequest(post(3), d);
+  assert.equal(draft.status, 409);
+  const ok = await handleApiRequest(post(2), d);
+  assert.equal(ok.status, 202);
+  active = true;
+  const activeConflict = await handleApiRequest(post(2), d);
+  assert.equal(activeConflict.status, 409);
+  const list = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/kano-runs`), d);
+  const body = await list.json() as { items: Array<{ staleInputs: boolean }> };
+  // 源版本一致但最新已批准资料是 v2 且报告引用 v2 → 不过期；此处 run.sourceVersion=1 与 requirement 一致
+  assert.equal(typeof body.items[0]?.staleInputs, "boolean");
+});

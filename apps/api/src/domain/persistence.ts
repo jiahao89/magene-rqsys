@@ -19,7 +19,7 @@ export type PersonMatchMethod = "tb_user_id" | "unique_name" | "manual";
 export type ConfidenceLevel = "high" | "medium" | "low";
 export type PriorityLevel = "P0" | "P1" | "P2" | "P3";
 export type PublishStatus = "draft" | "published" | "retired";
-export type PipelineJobType = "sync" | "analysis" | "base_push";
+export type PipelineJobType = "sync" | "analysis" | "base_push" | "kano_run";
 export type PipelineJobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 
 // AI 只能使用模块名称；责任人只用于工作台展示和维护，不参与模型输入。
@@ -338,4 +338,23 @@ export interface KanoEvidenceVersion {
   createdAt: string;
   approvedBy: string | null;
   approvedAt: string | null;
+}
+
+/** V02-T14：一次 Kano Beta 假设报告运行。输入快照固定；结果永远标记 AI 假设（待验证）。 */
+export interface KanoRunRecord {
+  id: string;
+  requirementId: string;
+  runVersion: number;
+  status: "running" | "succeeded" | "failed";
+  sourceVersion: number;
+  audienceSnapshot: { tags: string[]; confirmed: boolean };
+  evidenceVersion: number;
+  promptVersion: string;
+  model: string | null;
+  result: unknown;
+  safeErrorCode: string | null;
+  safeErrorSummary: string | null;
+  createdBy: string;
+  createdAt: string;
+  completedAt: string | null;
 }

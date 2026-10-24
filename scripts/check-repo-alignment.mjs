@@ -45,6 +45,7 @@ const SHARED = [
   "analysis/repository-adapter.ts",
   "audit/event.ts",
   "requirements/processing.ts",
+  "beta/kano.ts",
 ];
 
 // 平台适配：允许不同，但必须在 DECLARED 里给出理由，避免"漂移了却没人知道"。

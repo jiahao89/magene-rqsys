@@ -8,7 +8,7 @@ import { stableJson } from "../sync/hashes.js";
 import type { AuditEventRepository, AnalysisRunRepository, PipelineJobRepository, SourceConfigRepository, SyncBatchRepository, SyncItemRepository, PersonMappingRepository, RequirementQueryRepository, BasePushRunRepository, ModuleDictionaryRepository, PriorityRuleRepository, SourceSnapshotRepository, TeamDirectoryRepository } from "../application/repositories.js";
 import type { PersonMappingRecord, AnalysisRunRecord, ModuleDictionaryVersionRecord, PriorityRuleVersionRecord, RequirementRecord, SourceConfigRecord, SyncBatchRecord } from "../domain/persistence.js";
 import type { TeamPersonRecord } from "../domain/team-directory.js";
-import { AuditListQuerySchema, KanoEvidenceImportSchema, AudienceUpdateSchema, BatchListQuerySchema, RiceDraftUpdateSchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementIntakeEditSchema, RequirementIntakeSchema, RequirementListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
+import { AuditListQuerySchema, KanoEvidenceImportSchema, KanoRunRequestSchema, AudienceUpdateSchema, BatchListQuerySchema, RiceDraftUpdateSchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementIntakeEditSchema, RequirementIntakeSchema, RequirementListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
 import { createHash, randomUUID } from "node:crypto";
 import { SourceConfigUpdateSchema, type ResolvedSourceConfigUpdate } from "../contracts/source.js";
 import { DictionaryCreateSchema, PriorityRuleCreateSchema, TeamModulesSaveSchema, TeamPersonCreateSchema, TeamPersonFeishuBindSchema, TeamPersonRenameSchema } from "../contracts/rules.js";
@@ -501,6 +501,32 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
       if (result.outcome === "not_found") return jsonError("NOT_FOUND");
       if (result.outcome === "pii_flagged") return jsonError("CONFLICT", "资料包含疑似个人信息，去标识化后重新导入再批准。");
       return json({ outcome: "approved" });
+    } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
+  }
+  const kanoRunsMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/kano-runs$/);
+  if ((method === "POST" || method === "GET") && kanoRunsMatch) {
+    // V02-T14：手动触发 Kano 假设报告。仅引用已批准且未标记 PII 的资料版本；同需求同时只允许一个
+    // 运行中的报告；运行独立入队（kano_run），失败不触碰主分析/推送/通知。
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const requirement = await repositories.requirements.get(decodeURIComponent(kanoRunsMatch[1]!)); if (!requirement) return jsonError("NOT_FOUND");
+    if (method === "GET") {
+      const runs = await repositories.requirements.listKanoRuns?.(requirement.id) ?? [];
+      // 旧报告标明过期依据（AC08）：输入源版本或资料版本落后于当前时提示复核。
+      const latestEvidence = ((await repositories.requirements.listKanoEvidence?.() ?? []).filter((v) => v.status === "approved").sort((a, b) => b.version - a.version)[0]?.version) ?? null;
+      return json({ items: runs.map((run) => ({ ...run, staleInputs: run.sourceVersion !== requirement.sourceVersion || (latestEvidence !== null && run.evidenceVersion !== latestEvidence) })) });
+    }
+    const parsed = KanoRunRequestSchema.safeParse(await request.json().catch(() => null)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
+    const evidence = ((await repositories.requirements.listKanoEvidence?.() ?? []).find((version) => version.version === parsed.data.evidenceVersion)) ?? null;
+    if (!evidence || evidence.status !== "approved" || evidence.piiFlagged) return jsonError("CONFLICT", "资料版本未批准或包含未脱敏内容，不能作为 Kano 输入。");
+    try {
+      const result = await repositories.requirements.createKanoRun({
+        requirementId: requirement.id, sourceVersion: requirement.sourceVersion,
+        audienceSnapshot: { tags: requirement.audienceTags, confirmed: requirement.audienceConfirmed },
+        evidenceVersion: evidence.version, promptVersion: "rq-kano-v1", createdBy: auth.actor.id,
+      });
+      if (result.outcome === "active_run_exists") return jsonError("CONFLICT", "该需求已有运行中的 Kano 报告，请等待完成后再重跑。");
+      return json({ requirementId: requirement.id, runVersion: result.run.runVersion, status: "queued" }, 202);
     } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
   }
   const riceMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/rice-draft$/);

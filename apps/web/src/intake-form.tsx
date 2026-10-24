@@ -2,7 +2,7 @@
 // 只必填标题/描述/渠道；四段提示是 placeholder 引导，不是四个必填项（PRD 3.2）。
 // 幂等键在同一次提交意图内复用（失败重试不换键），成功或重新展开表单后重置。
 import { useEffect, useRef, useState } from "react";
-import { ApiError, AUDIENCE_LEVELS, AUDIENCE_LEVEL_NAMES, REQUIREMENT_INTAKE_CHANNELS, REQUIREMENT_INTAKE_TYPES, createRequirement, getFunctionModules, getRiceDraft, listKanoEvidence, saveRiceDraft, setAudienceTags, updateRequirement, type KanoEvidenceVersionDto, type RiceDraft } from "./api";
+import { ApiError, AUDIENCE_LEVELS, AUDIENCE_LEVEL_NAMES, REQUIREMENT_INTAKE_CHANNELS, REQUIREMENT_INTAKE_TYPES, createRequirement, getFunctionModules, getRiceDraft, listKanoEvidence, listKanoRuns, saveRiceDraft, setAudienceTags, triggerKanoRun, updateRequirement, type KanoEvidenceVersionDto, type KanoRunDto, type RiceDraft } from "./api";
 
 export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) => void }) {
   const [open, setOpen] = useState(false);
@@ -235,10 +235,19 @@ export function BetaPanel({ requirementId }: { requirementId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [evidence, setEvidence] = useState<KanoEvidenceVersionDto[]>([]);
+  const [runs, setRuns] = useState<KanoRunDto[]>([]);
+  const [selectedEvidence, setSelectedEvidence] = useState("");
+  const [kanoBusy, setKanoBusy] = useState(false);
+  const [kanoError, setKanoError] = useState<string | null>(null);
   useEffect(() => {
     if (!open) return;
     // V02-T13：只读列出已批准资料；打开面板不运行任何模型。
-    void listKanoEvidence().then((result) => setEvidence(result.items.filter((item) => item.status === "approved" && !item.piiFlagged))).catch(() => setEvidence([]));
+    void listKanoEvidence().then((result) => {
+      const approved = result.items.filter((item) => item.status === "approved" && !item.piiFlagged);
+      setEvidence(approved);
+      setSelectedEvidence(approved[0] ? String(approved[0].version) : "");
+    }).catch(() => setEvidence([]));
+    void listKanoRuns(requirementId).then((result) => setRuns(result.items)).catch(() => setRuns([]));
     void getRiceDraft(requirementId).then((loaded) => {
       setDraft(loaded);
       setReach(loaded.inputs.reach ?? ""); setImpact(loaded.inputs.impact ?? "");
@@ -281,6 +290,34 @@ export function BetaPanel({ requirementId }: { requirementId: string }) {
       {evidence.length === 0 ? <p className="status-hint">暂无已批准的访谈资料。</p> : <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
         {evidence.map((item) => <li key={item.id}>v{item.version} · {item.title}{item.coverageNotes ? `（覆盖限制：${item.coverageNotes}）` : ""}{item.sourceUrl ? <> · <a href={item.sourceUrl} target="_blank" rel="noreferrer">来源</a></> : null}</li>)}
       </ul>}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 8 }}>
+        <select aria-label="Kano 资料版本" value={selectedEvidence} onChange={(event) => setSelectedEvidence(event.target.value)} disabled={kanoBusy || evidence.length === 0}>
+          <option value="">选择资料版本</option>
+          {evidence.map((item) => <option key={item.id} value={String(item.version)}>v{item.version} · {item.title}</option>)}
+        </select>
+        <button className="button button-primary button-small" disabled={kanoBusy || !selectedEvidence} onClick={() => void (async () => {
+          setKanoBusy(true); setKanoError(null);
+          try {
+            await triggerKanoRun(requirementId, Number(selectedEvidence));
+            setRuns((await listKanoRuns(requirementId)).items);
+          } catch (cause) {
+            setKanoError(cause instanceof ApiError ? cause.message : "触发失败，请重试。");
+          } finally { setKanoBusy(false); }
+        })()}>生成 Kano 假设报告（手动）</button>
+        {kanoBusy && <span className="status-hint" role="status">已提交，运行中…</span>}
+        {kanoError && <span className="field-error" role="alert">{kanoError}</span>}
+      </div>
+      {runs.length > 0 && <div style={{ marginTop: 8 }}>
+        {runs.slice(0, 3).map((run) => <div key={run.id} className="req-field" style={{ borderTop: "1px dashed rgba(125,131,140,.3)", paddingTop: 8, marginTop: 8 }}>
+          <strong>v{run.runVersion} · {run.status === "succeeded" ? "AI假设（待验证）" : run.status === "running" ? "运行中" : `失败（${run.safeErrorCode ?? ""}）`}{run.staleInputs ? " · 输入已过期，建议重跑" : ""}</strong>
+          {run.result && <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+            {run.result.capabilities.map((capability, index) => <li key={index}><strong>{capability.capability}</strong>（{capability.audience ?? "人群待判断"}）→ 候选 <strong>{capability.candidateType}</strong>{capability.conflicts?.length ? ` · 冲突：${capability.conflicts.join("；")}` : ""}<br /><span className="status-hint">正向：{capability.positiveQuestion}／反向：{capability.negativeQuestion}</span><br /><span className="status-hint">推演倾向：{capability.simulatedLeaning.option}——{capability.simulatedLeaning.rationale}；证据 {capability.evidence.join(", ")}</span></li>)}
+          </ul>}
+          {run.result && run.result.gaps.length > 0 && <p className="status-hint">缺口：{run.result.gaps.join("；")}</p>}
+          {run.result && <p className="status-hint">置信度：{run.result.confidence}——{run.result.confidenceReason}</p>}
+          {run.status === "failed" && <p className="status-hint">{run.safeErrorSummary ?? ""}</p>}
+        </div>)}
+      </div>}
     </div>
     {error && <div className="field-error" role="alert" style={{ flexBasis: "100%" }}>{error}</div>}
   </div>;
