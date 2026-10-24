@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { FeishuBitableClient } from "./transport.js";
+import { BaseKeyConflictError, FeishuBitableClient } from "./transport.js";
 import { FeishuBasePushAdapter } from "./client.js";
 import { RateLimitedBaseClient } from "./rate-limit.js";
 
@@ -115,6 +115,28 @@ test("tenant token 请求并缓存至过期前", async () => {
   assert.equal(tokenRequests.length, 1);
 });
 
+test("V02-T03 findByPlatformKey 按需求平台 ID 精确过滤；多行命中抛键冲突", async () => {
+  let items: unknown[] = [{ record_id: "rec-1", fields: { 需求平台ID: "RQ-000001" } }];
+  const client = new FeishuBitableClient({
+    ...CONFIG,
+    keyFields: { requirementId: "TB需求ID", platformRequirementId: "需求平台ID" },
+    fetch: fakeFetch((path) => {
+      if (path.includes("/tenant_access_token")) return { body: { code: 0, tenant_access_token: "t-1", expire: 3600 } };
+      if (path.includes("/records?")) {
+        const url = new URL(`https://x${path}`);
+        assert.equal(url.searchParams.get("filter"), 'CurrentValue.[需求平台ID] = "RQ-000001"');
+        assert.deepEqual(JSON.parse(url.searchParams.get("field_names") ?? "[]"), ["需求平台ID"]);
+        return { body: { code: 0, data: { items } } };
+      }
+      return { body: { code: 0 } };
+    }, []),
+  });
+  const found = await client.findByPlatformKey("RQ-000001");
+  assert.equal(found?.recordId, "rec-1");
+  items = [{ record_id: "rec-1", fields: {} }, { record_id: "rec-2", fields: {} }];
+  await assert.rejects(() => client.findByPlatformKey("RQ-000001"), BaseKeyConflictError);
+});
+
 test("findByRequirementKey 使用 Bitable v1 按 TB 需求 ID 精确过滤", async () => {
   const calls: string[] = [];
   const client = new FeishuBitableClient({
@@ -163,7 +185,7 @@ test("重复 TB 需求 ID 拒绝任意选择记录", async () => {
   });
   await assert.rejects(
     () => client.findByRequirementKey({ projectId: "p", requirementId: "r" }),
-    /multiple records for the configured requirement key/,
+    (error: unknown) => error instanceof BaseKeyConflictError && /matched 2 rows/.test(error.message),
   );
 });
 

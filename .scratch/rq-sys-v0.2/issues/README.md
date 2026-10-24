@@ -15,7 +15,7 @@
 |---|---|---|---|---|
 | V02-T01 | [收敛共同工作流入口并保持TB行为](01-workflow-prefactor.md) | implemented-local | — | 核心 |
 | V02-T02 | [扩展统一来源身份并读回现有TB记录](02-unified-source-expand.md) | implemented-local | 01 | 核心 |
-| V02-T03 | [按平台编号复用Base旧TB行并安全切换](03-platform-base-key.md) | ready-for-agent | 02 | 核心 |
+| V02-T03 | [按平台编号复用Base旧TB行并安全切换](03-platform-base-key.md) | implemented-local | 02 | 核心 |
 | V02-T04 | [最小新建需求贯通AI与Base](04-manual-intake-minimal.md) | ready-for-agent | 03 | 核心 |
 | V02-T05 | [补齐精简需求上下文并展示来源](05-manual-definition-context.md) | ready-for-agent | 04 | 核心 |
 | V02-T06 | [需求级选择模块与负责人并通知分配人](06-direct-owner-and-module.md) | ready-for-agent | 04 | 核心 |
@@ -34,7 +34,7 @@
 
 ## 当前可领取的前沿
 
-- **03**：按平台编号复用 Base 旧 TB 行并安全切换（02 已于 2026-10-24 implemented-local：迁移 0009 + 手工收录事务能力 + 读回/展示，两仓全量验证；发布前目标库需按序执行 0008/0009）。
+- **04**：最小新建需求贯通 AI 与 Base（03 已于 2026-10-24 implemented-local：Base 双键解析/冲突结局/手工行可空 TB 键，两仓全量验证；目标 Base 回填核对留给 16）。
 - **15** 已于 2026-10-23 实现为"同标题仅提示、独立处理"（implemented-local；AC04 计数拆分与 AC06 联合回归待后续票补齐，正式结论汇合到 16）。
 - **10** 规则确认包已备（见票内链接）；新算法实施仍等待 PM Leader 确认输入、公式、阈值和校准案例。
 - 02完成后，08、11、13可与03→04分支独立推进；实际开发先协调共享契约和仓储的文件归属。

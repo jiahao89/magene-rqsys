@@ -16,7 +16,7 @@ import { randomUUID } from "node:crypto";
 import type { RequirementQueryRepository, PersonMappingRepository, BasePushRunRepository, AuditEventRepository, AnalysisRunRepository, SourceSnapshotRepository } from "../application/repositories.js";
 import type { AnalysisRunRecord, FeishuIdType, PersonMappingRecord, RequirementRecord, SourceSnapshotRecord } from "../domain/persistence.js";
 import type { FeishuBasePushAdapter, OmittedField } from "./client.js";
-import { FeishuApiError } from "./transport.js";
+import { BaseKeyConflictError, FeishuApiError } from "./transport.js";
 import { normalizeOwnerName } from "../owner/mapping.js";
 import { isIntakeComplete } from "../domain/workflow.js";
 
@@ -387,12 +387,12 @@ export function createBasePushService(deps: BasePushServiceDeps) {
         substantiveChanged, latestAnalysis,
         willWriteOwner: Boolean(baseOwner),
         resolveBaseOwner: async () => lastSuccessfulPush
-          ? (await deps.base.findCurrentOwner?.({ requirementId: req.teambitionRequirementId! })) ?? null
+          ? (await deps.base.findCurrentOwner?.({ platformRequirementId: req.platformRequirementId, requirementId: req.teambitionRequirementId })) ?? null
           : null,
       });
       const sourceCreatedAt = req.sourceCreatedAt ? Date.parse(req.sourceCreatedAt) : Number.NaN;
       pushedResult = await deps.base.push({
-        projectId: deps.sourceProjectId, requirementId: req.teambitionRequirementId!, platformRequirementId: req.platformRequirementId, requirementDbId: req.id,
+        projectId: deps.sourceProjectId, requirementId: req.teambitionRequirementId, platformRequirementId: req.platformRequirementId, requirementDbId: req.id,
         // 每次推送都写深链（含首推静默）：PM 从通知按钮点进来能直接打开该需求详情。
         requirementLink: requirementDeepLink(webBaseUrl, req.id),
         title: req.title, description: req.description,
@@ -413,6 +413,14 @@ export function createBasePushService(deps: BasePushServiceDeps) {
         } } : {}),
       });
     } catch (error) {
+      if (error instanceof BaseKeyConflictError) {
+        // 键冲突（V02-T03-AC02）：数据级冲突，停该条并审计；不自动合并、不另建行。
+        // 推送落 failed 供数据修复后手动重试；worker 把 conflict 视为终态不再自动重试。
+        await deps.basePushes.updateResult(run.id, { status: "failed", safeErrorCode: "BASE_KEY_CONFLICT", safeErrorSummary: "Base key conflict; inspect the Base rows for this requirement.", completedAt: now().toISOString() });
+        await deps.requirements.setPushState(req.id, "failed");
+        await deps.audit.append({ id: randomUUID(), actorId: deps.actorId, eventType: "base.push", entityType: "requirement", entityId: req.id, result: "denied", safeDetails: { sourceVersion: req.sourceVersion, reason: "base_key_conflict" }, occurredAt: now().toISOString() });
+        return { kind: "conflict" };
+      }
       const failure = safeBaseFailure(error);
       await deps.basePushes.updateResult(run.id, { status: "failed", safeErrorCode: failure.code, safeErrorSummary: failure.summary, completedAt: now().toISOString() });
       await deps.requirements.setPushState(req.id, "failed");

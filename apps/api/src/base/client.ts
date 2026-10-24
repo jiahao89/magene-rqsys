@@ -1,4 +1,5 @@
-import { FeishuApiError } from "./transport.js";
+import { BaseKeyConflictError, FeishuApiError } from "./transport.js";
+export { BaseKeyConflictError };
 
 export interface BaseRequirementKey { requirementId: string; /** Legacy callers may still provide this; Base lookup ignores it. */ projectId?: string }
 export interface BaseRecord { recordId: string; fields: Record<string, unknown> }
@@ -8,6 +9,8 @@ export interface BaseClient {
   // Production transport resolves the target schema; legacy injected test clients use text metadata.
   readFieldType?(fieldName: string): Promise<number>;
   findByRequirementKey(key: BaseRequirementKey): Promise<BaseRecord | null>;
+  /** V02-T03：按需求平台 ID 查找（跨来源首选键）。旧注入客户端未实现时适配器退回 TB 键兼容路径。 */
+  findByPlatformKey?(platformRequirementId: string): Promise<BaseRecord | null>;
   create(fields: Record<string, unknown>, options?: BaseWriteOptions): Promise<BaseRecord>;
   update(recordId: string, fields: Record<string, unknown>, options?: BaseWriteOptions): Promise<BaseRecord>;
   readPmFields(recordId: string): Promise<Record<string, unknown>>;
@@ -72,8 +75,11 @@ export interface BaseFieldMap {
 
 export interface BasePushInput {
   projectId: string;
-  /** Teambition 需求 ID（24 位字符串）。写入 Base 的「需求 ID」字段，用于跨系统对账。 */
-  requirementId: string;
+  /**
+   * Teambition 需求 ID（24 位字符串）。写入 Base 的「需求 ID」字段，用于跨系统对账。
+   * V02-T03 起手工来源为 null：不写 TB 专属字段、不做 TB 兼容查找。
+   */
+  requirementId: string | null;
   /** RQ-Sys display ID (for example RQ-000001), stored separately from the Teambition ID. */
   platformRequirementId?: string;
   /**
@@ -156,19 +162,53 @@ export class FeishuBasePushAdapter {
    * 只读当前 Base 行的人员字段，用于通知收件人判定。
    * 不用于覆盖写入：应用仍按自身负责人规则决定是否改 Base；读取失败由调用方兜底。
    */
-  async findCurrentOwner(key: BaseRequirementKey): Promise<{ userId: string; idType: "open_id" | "user_id" | "union_id" } | null> {
-    const record = await this.client.findByRequirementKey(key);
+  async findCurrentOwner(key: { platformRequirementId?: string; requirementId: string | null }): Promise<{ userId: string; idType: "open_id" | "user_id" | "union_id" } | null> {
+    const record = await this.resolveExisting(key);
     if (!record) return null;
     const fields = await this.client.readPmFields(record.recordId);
     return baseUserFieldValue(fields[this.fields.owner]);
   }
 
+  /**
+   * V02-T03 双键解析（AC01/AC02）：
+   * 1) 平台键优先——命中即用；命中行的 TB 字段与本次 TB ID 不一致时是键冲突；
+   * 2) 兼容窗口：仅 TB 来源（requirementId 非空）允许按旧 TB ID 查唯一旧行；
+   *    行上平台字段为空 → 本次写入自然回填；已存且与本次平台 ID 不同 → 键冲突；
+   * 3) 冲突向上抛 BaseKeyConflictError：停该条并审计，不自动合并、不另建行。
+   * 多行命中由传输层抛同一错误。
+   */
+  private async resolveExisting(input: { platformRequirementId?: string | null; requirementId: string | null }): Promise<BaseRecord | null> {
+    const platformField = this.fields.platformRequirementId;
+    if (platformField && input.platformRequirementId && this.client.findByPlatformKey) {
+      const byPlatform = await this.client.findByPlatformKey(input.platformRequirementId);
+      if (byPlatform) {
+        if (input.requirementId !== null) {
+          const rowTbId = byPlatform.fields[this.fields.requirementId];
+          if (typeof rowTbId === "string" && rowTbId.trim() && rowTbId !== input.requirementId) {
+            throw new BaseKeyConflictError(`Base row for platform ${input.platformRequirementId} holds TB id ${rowTbId}, expected ${input.requirementId}`);
+          }
+        }
+        return byPlatform;
+      }
+    }
+    if (input.requirementId === null) return null;
+    const legacy = await this.client.findByRequirementKey({ requirementId: input.requirementId });
+    if (!legacy) return null;
+    if (platformField && input.platformRequirementId) {
+      const rowPlatform = legacy.fields[platformField];
+      if (typeof rowPlatform === "string" && rowPlatform.trim() && rowPlatform !== input.platformRequirementId) {
+        throw new BaseKeyConflictError(`Base row for TB id ${input.requirementId} holds platform ${rowPlatform}, expected ${input.platformRequirementId}`);
+      }
+    }
+    return legacy;
+  }
+
   async push(input: BasePushInput): Promise<BasePushResult> {
     const omittedFields: OmittedField[] = [];
-    const key = { requirementId: input.requirementId };
-    const existing = await this.client.findByRequirementKey(key);
+    const existing = await this.resolveExisting(input);
     const delta: Record<string, unknown> = {
-      [this.fields.requirementId]: input.requirementId,
+      // TB 需求 ID 仅 TB 来源写入；手工行为空不得伪造 TB 专属字段（V02-T03-AC05）。
+      ...(input.requirementId === null ? {} : { [this.fields.requirementId]: input.requirementId }),
       [this.fields.owner]: input.owner ? [{ id: input.owner.userId }] : null,
     };
     if (this.fields.platformRequirementId) {

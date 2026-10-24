@@ -123,7 +123,7 @@ const baseClient = process.env.FEISHU_APP_ID && process.env.FEISHU_APP_SECRET &&
   ? new RateLimitedBaseClient(new FeishuBitableClient({
       appId: process.env.FEISHU_APP_ID, appSecret: process.env.FEISHU_APP_SECRET,
       appToken: process.env.BASE_APP_TOKEN, tableId: process.env.BASE_TABLE_ID,
-      keyFields: { requirementId: baseFields.requirementId },
+      keyFields: { requirementId: baseFields.requirementId, ...(baseFields.platformRequirementId ? { platformRequirementId: baseFields.platformRequirementId } : {}) },
     }), {
       // 全量同步逐条写 Base（311 条 ≈ 数百次连续调用）。默认 100ms ≈ 10 次/秒，
       // 用 BASE_MIN_INTERVAL_MS 覆盖；设为 0 可关闭（仅保留串行化）。

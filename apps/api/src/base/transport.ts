@@ -15,7 +15,7 @@ export interface FeishuBitableConfig {
   appToken: string;
   tableId: string;
   // Teambition ID is unique within the single configured source project and is the Base upsert key.
-  keyFields: { requirementId: string; projectId?: string };
+  keyFields: { requirementId: string; projectId?: string; platformRequirementId?: string };
   baseUrl?: string;
   fetch?: FetchLike;
   /** 单次 Base 请求超时（毫秒）。默认 15s；设为 0 关闭。 */
@@ -37,6 +37,17 @@ export type FeishuAction = "token endpoint" | "token request" | "field schema" |
 export type FeishuFailureKind = "http" | "api" | "invalid_response" | "ambiguous_response";
 
 /** Structured safe error metadata; callers should use fields, never parse message text. */
+/**
+ * Base 键冲突（V02-T03）：平台键/TB 键解析到多行，或命中行的另一键与本次需求不一致。
+ * 这是数据级冲突：调用方必须停该条并审计，不得自动合并或另建行。消息只含资源标识，不含 PII。
+ */
+export class BaseKeyConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BaseKeyConflictError";
+  }
+}
+
 export class FeishuApiError extends Error {
   constructor(
     readonly kind: FeishuFailureKind,
@@ -169,7 +180,33 @@ export class FeishuBitableClient implements BaseClient {
     const payload = (await res.json()) as FeishuEnvelope;
     this.assertOk(payload, "records filter");
     const items = payload.data?.items ?? [];
-    if (items.length > 1) throw new FeishuApiError("ambiguous_response", "records filter");
+    if (items.length > 1) throw new BaseKeyConflictError(`Base TB id lookup matched ${items.length} rows for requirement ${key.requirementId}`);
+    const record = items[0];
+    return record ? { recordId: record.record_id, fields: record.fields ?? {} } : null;
+  }
+
+  /**
+   * V02-T03：按需求平台 ID（RQ-######）查找 Base 行——跨来源首选键。
+   * 与 TB 键查找同一端点与转义规则；多行命中是键冲突，抛 BaseKeyConflictError。
+   */
+  async findByPlatformKey(platformRequirementId: string): Promise<BaseRecord | null> {
+    const field = this.config.keyFields.platformRequirementId;
+    if (!field) throw new Error("Base platform key field is not configured");
+    const filter = `CurrentValue.[${field}] = ${JSON.stringify(platformRequirementId)}`;
+    const query = new URLSearchParams({
+      filter,
+      field_names: JSON.stringify([field]),
+      page_size: "2",
+    });
+    const res = await this.authed(
+      `${this.baseUrl}/open-apis/bitable/v1/apps/${this.config.appToken}/tables/${this.config.tableId}/records?${query.toString()}`,
+      { method: "GET" },
+    );
+    if (!res.ok) throw await feishuHttpFailure(res, "records filter");
+    const payload = (await res.json()) as FeishuEnvelope;
+    this.assertOk(payload, "records filter");
+    const items = payload.data?.items ?? [];
+    if (items.length > 1) throw new BaseKeyConflictError(`Base platform id lookup matched ${items.length} rows for ${platformRequirementId}`);
     const record = items[0];
     return record ? { recordId: record.record_id, fields: record.fields ?? {} } : null;
   }

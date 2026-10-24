@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { AnalysisRunRecord, BasePushRunRecord, PersonMappingRecord, RequirementRecord, SourceSnapshotRecord } from "../domain/persistence.js";
 import type { FeishuBasePushAdapter } from "./client.js";
-import { FeishuApiError } from "./transport.js";
+import { BaseKeyConflictError, FeishuApiError } from "./transport.js";
 import { createBasePushService } from "./push-service.js";
 
 /** 上一次成功推送时快照里的旧负责人 TB ID；harness 用它区分「旧负责人映射」与「当前负责人映射」。 */
@@ -48,6 +48,7 @@ const sourceSnapshot = (overrides: Partial<SourceSnapshotRecord> = {}): SourceSn
 
 interface CapturedPushInput {
   projectId: string;
+  requirementId?: string | null;
   owner?: { userId: string; idType: "open_id" | "user_id" | "union_id" } | null;
   platformRequirementId: string;
   substantiveChanged: boolean;
@@ -762,4 +763,26 @@ test("a hand-picked owner keeps precedence after Teambition later provides a map
   assert.equal(result.kind, "pushed");
   assert.deepEqual(h.baseInput?.owner, { userId: "u-assignee", idType: "user_id" });
   assert.ok(!h.calls.includes("manual-owner-cleared"));
+});
+
+test("V02-T03 a Base key conflict stops the push with a denied audit and a failed run", async () => {
+  const h = makeHarness({ pushError: new BaseKeyConflictError("Base row for TB id tb-1 holds platform RQ-000099") });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "conflict");
+  assert.equal(h.savedFailure?.code, "BASE_KEY_CONFLICT");
+  assert.ok(h.calls.includes("state:failed"));
+  const denied = h.auditEvents.find((event) => event.result === "denied");
+  assert.equal(denied?.safeDetails.reason, "base_key_conflict");
+});
+
+test("V02-T03 manual requirements push with a null TB id and the platform key", async () => {
+  const req = requirement({
+    sourceType: "web_manual", sourceChannel: "售后", sourceConfigId: null, teambitionRequirementId: null,
+    pipeline: { pull: "collected", analysis: "analyzed", owner: "not_required", push: "pending" },
+  });
+  const h = makeHarness({ req });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.equal(h.baseInput?.requirementId, null);
+  assert.equal(h.baseInput?.platformRequirementId, "RQ-000001");
 });

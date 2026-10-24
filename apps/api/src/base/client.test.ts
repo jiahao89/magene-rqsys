@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { FeishuBasePushAdapter, type BaseClient } from "./client.js";
-import { FeishuApiError } from "./transport.js";
+import { BaseKeyConflictError, FeishuApiError } from "./transport.js";
 
 function fakeBase(initial?: { recordId: string; fields: Record<string, unknown> }) {
   const calls: string[] = [];
   let row = initial ?? null;
   const client: BaseClient = {
     async findByRequirementKey(key) { calls.push("find"); return row && row.fields["TB需求ID"] === key.requirementId ? row : null; },
+    async findByPlatformKey(platformId) { calls.push("find-platform"); return row && row.fields["需求平台ID"] === platformId ? row : null; },
     async create(fields) { calls.push("create"); row = { recordId: "record-new", fields: { ...fields } }; return row; },
     async update(recordId, fields) { calls.push("update"); assert.equal(recordId, row?.recordId); row = { recordId, fields: { ...row!.fields, ...fields } }; return row; },
     async readPmFields(recordId) { calls.push("snapshot"); assert.equal(recordId, row?.recordId); return { "PM状态": row!.fields["PM状态"] ?? null, "PM确认模块": row!.fields["PM确认模块"] ?? null, "PM确认优先级": row!.fields["PM确认优先级"] ?? null, "处理人": row!.fields["处理人"] ?? null, "处理时间": row!.fields["处理时间"] ?? null, "结构化备注": row!.fields["结构化备注"] ?? null }; },
@@ -492,4 +493,79 @@ test("propagates a second-request failure that is not FieldNameNotFound", async 
       recipientUserId: PM_LEADER_USER_ID, recipientIdType: "user_id", ownerMergeUserId: null,
     },
   }), /1254061/);
+});
+
+const t03FieldMap = { requirementId: "TB需求ID", platformRequirementId: "需求平台ID", owner: "执行人", source: { title: "标题" }, ai: {}, pm: ["PM状态"] };
+
+test("V02-T03 platform key wins: existing row located by RQ id without a TB lookup", async () => {
+  const fake = fakeBase({ recordId: "record-1", fields: { "TB需求ID": "tb-1", "需求平台ID": "RQ-000001" } });
+  const adapter = new FeishuBasePushAdapter(fake.client, t03FieldMap);
+  const result = await adapter.push({ projectId: "p", requirementId: "tb-1", platformRequirementId: "RQ-000001", requirementDbId: "11111111-2222-4333-8444-555555555555", title: "T", owner: null, sourceVersion: 2, substantiveChanged: false, idempotencyKey: "k" });
+  assert.equal(result.created, false);
+  assert.equal(result.recordId, "record-1");
+  // 平台键命中后不再退回 TB 查找
+  assert.equal(fake.calls.includes("find"), false);
+});
+
+test("V02-T03 compat window: platform miss falls back to the unique TB row and backfills the platform id", async () => {
+  const fake = fakeBase({ recordId: "record-1", fields: { "TB需求ID": "tb-1" } });
+  const adapter = new FeishuBasePushAdapter(fake.client, t03FieldMap);
+  const result = await adapter.push({ projectId: "p", requirementId: "tb-1", platformRequirementId: "RQ-000007", requirementDbId: "11111111-2222-4333-8444-555555555555", title: "T", owner: null, sourceVersion: 2, substantiveChanged: false, idempotencyKey: "k" });
+  assert.equal(result.created, false);
+  assert.deepEqual(fake.calls, ["find-platform", "find", "update"]);
+  assert.equal(fake.row()?.fields["需求平台ID"], "RQ-000007");
+});
+
+test("V02-T03 key conflict: TB row already holds a different platform id", async () => {
+  const fake = fakeBase({ recordId: "record-1", fields: { "TB需求ID": "tb-1", "需求平台ID": "RQ-000099" } });
+  const adapter = new FeishuBasePushAdapter(fake.client, t03FieldMap);
+  await assert.rejects(
+    () => adapter.push({ projectId: "p", requirementId: "tb-1", platformRequirementId: "RQ-000007", requirementDbId: "11111111-2222-4333-8444-555555555555", title: "T", owner: null, sourceVersion: 2, substantiveChanged: false, idempotencyKey: "k" }),
+    BaseKeyConflictError,
+  );
+  assert.equal(fake.calls.includes("update"), false);
+});
+
+test("V02-T03 key conflict: platform row holds a different TB id", async () => {
+  const fake = fakeBase({ recordId: "record-1", fields: { "TB需求ID": "tb-other", "需求平台ID": "RQ-000007" } });
+  const adapter = new FeishuBasePushAdapter(fake.client, t03FieldMap);
+  await assert.rejects(
+    () => adapter.push({ projectId: "p", requirementId: "tb-1", platformRequirementId: "RQ-000007", requirementDbId: "11111111-2222-4333-8444-555555555555", title: "T", owner: null, sourceVersion: 2, substantiveChanged: false, idempotencyKey: "k" }),
+    BaseKeyConflictError,
+  );
+});
+
+test("V02-T03 manual rows create without TB fields and never query the TB key", async () => {
+  const fake = fakeBase();
+  const adapter = new FeishuBasePushAdapter(fake.client, t03FieldMap);
+  const result = await adapter.push({ projectId: "p", requirementId: null, platformRequirementId: "RQ-000042", requirementDbId: "11111111-2222-4333-8444-555555555555", title: "售后诉求", owner: null, sourceVersion: 1, substantiveChanged: false, idempotencyKey: "k" });
+  assert.equal(result.created, true);
+  assert.deepEqual(fake.calls, ["find-platform", "create"]);
+  assert.equal("TB需求ID" in (fake.row()?.fields ?? {}), false);
+  assert.equal(fake.row()?.fields["需求平台ID"], "RQ-000042");
+});
+
+test("V02-T03 create-timeout recovery: a landed row is reused by the platform key on replay", async () => {
+  // 第一次 create 抛超时但外部已落行；重放按平台键对账到同一行，不重复建行。
+  let row: { recordId: string; fields: Record<string, unknown> } | null = null;
+  let createCalls = 0;
+  const calls: string[] = [];
+  const client: BaseClient = {
+    async findByRequirementKey() { calls.push("find"); return null; },
+    async findByPlatformKey(id) { calls.push("find-platform"); return row && row.fields["需求平台ID"] === id ? row : null; },
+    async create(fields) {
+      createCalls += 1; calls.push("create");
+      if (createCalls === 1) { row = { recordId: "record-landed", fields: { ...fields } }; throw new Error("socket timeout"); }
+      throw new Error("must not create twice");
+    },
+    async update(recordId, fields) { calls.push("update"); row = { recordId, fields: { ...row!.fields, ...fields } }; return row; },
+    async readPmFields() { return {}; },
+  };
+  const adapter = new FeishuBasePushAdapter(client, t03FieldMap);
+  const input = { projectId: "p", requirementId: "tb-1" as string | null, platformRequirementId: "RQ-000050", requirementDbId: "11111111-2222-4333-8444-555555555555", title: "T", owner: null, sourceVersion: 1, substantiveChanged: false, idempotencyKey: "k" };
+  await assert.rejects(() => adapter.push(input), /socket timeout/);
+  const replay = await adapter.push(input);
+  assert.equal(replay.created, false);
+  assert.equal(replay.recordId, "record-landed");
+  assert.equal(createCalls, 1);
 });
