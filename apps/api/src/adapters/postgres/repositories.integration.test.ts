@@ -10,7 +10,7 @@ import { createBasePushService } from "../../base/push-service.js";
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),"../../../../../");
 async function getDatabaseUrl(){if(process.env.DATABASE_URL)return process.env.DATABASE_URL;const env=await readFile(resolve(root,".env"),"utf8").catch(()=>"");const value=env.match(/^DATABASE_URL=(.+)$/m)?.[1]?.trim();if(!value)throw new Error("PostgreSQL integration tests require DATABASE_URL in environment or repo .env");return value;}
-async function setup(){const connectionString=await getDatabaseUrl();const admin=new Pool({connectionString,connectionTimeoutMillis:5000});const schema=`rq_test_${randomUUID().replaceAll("-","")}`;await admin.query(`CREATE SCHEMA "${schema}"`);const pool=new Pool({connectionString,options:`-c search_path=${schema}`,max:5});try{const sql=await readFile(resolve(root,"database/migrations/0001_initial.sql"),"utf8");await pool.query(sql);const next=await readFile(resolve(root,"database/migrations/0002_single_source_config.sql"),"utf8");await pool.query(next);const platformId=await readFile(resolve(root,"database/migrations/0004_platform_requirement_id.sql"),"utf8");await pool.query(platformId);const platformIdBackfill=await readFile(resolve(root,"database/migrations/0005_platform_requirement_id_backfill.sql"),"utf8");await pool.query(platformIdBackfill);const manualOwner=await readFile(resolve(root,"database/migrations/0006_requirement_manual_owner.sql"),"utf8");await pool.query(manualOwner);const ownerAndDuplicates=await readFile(resolve(root,"database/migrations/0007_requirement_owner_conflict_duplicates.sql"),"utf8");await pool.query(ownerAndDuplicates);const nameFix=await readFile(resolve(root,"database/migrations/0008_fix_team_directory_name.sql"),"utf8");await pool.query(nameFix);const sourceExpand=await readFile(resolve(root,"database/migrations/0009_extend_requirement_source.sql"),"utf8");await pool.query(sourceExpand);const defContext=await readFile(resolve(root,"database/migrations/0010_manual_definition_context.sql"),"utf8");await pool.query(defContext);const intakeModuleOwner=await readFile(resolve(root,"database/migrations/0011_requirement_intake_module_owner.sql"),"utf8");await pool.query(intakeModuleOwner);const editReceipts=await readFile(resolve(root,"database/migrations/0012_manual_edit_receipts.sql"),"utf8");await pool.query(editReceipts);const audience=await readFile(resolve(root,"database/migrations/0013_requirement_audience.sql"),"utf8");await pool.query(audience);return{pool,admin,schema,repos:new PostgresRepositories(pool as never)};}catch(error){await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();throw error;}}
+async function setup(){const connectionString=await getDatabaseUrl();const admin=new Pool({connectionString,connectionTimeoutMillis:5000});const schema=`rq_test_${randomUUID().replaceAll("-","")}`;await admin.query(`CREATE SCHEMA "${schema}"`);const pool=new Pool({connectionString,options:`-c search_path=${schema}`,max:5});try{const sql=await readFile(resolve(root,"database/migrations/0001_initial.sql"),"utf8");await pool.query(sql);const next=await readFile(resolve(root,"database/migrations/0002_single_source_config.sql"),"utf8");await pool.query(next);const platformId=await readFile(resolve(root,"database/migrations/0004_platform_requirement_id.sql"),"utf8");await pool.query(platformId);const platformIdBackfill=await readFile(resolve(root,"database/migrations/0005_platform_requirement_id_backfill.sql"),"utf8");await pool.query(platformIdBackfill);const manualOwner=await readFile(resolve(root,"database/migrations/0006_requirement_manual_owner.sql"),"utf8");await pool.query(manualOwner);const ownerAndDuplicates=await readFile(resolve(root,"database/migrations/0007_requirement_owner_conflict_duplicates.sql"),"utf8");await pool.query(ownerAndDuplicates);const nameFix=await readFile(resolve(root,"database/migrations/0008_fix_team_directory_name.sql"),"utf8");await pool.query(nameFix);const sourceExpand=await readFile(resolve(root,"database/migrations/0009_extend_requirement_source.sql"),"utf8");await pool.query(sourceExpand);const defContext=await readFile(resolve(root,"database/migrations/0010_manual_definition_context.sql"),"utf8");await pool.query(defContext);const intakeModuleOwner=await readFile(resolve(root,"database/migrations/0011_requirement_intake_module_owner.sql"),"utf8");await pool.query(intakeModuleOwner);const editReceipts=await readFile(resolve(root,"database/migrations/0012_manual_edit_receipts.sql"),"utf8");await pool.query(editReceipts);const audience=await readFile(resolve(root,"database/migrations/0013_requirement_audience.sql"),"utf8");await pool.query(audience);const rice=await readFile(resolve(root,"database/migrations/0014_rice_drafts.sql"),"utf8");await pool.query(rice);return{pool,admin,schema,repos:new PostgresRepositories(pool as never)};}catch(error){await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();throw error;}}
 async function cleanup(ctx:{pool:Pool;admin:Pool;schema:string}){await ctx.pool.end();await ctx.admin.query(`DROP SCHEMA "${ctx.schema}" CASCADE`);await ctx.admin.end();}
 const config={projectId:"tb-project",projectName:"Product",requirementTypeId:"req-type",enabled:true,schedule:{enabled:true,weekday:1,time:"09:30",timezone:"Asia/Shanghai"},ownerNames:["PM Owner"],fieldMap:{description:"cf-description"}};
 function requirementWrite(sourceConfigId:string, latestBatchId:string, overrides:Partial<import("./repositories.js").RequirementRowWrite>={}) {
@@ -379,5 +379,39 @@ test("V02-T09 audience tags: multi-select, confirmed-empty, optimistic version, 
     // 审计记录修改者/前后版本
     const events=await ctx.repos.audit.search({entityId:manual.requirementId,limit:20});
     assert.equal(events.filter((event)=>event.eventType==="audience.updated").length,2);
+  }finally{await cleanup(ctx);}
+});
+
+test("V02-T11 RICE draft: save, merge, optimistic conflict, history, no side effects",async()=>{
+  const ctx=await setup();
+  try{
+    const manual=await ctx.repos.requirements.createManualRequirement({idempotencyKey:"rice-m-1",actorId:"a1",requestHash:"1".repeat(64),title:"Beta诉求",description:"描述",sourceChannel:"售后"});
+    assert.equal(await ctx.repos.requirements.getRiceDraft(manual.requirementId),null);
+    // 首次保存（expected 0）：草稿 v1，记录来源版本
+    const first=await ctx.repos.requirements.saveRiceDraft({requirementId:manual.requirementId,expectedEditVersion:0,actorId:"pm-1",sourceVersion:1,reachInput:"约200次/月",notes:"依据客服月报"});
+    assert.deepEqual(first,{outcome:"saved",editVersion:1});
+    const draft=await ctx.repos.requirements.getRiceDraft(manual.requirementId);
+    assert.equal(draft?.reachInput,"约200次/月");
+    assert.equal(draft?.sourceVersion,1);
+    assert.equal(draft?.updatedBy,"pm-1");
+    // 部分更新合并：未传字段保留
+    const second=await ctx.repos.requirements.saveRiceDraft({requirementId:manual.requirementId,expectedEditVersion:1,actorId:"pm-2",sourceVersion:1,impactInput:"3"});
+    assert.equal(second.outcome,"saved");
+    const merged=await ctx.repos.requirements.getRiceDraft(manual.requirementId);
+    assert.equal(merged?.reachInput,"约200次/月");
+    assert.equal(merged?.impactInput,"3");
+    assert.equal(merged?.editVersion,2);
+    // 乐观冲突
+    const stale=await ctx.repos.requirements.saveRiceDraft({requirementId:manual.requirementId,expectedEditVersion:0,actorId:"pm-1",sourceVersion:1,effortInput:"2"});
+    assert.deepEqual(stale,{outcome:"version_conflict",currentEditVersion:2});
+    // 历史：两版本快照可追溯
+    const history=await ctx.pool.query("SELECT edit_version,snapshot->>'actor' AS a FROM rice_draft_history WHERE requirement_id=$1 ORDER BY edit_version",[manual.requirementId]);
+    assert.equal(history.rows.length,2);
+    // 零副作用：不入队、不改流水线
+    const jobs=await ctx.pool.query("SELECT COUNT(*)::int AS n FROM pipeline_jobs WHERE payload->>'requirementId'=$1",[manual.requirementId]);
+    assert.equal(Number(jobs.rows[0].n),1); // 仅建单时的首分析作业
+    const row=await ctx.repos.requirements.get(manual.requirementId);
+    assert.equal(row?.pipeline.analysis,"pending");
+    assert.equal(row?.pipeline.push,"pending");
   }finally{await cleanup(ctx);}
 });

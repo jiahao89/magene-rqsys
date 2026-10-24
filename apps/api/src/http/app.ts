@@ -8,7 +8,7 @@ import { stableJson } from "../sync/hashes.js";
 import type { AuditEventRepository, AnalysisRunRepository, PipelineJobRepository, SourceConfigRepository, SyncBatchRepository, SyncItemRepository, PersonMappingRepository, RequirementQueryRepository, BasePushRunRepository, ModuleDictionaryRepository, PriorityRuleRepository, SourceSnapshotRepository, TeamDirectoryRepository } from "../application/repositories.js";
 import type { PersonMappingRecord, AnalysisRunRecord, ModuleDictionaryVersionRecord, PriorityRuleVersionRecord, RequirementRecord, SourceConfigRecord, SyncBatchRecord } from "../domain/persistence.js";
 import type { TeamPersonRecord } from "../domain/team-directory.js";
-import { AuditListQuerySchema, AudienceUpdateSchema, BatchListQuerySchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementIntakeEditSchema, RequirementIntakeSchema, RequirementListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
+import { AuditListQuerySchema, AudienceUpdateSchema, BatchListQuerySchema, RiceDraftUpdateSchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementIntakeEditSchema, RequirementIntakeSchema, RequirementListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
 import { createHash, randomUUID } from "node:crypto";
 import { SourceConfigUpdateSchema, type ResolvedSourceConfigUpdate } from "../contracts/source.js";
 import { DictionaryCreateSchema, PriorityRuleCreateSchema, TeamModulesSaveSchema, TeamPersonCreateSchema, TeamPersonFeishuBindSchema, TeamPersonRenameSchema } from "../contracts/rules.js";
@@ -474,6 +474,34 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
       items: page.items.map((item) => ({ ...requirementSearchDto(item), ownerName: manualOwnerName(item) ?? (item.executorUserId ? nameByTbUser.get(item.executorUserId) ?? null : null) })),
       nextCursor: page.nextCursor,
     });
+  }
+  const riceMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/rice-draft$/);
+  if ((method === "GET" || method === "PUT") && riceMatch) {
+    // V02-T11：RICE Beta 草稿。保存只落草稿与历史：不入主队列、不触发 AI/推送/通知、
+    // 不改主分析/优先级/PM 状态。量纲未获批 → 一律显示“待配置”，不出分数或排名。
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const requirement = await repositories.requirements.get(decodeURIComponent(riceMatch[1]!)); if (!requirement) return jsonError("NOT_FOUND");
+    if (method === "GET") {
+      const draft = await repositories.requirements.getRiceDraft?.(requirement.id) ?? null;
+      const inputs = draft ? { reach: draft.reachInput, impact: draft.impactInput, confidence: draft.confidenceInput, effort: draft.effortInput } : { reach: null, impact: null, confidence: null, effort: null };
+      const complete = Object.values(inputs).every((value) => typeof value === "string" && value.trim().length > 0);
+      // RICE 量纲配置未获批（G-RICE，T12 前）：有草稿也只显示待配置。
+      return json({ requirementId: requirement.id, inputs, notes: draft?.notes ?? null, sourceVersion: draft?.sourceVersion ?? requirement.sourceVersion, editVersion: draft?.editVersion ?? 0, updatedBy: draft?.updatedBy ?? null, updatedAt: draft?.updatedAt ?? null, status: draft ? (complete ? "待配置" : "待补充") : "待补充", score: null });
+    }
+    const parsed = RiceDraftUpdateSchema.safeParse(await request.json().catch(() => null)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
+    try {
+      const result = await repositories.requirements.saveRiceDraft({
+        requirementId: requirement.id, expectedEditVersion: parsed.data.expectedEditVersion, actorId: auth.actor.id, sourceVersion: requirement.sourceVersion,
+        ...(parsed.data.reach !== undefined ? { reachInput: parsed.data.reach } : {}),
+        ...(parsed.data.impact !== undefined ? { impactInput: parsed.data.impact } : {}),
+        ...(parsed.data.confidence !== undefined ? { confidenceInput: parsed.data.confidence } : {}),
+        ...(parsed.data.effort !== undefined ? { effortInput: parsed.data.effort } : {}),
+        ...(parsed.data.notes !== undefined ? { notes: parsed.data.notes } : {}),
+      });
+      if (result.outcome === "version_conflict") return jsonError("CONFLICT", `草稿已被他人更新到版本 ${result.currentEditVersion}，请刷新后重试。`);
+      return json({ requirementId: requirement.id, editVersion: result.editVersion, status: "待配置" });
+    } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
   }
   const audienceMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/audience$/);
   if (method === "PUT" && audienceMatch) {

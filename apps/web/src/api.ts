@@ -432,3 +432,20 @@ export const AUDIENCE_LEVEL_NAMES: Record<string, string> = { L1: "L1 职业级 
 export function setAudienceTags(id: string, input: { tags: string[]; expectedVersion: number }, fetcher: typeof fetch = fetch): Promise<{ requirementId: string; audienceVersion: number; confirmed: boolean; tags: string[] }> {
   return putJson(`/api/requirements/${id}/audience`, input, fetcher);
 }
+export interface RiceDraft {
+  requirementId: string;
+  inputs: { reach: string | null; impact: string | null; confidence: string | null; effort: string | null };
+  notes: string | null;
+  sourceVersion: number;
+  editVersion: number;
+  updatedBy: string | null;
+  updatedAt: string | null;
+  status: string;
+  score: number | null;
+}
+export function getRiceDraft(id: string, fetcher: typeof fetch = fetch): Promise<RiceDraft> {
+  return requestJson<RiceDraft>(`/api/requirements/${id}/rice-draft`, fetcher);
+}
+export function saveRiceDraft(id: string, input: { reach?: string | null; impact?: string | null; confidence?: string | null; effort?: string | null; notes?: string | null; expectedEditVersion: number }, fetcher: typeof fetch = fetch): Promise<{ requirementId: string; editVersion: number; status: string }> {
+  return putJson(`/api/requirements/${id}/rice-draft`, input, fetcher);
+}

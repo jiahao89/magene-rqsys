@@ -2,7 +2,7 @@
 // 只必填标题/描述/渠道；四段提示是 placeholder 引导，不是四个必填项（PRD 3.2）。
 // 幂等键在同一次提交意图内复用（失败重试不换键），成功或重新展开表单后重置。
 import { useEffect, useRef, useState } from "react";
-import { ApiError, AUDIENCE_LEVELS, AUDIENCE_LEVEL_NAMES, REQUIREMENT_INTAKE_CHANNELS, REQUIREMENT_INTAKE_TYPES, createRequirement, getFunctionModules, setAudienceTags, updateRequirement } from "./api";
+import { ApiError, AUDIENCE_LEVELS, AUDIENCE_LEVEL_NAMES, REQUIREMENT_INTAKE_CHANNELS, REQUIREMENT_INTAKE_TYPES, createRequirement, getFunctionModules, getRiceDraft, saveRiceDraft, setAudienceTags, updateRequirement, type RiceDraft } from "./api";
 
 export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) => void }) {
   const [open, setOpen] = useState(false);
@@ -220,5 +220,59 @@ export function AudienceEditor({ requirementId, audience, onSaved }: { requireme
     {audience.confirmed && audience.tags.length === 0 && <span className="status-hint">已确认为空（不再默认采用 AI 建议）</span>}
     {!audience.confirmed && <span className="status-hint">未确认；上方 AI 建议仅供参考</span>}
     {error && <span className="field-error" role="alert">{error}</span>}
+  </div>;
+}
+
+/** V02-T11：详情「Beta 分析」次级入口（默认收起）。RICE 草稿只落草稿与历史，
+ *  打开面板不调用 AI、不影响主流程（AC01/AC06）。 */
+export function BetaPanel({ requirementId }: { requirementId: string }) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState<RiceDraft | null>(null);
+  const [reach, setReach] = useState(""); const [impact, setImpact] = useState("");
+  const [confidence, setConfidence] = useState(""); const [effort, setEffort] = useState("");
+  const [notes, setNotes] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    void getRiceDraft(requirementId).then((loaded) => {
+      setDraft(loaded);
+      setReach(loaded.inputs.reach ?? ""); setImpact(loaded.inputs.impact ?? "");
+      setConfidence(loaded.inputs.confidence ?? ""); setEffort(loaded.inputs.effort ?? "");
+      setNotes(loaded.notes ?? "");
+      setError(null); setNotice(null);
+    }).catch(() => { setError("草稿读取失败，请重试。"); });
+  }, [open, requirementId]);
+  if (!open) return <button className="button button-secondary button-small" onClick={() => setOpen(true)}>Beta 分析</button>;
+  const save = async () => {
+    if (!draft) return;
+    setBusy(true); setError(null); setNotice(null);
+    try {
+      const result = await saveRiceDraft(requirementId, {
+        reach: reach || null, impact: impact || null, confidence: confidence || null, effort: effort || null,
+        notes: notes || null, expectedEditVersion: draft.editVersion,
+      });
+      setNotice(`草稿已保存（v${result.editVersion}）；量纲未配置，暂不计算分数。`);
+      const reloaded = await getRiceDraft(requirementId);
+      setDraft(reloaded);
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : "保存失败，请重试。");
+    } finally { setBusy(false); }
+  };
+  return <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap", borderTop: "1px solid rgba(125,131,140,.25)", paddingTop: 12 }}>
+    <strong style={{ flexBasis: "100%" }}>RICE 草稿（Beta · 与主优先级无关）</strong>
+    <label className="field"><span>Reach（草稿）</span><input aria-label="RICE Reach 草稿" value={reach} onChange={(event) => setReach(event.target.value)} disabled={busy} placeholder="如：约 200 次/月（单位待配置）" /></label>
+    <label className="field"><span>Impact（草稿）</span><input aria-label="RICE Impact 草稿" value={impact} onChange={(event) => setImpact(event.target.value)} disabled={busy} /></label>
+    <label className="field"><span>Confidence（草稿）</span><input aria-label="RICE Confidence 草稿" value={confidence} onChange={(event) => setConfidence(event.target.value)} disabled={busy} /></label>
+    <label className="field"><span>Effort（草稿）</span><input aria-label="RICE Effort 草稿" value={effort} onChange={(event) => setEffort(event.target.value)} disabled={busy} /></label>
+    <label className="field" style={{ flexBasis: "100%" }}><span>依据说明</span><textarea aria-label="RICE 依据说明" rows={2} value={notes} onChange={(event) => setNotes(event.target.value)} disabled={busy} /></label>
+    <div className="field" style={{ flexBasis: "100%", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+      <button className="button button-primary button-small" onClick={() => void save()} disabled={busy || !draft}>保存草稿</button>
+      <button className="button button-secondary button-small" onClick={() => setOpen(false)} disabled={busy}>收起</button>
+      {draft && <span className="status-hint" role="status">状态：{draft.status} · 依据源版本 v{draft.sourceVersion} · 草稿版本 v{draft.editVersion}</span>}
+      {notice && <span className="status-hint" role="status">{notice}</span>}
+    </div>
+    {error && <div className="field-error" role="alert" style={{ flexBasis: "100%" }}>{error}</div>}
   </div>;
 }

@@ -3,7 +3,7 @@
 // （05 手动同步、06 AI 分析、07 负责人与 Base 推送、08 调度重试审计）实际需要的操作。
 // 唯一性约束由 DDL 保证（见 domain/persistence.ts 注释），端口语义与之对齐。
 
-import type { AuditEventRecord, BasePushRunRecord, BatchState, AnalysisRunRecord, FunctionModuleEntry, ModuleDictionaryVersionRecord, PersonMappingRecord, PmSnapshotRecord, PipelineJobRecord, PipelineJobType, PriorityLevel, PriorityRuleVersionRecord, SourceConfigRecord, SourceSnapshotRecord, SyncBatchRecord, SyncItemAction, SyncItemRecord, SyncTrigger, FeishuIdType, AudienceLevel } from "../domain/persistence.js";
+import type { AuditEventRecord, BasePushRunRecord, BatchState, AnalysisRunRecord, FunctionModuleEntry, ModuleDictionaryVersionRecord, PersonMappingRecord, PmSnapshotRecord, PipelineJobRecord, PipelineJobType, PriorityLevel, PriorityRuleVersionRecord, SourceConfigRecord, SourceSnapshotRecord, SyncBatchRecord, SyncItemAction, SyncItemRecord, SyncTrigger, FeishuIdType, AudienceLevel, RiceDraftRecord } from "../domain/persistence.js";
 import type { AnalysisState, OwnerState, PullState, PushState } from "../domain/workflow.js";
 import type { ResolvedSourceConfigUpdate } from "../contracts/source.js";
 import type { RequirementManualOwner, RequirementRecord } from "../domain/persistence.js";
@@ -277,6 +277,20 @@ export interface RequirementSearchCursor {
 
 export interface RequirementQueryRepository {
 
+
+  // V02-T11：RICE Beta 草稿。保存只落草稿与历史（乐观版本），不触发任何主流程。
+  getRiceDraft(requirementId: string): Promise<RiceDraftRecord | null>;
+  saveRiceDraft(input: {
+    requirementId: string;
+    expectedEditVersion: number;
+    actorId: string;
+    sourceVersion: number;
+    reachInput?: string | null;
+    impactInput?: string | null;
+    confidenceInput?: string | null;
+    effortInput?: string | null;
+    notes?: string | null;
+  }): Promise<{ outcome: "saved"; editVersion: number } | { outcome: "version_conflict"; currentEditVersion: number }>;
   // V02-T09：人工人群标签（多选/空集，确认语义）。乐观版本；修改只落库与审计，不触发任何主流程。
   setAudienceTags(requirementId: string, input: { tags: AudienceLevel[]; expectedVersion: number; actorId: string }): Promise<
     | { outcome: "updated"; version: number }

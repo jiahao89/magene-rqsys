@@ -108,3 +108,12 @@ export const AudienceUpdateSchema = z.strictObject({
   tags: z.array(z.enum(AUDIENCE_LEVELS)).max(6),
   expectedVersion: z.number().int().min(0),
 });
+// V02-T11：RICE Beta 草稿保存。未传字段=保持不变；null=清空；全部允许缺项（草稿）。
+export const RiceDraftUpdateSchema = z.strictObject({
+  reach: z.string().trim().max(500).nullish(),
+  impact: z.string().trim().max(500).nullish(),
+  confidence: z.string().trim().max(500).nullish(),
+  effort: z.string().trim().max(500).nullish(),
+  notes: z.string().trim().max(4_000).nullish(),
+  expectedEditVersion: z.number().int().min(0),
+});

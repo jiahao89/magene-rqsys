@@ -23,7 +23,7 @@
 | V02-T08 | [主AI增加需求类型与六层人群建议](08-analysis-audience-contract.md) | implemented-local | 02 | 核心 |
 | V02-T09 | [PM修改人群并保留人工确认](09-audience-confirmation.md) | implemented-local | 08 | 核心 |
 | V02-T10 | [确认并实现版本化U/M/S/C规则](10-priority-rule-calibration.md) | ready-for-agent | — | 规则条件 |
-| V02-T11 | [详情Beta入口保存RICE人工草稿](11-rice-beta-draft.md) | ready-for-agent | 02 | Beta |
+| V02-T11 | [详情Beta入口保存RICE人工草稿](11-rice-beta-draft.md) | implemented-local | 02 | Beta |
 | V02-T12 | [RICE按获批量纲计算并保留版本](12-rice-configured-score.md) | ready-for-agent | 11 | Beta |
 | V02-T13 | [Kano选择获批访谈资料版本](13-kano-evidence-snapshots.md) | ready-for-agent | 02 | Beta |
 | V02-T14 | [手动Kano生成证据化假设报告](14-kano-report.md) | ready-for-agent | 08、13 | Beta |
@@ -34,7 +34,7 @@
 
 ## 当前可领取的前沿
 
-- **核心链路 01-09 与 15 全部 implemented-local（2026-10-24/25）**。剩余：Beta 票 11/13/14（依赖 02 已就绪；12/18 等 G-RICE 门槛、16-18 等目标环境授权）；10 算法等 PM Leader 确认（确认包已备）。
+- **核心链路 01-09 与 15 全部 implemented-local（2026-10-24/25）**。剩余：Beta 票 13/14（13 依赖 02 已就绪；14 依赖 08✓/13）；12/18 等 G-RICE 量纲确认；10 算法等 PM Leader 确认（确认包已备）；16-18 目标迁移/发布/验收需授权。
 - **15** 已于 2026-10-23 实现为"同标题仅提示、独立处理"（implemented-local；AC04 计数拆分与 AC06 联合回归待后续票补齐，正式结论汇合到 16）。
 - **10** 规则确认包已备（见票内链接）；新算法实施仍等待 PM Leader 确认输入、公式、阈值和校准案例。
 - 02完成后，08、11、13可与03→04分支独立推进；实际开发先协调共享契约和仓储的文件归属。

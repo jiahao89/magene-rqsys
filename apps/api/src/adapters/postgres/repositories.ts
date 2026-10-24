@@ -199,6 +199,33 @@ async setAudienceTags(requirementId:string,p:{tags:("L1"|"L2"|"L3"|"L4"|"L5"|"L6
     return{outcome:"updated" as const,version:next};
   }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}
 }
+private riceDraft(r:any):import("../../domain/persistence.js").RiceDraftRecord{return{requirementId:String(r.requirement_id),reachInput:r.reach_input??null,impactInput:r.impact_input??null,confidenceInput:r.confidence_input??null,effortInput:r.effort_input??null,notes:r.notes??null,sourceVersion:Number(r.source_version),editVersion:Number(r.edit_version),updatedBy:r.updated_by??"",updatedAt:(r.updated_at instanceof Date?r.updated_at.toISOString():String(r.updated_at))};}
+// V02-T11：RICE Beta 草稿。乐观并发（edit_version）+ 历史追加，单事务；与主流程零耦合。
+async getRiceDraft(requirementId:string){const{rows}=await this.pool.query("SELECT * FROM rice_drafts WHERE requirement_id=$1",[requirementId]);return rows[0]?this.riceDraft(rows[0]):null;}
+async saveRiceDraft(p:{requirementId:string;expectedEditVersion:number;actorId:string;sourceVersion:number;reachInput?:string|null;impactInput?:string|null;confidenceInput?:string|null;effortInput?:string|null;notes?:string|null;}){
+  const c=await this.pool.connect();
+  try{
+    await c.query("BEGIN");
+    const{rows}=await c.query("SELECT * FROM rice_drafts WHERE requirement_id=$1 FOR UPDATE",[p.requirementId]);
+    const existing=rows[0];
+    if(existing){
+      const current=Number(existing.edit_version);
+      if(current!==p.expectedEditVersion){await c.query("COMMIT");return{outcome:"version_conflict" as const,currentEditVersion:current};}
+      const next=current+1;
+      const merged={reachInput:p.reachInput!==undefined?p.reachInput:existing.reach_input,impactInput:p.impactInput!==undefined?p.impactInput:existing.impact_input,confidenceInput:p.confidenceInput!==undefined?p.confidenceInput:existing.confidence_input,effortInput:p.effortInput!==undefined?p.effortInput:existing.effort_input,notes:p.notes!==undefined?p.notes:existing.notes};
+      await c.query("UPDATE rice_drafts SET reach_input=$2,impact_input=$3,confidence_input=$4,effort_input=$5,notes=$6,source_version=$7,edit_version=$8,updated_by=$9,updated_at=now() WHERE requirement_id=$1",[p.requirementId,merged.reachInput,merged.impactInput,merged.confidenceInput,merged.effortInput,merged.notes,p.sourceVersion,next,p.actorId]);
+      await c.query("INSERT INTO rice_draft_history(id,requirement_id,edit_version,snapshot,actor_id) VALUES($1,$2,$3,$4,$5)",[randomUUID(),p.requirementId,next,JSON.stringify({...merged,sourceVersion:p.sourceVersion}),p.actorId]);
+      await c.query("COMMIT");
+      return{outcome:"saved" as const,editVersion:next};
+    }
+    if(p.expectedEditVersion!==0){await c.query("COMMIT");return{outcome:"version_conflict" as const,currentEditVersion:0};}
+    const draft={reachInput:p.reachInput??null,impactInput:p.impactInput??null,confidenceInput:p.confidenceInput??null,effortInput:p.effortInput??null,notes:p.notes??null};
+    await c.query("INSERT INTO rice_drafts(requirement_id,reach_input,impact_input,confidence_input,effort_input,notes,source_version,edit_version,updated_by) VALUES($1,$2,$3,$4,$5,$6,$7,1,$8)",[p.requirementId,draft.reachInput,draft.impactInput,draft.confidenceInput,draft.effortInput,draft.notes,p.sourceVersion,p.actorId]);
+    await c.query("INSERT INTO rice_draft_history(id,requirement_id,edit_version,snapshot,actor_id) VALUES($1,$2,1,$3,$4)",[randomUUID(),p.requirementId,JSON.stringify({...draft,sourceVersion:p.sourceVersion}),p.actorId]);
+    await c.query("COMMIT");
+    return{outcome:"saved" as const,editVersion:1};
+  }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}
+}
 async findIntakeReceipt(key:string){const{rows}=await this.pool.query("SELECT requirement_id,request_hash,actor_id FROM requirement_intake_receipts WHERE idempotency_key=$1",[key]);return rows[0]?{requirementId:String(rows[0].requirement_id),requestHash:String(rows[0].request_hash),actorId:String(rows[0].actor_id)}:null;}
 async createManualRequirement(p:{idempotencyKey:string;actorId:string;requestHash:string;title:string;description:string|null;sourceChannel:string;productModel?:string|null;requirementType?:string|null;constraintNotes?:string|null;supplementUrl?:string|null;intakeModule?:string|null;owner?:{feishuUserId:string;feishuIdType:"open_id"|"user_id"|"union_id";name?:string|null};}){
   const c=await this.pool.connect();

@@ -364,6 +364,49 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: Stale expectedVersion; the message carries the current version. }
         '503': { $ref: '#/components/responses/DependencyUnavailable' }
+  /api/requirements/{id}/rice-draft:
+    get:
+      summary: Read the RICE Beta draft (V02-T11)
+      description: >-
+        Beta entry lives only in the requirement detail. Reading never calls the model. While the
+        RICE measurement config is unapproved (G-RICE), the draft shows 待配置/待补充 and never a
+        score or ranking. Fully isolated from the main pipeline.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Draft state (score is always null in this slice).
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      summary: Save the RICE Beta draft with optimistic edit version (V02-T11)
+      description: >-
+        Saves human-entered Reach/Impact/Confidence/Effort drafts plus rationale notes; appends
+        history and records the actor and the requirement source version. Saving never triggers
+        analysis, push, or notifications.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedEditVersion]
+              properties:
+                reach: { type: string, maxLength: 500, nullable: true }
+                impact: { type: string, maxLength: 500, nullable: true }
+                confidence: { type: string, maxLength: 500, nullable: true }
+                effort: { type: string, maxLength: 500, nullable: true }
+                notes: { type: string, maxLength: 4000, nullable: true }
+                expectedEditVersion: { type: integer, minimum: 0 }
+      responses:
+        '200': { description: Draft saved; editVersion returned. }
+        '400': { $ref: '#/components/responses/Validation' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Stale expectedEditVersion; the message carries the current version. }
+        '503': { $ref: '#/components/responses/DependencyUnavailable' }
   /api/requirements/{id}:
     get:
       summary: Get requirement source snapshot and latest analysis

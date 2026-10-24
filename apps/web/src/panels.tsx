@@ -2,7 +2,7 @@
 // 权限拒绝、空数据、加载中、局部失败和 API 不可用都显示可恢复状态。
 // 需求池/批次/审计面板自治加载，支持服务端筛选与游标分页。
 import { useCallback, useEffect, useId, useRef, useState, Component, type KeyboardEvent, type ReactNode } from "react";
-import { AudienceEditor, IntakeForm, ManualEditSection } from "./intake-form";
+import { AudienceEditor, BetaPanel, IntakeForm, ManualEditSection } from "./intake-form";
 import { Accordion as HeroAccordion, AlertDialog as HeroAlertDialog, Button as HeroButton, Card as HeroCard, Chip as HeroChip, Input as HeroInput, TextArea as HeroTextArea } from "@heroui/react";
 import { ArrowLeft, RefreshCw, X } from "lucide-react";
 import { stateLabel } from "./state-labels";
@@ -1125,6 +1125,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
         <strong>人群标签（PM 确认）</strong>
         <p className="status-hint">人工确认值与 AI 建议分开保存；修改不触发分析、推送或通知。</p>
         <AudienceEditor requirementId={detail.id} audience={detail.audience ?? { tags: [], confirmed: false, version: 0 }} onSaved={() => void open(detail.id)} />
+        <div style={{ marginTop: 8 }}><BetaPanel requirementId={detail.id} /></div>
       </div>
     </section>
 

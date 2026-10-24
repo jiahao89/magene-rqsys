@@ -304,3 +304,17 @@ export interface AuditEventRecord {
 
 // 导出状态联合别名，便于 repository 实现引用。
 export type { AnalysisState, BatchState, OwnerState, PullState, PushState, RequirementPipelineState };
+
+/** V02-T11：RICE Beta 人工草稿。量纲获批前四项为自由文本；与主流程完全隔离。 */
+export interface RiceDraftRecord {
+  requirementId: string;
+  reachInput: string | null;
+  impactInput: string | null;
+  confidenceInput: string | null;
+  effortInput: string | null;
+  notes: string | null;
+  sourceVersion: number;
+  editVersion: number;
+  updatedBy: string;
+  updatedAt: string;
+}
