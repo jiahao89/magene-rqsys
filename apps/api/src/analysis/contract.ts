@@ -31,7 +31,9 @@ const SECRET = /\b(?:sk-[A-Za-z0-9_-]{8,}|(?:api[_-]?key|token|secret)\s*[:=]\s*
 // 身份标识补充（工单 13）：中国大陆 18 位身份证号、24 位 hex 平台用户 ID（Teambition 形态）、@提及。
 const ID_CARD = /\b\d{6}(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:[0-2]\d|3[01])\d{3}[\dXx]\b/g;
 const PLATFORM_USER_ID = /(?<![\w\d])[0-9a-f]{24}(?![\w\d])/gi;
-const MENTION = /(^|\s)@[\w\u4e00-\u9fa5-]{2,30}/g;
+// 边界不能用 \s：中文正文里「用户@张三反馈…」没有空格，@提及会被漏掩码。
+// 排除 \w 前缀以避免误伤邮箱（a@b.c 中 @ 前是字母数字）。
+const MENTION = /(^|[^\w@])@[\w\u4e00-\u9fa5-]{2,30}/gu;
 const LABELLED_PERSON_NAME = /((?:反馈人|联系人|提出人|申请人|用户姓名|姓名)\s*[-－‐‑‒–—−:：]\s*)[^-－‐‑‒–—−\s【】,:：；;]+/giu;
 
 export function maskPii(text: string, markers: string[]): string {
@@ -101,5 +103,8 @@ export function validateAnalysisOutput(
     ...result.facts.map((item) => item.evidence),
   ];
   if (evidence.some((quote) => !sourceText.includes(quote))) throw new Error("Analysis evidence does not occur in source text");
+  // facts 声称是"源文事实"：同样必须能在源文里找到，防止需求正文里的提示注入
+  // 伪造出源文没有的"事实"进入结构化结果与详情页。
+  if (result.facts.some((item) => !sourceText.includes(item.text))) throw new Error("Analysis fact does not occur in source text");
   return { ...result, priority: null };
 }

@@ -10,7 +10,7 @@ const source: SourceConfigRecord = { id: "11111111-1111-4111-8111-111111111111",
 const batch: SyncBatchRecord = { id: "22222222-2222-4222-8222-222222222222", sourceConfigId: source.id, triggerType: "manual", actorId: "actor-1", idempotencyKey: "request-key-0001", status: "running", startedAt: "2026-10-08T00:00:00.000Z", completedAt: null, totalCount: 0, succeededCount: 0, failedCount: 0, errorSummary: null, createdAt: "2026-10-08T00:00:00.000Z" };
 const item: SyncItemRecord = { id: "33333333-3333-4333-8333-333333333333", batchId: batch.id, requirementId: null, teambitionRequirementId: "tb-1", action: "created", status: "succeeded", errorCode: null, errorDetail: null, startedAt: "2026-10-08T00:00:00.000Z", completedAt: "2026-10-08T00:00:00.000Z" };
 const auditEvent: AuditEventRecord = { id: "44444444-4444-4444-8444-444444444444", actorId: "actor-1", eventType: "sync.requested", entityType: "sync_batch", entityId: batch.id, result: "succeeded", safeDetails: {}, occurredAt: "2026-10-08T00:00:00.000Z" };
-const requirement = { id: "66666666-6666-4666-8666-666666666666", platformRequirementId: "RQ-000001", sourceConfigId: source.id, teambitionRequirementId: "tb-1", teambitionUniqueId: null, title: "Need", description: null, scope: null, acceptanceCriteria: null, proposerUserId: null, proposerName: null, executorUserId: null, executorName: null, sourceStatusId: null, sourceCreatedAt: null, sourceUpdatedAt: null, sourceUrl: null, attachmentRefs: [], sourceCustomFields: [], sourcePayload: {}, sourceHash: "h", substantiveHash: "s", sourceVersion: 1, latestBatchId: batch.id, baseRecordId: null, lastPushedAt: null, pipeline: { pull: "synced", analysis: "analyzed", owner: "not_required", push: "pending" }, firstSeenAt: "2026-10-08T00:00:00.000Z", lastSeenAt: "2026-10-08T00:00:00.000Z", createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z" };
+const requirement = { id: "66666666-6666-4666-8666-666666666666", platformRequirementId: "RQ-000001", sourceType: "teambition", sourceChannel: null, sourceConfigId: source.id, teambitionRequirementId: "tb-1", teambitionUniqueId: null, title: "Need", description: null, scope: null, acceptanceCriteria: null, proposerUserId: null, proposerName: null, executorUserId: null, executorName: null, sourceStatusId: null, sourceCreatedAt: null, sourceUpdatedAt: null, sourceUrl: null, attachmentRefs: [], sourceCustomFields: [], sourcePayload: {}, sourceHash: "h", substantiveHash: "s", sourceVersion: 1, latestBatchId: batch.id, baseRecordId: null, lastPushedAt: null, pipeline: { pull: "synced", analysis: "analyzed", owner: "not_required", push: "pending" }, firstSeenAt: "2026-10-08T00:00:00.000Z", lastSeenAt: "2026-10-08T00:00:00.000Z", createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z" };
 const analysisRun = { id: "run-1", requirementId: source.id, sourceVersion: 1, analysisVersion: 2, status: "analyzed", moduleSuggestion: "报表分析", confidence: "medium", confidenceReason: "理由", priority: "P1", structuredResult: null, provider: "deepseek", model: "m", promptVersion: "p", moduleDictionaryVersion: 1, priorityRuleVersionId: null, safeErrorCode: null, safeErrorSummary: null, startedAt: "2026-10-08T00:00:00.000Z", completedAt: "2026-10-08T00:00:01.000Z" };
 function makeDependencies(actor: { id: string } = { id: "actor-1" }): ApiDependencies {
  const batches: SyncBatchRecord[] = [];
@@ -154,7 +154,7 @@ test("failed item retry is idempotent across repeated requests", async () => {
   let retryBatch: SyncBatchRecord | null = null;
   d.repositories!.items.get = async () => ({ ...item, status: "failed" });
   d.repositories!.batches.create = async (params) => { created += 1; createdRetryKey = params.idempotencyKey; retryBatch = { ...batch, ...params, id: "retry-batch", status: "running" }; return retryBatch; };
-  const retryKey = `source_only:${createHashForTest("sha256").update("retry-key-123").digest("hex")}`;
+  const retryKey = `item-retry:source_only:${createHashForTest("sha256").update(`${item.id}:retry-key-123`).digest("hex")}`;
   d.repositories!.batches.findByIdempotencyKey = async (_sourceId, key) => key === retryKey ? retryBatch : null;
   d.repositories!.batches.get = async () => ({ ...batch, idempotencyKey: "source_only:" + "a".repeat(64) });
   d.repositories!.jobs.enqueue = async (params) => { enqueued += 1; enqueuedPayload = params.payload; return { ...params, id: "retry-job", status: "queued", attemptCount: 0, maxAttempts: 3, lockedUntil: null, lastErrorCode: null, lastErrorSummary: null, createdAt: params.availableAt, updatedAt: params.availableAt }; };
@@ -187,6 +187,21 @@ test("batch and requirement list routes pass time, batch and stable cursor filte
  assert.equal(requirementResponse.status, 200);
  assert.deepEqual(requirementQuery, { batchId: batch.id, pullState: "synced", since: "2026-01-01T00:00:00Z", until: "2026-01-02T00:00:00Z", limit: 25 });
 });
+test("V02-T02 manual requirements read back with source fields and no TB link fallback", async () => {
+  const d = makeDependencies();
+  const manual = { ...requirement, sourceType: "web_manual", sourceChannel: "售后", sourceConfigId: null, teambitionRequirementId: null, pipeline: { ...requirement.pipeline, pull: "collected" as const }, sourceUrl: null } as unknown as RequirementRecord;
+  d.repositories!.requirements!.get = async () => manual;
+  const response = await handleApiRequest(new Request("http://localhost/api/requirements/66666666-6666-4666-8666-666666666666"), d);
+  assert.equal(response.status, 200);
+  const body = await response.json() as Record<string, unknown>;
+  assert.equal(body.sourceType, "web_manual");
+  assert.equal(body.sourceChannel, "售后");
+  assert.equal(body.sourceRequirementId, null);
+  // 手工需求不拼接 TB 地址兜底（AC05）
+  assert.equal(body.sourceUrl, null);
+  assert.equal((body.pipeline as Record<string, string>).pull, "collected");
+});
+
 test("empty requirement search returns an empty page without querying mappings with an empty source id", async () => {
  const d = makeDependencies();
  let mappingQueries = 0;

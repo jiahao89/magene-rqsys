@@ -1,7 +1,9 @@
 import type { Pool } from "pg";
 import { normalizeOwnerName } from "../owner/mapping.js";
+import { canTransition } from "../domain/transitions.js";
+import { analysisRunningJobKeys } from "../scheduler/analysis-recovery.js";
 import { SourceProjectResolutionError, type FeishuUserDirectory, type FeishuUserSelectionResolver, type IdentityProvider, type TeambitionSourceProjectResolver } from "../application/ports.js";
-import { normalizeScheduleTime } from "../domain/workflow.js";
+import { isIntakeComplete, normalizeScheduleTime } from "../domain/workflow.js";
 import type { AuditEventRepository, AnalysisRunRepository, PipelineJobRepository, SourceConfigRepository, SyncBatchRepository, SyncItemRepository, PersonMappingRepository, RequirementQueryRepository, BasePushRunRepository, ModuleDictionaryRepository, PriorityRuleRepository, SourceSnapshotRepository, TeamDirectoryRepository } from "../application/repositories.js";
 import type { PersonMappingRecord, AnalysisRunRecord, ModuleDictionaryVersionRecord, PriorityRuleVersionRecord, RequirementRecord, SourceConfigRecord, SyncBatchRecord } from "../domain/persistence.js";
 import type { TeamPersonRecord } from "../domain/team-directory.js";
@@ -56,12 +58,15 @@ function requirementDto(req: RequirementRecord, analysis: Record<string, unknown
   return {
     id: req.id,
     sourceRequirementId: req.teambitionRequirementId,
+    // V02-T02 加法：来源类型（teambition/web_manual）与业务渠道；TB 显示不变，手工预留已收录语义。
+    sourceType: req.sourceType,
+    sourceChannel: req.sourceChannel,
     platformRequirementId: req.platformRequirementId ?? null,
     title: req.title,
     description: req.description,
     sourceVersion: req.sourceVersion,
     updatedAt: req.updatedAt,
-    sourceUrl: req.sourceUrl ?? `${TEAMBITION_TASK_BASE_URL}/${req.teambitionRequirementId}`,
+    sourceUrl: req.sourceType === "teambition" ? req.sourceUrl ?? `${TEAMBITION_TASK_BASE_URL}/${req.teambitionRequirementId}` : req.sourceUrl,
     lastPushedAt: req.lastPushedAt,
     ownerName,
     pipeline: { pull: req.pipeline.pull, analysis: req.pipeline.analysis, owner: req.pipeline.owner, push: req.pipeline.push },
@@ -402,7 +407,8 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     // 列表一次取回全部有效映射再按 TB 用户查名，避免逐行查询。
     // 空页时不能把空字符串传给 uuid 列：PostgreSQL 会以 22P02 拒绝，接口变成 500。
     const firstItem = page.items[0];
-    const mappings = repositories.people && firstItem ? await repositories.people.listActive(firstItem.sourceConfigId) : [];
+    // 手工需求 sourceConfigId 为空：不查 TB 人员映射（V02-T02 起可空）。
+    const mappings = repositories.people && firstItem?.sourceConfigId ? await repositories.people.listActive(firstItem.sourceConfigId) : [];
     const nameByTbUser = new Map(mappings.filter((m) => m.teambitionUserId && m.teambitionDisplayName).map((m) => [m.teambitionUserId as string, m.teambitionDisplayName as string]));
     return json({
       items: page.items.map((item) => ({ ...requirementSearchDto(item), ownerName: manualOwnerName(item) ?? (item.executorUserId ? nameByTbUser.get(item.executorUserId) ?? null : null) })),
@@ -418,7 +424,7 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const history = await repositories.analyses?.listByRequirement(req.id) ?? [];
     // 负责人姓名：详情单条解析一次，解析不到返回 null；前端会退回只显示映射状态。
     let ownerName: string | null = manualOwnerName(req);
-    if (req.executorUserId || req.executorName) {
+    if (req.sourceConfigId && (req.executorUserId || req.executorName)) {
       try {
         const mapping = await repositories.people?.resolveActive(req.sourceConfigId, req.executorUserId ? { tbUserId: req.executorUserId } : { normalizedName: normalizeOwnerName(req.executorName!) });
         ownerName = mapping?.teambitionDisplayName ?? null;
@@ -441,11 +447,15 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
       ?? (await repositories.jobs.findByDedupeKey?.(`sync:${batch.sourceConfigId}:${batch.idempotencyKey}`));
     // The original job can be missing after retention/cleanup. The source batch
     // key is mode-namespaced, so use it as a durable fallback for safe retries.
-    const mode = originalJob?.payload.mode === "source_only" || batch.idempotencyKey.startsWith("source_only:")
+    const mode = originalJob?.payload.mode === "source_only"
+      || batch.idempotencyKey.startsWith("source_only:")
+      || batch.idempotencyKey.startsWith("item-retry:source_only:")
       ? "source_only"
       : "full_pipeline";
     const startedAt = (dependencies.now ?? (() => new Date()))().toISOString();
-    const retryIdempotencyKey = `${mode}:${createHash("sha256").update(key.data).digest("hex")}`;
+    // 键命名空间与 /api/sync/run 分开，并把条目 ID 纳入哈希：否则与同步键撞车会把重试
+    // 挂到原批次上覆盖其计数，用同一键重试另一条也会静默复用旧批次。
+    const retryIdempotencyKey = `item-retry:${mode}:${createHash("sha256").update(`${item.id}:${key.data}`).digest("hex")}`;
     let retryBatch = await repositories.batches.findByIdempotencyKey(batch.sourceConfigId, retryIdempotencyKey);
     if (!retryBatch) {
       try { retryBatch = await repositories.batches.create({ sourceConfigId: batch.sourceConfigId, triggerType: "manual", actorId: auth.actor.id, idempotencyKey: retryIdempotencyKey, startedAt }); }
@@ -478,10 +488,13 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     if (!retryAllowed && req.pipeline.analysis === "running") {
       // 崩溃残留：handler 已把状态置为 running，但作业已终态或从未入队。
       // 放行重试（配合状态机的 running→running 自迁移），否则该需求只能手工改库。
-      const stuck = await repositories.jobs.findByDedupeKey?.(`analysis:${req.id}:sv${req.sourceVersion}:after${priorAnalysisVersion}`);
-      retryAllowed = !stuck || ["succeeded", "failed", "cancelled"].includes(stuck.status);
+      // running 的作业可能挂在三种键的任意一种上（首轮 v 键 / after prior / after prior-1），
+      // 只查一种会把活着的分析误判成崩溃残留，造成双份 AI 调用与分析版本。
+      const keys = analysisRunningJobKeys(req, priorAnalysisVersion);
+      const jobs = await Promise.all(keys.map((key) => repositories.jobs.findByDedupeKey?.(key)));
+      retryAllowed = !jobs.some((job) => job && ["queued", "running"].includes(job.status));
     }
-    if (req.pipeline.pull !== "synced" || !retryAllowed) return jsonError("CONFLICT");
+    if (!isIntakeComplete(req.pipeline.pull) || !retryAllowed) return jsonError("CONFLICT");
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
     const dedupeKey = `analysis:${req.id}:sv${req.sourceVersion}:after${priorAnalysisVersion}`;
     const currentJob = await repositories.jobs.findByDedupeKey?.(dedupeKey);
@@ -514,7 +527,7 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.people || !repositories.requirements || !repositories.jobs || !repositories.audit) return jsonError("DEPENDENCY_UNAVAILABLE");
     const req = await repositories.requirements.get(decodeURIComponent(ownerMatch[1]!)); if (!req) return jsonError("NOT_FOUND");
-    if (req.pipeline.pull !== "synced") return jsonError("CONFLICT");
+    if (!isIntakeComplete(req.pipeline.pull)) return jsonError("CONFLICT");
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
     const latestAnalysis = await repositories.analyses?.latest(req.id) ?? null;
     const analysisVersion = latestAnalysis?.analysisVersion ?? 0;
@@ -522,17 +535,21 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
       // 恢复默认负责人：清除本条需求的人工指定，再按 TB 执行人映射重新解析。
       if (!req.manualOwner) return jsonError("CONFLICT", "该需求没有单独指定的负责人。");
       const hasTbOwner = Boolean(req.executorUserId || req.executorName);
-      const mapping = req.executorUserId
+      const mapping = req.sourceConfigId && req.executorUserId
         ? await repositories.people.resolveActive(req.sourceConfigId, { tbUserId: req.executorUserId })
-        : req.executorName ? await repositories.people.resolveActive(req.sourceConfigId, { normalizedName: normalizeOwnerName(req.executorName) }) : null;
+        : req.sourceConfigId && req.executorName ? await repositories.people.resolveActive(req.sourceConfigId, { normalizedName: normalizeOwnerName(req.executorName) }) : null;
       const targetState = mapping ? "auto_mapped" : hasTbOwner ? "pending_mapping" : "not_required";
       try {
         await repositories.requirements.clearManualOwner(req.id);
-        // 状态机没有 manually_mapped → not_required 的直接迁移，按既有路径经过 pending_mapping。
-        if (targetState === "not_required" && req.pipeline.owner === "manually_mapped") {
+        // manually_mapped 没有到 not_required/auto_mapped 的直接迁移：先退回 pending_mapping 再落目标。
+        // 否则清除人工负责人后 setOwner 抛 InvalidTransitionError，需求永久卡在 manually_mapped
+        // （每次重试 409，后续推送记账也会持续失败）。
+        if (req.pipeline.owner !== targetState && !canTransition("owner", req.pipeline.owner, targetState)) {
           await repositories.requirements.setOwner(req.id, null, "pending_mapping");
         }
-        await repositories.requirements.setOwner(req.id, mapping?.feishuUserId ?? null, targetState);
+        if (req.pipeline.owner !== targetState) {
+          await repositories.requirements.setOwner(req.id, mapping?.feishuUserId ?? null, targetState);
+        }
       } catch (cause) {
         return (cause as Error)?.name === "InvalidTransitionError" ? jsonError("CONFLICT") : jsonError("DEPENDENCY_UNAVAILABLE");
       }
@@ -567,7 +584,7 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     if (!repositories?.requirements || !repositories.jobs || !repositories.audit) return jsonError("DEPENDENCY_UNAVAILABLE");
     const key = SyncIdempotencyHeaderSchema.safeParse(request.headers.get("Idempotency-Key")); if (!key.success) return jsonError("VALIDATION_FAILED");
     const req = await repositories.requirements.get(decodeURIComponent(pushMatch[1]!)); if (!req) return jsonError("NOT_FOUND");
-    if (req.pipeline.pull !== "synced" || req.pipeline.owner === "pending_mapping" || !["pending", "failed"].includes(req.pipeline.push)) return jsonError("CONFLICT");
+    if (!isIntakeComplete(req.pipeline.pull) || req.pipeline.owner === "pending_mapping" || !["pending", "failed"].includes(req.pipeline.push)) return jsonError("CONFLICT");
     const latestAnalysis = await repositories.analyses?.latest(req.id) ?? null;
     const analysisVersion = latestAnalysis?.analysisVersion ?? 0;
     const now = (dependencies.now ?? (() => new Date()))().toISOString();

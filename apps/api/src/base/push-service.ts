@@ -18,6 +18,7 @@ import type { AnalysisRunRecord, FeishuIdType, PersonMappingRecord, RequirementR
 import type { FeishuBasePushAdapter, OmittedField } from "./client.js";
 import { FeishuApiError } from "./transport.js";
 import { normalizeOwnerName } from "../owner/mapping.js";
+import { isIntakeComplete } from "../domain/workflow.js";
 
 export interface BasePushServiceDeps {
   requirements: RequirementQueryRepository;
@@ -183,7 +184,8 @@ export function createBasePushService(deps: BasePushServiceDeps) {
     const snapshot = snapshotOwnerLookup(previousSource.payload);
     if (!snapshot.answered) return { kind: "unknown" };
     if (!snapshot.lookup) return { kind: "none" };
-    const previousMapping = await deps.people.resolveActive(req.sourceConfigId, snapshot.lookup);
+    // 手工来源没有 sourceConfigId；旧负责人快照推导仅对 TB 行有效（V02-T02 起可空）。
+    const previousMapping = req.sourceConfigId ? await deps.people.resolveActive(req.sourceConfigId, snapshot.lookup) : null;
     // 旧负责人映射已不存在时得不到稳定的 fromUserId：不断言 A→B，避免发出错误事件。
     return previousMapping ? { kind: "known", userId: previousMapping.feishuUserId } : { kind: "unknown" };
   };
@@ -287,7 +289,7 @@ export function createBasePushService(deps: BasePushServiceDeps) {
   async function pushRequirementUnlocked(requirementId: string, idempotencyKey: string): Promise<PushOutcome> {
     const req = await deps.requirements.get(requirementId);
     if (!req) return { kind: "not_found" };
-    if (req.pipeline.pull !== "synced") return { kind: "conflict" };
+    if (!isIntakeComplete(req.pipeline.pull)) return { kind: "conflict" };
 
     const previous = await deps.basePushes.findByIdempotencyKey(idempotencyKey);
     if (previous?.status === "pushed") {
@@ -300,7 +302,7 @@ export function createBasePushService(deps: BasePushServiceDeps) {
       ? { tbUserId: req.executorUserId }
       : (req.executorName ? { normalizedName: normalizeOwnerName(req.executorName) } : {});
     const hasTbOwner = Boolean(ownerLookup.tbUserId || ownerLookup.normalizedName);
-    const mapping = hasTbOwner ? await deps.people.resolveActive(req.sourceConfigId, ownerLookup) : null;
+    const mapping = hasTbOwner && req.sourceConfigId ? await deps.people.resolveActive(req.sourceConfigId, ownerLookup) : null;
     // 逐条人工负责人优先：单条改派只影响这一条，不影响同 TB 执行人的其他需求；
     // TB 执行人映射保留为"默认负责人"，供恢复时使用。
     const manualOwner = req.manualOwner ?? null;
@@ -385,12 +387,12 @@ export function createBasePushService(deps: BasePushServiceDeps) {
         substantiveChanged, latestAnalysis,
         willWriteOwner: Boolean(baseOwner),
         resolveBaseOwner: async () => lastSuccessfulPush
-          ? (await deps.base.findCurrentOwner?.({ requirementId: req.teambitionRequirementId })) ?? null
+          ? (await deps.base.findCurrentOwner?.({ requirementId: req.teambitionRequirementId! })) ?? null
           : null,
       });
       const sourceCreatedAt = req.sourceCreatedAt ? Date.parse(req.sourceCreatedAt) : Number.NaN;
       pushedResult = await deps.base.push({
-        projectId: deps.sourceProjectId, requirementId: req.teambitionRequirementId, platformRequirementId: req.platformRequirementId, requirementDbId: req.id,
+        projectId: deps.sourceProjectId, requirementId: req.teambitionRequirementId!, platformRequirementId: req.platformRequirementId, requirementDbId: req.id,
         // 每次推送都写深链（含首推静默）：PM 从通知按钮点进来能直接打开该需求详情。
         requirementLink: requirementDeepLink(webBaseUrl, req.id),
         title: req.title, description: req.description,
@@ -427,7 +429,12 @@ export function createBasePushService(deps: BasePushServiceDeps) {
       // 推送时解析到负责人则推进 owner 状态（已达目标状态时跳过，避免非法迁移）
       if (owner) {
         const targetOwnerState = owner.matchMethod === "manual" ? "manually_mapped" : "auto_mapped";
-        if (req.pipeline.owner !== targetOwnerState) await deps.requirements.setOwner(req.id, owner.feishuUserId, targetOwnerState);
+        if (req.pipeline.owner !== targetOwnerState) {
+          // owner 状态是咨询性的、可由推进器恢复：Base 行已写成功，撞上非法迁移（如
+          // not_required→auto_mapped）不能拖垮记账，否则推送被永久误报为"未记录"。
+          try { await deps.requirements.setOwner(req.id, owner.feishuUserId, targetOwnerState); }
+          catch (cause) { if ((cause as Error)?.name !== "InvalidTransitionError") throw cause; }
+        }
       }
       if (owner?.perRequirement && baseOwner) await deps.requirements.markManualOwnerPushed(req.id, owner.feishuUserId);
       await deps.requirements.markLastPushedOwner(req.id, owner ? { feishuUserId: owner.feishuUserId, feishuIdType: owner.feishuIdType } : null);
@@ -437,7 +444,9 @@ export function createBasePushService(deps: BasePushServiceDeps) {
         await deps.audit.append({
           id: randomUUID(), actorId: deps.actorId, eventType: "base.push", entityType: "requirement", entityId: req.id,
           result: "succeeded",
-          safeDetails: { bookkeeping: "failed", baseRecordId: pushedResult.recordId, code: failure.code, sourceVersion: req.sourceVersion },
+          // baseRecordId/code 不在 safeDetails 白名单里会被脱敏丢弃；折叠进 reason 才能留存，
+          // 供"Base 行已写成功但本地未记账"的对账使用。
+          safeDetails: { reason: `bookkeeping_failed:${failure.code}:${pushedResult.recordId}`, sourceVersion: req.sourceVersion },
           occurredAt: now().toISOString(),
         });
       } catch {

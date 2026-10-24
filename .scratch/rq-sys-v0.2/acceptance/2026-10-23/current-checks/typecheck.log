@@ -1,0 +1,12 @@
+
+> typecheck
+> npm --workspace @rq-sys/api run typecheck && npm --workspace @rq-sys/web run typecheck
+
+
+> typecheck
+> tsc -p tsconfig.json --noEmit
+
+
+> @rq-sys/web@0.1.0 typecheck
+> tsc -b --pretty
+

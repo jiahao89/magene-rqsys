@@ -1160,3 +1160,6 @@ html, body, #root, .app-shell { max-width: 100%; overflow-x: clip; }
 .advanced-settings > .rules-form:last-child { padding-bottom: 14px; }
 .subsection { margin-top: 22px; padding-top: 6px; border-top: 1px solid var(--rq-divider); }
 .subsection h3 { margin: 0; font-size: var(--rq-font-body); }
+
+/* V02-T02：手工收录来源角标（TB 行不显示） */
+.source-badge { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: 12px; line-height: 18px; background: var(--rq-accent-soft, #eef2ff); color: var(--rq-accent-text, #3f5bd9); vertical-align: 1px; }

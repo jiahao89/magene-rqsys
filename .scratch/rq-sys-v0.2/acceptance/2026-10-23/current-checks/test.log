@@ -1,0 +1,836 @@
+
+> test
+> npm --workspace @rq-sys/api run test && npm --workspace @rq-sys/web run test
+
+
+> test
+> node --import=tsx --test 'src/**/*.test.ts'
+
+✔ uses the documented user-authenticated GET search and users response (45.641792ms)
+✔ rejects expired credentials without retaining provider messages (0.42ms)
+✖ source configuration create/get persists a minute-precision schedule, owner names and field map (5.942666ms)
+✖ source config mutation and audit append share one transaction (5.11575ms)
+✖ MVP source configuration is database-enforced as a singleton (5.254334ms)
+✖ requirements receive stable sequential RQ IDs without changing the TB upsert key (13.277708ms)
+✖ sync batch create is idempotent and blocks a parallel active batch (1.406292ms)
+✖ persistent job queue claims a lease and completes the job with fencing (1.245208ms)
+✖ fixture rejection settles its batch atomically and a stale claimant cannot overwrite recovery (2.253333ms)
+✖ analysis records append versions and keep the earlier run (2.59675ms)
+✖ analysis completion rejects a result produced for a stale source version (2.033875ms)
+✖ PM snapshots and audit events persist and can be read (2.728417ms)
+✖ requirement upsert round-trips source URL and latest batch (1.304042ms)
+✖ requirement search keyset cursor returns a second page (0.640291ms)
+✖ batch keyset cursor does not skip rows with identical start times and applies inclusive time filters (1.547708ms)
+✖ changed source upsert atomically snapshots, resets analysis and push, and only clears owner mapping when the TB owner changes (0.7305ms)
+✖ sync item persists orchestrator started time (3.70775ms)
+✖ PM snapshot wiring keys on the database requirement id, never the Teambition id (2.817333ms)
+✖ requirement advisory lock serializes the same requirement and releases on failure (1.38925ms)
+✖ concurrent pushes of the same requirement serialize through the advisory lock and write one Base row (2.052458ms)
+✖ a no-TB-owner requirement keeps a per-requirement owner across syncs until it is cleared (0.897667ms)
+✖ assigning a per-requirement owner to a missing requirement fails without side effects (3.730667ms)
+✔ team directory CRUD survives a transport that cannot serialize PostgreSQL void (2.21475ms)
+✔ team directory reports roster bindings and flags same-name multi-account conflicts (1.23425ms)
+✔ binding a person inserts one roster mapping and rejects an account already bound elsewhere (2.202208ms)
+✔ binding a person adopts an existing unnamed TB-scoped mapping for the same Feishu account (0.358916ms)
+✔ renaming a person carries the binding and refuses a target name bound to another account (0.507417ms)
+✔ requirement-level manual mapping replaces only that person's name-scoped mapping (0.361375ms)
+✔ deleting a person deactivates every active mapping for that name (0.252917ms)
+✔ source config repository maps persisted snake_case fields (0.254875ms)
+✔ overview aggregation excludes synthetic fixtures and maps database counts (0.240791ms)
+✔ source config JSON fields are passed as JSON, not PostgreSQL array literals (0.289709ms)
+✔ audit search uses parameterized filters and limit (0.116167ms)
+✔ audit persistence strips fields outside the safe details allowlist (0.125209ms)
+✔ batch search applies inclusive time bounds and a stable composite cursor (0.15975ms)
+✔ requirement search filters by latest batch and last-seen time on the server (0.128042ms)
+✔ base push repository looks up a run by idempotency key (0.211792ms)
+✔ job claim uses SKIP LOCKED and expires old leases (0.24375ms)
+✔ first module dictionary save persists the built-in roster (0.287209ms)
+✔ module dictionary save refuses an empty list without retiring the published version (0.283708ms)
+✔ enqueue reopens a terminally failed job for an explicit same-key retry (0.160834ms)
+✔ sync terminal state is accompanied by an actor-attributed audit event (2.208125ms)
+✔ resolves an exact project name and its unique requirement task type (61.398709ms)
+✔ does not resolve a project by a partial or different name (0.400958ms)
+✔ rejects duplicate project names instead of selecting the first project (7.58075ms)
+✔ rejects multiple requirement task types even when one is named exactly 需求 (0.510917ms)
+✔ surfaces only the HTTP status for gateway failures (0.222542ms)
+✔ duplicate allowlisted custom field IDs use the last returned value deterministically (1.46975ms)
+✔ custom-field allowlist excludes unrelated and duplicate unknown IDs (0.075625ms)
+✔ malformed serialized custom fields fail closed to an empty projection (0.067166ms)
+✔ rtf fields become readable text and lookup fields retain proposer identity separately (0.457625ms)
+✔ buildAnalysisRequest masks listed identity PII and pattern-matched contact details in all model text (2.515791ms)
+✔ validateAnalysisOutput accepts a fully evidenced contract, ignores model priority, and rejects bad module/evidence/inference (4.27925ms)
+✔ provider config does not invent credentials when AI_API_KEY is unset (0.096917ms)
+✔ DeepSeek provider sends JSON-mode request and parses structured response via injected fetch (59.734792ms)
+✔ provider resolves model evidence references to exact source excerpts (4.654208ms)
+✔ provider ignores an AI-generated priority when no calibrated rule is published (0.371042ms)
+✔ analysis orchestration appends versions, safely records provider failures, and does not touch PM fields (1.939709ms)
+✔ analysis is refused until the source snapshot has persisted (0.274291ms)
+✔ analysis config keeps API credential absent rather than making an external call (4.082625ms)
+✔ maskPii covers extra identity markers: platform user IDs, ID cards and @mentions (1.193583ms)
+✔ maskPii redacts a person name embedded in a labeled Teambition feedback title (0.169917ms)
+✔ outbound model payload carries no names, user IDs, contacts, credentials or attachment content (ticket 13) (0.383375ms)
+✔ recommendationValues 提取四维建议取值作为评分映射的查找键 (2.259042ms)
+✔ buildPriorityRule：按已批准评分映射与阈值确定性映射 P0–P3 (0.309417ms)
+✔ buildPriorityRule：建议取值不在评分映射中时优先级为 null（宁缺毋滥） (0.1115ms)
+✔ buildPriorityRule：证据缺失与否不影响分数——禁止把 missing_evidence 计为优先级分数 (0.115583ms)
+✔ buildPriorityRule：规则缺少评分映射、阈值或校准证据时不得用于计算（priority 留空） (0.133959ms)
+✔ runAnalysis：已发布且校准的规则驱动优先级；无规则或未校准规则时保持 null (1.25975ms)
+✔ analysis repository adapter appends then completes a separate durable analysis version (2.386292ms)
+✔ batch cursor preserves both startedAt and id for stable pagination (1.753417ms)
+✔ malformed batch cursor is ignored safely (0.146417ms)
+✔ 不变量5：审计事件捕获 actor/entity/result/timestamp（DDL 对齐形状） (3.509625ms)
+✔ 不变量5：result 枚举与 DDL CHECK 对齐（succeeded/failed/denied） (0.385166ms)
+✔ source configuration audit actions are part of the controlled event vocabulary (0.307375ms)
+✔ 不变量5：禁止字段被脱敏（密钥/联系方式/原始载荷） (0.156542ms)
+✔ 不变量5：白名单外的字段被丢弃，嵌套结构被丢弃 (0.29225ms)
+✔ 不变量5：全部字段被脱敏后 safeDetails 为空对象 (0.1455ms)
+✔ 不变量5：createAuditEvent 内部自动脱敏 (0.116375ms)
+✔ 不变量5：审计存储追加只读，按实体查询按时间排序 (4.972708ms)
+✔ 不变量5：非法事件被 schema 拒绝 (0.489458ms)
+✔ creates/upserts on the Teambition requirement ID, permits empty owner, and filters fields (0.943291ms)
+✔ snapshots before substantive update and only then resets PM status (0.668667ms)
+✔ serializes Base selects and text metadata, while an unavailable module option does not block push (0.094042ms)
+✔ snapshot failure leaves existing Base row untouched (0.249125ms)
+✔ reports an out-of-options select value instead of silently dropping it (0.089417ms)
+✔ distinguishes the deliberate 无法识别 omission from a rejected value (0.144667ms)
+✔ reports no omissions when every value fits the Base options (3.77775ms)
+✔ splits the owner merge value and the recipient into two requests when their id types differ (1.934167ms)
+✔ an existing row update also separates the owner and recipient id types (2.339375ms)
+✔ writes a PM Leader recipient as user_id in the second request even when the row has no owner (0.147958ms)
+✔ writes no notification fields and only one request without a notification payload (0.079709ms)
+✔ writes the event id and type without person fields when the event has no recipient (0.084541ms)
+✔ a Base missing the notification fields records the omissions and still writes the business fields (0.158292ms)
+✔ a Base missing only the owner merge field records that omission and still writes the notification (0.107ms)
+✔ writes the requirement deep link for a silent push and records a missing link field instead of failing (0.081375ms)
+✔ keeps the owner merge value when only the requirement link field is missing (0.096167ms)
+✔ keeps the requirement link when only the owner merge field is missing (0.090416ms)
+✔ propagates a first-request failure that is not FieldNameNotFound (0.159666ms)
+✔ propagates a second-request failure that is not FieldNameNotFound (0.075916ms)
+✔ retrying the same failed Base push executes the upsert instead of reporting the failure as success (14.051167ms)
+✔ substantive source updates snapshot against the last successful push and persist the Base record ID (0.248458ms)
+✔ uses the configured Teambition source project ID as the Base project key (2.583209ms)
+✔ records a rejected select value in the push audit instead of hiding it (8.789334ms)
+✔ keeps the success audit free of an omission reason when nothing was skipped (0.174375ms)
+✔ classifies Feishu failures from structured fields rather than Error.message wording (0.288292ms)
+✔ a bookkeeping failure after a successful Base write is not reported as a push failure (0.11475ms)
+✔ reconciles a Base record left by a previous push whose local record was never written (0.221ms)
+✔ first push stays silent so a bulk backfill cannot flood the PM Leader (0.172875ms)
+✔ first push notifies the owner when this requirement was assigned by hand (0.193916ms)
+✔ first push stays silent when the owner comes from a manual TB mapping (0.101916ms)
+✔ first push stays silent when the owner comes from a name-based roster binding (0.151708ms)
+✔ writes the stable web requirement deep link on every push, including a silent first push (0.069791ms)
+✔ defaults the requirement deep link to the production workbench (0.073459ms)
+✔ reads the deep-link base from RQSYS_WEB_BASE_URL and trims a trailing slash (0.067708ms)
+✔ a substantive change notifies the current owner with substantive_update (0.108916ms)
+✔ a substantive change without an owner falls back to the PM Leader (0.085917ms)
+✔ an owner appearing for the first time produces owner_assigned for the new owner (0.086333ms)
+✔ an owner A→B change produces owner_changed with the previous and new user ids in the event id (0.097125ms)
+✔ AI failure followed by success on the same source version produces ai_retry_success (0.085542ms)
+✔ AI retry success without an owner falls back to the PM Leader (0.092ms)
+✔ a repeated no-change sync is silent and writes no notification fields (0.07425ms)
+✔ replaying a pushed idempotency key is silent and never touches Base again (0.044ms)
+✔ first push without an owner is also silent (0.064625ms)
+✔ first push with an owner but no PM Leader stays silent instead of falling back to the owner (0.074583ms)
+✔ omits the notification payload when no recipient can be resolved (0.044875ms)
+✔ event ids are stable for the same event and distinct across events (0.191292ms)
+✔ the requirement advisory lock serializes concurrent pushes and prevents a duplicate Base row (21.646208ms)
+✔ a hand-picked owner on a requirement without a TB owner is written to Base and notified on the first push (0.316208ms)
+✔ assigning an owner after an empty-owner push notifies the newly assigned owner (0.154625ms)
+✔ once the hand-picked owner is in Base, later pushes neither rewrite the owner nor notify again (0.126292ms)
+✔ a substantive change on a hand-assigned requirement notifies that owner rather than the PM Leader (0.1095ms)
+✔ reassigning a hand-picked owner produces owner_changed from the owner previously written to Base (0.116875ms)
+✔ a stored hand-picked owner on a no-TB-owner requirement moves the owner state from not_required (0.100042ms)
+✔ a hand-picked owner keeps precedence after Teambition later provides a mapped owner (0.111208ms)
+✔ minIntervalMs 为 0 时只串行化，不额外等待 (1.202292ms)
+✔ 连续调用被拉开到最小间隔 (0.165667ms)
+✔ 并发调用不会重叠：内部客户端一次只被调用一个 (23.184292ms)
+✔ 已有足够间隔时不额外等待，队列失败不阻塞后续调用 (1.439208ms)
+✔ 所有 Base 方法都受限流（含读取路径） (1.085542ms)
+✔ source versions use the actual target field type for both numeric production and text POC tables (45.141375ms)
+✔ owner ID type passes through the production adapter and rate limiter (2.007375ms)
+✔ field schema follows pagination, caches reads, and rejects incomplete or cyclic responses (1.2175ms)
+✔ tenant token 请求并缓存至过期前 (0.455709ms)
+✔ findByRequirementKey 使用 Bitable v1 按 TB 需求 ID 精确过滤 (1.252209ms)
+✔ TB 需求 ID 无命中返回 null (0.307416ms)
+✔ 重复 TB 需求 ID 拒绝任意选择记录 (0.431584ms)
+✔ create/update/readPmFields 走 bitable records API (0.615ms)
+✔ Feishu 业务错误（code != 0）抛错且不泄露 appSecret (0.355459ms)
+✔ SyncRunRequest 只接受 UUID sourceId (1.424875ms)
+✔ OwnerMappingUpdate 与 openapi 对齐：tbUserId/tbDisplayName 可空可省略 (0.30775ms)
+✔ 分页查询默认 limit 与契约一致（batches 25 / audit 50） (0.371375ms)
+✔ BatchListQuery status 只接受契约枚举 (0.43975ms)
+✔ RequirementListQuery 四阶段状态枚举与契约一致，q 最长 200 (0.357708ms)
+✔ AuditListQuery since/until 接受 UTC 与偏移量时间戳（RFC 3339 date-time） (0.074959ms)
+✔ Idempotency-Key header 契约：8-128 字符 (0.074708ms)
+✔ 剥离文件自带的顶层 BEGIN;/COMMIT; (0.653417ms)
+✔ 没有事务包装的文件原样返回 (0.076042ms)
+✔ 只剥离首尾：PL/pgSQL 的 BEGIN 与文件中间的 COMMIT 不受影响 (0.07375ms)
+✔ 大小写与空白不敏感 (0.042625ms)
+✔ 常见迁移：BEGIN 与 COMMIT 都在时，中间语句完整保留 (0.044917ms)
+✔ pull 合法迁移：pending → running → synced/failed，failed → pending 重试 (1.194333ms)
+✔ pull 非法迁移被拒绝 (0.116792ms)
+✔ analysis 合法迁移：failed_retryable → pending/running（新建版本重试） (0.096083ms)
+✔ owner 迁移：auto_mapped → manually_mapped 允许，人工映射不可被自动流程改写 (0.089833ms)
+✔ push 合法迁移：failed → pending 重试，pushed → running 实质更新 (0.087709ms)
+✔ assertTransition 非法迁移抛 InvalidTransitionError (0.374959ms)
+✔ 不变量：自动映射建议不覆盖人工确认字段 (0.096625ms)
+✔ 不变量：低置信/缺优先级/首轮 AI 失败不阻塞合格推送 (0.180625ms)
+✔ 不变量：未完成前置阶段的推送不合格 (0.160083ms)
+✔ liveness reports the API service (114.151958ms)
+✔ readiness reports unavailable when no database is configured (0.493042ms)
+✔ overview metrics return full pipeline counts and require an authenticated actor (3.490083ms)
+✔ test fixture status requires authentication and reports only its availability (0.336083ms)
+✔ lists only user-maintained source settings after injected identity authentication (0.197417ms)
+✔ rejects protected routes without an identity provider (0.110208ms)
+✔ updates source settings by project name while keeping server-owned IDs and metadata (3.743667ms)
+✔ any authenticated Feishu actor can update source settings without an application role (0.603583ms)
+✔ queues a sync once and returns the batch for an idempotent repeat (1.299417ms)
+✔ queues a source-only sync mode separately and records the mode in the audit (0.345791ms)
+✔ scopes the same idempotency token to its sync mode (0.35325ms)
+✔ queues a Base push retry without an undocumented project ID dependency (0.281417ms)
+✔ queues a retry for a pending analysis when its current queue job is missing (0.224125ms)
+✔ audits an analysis retry request when an existing queued job is reused (0.129166ms)
+✔ lists and retrieves batches with items (0.358042ms)
+✔ failed item retry is idempotent across repeated requests (0.260667ms)
+✔ batch and requirement list routes pass time, batch and stable cursor filters to repositories (0.781334ms)
+✔ lists audit events (0.163958ms)
+✖ requirement detail returns the full analysis version history (spec 02 prior versions) (0.509917ms)
+✔ retries a requirement stranded in running by a crashed analysis handler (0.13075ms)
+✔ still rejects a retry while the analysis job is genuinely running (0.091958ms)
+✔ production repository composition exposes rules repositories to the HTTP layer (0.910875ms)
+✔ authenticated user creates the single source and reads it back consistently (57.633417ms)
+✔ source config time read from PostgreSQL round-trips through the update API (0.691666ms)
+✔ source creation rejects credentials and server-owned configuration fields (0.656417ms)
+✔ any authenticated user can configure the source and maintain module dictionaries (0.690708ms)
+✔ any authenticated user can operate the sync, retry, mapping and push routes (0.783958ms)
+✔ read endpoints remain available to every authenticated user (0.11575ms)
+✔ audit write failure does not report a successful publish or source creation (0.227875ms)
+✔ authenticated user configures a source by project name and stores server-resolved Teambition IDs (0.182458ms)
+✔ changing the project name resolves new IDs and clears project-specific server mappings (0.259167ms)
+✔ source setup rejects client-supplied Teambition IDs instead of bypassing name resolution (0.152125ms)
+✔ source setup rejects client-supplied field and owner mapping controls (0.176084ms)
+✔ source setup fails closed when server-side project resolution is unavailable (0.334458ms)
+✔ source setup reports a project-resolution conflict without persisting a source (0.12625ms)
+✔ redactSecrets 脱敏密钥/凭据/联系方式 (1.485875ms)
+✔ redactSecrets 保留资源标识符（UUID）以维持可诊断性 (0.13075ms)
+✔ errorBody 默认消息与契约一致，自定义消息自动脱敏 (1.128708ms)
+✔ jsonError 返回注册表对应的 HTTP 状态 (78.677375ms)
+✔ ERROR_STATUS 与 openapi 错误契约对齐 (0.111541ms)
+✔ provider 原始错误永不回显 (0.14125ms)
+✔ defaults to disabled so the server stays fail-closed (0.617167ms)
+✔ never activates in production, regardless of configuration (0.058625ms)
+✔ accepts the platform contract header on loopback when explicitly enabled (56.837666ms)
+✔ still requires the identity header rather than trusting the environment alone (0.311292ms)
+✔ rejects non-loopback requests so the seam cannot be reached remotely (0.232458ms)
+✔ rejects control characters and over-long identities (0.129042ms)
+✔ supports a configurable header name but defaults to the Miaoda contract (0.124167ms)
+✔ startup notice describes the seam without leaking anything reusable (0.0775ms)
+✔ lists active person mappings for the single source (164.247791ms)
+✔ mappings list requires authentication (21.703917ms)
+✔ mappings list returns an empty page when no source is configured (3.131541ms)
+✔ searches Feishu users only for an authorized operator and returns minimal candidates (17.899291ms)
+✔ Feishu user search validates query and is available to any authenticated user (6.992708ms)
+✔ resolves a platform selection only after login and keeps the I64 identifier as text (4.868625ms)
+✖ manual owner mapping persists mapping, marks manually mapped, enqueues push and audits (138.993083ms)
+✖ manual owner mapping returns 409 when the Feishu account belongs to another person (1.906666ms)
+✔ manual mapping does not bypass pull state or push when requirement is missing (0.723375ms)
+✔ push API queues the asynchronous Base push and deduplicates by requirement versions (1.48975ms)
+✔ assigning an owner to a requirement without a TB owner stores it on the requirement and queues a push (0.438541ms)
+✔ a legacy no-owner requirement still waiting for mapping accepts a per-requirement owner (0.206875ms)
+✔ a per-requirement owner assignment that cannot be stored reports a dependency failure and queues nothing (0.267667ms)
+✖ the requirement detail shows the per-requirement owner picked for a no-TB-owner requirement (1.51075ms)
+✔ lists module dictionary versions after authentication (84.542916ms)
+✔ rejects rules routes without an identity provider (4.305791ms)
+✔ creates a module dictionary draft with an auto-incremented version (7.71875ms)
+✔ rejects an empty or malformed dictionary body (2.224458ms)
+✔ publishes a draft dictionary and retires the previously published version (0.408916ms)
+✔ publishing an unknown or non-draft dictionary version fails without mutating state (0.809709ms)
+✔ audits dictionary create and publish actions (0.282875ms)
+✔ lists priority rule versions after authentication (0.583375ms)
+✔ creates a priority rule draft and rejects thresholds violating the contract (4.560167ms)
+✔ publishes a draft priority rule and retires the previously published version (0.643666ms)
+✔ publishing an unknown or non-draft priority rule fails (0.188167ms)
+✔ audits priority rule create and publish actions (0.594ms)
+✔ source adapter completes API contract endpoints and protects base health (62.308333ms)
+✔ team-directory endpoints require the trusted Feishu identity (161.110834ms)
+✔ people endpoints list, add, rename and delete names with actor-attributed audit events (12.218917ms)
+✔ binds and unbinds a roster person to a Feishu identity with audit and conflict handling (2.087125ms)
+✔ module directory reads and saves the exact module/person dictionary as a new version (2.008792ms)
+✔ refuses an empty module list so the active taxonomy cannot be cleared (0.373708ms)
+✔ requirements API forwards exact TB-owner filtering to the server repository (0.989708ms)
+✔ 不变量1：无已有 run 时 claim 创建新 run 并绑定 worker lease (2.33475ms)
+✔ 不变量1：同幂等键重复触发不创建重复工作（already_active） (0.084125ms)
+✔ 不变量1：不同幂等键但同身份活跃 run 存在时返回 already_active (0.048791ms)
+✔ 同键终态 run 拒绝重复触发，新键可对终态身份创建新 run (0.054125ms)
+✔ 不变量1：终态 run 拒绝同幂等键重复触发（terminal_rejected） (0.049416ms)
+✔ 不变量3：过期 lease 可安全回收（lease_expired_reclaimed） (0.080917ms)
+✔ 不变量3：从未 claim 的 queued run 可被回收 (0.045708ms)
+✔ 不变量3：lease 有效性判断的边界条件 (0.046667ms)
+✔ 不变量2：nextStage 返回首个未成功阶段，保留先前成功结果 (0.076084ms)
+✔ 不变量2：全部阶段成功时 nextStage 返回 null (0.089416ms)
+✔ 回收过期 lease 时恢复到首个未成功阶段 (0.062667ms)
+✔ 活跃与终态判断 (0.043292ms)
+✔ 不变量1：同幂等键的重复调度不创建重复 run (1.767916ms)
+✔ 不变量1：同需求身份不同键、活跃 run 存在时不创建重复工作 (0.091ms)
+✔ 不变量1：不同需求身份各自创建独立 run (0.0815ms)
+✔ 不变量3：有效 lease 内的并发 claim 被拒绝，过期后可回收 (0.102458ms)
+✔ 不变量2：阶段推进只追加成功结果，失败保留先前成功 (0.141708ms)
+✔ 不变量2：全部阶段成功后 run 标记 succeeded，lease 释放 (0.092667ms)
+✔ advance 校验 lease 与阶段匹配 (0.301667ms)
+✔ 幂等键生成：调度键稳定，手动键唯一 (0.060667ms)
+✔ 幂等键格式校验 (0.059916ms)
+✔ worker claims one due job and dispatches sync using the existing orchestrator (7.778333ms)
+✔ worker preserves the explicit source-only mode for a manual import (0.227042ms)
+✔ worker preserves the explicit scheduled fixture marker for the safe sync reader (0.168292ms)
+✔ 迟到的 worker 结果被 fencing 拒绝：不覆盖新认领者的状态（不变量，工单 15） (0.418583ms)
+✔ worker leaves the queue untouched when no job is claimable (0.770333ms)
+✔ 不变量4：retryable failure reschedules with bounded stage backoff and a safe summary (0.451459ms)
+✔ 不变量4：max attempts reached completes the job as failed terminal (0.264958ms)
+✔ fixture policy denial is terminal and never schedules an unsafe retry (0.195333ms)
+✔ fixture rejection persists a bounded reason without disclosing environment values (0.391916ms)
+✔ partial_failure sync is retryable; job types without a handler fail closed (terminal) (0.334417ms)
+✔ sync 作业的任意终态失败都收敛批次，不留下永久 running 的孤儿批次 (0.215292ms)
+✔ 夹具策略拒绝仍然收敛批次（原有行为不回退） (0.162625ms)
+✔ dispatch 期间按租约 1/3 周期续约，长任务不会被重复认领 (351.138541ms)
+✔ 续约被拒（租约已易主）后停止续约，不覆盖他人结果 (400.996666ms)
+✔ 永久性错误直接终态，不白白重试到 Max attempts (0.370208ms)
+✔ 可重试错误仍然按退避重排（分类不误伤） (0.11225ms)
+✔ resolves by TB ID before a colliding normalized name (4.025625ms)
+✔ uses exactly one active normalized-name match when ID is absent (0.276167ms)
+✔ classifies duplicate normalized names as ambiguous (0.109584ms)
+✔ classifies unmatched or inactive ID as unmatched without falling back to name (0.249709ms)
+✔ permits no owner and does not return an owner mapping (0.155292ms)
+✔ preserves manual mappings when automatic resolution is empty or unresolved (0.106708ms)
+✔ 无负责人需求：分析终态后标记 not_required 并幂等入队推送（可空负责人推送） (3.893709ms)
+✔ TB 有负责人且映射唯一：分析失败终态也入队推送（AI 不是门槛） (0.27975ms)
+✔ TB 有负责人但未匹配：等待人工映射，不入队推送 (0.101083ms)
+✔ AI 成功重试可更新已推送需求；失败重试不重复推送，未同步需求不推进 (0.10625ms)
+✖ 推送映射最新 AI 版本：P3 原样传递不丢弃，无分析时不写 AI 字段 (2.914167ms)
+✔ TB 有负责人但未匹配：不推送且审计 denied（映射前不误报已推送） (0.142334ms)
+✖ TB 无负责人：先 not_required 再空负责人推送，且新源版本才触发 PM 快照 (0.331708ms)
+✔ 无 TB 负责人但已在 Web 指定负责人：分析终态后保持 manually_mapped 并入队推送 (0.124041ms)
+✔ metadata-only source changes reuse a known owner mapping and queue Base update without AI (2.043333ms)
+✔ metadata-only owner removal resolves to no owner and queues an empty-owner Base update (0.110833ms)
+✔ metadata-only update with an unmapped new owner waits for manual mapping (0.058041ms)
+✔ metadata-only source update preserves an existing manual owner selection (0.090166ms)
+✔ metadata-only sync of a no-TB-owner requirement keeps the owner picked in Web (0.13525ms)
+✔ 不变量6：确定性时钟不依赖机器本地时间 (5.086708ms)
+✔ 系统时钟返回合法 Date (0.160166ms)
+✔ 不变量4：退避计算确定且有界（指数增长但封顶） (0.66975ms)
+✔ 不变量4：rate_limited 退避翻倍但仍封顶 (0.2225ms)
+✔ 不变量4：各阶段尝试上限确定且不同 (0.107416ms)
+✔ 不变量4：shouldRetry 在达到上限后返回 false (0.167542ms)
+✔ 不可重试错误类别直接返回 false (0.18425ms)
+✔ 可重试错误类别按阶段判断 (0.051792ms)
+✔ HTTP 状态码到错误类别映射 (0.05475ms)
+✔ 不变量2：失败阶段的重试只影响该阶段（由 nextStage + storage 保证） (0.040125ms)
+✔ failed_retryable 需求会被自动补排分析作业并写系统审计 (4.165375ms)
+✔ 已有 queued/running 作业时不重复入队 (0.3085ms)
+✔ 作业已 succeeded 但需求仍是 failed_retryable 时不做自动动作 (0.145833ms)
+✔ 同一源版本累计调度重试达到上限后放弃：只留一条 failed 审计，之后静默跳过 (0.670042ms)
+✔ 上限内的调度重试仍会继续入队（边界：2 次已用，允许第 3 次） (0.783834ms)
+✔ running + 作业已终态 → 回退 failed_retryable 并写 analysis.recovery 审计 (3.709625ms)
+✔ running + 作业不存在 → 回退 failed_retryable（reason=job_missing） (0.415167ms)
+✔ running + 作业租约未过期 → 不动 (15.056125ms)
+✔ running + 首轮同步链路的活作业（analysis:<id>:v<sv>）→ 不动，避免误判崩溃 (8.318333ms)
+✔ running + 租约过期但尝试次数未用尽 → 不动（worker 会重新认领） (0.825667ms)
+✔ running + 租约过期且尝试次数用尽 → 终结僵尸作业并回退 (0.2115ms)
+✔ 僵尸作业在被回收前被其他实例认领（fencing 拒绝）→ 不回退需求状态 (0.092709ms)
+✔ running 阶段查询异常时记录错误，但不阻断 failed_retryable 重试 (1.058875ms)
+✔ 单个需求入队异常时记录错误并继续处理下一条 (2.62675ms)
+✔ 作业键助手覆盖重试键、上一版本键与首轮同步键 (0.145833ms)
+✔ 不变量1：同一调度窗口的重复触发不创建重复批次/任务（幂等键按窗口） (87.659125ms)
+✔ 不变量6：调度计算按显式时区执行（UTC 08:00） (0.8345ms)
+✔ 未启用/未配置调度的来源跳过 (0.104792ms)
+✔ 定时合成验收只调度指定来源，并隔离正式窗口幂等键 (5.931916ms)
+✔ 合成来源不存在时，在其他来源入队前失败 (0.236125ms)
+✔ 单个来源入队失败不中断其他来源，且不留孤儿批次 (0.515709ms)
+✔ 复用既有批次时入队失败不覆盖该批次状态 (0.321709ms)
+✔ 不变量6：调度计算使用显式时区而非机器本地时区 (42.154333ms)
+✔ 不变量6：now 在目标时刻之前时返回昨日窗口 (0.367583ms)
+✔ 不变量6：weekday 过滤找到最近符合的窗口 (0.281417ms)
+✔ 不变量6：调度未启用或配置不完整返回 null (0.043875ms)
+✔ 不变量6：非法 time 格式抛错而非静默回退 (0.161917ms)
+✔ 不变量6：非法时区抛错而非静默回退到机器本地时区 (0.081834ms)
+✔ 窗口终点为起点 + 24 小时 (0.153959ms)
+✔ 跨夏令时边界：America/New_York 时区的调度计算 (0.580542ms)
+✔ 跨夏令时回退边界：窗口时刻与 now 分居切换日两侧时起点仍准确 (0.232542ms)
+✔ 调度幂等键：同窗口同键，不同窗口不同键 (0.481ms)
+✔ 解析到映射的需求会入队 base_push 并写 recheck 审计 (2.138583ms)
+✔ 解析不到映射时跳过且不写审计 (0.143167ms)
+✔ analysisVersion 取最新分析版本，缺失版本时用 0 (0.13475ms)
+✔ 单条需求的异常只进 errors，后续需求继续入队 (0.17275ms)
+✔ limit 默认 100 且可覆盖，单轮不会全量入队 (0.415208ms)
+✔ owner_state 迁移不被状态机允许时不写状态，但仍入队 (0.083792ms)
+✔ 已映射状态不被自动改写，尤其人工映射结果 (0.094083ms)
+✔ manual 匹配的映射落 manually_mapped，而不是 auto_mapped (0.074959ms)
+✔ 无 tbUserId 时按规范化姓名解析映射；无执行人的需求跳过 (0.158333ms)
+✔ 候选查询失败不抛出，只记录 errors (0.106334ms)
+✔ 作业不存在且批次已过最小年龄 → 回收为 failed (2.642042ms)
+✔ 作业已终态但批次仍 running → 回收（收敛机会已过去） (0.210542ms)
+✔ 作业仍在 queued/running → 不动它（租约机制会接管） (0.162542ms)
+✔ 未过最小年龄的批次放过，避免误杀刚建好、作业尚未入队的批次 (0.126166ms)
+✔ 只扫描 running 批次 (0.13225ms)
+✔ 手动路径的作业键（sync:<sourceId>:<key>）也能找到作业，不误杀健康批次 (0.132458ms)
+✔ running 且尝试用尽、租约过期 → 原子收敛（complete + settleSyncBatch） (0.198167ms)
+✔ 尝试用尽但租约尚未过期 → 放过（可能仍有活着的 worker 在收尾） (0.099875ms)
+✔ stableHash is independent of object key insertion order (1.086459ms)
+✔ substantiveHash changes only for substantive text and attachment references (0.2585ms)
+✔ source-only mode suppresses every downstream stage while omitted mode keeps the full pipeline (1.535041ms)
+✔ imports every returned task, filters provider fields, and persists snapshots and results (12.073125ms)
+✔ keeps successful items committed and safely completes a partial-failure batch (0.8485ms)
+✔ marks a source-list failure as a failed batch (0.15025ms)
+✔ fetches all pages including archived tasks and deduplicates repeated IDs (0.335708ms)
+✖ drops later TB records that share a normalized title, keeping the earliest one (1.675791ms)
+✖ keeps blank titles and breaks created ties by requirement id (0.30525ms)
+✔ does not expose unmapped provider custom fields in normalized payload (0.669666ms)
+✔ source-only metadata updates remain recoverable by a later full sync (0.727916ms)
+✔ classifies a source snapshot write failure without exposing its database error (1.005917ms)
+✔ scheduled fixture mode is off by default and accepts only an explicit short-lived POC source (3.213666ms)
+✔ invalid or expired fixture configuration never falls back to real synchronization (2.087792ms)
+✔ all stages reject real or other-source work while fixture mode is active (0.148792ms)
+✔ delayed fixture analysis or push cannot run after restoring a formal Base (0.106333ms)
+✔ fixture policy denial identifies a safe Base app mismatch without exposing the configured value (1.578083ms)
+✔ fixed source identity survives retry and has no owner or proposer (2.178709ms)
+✔ a single-item fixture retry retains its original identity even without a payload marker (0.357833ms)
+ℹ tests 387
+ℹ suites 0
+ℹ pass 359
+ℹ fail 28
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1853.119083
+
+✖ failing tests:
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:3223
+✖ source configuration create/get persists a minute-precision schedule, owner names and field map (5.942666ms)
+  Error: connect EPERM /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Users/jacko/Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:13:198)
+      at async TestContext.<anonymous> (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:19:124)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    errno: -1,
+    code: 'EPERM',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:3954
+✖ source config mutation and audit append share one transaction (5.11575ms)
+  Error: connect EPERM /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Users/jacko/Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:13:198)
+      at async TestContext.<anonymous> (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:90)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -1,
+    code: 'EPERM',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:4722
+✖ MVP source configuration is database-enforced as a singleton (5.254334ms)
+  Error: connect EPERM /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Users/jacko/Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:13:198)
+      at async TestContext.<anonymous> (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:21:89)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -1,
+    code: 'EPERM',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:5004
+✖ requirements receive stable sequential RQ IDs without changing the TB upsert key (13.277708ms)
+  Error: connect EPERM /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Users/jacko/Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:13:198)
+      at async TestContext.<anonymous> (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:23:13)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -1,
+    code: 'EPERM',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:6127
+✖ sync batch create is idempotent and blocks a parallel active batch (1.406292ms)
+  Error: connect EPERM /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Users/jacko/Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:13:198)
+      at async TestContext.<anonymous> (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:37:95)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -1,
+    code: 'EPERM',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:6681
+✖ persistent job queue claims a lease and completes the job with fencing (1.245208ms)
+  Error: connect EPERM /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Users/jacko/Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:13:198)
+      at async TestContext.<anonymous> (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:38:99)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -1,
+    code: 'EPERM',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:7518
+✖ fixture rejection settles its batch atomically and a stale claimant cannot overwrite recovery (2.253333ms)
+  Error: connect EPERM /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Users/jacko/Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:13:198)
+      at async TestContext.<anonymous> (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:41:15)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -1,
+    code: 'EPERM',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:9150
+✖ analysis records append versions and keep the earlier run (2.59675ms)
+  Error: connect EPERM /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Users/jacko/Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:13:198)
+      at async TestContext.<anonymous> (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:60:86)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -1,
+    code: 'EPERM',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:10159
+✖ analysis completion rejects a result produced for a stale source version (2.033875ms)
+  Error: connect EPERM /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Users/jacko/Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:13:198)
+      at async TestContext.<anonymous> (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:61:101)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -1,
+    code: 'EPERM',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:11083
+✖ PM snapshots and audit events persist and can be read (2.728417ms)
+  Error: connect EPERM /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Users/jacko/Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:13:198)
+      at async TestContext.<anonymous> (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:62:82)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -1,
+    code: 'EPERM',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:12134
+✖ requirement upsert round-trips source URL and latest batch (1.304042ms)
+  Error: connect EPERM /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Users/jacko/Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:13:198)
+      at async TestContext.<anonymous> (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:64:87)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -1,
+    code: 'EPERM',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:12897
+✖ requirement search keyset cursor returns a second page (0.640291ms)
+  Error: connect EPERM /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Users/jacko/Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:13:198)
+      at async TestContext.<anonymous> (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:65:83)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -1,
+    code: 'EPERM',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:14156
+✖ batch keyset cursor does not skip rows with identical start times and applies inclusive time filters (1.547708ms)
+  Error: connect EPERM /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Users/jacko/Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:13:198)
+      at async TestContext.<anonymous> (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:66:129)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -1,
+    code: 'EPERM',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:15387
+✖ changed source upsert atomically snapshots, resets analysis and push, and only clears owner mapping when the TB owner changes (0.7305ms)
+  Error: connect EPERM /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Users/jacko/Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:13:198)
+      at async TestContext.<anonymous> (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:69:13)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -1,
+    code: 'EPERM',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:18377
+✖ sync item persists orchestrator started time (3.70775ms)
+  Error: connect EPERM /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Users/jacko/Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:13:198)
+      at async TestContext.<anonymous> (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:90:73)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -1,
+    code: 'EPERM',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:18998
+✖ PM snapshot wiring keys on the database requirement id, never the Teambition id (2.817333ms)
+  Error: connect EPERM /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Users/jacko/Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:13:198)
+      at async TestContext.<anonymous> (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:97:15)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -1,
+    code: 'EPERM',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:20045
+✖ requirement advisory lock serializes the same requirement and releases on failure (1.38925ms)
+  Error: connect EPERM /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Users/jacko/Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:13:198)
+      at async TestContext.<anonymous> (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:121:15)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -1,
+    code: 'EPERM',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:21491
+✖ concurrent pushes of the same requirement serialize through the advisory lock and write one Base row (2.052458ms)
+  Error: connect EPERM /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Users/jacko/Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:13:198)
+      at async TestContext.<anonymous> (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:155:15)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -1,
+    code: 'EPERM',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:23510
+✖ a no-TB-owner requirement keeps a per-requirement owner across syncs until it is cleared (0.897667ms)
+  Error: connect EPERM /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Users/jacko/Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:13:198)
+      at async TestContext.<anonymous> (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:203:13)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -1,
+    code: 'EPERM',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:25590
+✖ assigning a per-requirement owner to a missing requirement fails without side effects (3.730667ms)
+  Error: connect EPERM /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Users/jacko/Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:13:198)
+      at async TestContext.<anonymous> (/Users/jacko/Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:232:13)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -1,
+    code: 'EPERM',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/http/app.test.ts:1:19456
+✖ requirement detail returns the full analysis version history (spec 02 prior versions) (0.509917ms)
+  TypeError: repositories.requirements.listDuplicates is not a function
+      at handleApiRequest (/Users/jacko/Projects/RQ-Sys/apps/api/src/http/app.ts:425:56)
+      at async TestContext.<anonymous> (/Users/jacko/Projects/RQ-Sys/apps/api/src/http/app.test.ts:192:13)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7)
+
+test at src/http/owner-base.test.ts:1:4074
+✖ manual owner mapping persists mapping, marks manually mapped, enqueues push and audits (138.993083ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  503 !== 200
+  
+      at TestContext.<anonymous> (/Users/jacko/Projects/RQ-Sys/apps/api/src/http/owner-base.test.ts:33:10)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 503,
+    expected: 200,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at src/http/owner-base.test.ts:1:4918
+✖ manual owner mapping returns 409 when the Feishu account belongs to another person (1.906666ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  503 !== 409
+  
+      at TestContext.<anonymous> (/Users/jacko/Projects/RQ-Sys/apps/api/src/http/owner-base.test.ts:46:10)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 503,
+    expected: 409,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at src/http/owner-base.test.ts:1:9782
+✖ the requirement detail shows the per-requirement owner picked for a no-TB-owner requirement (1.51075ms)
+  TypeError: repositories.requirements.listDuplicates is not a function
+      at handleApiRequest (/Users/jacko/Projects/RQ-Sys/apps/api/src/http/app.ts:425:56)
+      at async TestContext.<anonymous> (/Users/jacko/Projects/RQ-Sys/apps/api/src/http/owner-base.test.ts:124:20)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7)
+
+test at src/pipeline/advance.test.ts:1:7757
+✖ 推送映射最新 AI 版本：P3 原样传递不丢弃，无分析时不写 AI 字段 (2.914167ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'pushed_unrecorded'
+  - 'pushed'
+           ^
+  
+      at TestContext.<anonymous> (/Users/jacko/Projects/RQ-Sys/apps/api/src/pipeline/advance.test.ts:118:10)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'pushed_unrecorded',
+    expected: 'pushed',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at src/pipeline/advance.test.ts:1:9596
+✖ TB 无负责人：先 not_required 再空负责人推送，且新源版本才触发 PM 快照 (0.331708ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'pushed_unrecorded'
+  - 'pushed'
+           ^
+  
+      at TestContext.<anonymous> (/Users/jacko/Projects/RQ-Sys/apps/api/src/pipeline/advance.test.ts:142:10)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'pushed_unrecorded',
+    expected: 'pushed',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at src/sync/service.test.ts:1:4327
+✖ drops later TB records that share a normalized title, keeping the earliest one (1.675791ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  3 !== 2
+  
+      at TestContext.<anonymous> (/Users/jacko/Projects/RQ-Sys/apps/api/src/sync/service.test.ts:88:10)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 3,
+    expected: 2,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at src/sync/service.test.ts:1:5161
+✖ keeps blank titles and breaks created ties by requirement id (0.30525ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  4 !== 3
+  
+      at TestContext.<anonymous> (/Users/jacko/Projects/RQ-Sys/apps/api/src/sync/service.test.ts:105:10)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 4,
+    expected: 3,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+npm error Lifecycle script `test` failed with error:
+npm error code 1
+npm error path /Users/jacko/Projects/RQ-Sys/apps/api
+npm error workspace @rq-sys/api
+npm error location /Users/jacko/Projects/RQ-Sys/apps/api
+npm error command failed
+npm error command sh -c node --import=tsx --test 'src/**/*.test.ts'

@@ -276,6 +276,16 @@ export interface RequirementSearchCursor {
 }
 
 export interface RequirementQueryRepository {
+  // V02-T02/T04：手工收录。同幂等键重放返回同一需求；hash 不一致视为冲突由调用方拒绝。
+  findIntakeReceipt(key: string): Promise<{ requirementId: string; requestHash: string; actorId: string } | null>;
+  createManualRequirement(input: {
+    idempotencyKey: string;
+    actorId: string;
+    requestHash: string;
+    title: string;
+    description: string | null;
+    sourceChannel: string;
+  }): Promise<{ requirementId: string; platformRequirementId: string; replay: boolean }>;
   getPipelineCounts(): Promise<{
     total: number;
     pullSynced: number;

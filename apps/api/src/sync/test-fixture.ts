@@ -59,8 +59,9 @@ export function assertFixtureWorkAllowed(
   }
 }
 
-export function isSyntheticFixtureRequirement(sourceRequirementId: string): boolean {
-  return sourceRequirementId.startsWith("rqsys-fixture-");
+export function isSyntheticFixtureRequirement(sourceRequirementId: string | null): boolean {
+  // 手工需求没有 TB ID（null）：不是合成夹具，正常放行（V02-T02 起可空）。
+  return sourceRequirementId !== null && sourceRequirementId.startsWith("rqsys-fixture-");
 }
 
 /** 兼容旧的单项重试队列：身份以持久化条目 ID 为准，不只依赖 marker。 */

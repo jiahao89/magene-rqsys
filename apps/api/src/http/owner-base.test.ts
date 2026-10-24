@@ -4,7 +4,7 @@ import { handleApiRequest, type ApiDependencies, type ApiRepositories } from "./
 import type { PersonMappingRecord, RequirementRecord } from "../domain/persistence.js";
 import type { FeishuBasePushAdapter } from "../base/client.js";
 
-const requirement: RequirementRecord = { id: "req-1", platformRequirementId: "RQ-000001", sourceConfigId: "source-1", teambitionRequirementId: "tb-1", teambitionUniqueId: null, title: "Need", description: null, scope: null, acceptanceCriteria: null, proposerUserId: null, proposerName: null, executorUserId: "tb-user", executorName: "Ada", sourceStatusId: null, sourceCreatedAt: null, sourceUpdatedAt: null, sourceUrl: null, attachmentRefs: [], sourceCustomFields: [], sourcePayload: {}, sourceHash: "h", substantiveHash: "s", sourceVersion: 1, latestBatchId: null, baseRecordId: null, lastPushedAt: null, pipeline: { pull: "synced", analysis: "failed_retryable", owner: "pending_mapping", push: "pending" }, firstSeenAt: "2026-10-08T00:00:00.000Z", lastSeenAt: "2026-10-08T00:00:00.000Z", createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z" };
+const requirement: RequirementRecord = { id: "req-1", platformRequirementId: "RQ-000001", sourceType: "teambition", sourceChannel: null, sourceConfigId: "source-1", teambitionRequirementId: "tb-1", teambitionUniqueId: null, title: "Need", description: null, scope: null, acceptanceCriteria: null, proposerUserId: null, proposerName: null, executorUserId: "tb-user", executorName: "Ada", sourceStatusId: null, sourceCreatedAt: null, sourceUpdatedAt: null, sourceUrl: null, attachmentRefs: [], sourceCustomFields: [], sourcePayload: {}, sourceHash: "h", substantiveHash: "s", sourceVersion: 1, latestBatchId: null, baseRecordId: null, lastPushedAt: null, pipeline: { pull: "synced", analysis: "failed_retryable", owner: "pending_mapping", push: "pending" }, firstSeenAt: "2026-10-08T00:00:00.000Z", lastSeenAt: "2026-10-08T00:00:00.000Z", createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z" };
 
 function deps() {
   const actions: string[] = [];
@@ -153,6 +153,22 @@ test("the requirement detail shows the per-requirement owner picked for a no-TB-
   const response = await handleApiRequest(new Request("http://localhost/api/requirements/req-1"), h.dependencies);
   assert.equal(response.status, 200);
   assert.equal((await response.json() as { ownerName: string | null }).ownerName, "毕梓浩");
+});
+
+test("clearing a manual owner on a manually-mapped requirement bridges to auto_mapped through pending_mapping", async () => {
+  // manually_mapped 没有 → auto_mapped 的直接迁移：先退 pending_mapping 再落目标，
+  // 否则真实仓储会抛 InvalidTransitionError，需求被永久卡在 manually_mapped（重试 409）。
+  const h = deps();
+  const calls: string[] = [];
+  const repositories = h.dependencies.repositories as unknown as { requirements: Record<string, unknown> };
+  const base = await (repositories.requirements.get as () => Promise<RequirementRecord | null>)();
+  repositories.requirements.get = async () => ({ ...base!, pipeline: { ...base!.pipeline, owner: "manually_mapped" }, manualOwner: { feishuUserId: "u-assignee", feishuIdType: "user_id", name: "毕梓浩", assignedBy: "operator", assignedAt: "2026-10-09T00:00:00.000Z", pushedFeishuUserId: null } });
+  repositories.requirements.clearManualOwner = async () => { calls.push("cleared"); };
+  repositories.requirements.setOwner = async (_id: string, owner: string | null, state: string) => { calls.push(`owner:${owner ?? "none"}:${state}`); };
+  const response = await handleApiRequest(new Request("http://localhost/api/requirements/req-1/owner", { method: "DELETE" }), h.dependencies);
+  assert.equal(response.status, 200);
+  assert.deepEqual(calls, ["cleared", "owner:none:pending_mapping", "owner:ou-user:auto_mapped"]);
+  assert.deepEqual(await response.json(), { requirementId: "req-1", ownerState: "auto_mapped", status: "queued" });
 });
 
 test("clearing a manual owner on a requirement without TB executor transitions through pending_mapping", async () => {

@@ -106,7 +106,7 @@ export async function recheckOwnerMappings(
         continue;
       }
 
-      const mapping = await params.people.resolveActive(requirement.sourceConfigId, lookup);
+      const mapping = requirement.sourceConfigId ? await params.people.resolveActive(requirement.sourceConfigId, lookup) : null;
       if (!mapping) {
         // 尚未补映射：等待下一轮或人工映射。不写审计，避免每轮重复刷噪音。
         report.skipped += 1;

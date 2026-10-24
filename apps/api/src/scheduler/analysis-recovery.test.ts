@@ -17,7 +17,7 @@ type SearchQuery = Parameters<RequirementQueryRepository["search"]>[0];
 
 function requirement(overrides: Partial<RequirementRecord> = {}): RequirementRecord {
   return {
-    id: "req-1", platformRequirementId: "RQ-000001", sourceConfigId: "src-1", teambitionRequirementId: "tb-1", teambitionUniqueId: 1,
+    id: "req-1", platformRequirementId: "RQ-000001", sourceType: "teambition", sourceChannel: null, sourceConfigId: "src-1", teambitionRequirementId: "tb-1", teambitionUniqueId: 1,
     title: "需求", description: null, scope: null, acceptanceCriteria: null,
     proposerUserId: null, proposerName: null, executorUserId: null, executorName: null,
     sourceStatusId: null, sourceCreatedAt: null, sourceUpdatedAt: null, sourceUrl: null,

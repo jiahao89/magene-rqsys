@@ -1,0 +1,17 @@
+{
+  "requests": [
+    {
+      "url": "https://ecn8egz1lhkq.feishuapp.com/app/app_17fqkjwyx1u/api/requirements?q=RQSYS-%E9%AA%8C%E6%94%B6-%E6%97%A0%E6%AD%A4%E9%9C%80%E6%B1%82-20261023-A&limit=25",
+      "status": 500,
+      "body": "{\"error\":{\"code\":\"INTERNAL_ERROR\",\"message\":\"服务器内部错误\",\"timestamp\":1792722308520}}"
+    }
+  ],
+  "ui": {
+    "url": "https://ecn8egz1lhkq.feishuapp.com/app/app_17fqkjwyx1u?title=RQSYS-%E9%AA%8C%E6%94%B6-%E6%97%A0%E6%AD%A4%E9%9C%80%E6%B1%82-20261023-A#requirements",
+    "retainedRows": 23,
+    "status": "已加载 23 条（已应用 1 个筛选）\n排序仅作用于已加载的记录：待分配 → 推送失败 → 待推送 → 已推送",
+    "alerts": [
+      "请求失败服务器内部错误（INTERNAL_ERROR）"
+    ]
+  }
+}

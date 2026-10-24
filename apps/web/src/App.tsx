@@ -195,7 +195,8 @@ function App() {
   };
 
   const loadData = useCallback(async () => {
-    setHealth("loading"); setError(null);
+    // 轮询刷新时保留已加载状态：每 5 秒闪回“正在检查 API”只会让按钮禁用、数字抖动。
+    setHealth((prev) => (prev === "ready" ? "ready" : "loading")); setError(null);
     try {
       await getHealth();
       setHealth("ready");

@@ -7,6 +7,7 @@
 import { randomUUID } from "node:crypto";
 import type { RequirementQueryRepository, PersonMappingRepository, PipelineJobRepository, AuditEventRepository } from "../application/repositories.js";
 import { normalizeOwnerName } from "../owner/mapping.js";
+import { isIntakeComplete } from "../domain/workflow.js";
 import { basePushIdempotencyKey } from "../application/idempotency-keys.js";
 
 export interface AdvanceDeps {
@@ -23,7 +24,7 @@ export function createAnalysisAdvancer(deps: AdvanceDeps) {
   const now = deps.now ?? (() => new Date());
   return async function advanceAfterAnalysisTerminal(requirementId: string, analysisStatus: "analyzed" | "failed_retryable", actorId: string | null, analysisVersion: number): Promise<AdvanceOutcome> {
     const req = await deps.requirements.get(requirementId);
-    if (!req || req.pipeline.pull !== "synced") return "not_eligible";
+    if (!req || !isIntakeComplete(req.pipeline.pull)) return "not_eligible";
     if (req.pipeline.push === "running" || (req.pipeline.push === "pushed" && analysisStatus !== "analyzed")) return "not_eligible";
 
     const hasTbOwner = Boolean(req.executorUserId || req.executorName);
@@ -36,7 +37,7 @@ export function createAnalysisAdvancer(deps: AdvanceDeps) {
       if (req.pipeline.owner === "pending_mapping") await deps.requirements.setOwner(req.id, null, "not_required");
     } else {
       const ownerLookup = req.executorUserId ? { tbUserId: req.executorUserId } : { normalizedName: normalizeOwnerName(req.executorName!) };
-      const mapping = await deps.people.resolveActive(req.sourceConfigId, ownerLookup);
+      const mapping = req.sourceConfigId ? await deps.people.resolveActive(req.sourceConfigId, ownerLookup) : null;
       if (mapping) {
         if (req.pipeline.owner === "pending_mapping") await deps.requirements.setOwner(req.id, mapping.feishuUserId, "auto_mapped");
       } else {
@@ -78,7 +79,7 @@ export function createSourceMetadataAdvancer(deps: AdvanceDeps, options: { now?:
     analysisVersion: number,
   ): Promise<AdvanceOutcome> {
     const req = await deps.requirements.get(requirementId);
-    if (!req || req.pipeline.pull !== "synced") return "not_eligible";
+    if (!req || !isIntakeComplete(req.pipeline.pull)) return "not_eligible";
 
     let ownerState = req.pipeline.owner;
     const ownerLookup = req.executorUserId
@@ -103,7 +104,7 @@ export function createSourceMetadataAdvancer(deps: AdvanceDeps, options: { now?:
         ownerState = "not_required";
       }
     } else if (ownerState !== "manually_mapped") {
-      const mapping = await deps.people.resolveActive(req.sourceConfigId, ownerLookup);
+      const mapping = req.sourceConfigId ? await deps.people.resolveActive(req.sourceConfigId, ownerLookup) : null;
       if (!mapping) {
         if (ownerState !== "pending_mapping") {
           await deps.requirements.setOwner(req.id, null, "pending_mapping");

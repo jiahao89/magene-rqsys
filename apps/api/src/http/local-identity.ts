@@ -3,7 +3,8 @@
 // 安全边界（三层，缺一不可，避免它变成生产身份旁路）：
 //   1. 必须显式设置 `RQSYS_LOCAL_IDENTITY`（默认关闭，未设置时 server.ts 仍保持 fail-closed）；
 //   2. `NODE_ENV=production` 时无论变量如何都拒绝启用；
-//   3. 只接受来自本机（localhost/127.0.0.1）的请求。
+//   3. 只接受来自本机的请求——边界是对端 socket 地址，不是 Host 头
+//      （Host 完全由客户端控制，用它会把身份旁路暴露给同网段任意机器）。
 //
 // 请求头名称与妙搭 app 的可信契约保持一致，便于本地与目标环境行为对齐：
 // 目标环境由 `withMiaodaUserContext` 清除外部伪造头后写入；本地由 Vite 代理注入。
@@ -11,8 +12,10 @@
 import type { IdentityProvider } from "../application/ports.js";
 
 export const PLATFORM_USER_ID_HEADER = "x-rqsys-platform-user-id";
+/** server.ts 从 socket 写入的对端地址头；同名客户端头会被覆盖，因此它是唯一可信的环回边界。 */
+export const PEER_ADDRESS_HEADER = "x-rqsys-peer-address";
 
-const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost", "[::1]"]);
+const LOOPBACK_PEERS = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
 
 export interface LocalIdentityOptions {
   /** 环境变量显式给出的本地身份 ID；未设置或为空白表示未启用。 */
@@ -21,6 +24,8 @@ export interface LocalIdentityOptions {
   nodeEnv?: string | undefined;
   /** 允许的请求头名称，默认与妙搭契约一致。 */
   headerName?: string | undefined;
+  /** 对端地址头名称，默认 PEER_ADDRESS_HEADER。 */
+  peerHeaderName?: string | undefined;
 }
 
 export class LocalIdentityDisabledError extends Error {
@@ -41,10 +46,11 @@ export function createLocalIdentityProvider(options: LocalIdentityOptions = {}):
     throw new LocalIdentityDisabledError("configured local user id is not a valid identity string");
   }
   const headerName = options.headerName?.trim() || PLATFORM_USER_ID_HEADER;
+  const peerHeaderName = options.peerHeaderName?.trim() || PEER_ADDRESS_HEADER;
   return {
     async requireActor(request: Request): Promise<{ id: string }> {
-      const host = new URL(request.url).hostname;
-      if (!LOOPBACK_HOSTS.has(host)) {
+      const peer = request.headers.get(peerHeaderName)?.trim() ?? "";
+      if (!LOOPBACK_PEERS.has(peer)) {
         throw new Error("Local development identity is restricted to loopback requests");
       }
       const presented = request.headers.get(headerName)?.trim();

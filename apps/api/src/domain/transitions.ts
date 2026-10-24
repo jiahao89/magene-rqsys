@@ -28,6 +28,7 @@ export const PIPELINE_TRANSITIONS: {
     running: ["synced", "failed"],
     synced: ["running"], // 后续同步批次重新拉取
     failed: ["pending", "running"], // 重试
+    collected: ["collected"], // 手工收录的终态：没有后续拉取，仅允许自迁移（V02-T02）
   },
   analysis: {
     pending: ["running"],

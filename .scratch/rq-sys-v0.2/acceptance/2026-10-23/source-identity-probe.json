@@ -1,0 +1,17 @@
+{
+  "inputIds": [
+    "tb-a",
+    "tb-b"
+  ],
+  "persistedIds": [
+    "tb-a"
+  ],
+  "result": {
+    "batchId": "batch-local",
+    "status": "succeeded",
+    "totalCount": 1,
+    "succeededCount": 1,
+    "failedCount": 0
+  },
+  "externalNetworkRequests": 0
+}

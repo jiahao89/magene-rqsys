@@ -1,0 +1,11 @@
+
+> check:alignment
+> node scripts/check-repo-alignment.mjs
+
+两仓对齐检查（忽略 import 扩展名差异）
+  逐字一致：39 个模块
+  声明的共用逻辑：24/24 一致
+  已声明的平台适配：16 处确有差异，15 处当前恰好一致
+  已声明的 root 独有：5 处
+
+全部差异均已分类：无未声明的行为漂移。

@@ -43,6 +43,8 @@ const SHARED = [
   "domain/persistence.ts",
   "domain/team-directory.ts",
   "analysis/repository-adapter.ts",
+  "audit/event.ts",
+  "requirements/processing.ts",
 ];
 
 // 平台适配：允许不同，但必须在 DECLARED 里给出理由，避免"漂移了却没人知道"。
@@ -56,7 +58,6 @@ const DECLARED = {
   "adapters/teambition/normalize.ts": "app 仓承载项目字段映射细节",
   "adapters/feishu/directory-client.ts": "app 仓按妙搭运行时调整通讯录调用",
   "application/repositories.ts": "驱动差异导致的仓储接口收敛",
-  "audit/event.ts": "app 仓审计写入路径不同",
   "contracts/pipeline.ts": "app 仓契约收敛",
   "contracts/source.ts": "app 仓契约收敛",
   "domain/transitions.ts": "app 仓状态机收敛",
@@ -77,6 +78,16 @@ const ROOT_ONLY = {
   "http/local-identity.ts": "本地开发身份 seam；目标环境用妙搭 userContext，故 app 仓不应有",
 };
 
+// app 独有：妙搭运行时的专属实现，root 侧没有对应物。新增 app 独有文件必须在此声明，
+// 否则脚本报错——2026-10-24 审查发现单向遍历放过妙搭侧真实漂移（audit 白名单、分析守卫等）。
+const APP_ONLY = {
+  "adapters/feishu/identity.ts": "妙搭可信身份适配（userContext 注入），root 用本地身份 seam",
+  "adapters/postgres/drizzle-pool.ts": "妙搭 Drizzle 传输层（$N 参数拆分语义），root 用 pg",
+  "adapters/postgres/team-directory-repository.ts": "妙搭团队目录仓储接线，root 内联于 repositories",
+  "jobs/drain.ts": "妙搭请求内 drain 编排，root 由轮询 worker 驱动",
+  "runtime.ts": "妙达应用装配入口，root 对应 server.ts（已在 DECLARED）",
+};
+
 const IGNORE = /\.test\.ts$/;
 
 async function walk(dir, base = dir) {
@@ -95,6 +106,7 @@ function normalize(source) {
 }
 
 const rootFiles = (await walk(ROOT_API)).sort();
+const appFiles = (await walk(APP_API)).sort();
 const failures = [];
 let identical = 0;
 const observed = { declared: [], rootOnly: [], sharedOk: [], adapterCoincides: [] };
@@ -128,11 +140,24 @@ for (const rel of rootFiles) {
 const missingShared = SHARED.filter((rel) => !observed.sharedOk.includes(rel));
 if (missingShared.length) failures.push(`声明的共用模块未能确认一致：${missingShared.join(", ")}`);
 
+// 反向遍历：app 独有文件必须声明。此前只走 root 侧，妙搭新增/漂移的独有文件无人核对。
+let appOnlyCount = 0;
+for (const rel of appFiles) {
+  if (existsSync(join(ROOT_API, rel))) continue; // 双侧都有，已在正向遍历处理
+  const reason = APP_ONLY[rel];
+  if (reason) { appOnlyCount += 1; continue; }
+  failures.push(`app 仓独有模块未声明：${rel}`);
+}
+for (const [rel] of Object.entries(APP_ONLY)) {
+  if (!existsSync(join(APP_API, rel))) failures.push(`声明的 app 独有模块已不存在，请更新声明：${rel}`);
+}
+
 console.log(`两仓对齐检查（忽略 import 扩展名差异）`);
 console.log(`  逐字一致：${identical} 个模块`);
 console.log(`  声明的共用逻辑：${observed.sharedOk.length}/${SHARED.length} 一致`);
 console.log(`  已声明的平台适配：${observed.declared.length} 处确有差异，${observed.adapterCoincides.length} 处当前恰好一致`);
 console.log(`  已声明的 root 独有：${observed.rootOnly.length} 处`);
+console.log(`  已声明的 app 独有：${appOnlyCount} 处`);
 if (failures.length) {
   console.log(`\n未通过（${failures.length}）：`);
   for (const item of failures) console.log(`  - ${item}`);

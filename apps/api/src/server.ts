@@ -7,11 +7,7 @@ import { errorBody } from "./http/errors.js";
 import { PipelineJobWorker } from "./jobs/worker.js";
 import { SyncOrchestrator, shouldProcessSyncDownstream, type SyncJobRunner } from "./sync/service.js";
 import { TeambitionClient } from "./adapters/teambition/client.js";
-import { createDeepSeekProvider } from "./analysis/provider.js";
-import { analysisModelContext } from "./analysis/context.js";
-import { runAnalysis } from "./analysis/service.js";
-import { AnalysisRepositoryAdapter } from "./analysis/repository-adapter.js";
-import { buildPriorityRule } from "./analysis/priority-rule.js";
+import { createRequirementWorkflow } from "./requirements/processing.js";
 import { createDueSyncJobs } from "./scheduler/due-jobs.js";
 import { reapOrphanedBatches } from "./scheduler/reap.js";
 import { recoverAnalysisPipeline } from "./scheduler/analysis-recovery.js";
@@ -20,13 +16,9 @@ import { FeishuBasePushAdapter } from "./base/client.js";
 import { FeishuBitableClient } from "./base/transport.js";
 import { RateLimitedBaseClient } from "./base/rate-limit.js";
 import { FeishuUserDirectoryClient } from "./adapters/feishu/directory-client.js";
-import { createBasePushService } from "./base/push-service.js";
-import { basePushIdempotencyKey } from "./application/idempotency-keys.js";
-import { createAnalysisAdvancer, createSourceMetadataAdvancer } from "./pipeline/advance.js";
-import { createLocalIdentityProvider, describeLocalIdentity } from "./http/local-identity.js";
+import { PEER_ADDRESS_HEADER, createLocalIdentityProvider, describeLocalIdentity } from "./http/local-identity.js";
 import type { SourceProjectConfig } from "./domain/workflow.js";
-import { DEFAULT_FUNCTION_MODULES } from "./domain/team-directory.js";
-import { assertFixtureWorkAllowed, createSyntheticFixtureTasks, isSyntheticFixtureRequirement, isSyntheticFixtureSyncJob, readScheduledFixtureSource } from "./sync/test-fixture.js";
+import { assertFixtureWorkAllowed, createSyntheticFixtureTasks, isSyntheticFixtureSyncJob, readScheduledFixtureSource } from "./sync/test-fixture.js";
 
 const port = Number(process.env.PORT ?? 8787);
 const database = createPool(process.env.DATABASE_URL);
@@ -50,6 +42,8 @@ let teambitionSourceProjects: TeambitionClient | undefined;
 try { teambitionSourceProjects = new TeambitionClient(); } catch { /* source setup will report the unavailable gateway */ }
 
 // ---- Worker composition：认领 pipeline_jobs 并分发到对应执行器 ----
+// 三个作业体（同步后推进 / analysis / base_push）的业务行为在 requirements/processing.ts
+// 与妙搭仓共用；本文件只负责平台装配（env、worker 生命周期、日志出口）。
 const syncJobRunner: SyncJobRunner | undefined = repositories ? async (job) => {
   const fixture = isSyntheticFixtureSyncJob(job);
   assertFixtureWorkAllowed({ sourceId: job.sourceConfigId, fixture }, fixtureEnvironment, new Date());
@@ -67,64 +61,17 @@ const syncJobRunner: SyncJobRunner | undefined = repositories ? async (job) => {
     : { async listRequirements(cfg: SourceProjectConfig) { return { items: await new TeambitionClient().listRequirementTasks(cfg), hasMore: false, nextCursor: null }; } };
   const orchestrator = new SyncOrchestrator(taskSource, persistence);
   const result = await orchestrator.run({ batchId: job.batchId, sourceConfigId: job.sourceConfigId, config, ...(job.mode === undefined ? {} : { mode: job.mode }), ...(job.onlyIds === undefined ? {} : { onlyIds: job.onlyIds }) });
-  // 打通同步 → AI 分析链路：为新建/实质变更的需求创建分析任务（按源版本幂等去重）
+  // 打通同步 → AI 分析链路：下游推进（入队首分析 / 元数据推进）收敛在共用 workflow 模块。
   if (result.status !== "failed" && shouldProcessSyncDownstream(job.mode)) {
-    const now = new Date().toISOString();
-    // 本地开发专用上限：只限制「入队分析」的数量，不同步范围。导入与快照始终覆盖全部需求，
-    // 因此验收时不会看到"只同步了一部分"的假象。默认 0 = 不限制；目标环境不要设置。
-    const analysisCap = Number(process.env.RQSYS_MAX_ANALYSIS_PER_SYNC ?? 0);
-    let queued = 0;
-    for (const touched of persistence.touchedRequirements()) {
-      const current = await repositories.requirements.get(touched.id);
-      if (!current) continue;
-      if (touched.analysisRequired) {
-        if (analysisCap > 0 && queued >= analysisCap) continue;
-        queued += 1;
-        await repositories.jobs.enqueue({
-          jobType: "analysis", dedupeKey: `analysis:${touched.id}:v${touched.sourceVersion}`,
-          payload: { requirementId: touched.id, sourceVersion: touched.sourceVersion, substantiveHash: touched.substantiveHash, actorId: job.actorId }, availableAt: now,
-        });
-      } else {
-        const latestAnalysis = await repositories.analyses.latest(touched.id);
-        await advanceAfterMetadataSync?.(touched.id, job.actorId, latestAnalysis?.analysisVersion ?? 0);
-      }
-    }
+    if (!requirementWorkflow) throw new Error("Requirement workflow is not assembled");
+    await requirementWorkflow.dispatchAfterSync({ touched: persistence.touchedRequirements(), actorId: job.actorId });
   }
   return result;
 } : undefined;
 
 const analysisJobHandler: ((job: { payload: Record<string, unknown> }) => Promise<void>) | undefined = repositories ? async (job) => {
-  const requirementId = job.payload.requirementId;
-  if (typeof requirementId !== "string") throw new Error("Invalid analysis job payload");
-  const requirement = await repositories.requirements.get(requirementId);
-  if (!requirement) throw new Error("Analysis requirement was not found");
-  assertFixtureWorkAllowed({ sourceId: requirement.sourceConfigId, fixture: isSyntheticFixtureRequirement(requirement.teambitionRequirementId) }, fixtureEnvironment, new Date());
-  const targetSubstantiveHash = job.payload.substantiveHash;
-  if (typeof targetSubstantiveHash === "string" && targetSubstantiveHash !== requirement.substantiveHash) return;
-  const source = await repositories.sources.get(requirement.sourceConfigId);
-  if (!source) throw new Error("Analysis source configuration was not found");
-  const published = (await repositories.dictionaries.list()).find((version) => version.status === "published");
-  const dictionary = { version: published?.version ?? 0, modules: (published?.entries ?? DEFAULT_FUNCTION_MODULES).map((entry) => typeof entry === "string" ? entry : String((entry as { name?: unknown }).name ?? entry)) };
-  // 已发布规则接入确定性计算；规则 JSON 不符合契约时 buildPriorityRule 返回 null（priority 保持为空）
-  const ruleRecord = await repositories.priorityRules.getPublished();
-  const priorityRule = ruleRecord ? buildPriorityRule(ruleRecord) : null;
-  const provider = createDeepSeekProvider();
-  await repositories.requirements.updateAnalysisState(requirement.id, "running");
-  const run = await runAnalysis({
-    requirementId: requirement.id, sourceVersion: requirement.sourceVersion, sourcePersisted: true,
-    title: requirement.title, description: requirement.description ?? "", context: analysisModelContext(requirement),
-    // 文本中可能出现的姓名（配置名单 + 需求 proposer/executor）一律掩码；用户 ID 不进 prompt
-    piiMarkers: [...source.ownerNames, requirement.proposerName, requirement.executorName].filter((x): x is string => Boolean(x)),
-    dictionary, priorityRule,
-  }, { repository: new AnalysisRepositoryAdapter(repositories.analyses), provider });
-  const current = await repositories.requirements.get(requirement.id);
-  if (!current || current.substantiveHash !== requirement.substantiveHash) return;
-  await repositories.requirements.updateAnalysisState(requirement.id, run.status === "analyzed" ? "analyzed" : "failed_retryable");
-  // 工单 14：首次分析进入可见终态后继续负责人处理与 Base 推送——AI 不是推送门槛。
-  // 无负责人 → not_required 直接入队；有负责人且映射唯一 → auto_mapped 入队；未匹配 → 等待人工映射。
-  if (advanceAfterAnalysis) {
-    await advanceAfterAnalysis(requirement.id, run.status === "analyzed" ? "analyzed" : "failed_retryable", typeof job.payload.actorId === "string" ? job.payload.actorId : null, run.analysisVersion);
-  }
+  if (!requirementWorkflow) throw new Error("Requirement workflow is not assembled");
+  await requirementWorkflow.handleAnalysisJob(job);
 } : undefined;
 
 // ---- Feishu Base 推送装配：env 凭证齐全时构建真实 transport（工单 00/W7 目标环境验证）----
@@ -143,7 +90,7 @@ const DEFAULT_BASE_FIELDS = {
   selectOptions: {
     // Verified against the safe POC Base schema; override via BASE_FIELDS_JSON
     // together with Base options when the product module dictionary changes.
-    module: ["需求澄清", "方案设计", "缺陷修复", "其他"], priority: ["P0", "P1", "P2"],
+    module: ["需求澄清", "方案设计", "缺陷修复", "其他"], priority: ["P0", "P1", "P2", "P3"],
   } as Record<string, string[]>,
 };
 function parseBaseFields(raw: string | undefined): typeof DEFAULT_BASE_FIELDS {
@@ -188,40 +135,21 @@ const baseAdapter = baseClient && repositories
       async savePmSnapshot(input) { await repositories.pmSnapshots.append({ ...input, capturedAt: new Date().toISOString() }); },
     })
   : undefined;
-const advanceAfterAnalysis = repositories ? createAnalysisAdvancer({
-  requirements: repositories.requirements, people: repositories.people, jobs: repositories.jobs, audit: repositories.audit,
-}) : undefined;
-const advanceAfterMetadataSync = repositories ? createSourceMetadataAdvancer({
-  requirements: repositories.requirements, people: repositories.people, jobs: repositories.jobs, audit: repositories.audit,
-}) : undefined;
-
+// 共用收录后主流程（V02-T01）：Base 凭据缺失时仍可分析与推进，仅推送作业不注册。
+const requirementWorkflow = repositories
+  ? createRequirementWorkflow({
+      repositories,
+      ...(baseAdapter ? { base: baseAdapter } : {}),
+      baseFields,
+      fixtureEnvironment,
+      // 本地开发专用上限：只限制「入队分析」的数量，不同步范围。默认 0 = 不限制；目标环境不要设置。
+      ...(Number(process.env.RQSYS_MAX_ANALYSIS_PER_SYNC ?? 0) > 0 ? { analysisEnqueueCap: Number(process.env.RQSYS_MAX_ANALYSIS_PER_SYNC) } : {}),
+    })
+  : undefined;
 const basePushJobHandler: ((job: { payload: Record<string, unknown> }) => Promise<void>) | undefined = repositories && baseAdapter ? async (job) => {
-  const requirementId = job.payload.requirementId;
-  if (typeof requirementId !== "string") throw new Error("Invalid base_push job payload");
-  const requirement = await repositories.requirements.get(requirementId);
-  if (!requirement) throw new Error("Base push requirement was not found");
-  assertFixtureWorkAllowed({ sourceId: requirement.sourceConfigId, fixture: isSyntheticFixtureRequirement(requirement.teambitionRequirementId) }, fixtureEnvironment, new Date());
-  const source = await repositories.sources.get(requirement.sourceConfigId);
-  if (!source?.externalProjectId) throw new Error("Base push source project is not configured");
-  const expectedSourceVersion = job.payload.sourceVersion;
-  if (typeof expectedSourceVersion === "number" && expectedSourceVersion !== requirement.sourceVersion) return;
-  const latestAnalysis = await repositories.analyses.latest(requirement.id);
-  const expectedAnalysisVersion = job.payload.analysisVersion;
-  if (typeof expectedAnalysisVersion === "number" && expectedAnalysisVersion !== (latestAnalysis?.analysisVersion ?? 0)) return;
-  const service = createBasePushService({
-    requirements: repositories.requirements, people: repositories.people, basePushes: repositories.basePushes,
-    audit: repositories.audit, analyses: repositories.analyses, sourceSnapshots: repositories.sourceSnapshots, base: baseAdapter, sourceProjectId: source.externalProjectId, baseFields, actorId: typeof job.payload.actorId === "string" ? job.payload.actorId : null,
-  });
-  const idempotencyKey = typeof job.payload.idempotencyKey === "string"
-    ? job.payload.idempotencyKey
-    : basePushIdempotencyKey(requirementId, requirement.sourceVersion, latestAnalysis?.analysisVersion ?? 0);
-  const outcome = await service.pushRequirement(requirementId, idempotencyKey);
-  if (outcome.kind === "error") throw new Error("Base push failed; retry is available.");
-  // Base 行已写成功、仅本地记账失败：作业按成功处理，绝不重推外部（会重复写 Base）。
-  if (outcome.kind === "pushed_unrecorded") {
-    process.stderr.write(`base push wrote record ${outcome.baseRecordId} but bookkeeping failed: ${outcome.detail}\n`);
-  }
-  // conflict：pull 未同步或等待人工映射——等待不是失败，人工映射持久化后会重新入队
+  if (!requirementWorkflow) throw new Error("Requirement workflow is not assembled");
+  await requirementWorkflow.handleBasePushJob(job);
+  // conflict：等待人工映射不是失败，人工映射持久化后会重新入队（见 requirements/processing.ts）
 } : undefined;
 
 const worker = repositories ? new PipelineJobWorker({
@@ -239,14 +167,28 @@ const worker = repositories ? new PipelineJobWorker({
 
 const server = createServer(async (incoming, outgoing) => {
   try {
+    // 请求体上限：防止异常/恶意的超大 body 拖垮本地 dev server。
     const chunks: Buffer[] = [];
-    for await (const chunk of incoming) chunks.push(Buffer.from(chunk));
+    let bodyBytes = 0;
+    for await (const chunk of incoming) {
+      bodyBytes += chunk.length;
+      if (bodyBytes > 1_048_576) {
+        outgoing.statusCode = 413;
+        outgoing.setHeader("content-type", "application/json; charset=utf-8");
+        outgoing.end(JSON.stringify(errorBody("PAYLOAD_TOO_LARGE")));
+        incoming.destroy();
+        return;
+      }
+      chunks.push(Buffer.from(chunk));
+    }
     const body = Buffer.concat(chunks);
     const headers = new Headers();
     for (const [key, value] of Object.entries(incoming.headers)) {
       if (Array.isArray(value)) headers.set(key, value.join(", "));
       else if (value !== undefined) headers.set(key, value);
     }
+    // 对端地址只由这里从 socket 覆盖写入（客户端同名头不可信），供本地身份适配器做环回边界。
+    headers.set(PEER_ADDRESS_HEADER, incoming.socket.remoteAddress ?? "");
     const request = new Request(`http://${incoming.headers.host ?? "localhost"}${incoming.url ?? "/"}`, {
       method: incoming.method ?? "GET", headers, ...(body.length > 0 ? { body } : {}),
     });
@@ -290,7 +232,14 @@ if (worker && repositories && workerPollMs > 0) {
       } catch (error) {
         process.stderr.write(`batch reaper failed: ${String(error)}\n`);
       }
-      const outcomes = await createDueSyncJobs({ sources: repositories.sources, batches: repositories.batches, jobs: repositories.jobs, now, ...(fixtureSourceId ? { fixtureSourceId } : {}) });
+      // createDueSyncJobs 内部按来源隔离失败；这里再兜一层，防止单个来源的未分类异常
+      // 跳过本轮的分析恢复、负责人重查与 worker 消费。
+      let outcomes: Awaited<ReturnType<typeof createDueSyncJobs>> = [];
+      try {
+        outcomes = await createDueSyncJobs({ sources: repositories.sources, batches: repositories.batches, jobs: repositories.jobs, now, ...(fixtureSourceId ? { fixtureSourceId } : {}) });
+      } catch (error) {
+        process.stderr.write(`due sync job creation failed: ${String(error)}\n`);
+      }
       // 每个来源的失败原因必须落地：此前 error 字段被算出来又丢掉，来源静默不同步，
       // 批次/审计/UI 都看不到任何痕迹。
       for (const outcome of outcomes) {

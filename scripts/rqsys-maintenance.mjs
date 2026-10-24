@@ -55,8 +55,9 @@ const FAILED_PUSH_SCOPE = `
     select 'base-push:'||r.id||':sv'||r.source_version||':av'||
       coalesce((select max(analysis_version) from analysis_runs a where a.requirement_id=r.id),0)
     from requirements r
-    join person_mappings p on p.teambition_user_id=r.executor_user_id and p.active
-    where r.push_state='pending' and r.analysis_state='analyzed' and r.pull_state='synced')`;
+    left join person_mappings p on p.teambition_user_id=r.executor_user_id and p.active
+    where r.push_state='pending' and r.analysis_state='analyzed' and r.pull_state='synced'
+      and (p.id is not null or r.manual_owner_feishu_user_id is not null))`;
 
 async function requeueFailed() {
   const [{ n } = { n: "?" }] = await sql(`select count(*) n from pipeline_jobs where ${FAILED_PUSH_SCOPE}`);
@@ -75,9 +76,10 @@ const REQUEUE_PENDING_SQL = `
     jsonb_build_object('requirementId', r.id::text, 'actorId', null, 'sourceVersion', r.source_version, 'analysisVersion', coalesce(a.v,0)),
     'queued', 0, 5, now(), now(), now()
   from requirements r
-  join person_mappings p on p.teambition_user_id = r.executor_user_id and p.active
+  left join person_mappings p on p.teambition_user_id = r.executor_user_id and p.active
   left join lateral (select max(analysis_version) v from analysis_runs where requirement_id = r.id) a on true
   where r.push_state='pending' and r.analysis_state='analyzed' and r.pull_state='synced'
+    and (p.id is not null or r.manual_owner_feishu_user_id is not null)
     and not exists (select 1 from pipeline_jobs j where j.dedupe_key = 'base-push:'||r.id||':sv'||r.source_version||':av'||coalesce(a.v,0))
   on conflict (dedupe_key) do update
     set status='queued', attempt_count=0, available_at=now(), locked_until=null,
@@ -86,8 +88,9 @@ const REQUEUE_PENDING_SQL = `
 
 async function requeuePending() {
   const [{ n } = { n: "?" }] = await sql(`select count(*) n from requirements r
-    join person_mappings p on p.teambition_user_id=r.executor_user_id and p.active
-    where r.push_state='pending' and r.analysis_state='analyzed' and r.pull_state='synced'`);
+    left join person_mappings p on p.teambition_user_id=r.executor_user_id and p.active
+    where r.push_state='pending' and r.analysis_state='analyzed' and r.pull_state='synced'
+      and (p.id is not null or r.manual_owner_feishu_user_id is not null)`);
   console.log(`== 为可推送但未推送的需求补入队：候选 ${n} 条 ==`);
   if (DRY) return console.log("  （dry-run，未写入）");
   report("已入队/复用", await sql(REQUEUE_PENDING_SQL));

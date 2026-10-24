@@ -145,9 +145,9 @@ async function checkBase() {
   if (!pushState.includes("已推送")) fail(B, "推送状态选项含「已推送」", `实际：${pushState.join("/") || "无"}`);
   else pass(B, "推送状态选项含「已推送」", "");
   const priority = optionNames("AI优先级建议");
-  const missingPriority = ["P0", "P1", "P2"].filter((p) => !priority.includes(p));
-  if (missingPriority.length) fail(B, "AI优先级建议含 P0/P1/P2", `缺少 ${missingPriority.join("/")}`);
-  else pass(B, "AI优先级建议含 P0/P1/P2", "");
+  const missingPriority = ["P0", "P1", "P2", "P3"].filter((p) => !priority.includes(p));
+  if (missingPriority.length) fail(B, "AI优先级建议含 P0/P1/P2/P3", `缺少 ${missingPriority.join("/")}`);
+  else pass(B, "AI优先级建议含 P0/P1/P2/P3", "");
   const moduleCount = optionNames("AI模块建议").length;
   if (moduleCount < 50) warn(B, "AI模块建议选项数", `${moduleCount} 个；字典模块超出部分会被记录为省略而不是写非法值`);
   else pass(B, "AI模块建议选项数", `${moduleCount} 个`);

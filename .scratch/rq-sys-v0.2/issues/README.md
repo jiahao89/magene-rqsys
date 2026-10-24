@@ -1,0 +1,58 @@
+# RQ-Sys V0.2 Tickets
+
+> 拆分已于2026-10-23由用户确认并发布至本地tracker。共18张Ticket；除已标注的 implemented-local 外均为 ready-for-agent，尚未实施或目标验收。
+
+## 使用方式
+
+1. 阅读[V0.2 PRD](../../../docs/2026-10-21-rq-sys-v0.2-prd.md)、[Spec索引](../../../specs/rq-sys-v0.2/README.md)、相关编号Spec和[决策门槛](../../../specs/rq-sys-v0.2/DECISIONS-AND-GATES.md)。
+2. 只领取代码前置已完成且Execution gate满足的任务。ready-for-agent不表示依赖已经满足。
+3. 每张任务完成其schema/API/UI/行为验证及两仓对齐；更新本票Status和本索引行，附证据。未取得目标证据时标记“已实现，未在目标环境验证”。
+4. GitHub是代码源，任务仍在本地Markdown管理；旧MVP任务不关闭、不重编号。
+
+## Ticket list
+
+| ID | 任务 | Status | Blocked by | 分支 |
+|---|---|---|---|---|
+| V02-T01 | [收敛共同工作流入口并保持TB行为](01-workflow-prefactor.md) | implemented-local | — | 核心 |
+| V02-T02 | [扩展统一来源身份并读回现有TB记录](02-unified-source-expand.md) | implemented-local | 01 | 核心 |
+| V02-T03 | [按平台编号复用Base旧TB行并安全切换](03-platform-base-key.md) | ready-for-agent | 02 | 核心 |
+| V02-T04 | [最小新建需求贯通AI与Base](04-manual-intake-minimal.md) | ready-for-agent | 03 | 核心 |
+| V02-T05 | [补齐精简需求上下文并展示来源](05-manual-definition-context.md) | ready-for-agent | 04 | 核心 |
+| V02-T06 | [需求级选择模块与负责人并通知分配人](06-direct-owner-and-module.md) | ready-for-agent | 04 | 核心 |
+| V02-T07 | [手工编辑需求保留版本并安全更新Base](07-manual-edit-versioning.md) | ready-for-agent | 04 | 核心 |
+| V02-T08 | [主AI增加需求类型与六层人群建议](08-analysis-audience-contract.md) | ready-for-agent | 02 | 核心 |
+| V02-T09 | [PM修改人群并保留人工确认](09-audience-confirmation.md) | ready-for-agent | 08 | 核心 |
+| V02-T10 | [确认并实现版本化U/M/S/C规则](10-priority-rule-calibration.md) | ready-for-agent | — | 规则条件 |
+| V02-T11 | [详情Beta入口保存RICE人工草稿](11-rice-beta-draft.md) | ready-for-agent | 02 | Beta |
+| V02-T12 | [RICE按获批量纲计算并保留版本](12-rice-configured-score.md) | ready-for-agent | 11 | Beta |
+| V02-T13 | [Kano选择获批访谈资料版本](13-kano-evidence-snapshots.md) | ready-for-agent | 02 | Beta |
+| V02-T14 | [手动Kano生成证据化假设报告](14-kano-report.md) | ready-for-agent | 08、13 | Beta |
+| V02-T15 | [对齐同标题不同TB ID的保留规则](15-source-id-invariant.md) | implemented-local | — | 核心 |
+| V02-T16 | [核心V0.2兼容迁移与目标验收](16-core-target-acceptance.md) | ready-for-agent | 05、06、07、09、15 | 验收 |
+| V02-T17 | [RICE与Kano Beta独立目标验收](17-beta-target-acceptance.md) | ready-for-agent | 12、14、16 | 验收 |
+| V02-T18 | [获批U/M/S/C规则目标验收](18-priority-target-acceptance.md) | ready-for-agent | 10、16 | 验收 |
+
+## 当前可领取的前沿
+
+- **03**：按平台编号复用 Base 旧 TB 行并安全切换（02 已于 2026-10-24 implemented-local：迁移 0009 + 手工收录事务能力 + 读回/展示，两仓全量验证；发布前目标库需按序执行 0008/0009）。
+- **15** 已于 2026-10-23 实现为"同标题仅提示、独立处理"（implemented-local；AC04 计数拆分与 AC06 联合回归待后续票补齐，正式结论汇合到 16）。
+- **10** 规则确认包已备（见票内链接）；新算法实施仍等待 PM Leader 确认输入、公式、阈值和校准案例。
+- 02完成后，08、11、13可与03→04分支独立推进；实际开发先协调共享契约和仓储的文件归属。
+
+## 依赖顺序
+
+核心：01→02→03→04；04后05/06/07，02后08→09，汇合独立15到16。
+
+Beta：02→11→12；02→13与08汇合到14；12/14与16汇合到17。
+
+规则：10与16汇合到18；未批准新公式时核心可继续空优先级交付。
+
+## 产品和目标门槛
+
+来源ID原则和Web录入模块/Base确认模块的归属已确认。U/M/S/C公式、RICE量纲、获批去标识访谈资料以及目标环境写入授权尚需按[门槛表](../../../specs/rq-sys-v0.2/DECISIONS-AND-GATES.md)处理，不能将本次同意拆分解释为这些参数或生产发布已获批。
+
+## 追踪与证据
+
+[Spec索引](../../../specs/rq-sys-v0.2/README.md)、各票稳定AC编号及[历史审阅包的PRD追踪表](../review/README.md)共同提供追踪。历史草案不作为当前状态；本目录与票内状态同步。机器可读依赖见[manifest.json](manifest.json)。
+
+本次文档发布只检查文件、链接、Spec章节、AC数量、状态和依赖无环，不作为代码测试、功能实现或线上验收证据。

@@ -1,0 +1,21 @@
+
+> build
+> npm --workspace @rq-sys/api run build && npm --workspace @rq-sys/web run build
+
+
+> build
+> tsc -p tsconfig.json
+
+
+> @rq-sys/web@0.1.0 build
+> tsc -b && vite build
+
+vite v7.3.7 building client environment for production...
+transforming...
+✓ 3492 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.57 kB │ gzip:   0.37 kB
+dist/assets/index-D-td9Kxj.css  491.36 kB │ gzip:  52.29 kB
+dist/assets/index-CSMT-Lt9.js   484.91 kB │ gzip: 149.15 kB
+✓ built in 1.70s

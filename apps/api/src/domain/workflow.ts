@@ -1,4 +1,4 @@
-export type PullState = "pending" | "running" | "synced" | "failed";
+export type PullState = "pending" | "running" | "synced" | "failed" | "collected";
 export type AnalysisState =
   | "pending"
   | "running"
@@ -33,6 +33,15 @@ export interface SourceProjectConfig {
   };
   ownerNames: string[];
   fieldMap: Record<string, string>;
+}
+
+/**
+ * 收录完成判定（V02-S00）：后台就绪判断基于来源事实已持久化，而不是所有来源都 pull=synced。
+ * T01 阶段仅 TB 拉取的 synced 视为收录完成；V02-T02/T04 扩展手工来源的 collected 语义。
+ */
+export function isIntakeComplete(pull: PullState): boolean {
+  // collected：Web 手工收录（V02-T02 预留语义）；TB 拉取的 synced 语义不变。
+  return pull === "synced" || pull === "collected";
 }
 
 /** Normalize PostgreSQL TIME values to the API's minute-precision HH:mm clock. */

@@ -1,0 +1,161 @@
+
+> fullstack-nestjs-template@2.3.0 test:rqsys-route
+> npm run build:server && node --test scripts/rqsys-api-routing.test.cjs scripts/rqsys-controller-route.test.cjs scripts/rqsys-identity.test.cjs scripts/rqsys-automation.test.cjs scripts/rqsys-worker-drain.test.cjs scripts/rqsys-base-push-metadata.test.cjs scripts/rqsys-base-push-queue.test.cjs scripts/rqsys-base-push-errors.test.cjs scripts/rqsys-base-transport.test.cjs scripts/rqsys-drizzle-pool.test.cjs scripts/rqsys-jsonb-persistence.test.cjs scripts/rqsys-feishu-users.test.cjs scripts/rqsys-user-selection.test.cjs scripts/rqsys-source-config.test.cjs scripts/rqsys-fixture-sync.test.cjs scripts/rqsys-sync-orchestrator.test.cjs scripts/rqsys-analysis-retry.test.cjs scripts/rqsys-analysis-recovery.test.cjs scripts/rqsys-owner-recheck.test.cjs scripts/rqsys-job-recovery.test.cjs scripts/rqsys-analysis-redaction.test.cjs scripts/rqsys-sync-analysis-routing.test.cjs scripts/rqsys-metadata-advance.test.cjs scripts/rqsys-normalize.test.cjs scripts/rqsys-base-select-omission.test.cjs scripts/rqsys-team-directory-modules.test.cjs scripts/rqsys-overview-metrics.test.cjs
+
+
+> fullstack-nestjs-template@2.3.0 build:server
+> NODE_ENV=production nest build
+
+>  SWC  Running...
+Successfully compiled: 83 files with swc (44.65ms)
+✔ failed_retryable 需求会被自动补排分析作业并写系统审计 (2.021667ms)
+✔ running + 作业已终态 → 回退 failed_retryable 并写 analysis.recovery 审计 (0.339959ms)
+✔ running + 作业租约未过期 → 不动 (0.174417ms)
+✔ 同一源版本累计调度重试达到上限后放弃，且放弃审计只写一次 (0.308375ms)
+✔ 单个需求入队异常不会中断整轮恢复 (0.339334ms)
+✔ Teambition feedback labels redact embedded names and phone numbers from model text (6.96975ms)
+✔ analysis retry is idempotent by source and analysis version (125.978417ms)
+✔ a pending analysis can be retried when its queued job was lost (2.429125ms)
+✔ a pending requirement cannot be retried against a completed queue job (1.955125ms)
+✔ analysis retry rejects a requirement that is not retryable (0.531042ms)
+✔ analysis retry does not interrupt a running analysis (0.492417ms)
+✔ analysis retry recovers a requirement stranded in running by a crashed handler (0.191667ms)
+✔ a successful AI rerun queues a Base upsert even after the source was already pushed (0.315458ms)
+✔ Miaoda list APIs use the backend-aware transport by default (439.80425ms)
+✔ workbench startup waits for database readiness and the full initial snapshot (43.17725ms)
+✔ cron handler logs invocation and completion around the durable poll (1.141ms)
+✔ cron handler records a sanitized runtime initialization failure and rethrows (0.259125ms)
+✔ cron handler records a sanitized poll failure and rethrows (0.087584ms)
+✔ stores safe Feishu endpoint diagnostics without returning response content (22.029542ms)
+✔ Base push writes approved source timestamps and versioned push metadata (2.315333ms)
+✔ new records start pending while an existing PM decision survives replay (0.152708ms)
+✔ manual Base push retry is queued without a separate Base project ID (212.014542ms)
+✔ a P3 value is omitted visibly instead of being silently dropped or downgraded (1.350542ms)
+✔ the deliberate 无法识别 omission is reported with its own reason (0.087417ms)
+✔ a writable priority reports no omissions (0.075625ms)
+✔ requirement key lookup uses Bitable v1 exact TB requirement ID filter (97.838ms)
+✔ requirement key lookup returns null when the exact filter has no match (62.857875ms)
+✔ requirement key lookup rejects duplicate TB IDs instead of updating an arbitrary row (0.492584ms)
+✔ record lookup errors expose only the numeric Feishu code (0.251417ms)
+✔ owner user_id type passes through adapter and rate limiter into Bitable create/update URLs (1.56425ms)
+✔ source versions use the actual target field type for both numeric production and text POC tables (0.783791ms)
+✔ field schema follows pagination, caches reads, and rejects incomplete or cyclic responses (0.47925ms)
+✔ strips the Miaoda app mount prefix before dispatching the API request (3.347791ms)
+✔ keeps an unprefixed API path unchanged (0.242542ms)
+✔ queues a source-only sync with an isolated idempotency key and safe audit mode (2.301833ms)
+✔ scopes the same idempotency token to its sync mode (0.730083ms)
+✔ source-only failed item retry keeps downstream processing disabled (0.29225ms)
+✔ does not accept a client-supplied identity header without platform user context (0.554083ms)
+✔ reports source persistence failures as server errors and logs only safe database diagnostics (1.27725ms)
+✔ preserves a nested PostgreSQL code from the source audit transaction without exposing its message (0.424875ms)
+✔ serializes source-creation audit details for the Miaoda JSONB driver (0.300666ms)
+✔ serializes standalone audit details for the Miaoda JSONB driver (0.1265ms)
+✔ converts positional parameters to Drizzle-bound values without rewriting quoted literals (4.38125ms)
+✔ uses the injected Drizzle database for regular queries and transactions (7.219542ms)
+✔ a failed transactional query can be rolled back without hanging (0.37925ms)
+✔ Feishu user search is available to any authenticated user and returns only identity fields (201.335791ms)
+✔ Feishu user search rejects missing identity and invalid queries (1.598875ms)
+✔ Feishu user search hides provider failures, logs only bounded diagnostics, and reports missing configuration safely (0.745333ms)
+✔ standalone directory uses the official user token GET search contract (1.56975ms)
+✔ Feishu directory errors keep only numeric provider diagnostics (18.870584ms)
+✔ Miaoda runtime does not pretend application credentials authorize user-token search (0.361834ms)
+✔ requirement search forwards stage, batch and last-sync-time filters (1.263833ms)
+✔ PostgreSQL requirement search parameterizes batch and inclusive last-sync-time filters (0.162417ms)
+✔ source creation accepts project name and schedule while server retains field metadata (4.547584ms)
+✔ dev fixture endpoint enqueues only fixed synthetic source data (117.542666ms)
+✔ dev fixture endpoint is hidden unless the environment enables it (0.966209ms)
+✔ fixture status is authenticated and reveals only whether the guarded route is enabled (0.782041ms)
+✔ synthetic fixtures require the isolated POC Base even when the flag is enabled (0.142291ms)
+✔ fixture rejection names only the mismatched safety dimension and never exposes configured values (0.563042ms)
+✔ a retried fixture keeps stable source identity and hash inputs (0.178791ms)
+✔ scheduled acceptance requires a short-lived source and keeps delayed fixture writes inside the POC Base (0.442209ms)
+✔ compiled scheduler creates a fixture job in a separate namespace from the persisted source schedule (59.111417ms)
+✔ runtime guards sync, analysis and push before integration lookup, including delayed fixtures after restore (19.339125ms)
+✔ fixture batch persistence failures are diagnosed and are not mislabeled as conflicts (1.596667ms)
+✔ fixture job enqueue failures are safely diagnosed and leave a failed batch (0.854666ms)
+✔ accepts a trusted platform user id without requiring an application role (112.213834ms)
+✔ rejects a missing or malformed platform user id (0.822875ms)
+✔ does not trust a client-supplied identity header over platform user context (0.245958ms)
+✔ weekly recovery requeues a terminal failed or cancelled job for the same schedule window (2.403667ms)
+✔ serializes application JSON values before binding PostgreSQL jsonb parameters (2.594958ms)
+✔ metadata-only changes reuse owner mapping and queue a versioned Base push (2.995417ms)
+✔ an unmapped TB owner waits for manual mapping (0.187167ms)
+✔ a manual owner choice is preserved during unrelated metadata updates (0.169791ms)
+✔ normalizes approved Teambition rich text and lookup fields into readable values (3.698958ms)
+✔ ignores unmapped custom fields and handles malformed rich text safely (0.680625ms)
+✔ overview metrics report persisted full-dataset counts instead of the current requirement page (88.567458ms)
+✔ overview metrics require a signed-in actor (1.873416ms)
+✔ pipeline counts exclude synthetic fixtures and aggregate every persisted requirement (0.266791ms)
+✔ 解析到映射的需求会入队 base_push 并写 recheck 审计 (2.931375ms)
+✔ 解析不到映射时跳过且不写审计 (0.200833ms)
+✔ analysisVersion 取最新分析版本，缺失版本时用 0 (0.232375ms)
+✔ 单条需求异常不阻断整轮，后续需求继续入队 (0.380292ms)
+✔ limit 默认 100 且可覆盖 (0.929625ms)
+✔ owner_state 迁移不被状态机允许时不写状态，但仍入队 (0.21025ms)
+✔ 已映射状态不被自动改写；manual 匹配落 manually_mapped (0.254708ms)
+✔ 候选查询失败不抛出，只记录 errors (0.207459ms)
+✔ source setup accepts the project name and schedule without client-side source IDs (2.968667ms)
+✔ database TIME values normalize to the API minute-precision schedule format (0.302417ms)
+✔ source setup rejects client-supplied project and requirement-type IDs (0.372208ms)
+✔ source-only mode suppresses downstream analysis and push routing; normal mode remains enabled (1.583583ms)
+✖ source-only metadata updates remain recoverable by a later full sync (11.937291ms)
+✔ sync persistence exposes analysis routing and source hash to the runtime (2.987459ms)
+✖ sync item reports a safe snapshot failure stage after the requirement upsert (12.194084ms)
+✔ directory CRUD works through the platform transport without returning void (36.261292ms)
+✔ the runtime refuses to publish an empty module list (21.634916ms)
+✔ the runtime still publishes a non-empty module list (1.020917ms)
+✔ the runtime binds and unbinds a roster person through the people API (1.1425ms)
+✖ the runtime returns 409 when a manual owner mapping conflicts with another person binding (1.370541ms)
+✔ resolves the selected internal platform user to the enterprise user ID and server name (1.159125ms)
+✔ does not resolve an external/unlinked platform user or a mismatched profile (0.089458ms)
+✔ selection resolution requires login, validates ID as text, and returns only candidate fields (21.500333ms)
+✔ the logged-in controller wires platform selection to the resolver and rejects forged identities (458.986209ms)
+✔ platform SDK failures expose their bounded stage but never the original message (0.290167ms)
+✔ a manually mapped owner can be reassigned without allowing automatic overwrite (0.062208ms)
+✔ drains queued work up to the configured bound and stops when idle (1.120792ms)
+✔ enforces a safe per-invocation job cap (0.187667ms)
+ℹ tests 106
+ℹ suites 0
+ℹ pass 103
+ℹ fail 3
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1621.997917
+
+✖ failing tests:
+
+test at scripts/rqsys-sync-analysis-routing.test.cjs:20:1
+✖ source-only metadata updates remain recoverable by a later full sync (11.937291ms)
+  TypeError: persistence.listTitleCandidates is not a function
+      at markDuplicateTitles (/Users/jacko/Projects/RQ-Sys/rq-sys-miaoda/dist/server/rqsys/sync/service.js:36:42)
+      at SyncOrchestrator.run (/Users/jacko/Projects/RQ-Sys/rq-sys-miaoda/dist/server/rqsys/sync/service.js:217:15)
+      at async TestContext.<anonymous> (/Users/jacko/Projects/RQ-Sys/rq-sys-miaoda/scripts/rqsys-sync-analysis-routing.test.cjs:36:3)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7)
+
+test at scripts/rqsys-sync-orchestrator.test.cjs:5:1
+✖ sync item reports a safe snapshot failure stage after the requirement upsert (12.194084ms)
+  TypeError: persistence.listTitleCandidates is not a function
+      at markDuplicateTitles (/Users/jacko/Projects/RQ-Sys/rq-sys-miaoda/dist/server/rqsys/sync/service.js:36:42)
+      at SyncOrchestrator.run (/Users/jacko/Projects/RQ-Sys/rq-sys-miaoda/dist/server/rqsys/sync/service.js:217:15)
+      at async TestContext.<anonymous> (/Users/jacko/Projects/RQ-Sys/rq-sys-miaoda/scripts/rqsys-sync-orchestrator.test.cjs:17:18)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+
+test at scripts/rqsys-team-directory-modules.test.cjs:235:1
+✖ the runtime returns 409 when a manual owner mapping conflicts with another person binding (1.370541ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  503 !== 409
+  
+      at TestContext.<anonymous> (/Users/jacko/Projects/RQ-Sys/rq-sys-miaoda/scripts/rqsys-team-directory-modules.test.cjs:260:10)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 503,
+    expected: 409,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

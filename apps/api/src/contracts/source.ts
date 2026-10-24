@@ -8,7 +8,11 @@ export const SourceConfigUpdateSchema = z.strictObject({
     enabled: z.boolean(),
     weekday: z.number().int().min(1).max(7).nullable(),
     time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).nullable(),
-    timezone: z.string().trim().min(1).nullable(),
+    // 时区必须是合法 IANA 名称：调度窗口换算依赖 Intl.DateTimeFormat，
+    // 坏时区会让每次轮询都抛 RangeError（此前任意字符串都能存进来源配置）。
+    timezone: z.string().trim().min(1).refine((zone) => {
+      try { new Intl.DateTimeFormat("en-US", { timeZone: zone }); return true; } catch { return false; }
+    }).nullable(),
   }),
 });
 

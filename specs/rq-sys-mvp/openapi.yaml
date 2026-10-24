@@ -736,7 +736,7 @@ components:
       enum: [running, succeeded, partial_failure, failed]
     PullState:
       type: string
-      enum: [pending, running, synced, failed]
+      enum: [pending, running, synced, failed, collected]
     AnalysisState:
       type: string
       enum: [pending, running, analyzed, failed_retryable]

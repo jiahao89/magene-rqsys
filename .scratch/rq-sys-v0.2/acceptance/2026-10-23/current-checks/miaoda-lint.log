@@ -1,0 +1,26 @@
+
+> fullstack-nestjs-template@2.3.0 lint
+> node ./scripts/lint.js
+
+
+> fullstack-nestjs-template@2.3.0 eslint
+> eslint . --quiet
+
+
+> fullstack-nestjs-template@2.3.0 type:check
+> concurrently -n "server,client" -c "blue,green" "npm run type:check:server" "npm run type:check:client"
+
+[client] 
+[client] > fullstack-nestjs-template@2.3.0 type:check:client
+[client] > tsc --noEmit --project tsconfig.app.json
+[client] 
+[server] 
+[server] > fullstack-nestjs-template@2.3.0 type:check:server
+[server] > tsc --noEmit --project tsconfig.node.json
+[server] 
+[server] npm run type:check:server exited with code 0
+[client] npm run type:check:client exited with code 0
+
+> fullstack-nestjs-template@2.3.0 stylelint
+> stylelint client/src/**/*.css --quiet
+

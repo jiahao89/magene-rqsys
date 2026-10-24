@@ -141,6 +141,17 @@ test("blank titles are never marked as duplicates", async () => {
   assert.equal(h.calls.some((call) => call.startsWith("duplicate:")), false);
 });
 
+test("a duplicate-hint refresh failure does not fail already-synced items", async () => {
+  const h = harness([task("one", "One"), task("two", "Two")]);
+  h.persistence.listTitleCandidates = async () => { throw new Error("duplicate hint read failed"); };
+  const result = await h.orchestrator.run({ batchId: "batch-1", sourceConfigId: config.id, config });
+  // 条目已全部成功：标注失败只记批次摘要，不把整批拖成失败重跑。
+  assert.equal(result.status, "succeeded");
+  assert.equal(result.succeededCount, 2);
+  assert.equal(result.failedCount, 0);
+  assert.ok(h.calls.includes("complete:succeeded:2:2:0"));
+});
+
 test("does not expose unmapped provider custom fields in normalized payload", async () => {
   const h = harness([task("one", "One")]);
   capturedPayloads.length = 0;

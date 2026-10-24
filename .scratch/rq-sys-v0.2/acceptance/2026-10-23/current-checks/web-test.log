@@ -1,0 +1,15 @@
+
+> @rq-sys/web@0.1.0 test
+> vitest run
+
+
+ RUN  v4.1.11 /Users/jacko/Projects/RQ-Sys/apps/web
+
+(node:92235) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+ Test Files  7 passed (7)
+      Tests  78 passed (78)
+   Start at  14:44:53
+   Duration  2.97s (transform 643ms, setup 913ms, import 1.63s, tests 2.66s, environment 3.19s)
+

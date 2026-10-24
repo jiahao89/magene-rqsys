@@ -1,0 +1,32 @@
+[
+  {
+    "case": "preserved-base-owner-substantive-update",
+    "outcome": "pushed",
+    "finalBaseOwner": [
+      {
+        "id": "person-b"
+      }
+    ],
+    "notificationRecipient": [
+      {
+        "id": "pm-leader"
+      }
+    ],
+    "eventType": "需求内容变更",
+    "writes": 2,
+    "externalNetworkRequests": 0
+  },
+  {
+    "case": "manual-reassignment",
+    "outcome": "pushed",
+    "finalBaseOwner": [
+      {
+        "id": "person-b"
+      }
+    ],
+    "notificationRecipient": null,
+    "eventType": null,
+    "writes": 1,
+    "externalNetworkRequests": 0
+  }
+]

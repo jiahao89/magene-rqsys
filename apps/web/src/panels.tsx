@@ -436,11 +436,11 @@ export function ModulesPanel() {
     <div className="panel-heading"><div><h2>功能模块</h2><p>AI 仅从已发布的模块名称中选择；无法匹配时输出“无法识别”。每次保存生成一个新字典版本，且至少保留一个模块。</p></div><HeroButton className="button button-secondary button-small" onPress={() => void load()} isDisabled={busy}><RefreshCw size={14} />刷新</HeroButton></div>
     <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
     {formError && <div className="field-error" role="alert">{formError}</div>}
-    <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}><label className="field" style={{ flex: 1 }}><span>功能模块</span><HeroInput aria-label="功能模块名称" value={name} onChange={(event) => setName(event.target.value)} /></label><label className="field"><span>人员</span><select aria-label="模块责任人员" value={personName} onChange={(event) => setPersonName(event.target.value)}><option value="">未分配</option>{people.map((person) => <option key={person.name} value={person.name}>{person.name}</option>)}</select></label><HeroButton className="button button-primary button-small" onPress={submit} isDisabled={busy}>新增模块</HeroButton></div>
+    <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}><label className="field" style={{ flex: 1 }}><span>功能模块</span><HeroInput aria-label="功能模块名称" value={name} onChange={(event) => setName(event.target.value)} /></label><label className="field"><span>人员</span><select aria-label="模块责任人员" value={personName} onChange={(event) => setPersonName(event.target.value)}><option value="">未分配</option>{people.filter((person) => person.name).map((person) => <option key={person.name} value={person.name}>{person.name}</option>)}</select></label><HeroButton className="button button-primary button-small" onPress={submit} isDisabled={busy}>新增模块</HeroButton></div>
     {items.length ? <div className="table-scroll" tabIndex={0} role="region" aria-label="功能模块列表"><table><thead><tr><th>功能模块</th><th>人员</th><th>操作</th></tr></thead><tbody>{items.map((item) => editing === item.name
       ? <tr key={item.name} className="module-row is-editing">
           <td><input className="inline-input" aria-label="编辑功能模块名称" value={editName} onChange={(event) => setEditName(event.target.value)} autoFocus /></td>
-          <td><select className="inline-input" aria-label="编辑模块责任人员" value={editPerson} onChange={(event) => setEditPerson(event.target.value)}><option value="">未分配</option>{people.map((person) => <option key={person.name} value={person.name}>{person.name}</option>)}</select></td>
+          <td><select className="inline-input" aria-label="编辑模块责任人员" value={editPerson} onChange={(event) => setEditPerson(event.target.value)}><option value="">未分配</option>{people.filter((person) => person.name).map((person) => <option key={person.name} value={person.name}>{person.name}</option>)}</select></td>
           <td><HeroButton className="button button-primary button-small" onPress={submitEdit} isDisabled={busy}>保存</HeroButton> <HeroButton className="button button-secondary button-small" onPress={() => { setEditing(null); setEditName(""); setEditPerson(""); }} isDisabled={busy}>取消</HeroButton></td>
         </tr>
       : <tr key={item.name} className="module-row">
@@ -543,7 +543,7 @@ function stateChip(status: string) {
 
 const ownerStateOptions = [["", "全部负责人状态"], ["pending_mapping", "待匹配"], ["auto_mapped", "已匹配"], ["manually_mapped", "手动匹配"], ["not_required", "无需匹配"]] as const;
 const analysisStateOptions = [["", "全部分析状态"], ["analyzed", "已分析"], ["failed_retryable", "待重试"], ["pending", "等待中"], ["running", "进行中"]] as const;
-const pullStateOptions = [["", "全部同步状态"], ["pending", "等待同步"], ["running", "同步中"], ["synced", "已同步"], ["failed", "同步失败"]] as const;
+const pullStateOptions = [["", "全部同步状态"], ["pending", "等待同步"], ["running", "同步中"], ["synced", "已同步"], ["failed", "同步失败"], ["collected", "已收录"]] as const;
 const pushStateOptions = [["", "全部推送状态"], ["pending", "等待推送"], ["running", "推送中"], ["pushed", "已推送"], ["failed", "推送失败"]] as const;
 
 // 详情/列表徽标按阶段取值：同一个原始枚举（pending/running/failed）在不同阶段含义不同，
@@ -834,7 +834,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
         </label>
         <label className="qfield">
           <span className="sr-only">负责人</span>
-          <select aria-label="TB负责人筛选" value={executorName} onChange={(e) => setExecutorName(e.target.value)}><option value="">全部 TB 负责人</option>{people.map((person) => <option key={person.name} value={person.name}>{person.name}</option>)}</select>
+          <select aria-label="TB负责人筛选" value={executorName} onChange={(e) => setExecutorName(e.target.value)}><option value="">全部 TB 负责人</option>{people.filter((person) => person.name).map((person) => <option key={person.name} value={person.name}>{person.name}</option>)}</select>
         </label>
         <label className="qfield">
           <span className="sr-only">同步状态</span>
@@ -1027,7 +1027,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
         <HeroButton className="button button-secondary button-small" onPress={onBack}><ArrowLeft size={14} />返回需求池</HeroButton>
         <div className="req-summary-copy">
           <h2 className="req-summary-title">{detail.title}</h2>
-          <span className="req-summary-id">{detail.platformRequirementId ?? `REQ-${detail.sourceRequirementId.slice(0, 8)}`} · v{detail.sourceVersion}</span>
+          <span className="req-summary-id">{detail.platformRequirementId ?? (detail.sourceRequirementId ? `REQ-${detail.sourceRequirementId.slice(0, 8)}` : "WEB")} · v{detail.sourceVersion}</span>
           {detail.duplicateOf && <div className="req-duplicate-notice" role="note">
             该需求与另一条需求标题相同，仅作疑似重复提示；两条记录仍按各自的来源 ID 独立分析、分配和推送。<a href={`?requirement=${detail.duplicateOf}`}>查看另一条</a>
           </div>}
@@ -1071,7 +1071,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
     <StateBanner loadError={error} notice={notice} onCloseNotice={onCloseNotice} />
 
     <section className="req-section" aria-labelledby="req-l1-heading">
-      <div className="req-section-head"><h3 id="req-l1-heading">需求信息</h3><span className="req-source-note">来自 Teambition</span></div>
+      <div className="req-section-head"><h3 id="req-l1-heading">需求信息</h3><span className="req-source-note">{detail.sourceType === "web_manual" ? `来自 Web 收录${detail.sourceChannel ? ` · ${detail.sourceChannel}` : ""}` : "来自 Teambition"}</span></div>
       <div className="req-field">
         <TbFieldLabel>标题</TbFieldLabel>
         <p className="req-l1-title">{detail.title}</p>
@@ -1175,7 +1175,7 @@ function RequirementsTable({ rows, loading, onOpen, onAssign }: { rows: Requirem
         onClick={(event) => { if (!isRowActionTarget(event.target)) onOpen(row); }}
         onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && !isRowActionTarget(event.target)) { event.preventDefault(); onOpen(row); } }}
       >
-        <td><span className="req-row-title" title={row.title}>{row.title}</span></td>
+        <td><span className="req-row-title" title={row.title}>{row.title}</span>{row.sourceType === "web_manual" ? <span className="source-badge" title={`Web 收录${row.sourceChannel ? ` · ${row.sourceChannel}` : ""}`}>手工</span> : null}</td>
         <td>
           <button type="button" className="owner-cell-button" title={owner.unassigned ? "分配负责人" : "变更负责人"}
             onClick={(event) => { event.stopPropagation(); onAssign(row); }}>

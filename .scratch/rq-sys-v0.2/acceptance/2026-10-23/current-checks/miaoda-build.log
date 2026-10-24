@@ -1,0 +1,49 @@
+
+> fullstack-nestjs-template@2.3.0 build:prod
+> npm run build:server && npm run build:client
+
+
+> fullstack-nestjs-template@2.3.0 build:server
+> NODE_ENV=production nest build
+
+>  SWC  Running...
+Successfully compiled: 83 files with swc (79.46ms)
+
+> fullstack-nestjs-template@2.3.0 build:client
+> NODE_ENV=production vite build --config vite.config.ts
+
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vite.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+vite v8.3.4 building client environment for production...
+transforming...
+(node:92331) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/jacko/Projects/RQ-Sys/rq-sys-miaoda/tailwind.config.ts?id=1792737896725 is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /Users/jacko/Projects/RQ-Sys/rq-sys-miaoda/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✓ 3745 modules transformed.
+rendering chunks...
+
+ WARN  inlineDynamicImports option is ignored because codeSplitting: false is set.
+
+[miaoda-polyfill] generated assets/polyfills.js (53KB)
+SourceMapUploadPlugin: Starting sourcemap consolidation process...
+SourceMapUploadPlugin: Consolidated assets/index-C7S4u0SD.js.map to /Users/jacko/Projects/RQ-Sys/rq-sys-miaoda/dist/sourcemaps/client/assets/index-C7S4u0SD.js.map
+SourceMapUploadPlugin: Consolidated assets/radix-CKL3rQVV.js.map to /Users/jacko/Projects/RQ-Sys/rq-sys-miaoda/dist/sourcemaps/client/assets/radix-CKL3rQVV.js.map
+computing gzip size...
+dist/client/routes.json                              0.04 kB │ gzip:   0.06 kB
+dist/client/client/index.html                        5.66 kB │ gzip:   2.08 kB
+dist/client/assets/polyfills.js                     54.49 kB
+dist/client/assets/index-DADaSw8P.css              298.28 kB │ gzip:  44.86 kB
+dist/client/assets/rolldown-runtime-hePW80VL.js      0.71 kB │ gzip:   0.42 kB
+dist/client/assets/radix-CKL3rQVV.js                83.61 kB │ gzip:  27.82 kB │ map:   426.88 kB
+dist/client/assets/index-C7S4u0SD.js             1,284.74 kB │ gzip: 400.94 kB │ map: 5,838.11 kB
+
+[plugin builtin:vite-reporter] 
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 2.31s
+[html-output] Moved: /Users/jacko/Projects/RQ-Sys/rq-sys-miaoda/dist/client/client/index.html -> /Users/jacko/Projects/RQ-Sys/rq-sys-miaoda/dist/client/index.html
+[html-output] Minified: /Users/jacko/Projects/RQ-Sys/rq-sys-miaoda/dist/client/index.html

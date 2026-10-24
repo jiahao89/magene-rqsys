@@ -84,7 +84,7 @@ export class FeishuBitableClient implements BaseClient {
 
   /** 给请求附加超时信号；调用方已自带 signal 时不覆盖。 */
   private withTimeout(init: RequestInit): RequestInit {
-    if (this.timeoutMs <= 0 || init.signal !== undefined || init.signal !== null) return init;
+    if (this.timeoutMs <= 0 || init.signal != null) return init;
     return { ...init, signal: AbortSignal.timeout(this.timeoutMs) };
   }
 

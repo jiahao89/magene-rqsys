@@ -9,6 +9,7 @@ export const ERROR_STATUS = {
   FORBIDDEN: 403,
   NOT_FOUND: 404,
   CONFLICT: 409,
+  PAYLOAD_TOO_LARGE: 413,
   INTERNAL: 500,
   ROUTE_NOT_IMPLEMENTED: 501,
   DEPENDENCY_UNAVAILABLE: 503,
@@ -22,6 +23,7 @@ const DEFAULT_MESSAGES: Record<ErrorCode, string> = {
   FORBIDDEN: "You do not have permission to perform this action.",
   NOT_FOUND: "Resource not found.",
   CONFLICT: "Conflicting concurrent operation.",
+  PAYLOAD_TOO_LARGE: "Request body exceeds the accepted size.",
   INTERNAL: "An internal error occurred.",
   ROUTE_NOT_IMPLEMENTED:
     "This endpoint is defined by the API contract and will be implemented in its ticket.",

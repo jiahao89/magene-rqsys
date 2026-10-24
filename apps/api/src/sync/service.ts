@@ -81,7 +81,7 @@ export class SyncOrchestrator {
   async run(input:SyncInput):Promise<SyncResult>{
     let cursor:string|null=null;let all:TeambitionTaskRecord[]=[];const seen=new Set<string>();const clock=this.options.now??(()=>new Date());
     try {
-      while(true){const page=await this.source.listRequirements(input.config,cursor);for(const record of page.items){if(!record.id)continue;if(seen.has(record.id))continue;seen.add(record.id);all.push(record);}if(!page.hasMore)break;if(!page.nextCursor||page.nextCursor===cursor)throw new Error("Teambition pagination cursor did not advance");cursor=page.nextCursor;}
+      while(true){const page=await this.source.listRequirements(input.config,cursor);for(const record of page.items){if(!record.id){all.push(record);continue;}if(seen.has(record.id))continue;seen.add(record.id);all.push(record);}if(!page.hasMore)break;if(!page.nextCursor||page.nextCursor===cursor)throw new Error("Teambition pagination cursor did not advance");cursor=page.nextCursor;}
     } catch (error) {
       // 此前这里把原因整个丢掉，只写一句固定文案：5 次重试无法区分"网关 key 过期"与"偶发抖动"，
       // 目标环境排障只能靠猜。现在落一个**脱敏的结构化代码**（不写 provider 原文、不含凭据）。
@@ -94,7 +94,13 @@ export class SyncOrchestrator {
     const onlyIds=input.onlyIds?new Set(input.onlyIds):null;
     if(onlyIds)all=all.filter((record)=>record.id!==undefined&&onlyIds.has(record.id));
     let succeededCount=0,failedCount=0;
-    for(const record of all){const began=clock().toISOString();let requirementId:string|null=null;let action:"created"|"updated"|"unchanged"="created";let status:"succeeded"|"failed"="succeeded";let errorCode:string|null=null,errorDetail:string|null=null;let failureCode="source_item_invalid";
+    for(const record of all){const began=clock().toISOString();
+      // 无 ID 的源记录也要留痕：此前被静默丢弃，批次计数与明细完全看不到"少了一条"。
+      if(!record.id){
+        try{await this.persistence.writeSyncItem({batchId:input.batchId,requirementId:null,teambitionRequirementId:"",action:"unchanged",status:"failed",errorCode:"source_item_invalid",errorDetail:"Source record has no requirement id",startedAt:began,completedAt:clock().toISOString()});}catch{}
+        failedCount++;continue;
+      }
+      let requirementId:string|null=null;let action:"created"|"updated"|"unchanged"="created";let status:"succeeded"|"failed"="succeeded";let errorCode:string|null=null,errorDetail:string|null=null;let failureCode="source_item_invalid";
       try{
         const normalized=normalizeTeambitionTask(input.config.projectId,record,input.config.fieldMap);const payload=persistedPayload(normalized);const hash=sourcePayloadHash(payload);const sub = substantiveHash(substantivePayload(normalized) as { title:string; description:string|null; scope:string|null; acceptanceCriteria:string|null; attachmentRefs:readonly string[] });failureCode="source_item_read_failed";const previous=await this.persistence.findRequirement(input.sourceConfigId,normalized.sourceRequirementId);const version=previous?previous.sourceVersion+(previous.sourceHash===hash?0:1):1;const changed=previous!==null&&previous.sourceHash!==hash;const substantive=isSubstantiveChange(previous?.substantiveHash??null,sub);
         const analysisRequired=!previous||substantive||previous.analysisState==="pending";
@@ -110,9 +116,13 @@ export class SyncOrchestrator {
       if(status==="succeeded")succeededCount++;else failedCount++;
     }
     // 全部需求先导入，再统一标注同标题疑似重复（可随标题变化重算；不删除任何行）。
-    await markDuplicateTitles(this.persistence, input.sourceConfigId);
+    // 标注只是提示：失败不能把已成功的条目拖成整批失败重跑，但要写进批次摘要留下痕迹。
+    let duplicateHintsFailed=false;
+    try{await markDuplicateTitles(this.persistence,input.sourceConfigId);}
+    catch{duplicateHintsFailed=true;}
     const result:SyncResult={batchId:input.batchId,status:failedCount===0?"succeeded":succeededCount===0?"failed":"partial_failure",totalCount:all.length,succeededCount,failedCount};
-    await this.persistence.completeBatch(input.batchId,{...result,errorSummary:failedCount?`${failedCount} item(s) failed; inspect item results.`:null,completedAt:clock().toISOString()});return result;
+    const errorSummary=failedCount?`${failedCount} item(s) failed; inspect item results.`:duplicateHintsFailed?"All items synced, but duplicate-title hints could not be refreshed; manual retry is available.":null;
+    await this.persistence.completeBatch(input.batchId,{...result,errorSummary,completedAt:clock().toISOString()});return result;
   }
 }
 

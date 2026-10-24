@@ -2,6 +2,7 @@ const labels: Record<string, string> = {
   pending: "等待中",
   running: "进行中",
   synced: "已同步",
+  collected: "已收录",
   analyzed: "已分析",
   pushed: "已推送",
   failed: "失败",
