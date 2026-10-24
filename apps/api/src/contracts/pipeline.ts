@@ -117,3 +117,15 @@ export const RiceDraftUpdateSchema = z.strictObject({
   notes: z.string().trim().max(4_000).nullish(),
   expectedEditVersion: z.number().int().min(0),
 });
+// V02-T13：Kano 访谈资料导入（维护者受控入口）。未知字段显式 null/缺省，不补造。
+export const KanoEvidenceImportSchema = z.strictObject({
+  title: z.string().trim().min(1).max(200),
+  sourceUrl: z.string().trim().url().max(500).nullish(),
+  sourceSection: z.string().trim().max(200).nullish(),
+  summary: z.string().trim().min(1).max(20_000),
+  evidenceFragments: z.array(z.strictObject({ ref: z.string().trim().min(1).max(40), text: z.string().trim().min(1).max(2_000) })).max(200),
+  coverageNotes: z.string().trim().max(4_000).nullish(),
+  knownAudiences: z.array(z.enum(AUDIENCE_LEVELS)).max(6).default([]),
+  knownScenes: z.string().trim().max(500).nullish(),
+  interviewDate: z.string().trim().max(40).nullish(),
+});

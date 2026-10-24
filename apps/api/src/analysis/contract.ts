@@ -37,6 +37,20 @@ const PLATFORM_USER_ID = /(?<![\w\d])[0-9a-f]{24}(?![\w\d])/gi;
 const MENTION = /(^|[^\w@])@[\w\u4e00-\u9fa5-]{2,30}/gu;
 const LABELLED_PERSON_NAME = /((?:反馈人|联系人|提出人|申请人|用户姓名|姓名)\s*[-－‐‑‒–—−:：]\s*)[^-－‐‑‒–—−\s【】,:：；;]+/giu;
 
+/**
+ * 检测文本中的疑似 PII 命中数（V02-T13）：导入 Kano 访谈快照时标记，
+ * 命中>0 的版本拒绝批准，防止未脱敏材料进入模型输入。只计数不改写。
+ */
+export function countPiiFindings(text: string): number {
+  const patterns = [EMAIL, PHONE, SECRET, ID_CARD, LABELLED_PERSON_NAME];
+  let count = 0;
+  for (const pattern of patterns) {
+    const matches = text.match(new RegExp(pattern.source, pattern.flags));
+    count += matches?.length ?? 0;
+  }
+  return count;
+}
+
 export function maskPii(text: string, markers: string[]): string {
   let masked = text;
   for (const marker of [...new Set(markers)].filter(Boolean).sort((a, b) => b.length - a.length)) {

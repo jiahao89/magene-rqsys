@@ -177,6 +177,60 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '409': { description: Item is not retryable }
+  /api/kano/evidence:
+    get:
+      summary: List Kano evidence versions (V02-T13)
+      description: >-
+        Maintainer-imported, de-identified interview summary snapshots. Only approved and
+        non-PII-flagged versions may feed the Kano model input; updates create new immutable
+        versions and never mutate referenced snapshots.
+      responses:
+        '200': { description: Version list with status and PII flags. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      summary: Import a Kano evidence version (V02-T13)
+      description: >-
+        Creates the next immutable version with a PII scan; suspected findings mark the
+        version piiFlagged and block approval. No editor, crawler, or vector store.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, summary, evidenceFragments]
+              properties:
+                title: { type: string, maxLength: 200 }
+                sourceUrl: { type: string, maxLength: 500, nullable: true }
+                sourceSection: { type: string, maxLength: 200, nullable: true }
+                summary: { type: string, maxLength: 20000 }
+                evidenceFragments:
+                  type: array
+                  items:
+                    type: object
+                    required: [ref, text]
+                    properties:
+                      ref: { type: string, maxLength: 40 }
+                      text: { type: string, maxLength: 2000 }
+                coverageNotes: { type: string, maxLength: 4000, nullable: true }
+                knownAudiences: { type: array, items: { type: string, enum: [L1, L2, L3, L4, L5, L6] } }
+                knownScenes: { type: string, maxLength: 500, nullable: true }
+                interviewDate: { type: string, maxLength: 40, nullable: true }
+      responses:
+        '201': { description: Draft version created (may be piiFlagged). }
+        '400': { $ref: '#/components/responses/Validation' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/DependencyUnavailable' }
+  /api/kano/evidence/{id}/approve:
+    post:
+      summary: Approve a Kano evidence version (V02-T13)
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200': { description: Approved. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: The version is PII-flagged; re-import a de-identified snapshot. }
   /api/requirements:
     get:
       summary: Search requirements by source and pipeline state

@@ -318,3 +318,24 @@ export interface RiceDraftRecord {
   updatedBy: string;
   updatedAt: string;
 }
+
+/** V02-T13：Kano 访谈资料版本（导入即不可变；批准后才能作为模型输入）。 */
+export interface KanoEvidenceVersion {
+  id: string;
+  version: number;
+  title: string;
+  sourceUrl: string | null;
+  sourceSection: string | null;
+  summary: string;
+  evidenceFragments: Array<{ ref: string; text: string }>;
+  coverageNotes: string | null;
+  knownAudiences: string[];
+  knownScenes: string | null;
+  interviewDate: string | null;
+  status: "draft" | "approved" | "retired";
+  piiFlagged: boolean;
+  createdBy: string;
+  createdAt: string;
+  approvedBy: string | null;
+  approvedAt: string | null;
+}

@@ -10,7 +10,7 @@ import { createBasePushService } from "../../base/push-service.js";
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),"../../../../../");
 async function getDatabaseUrl(){if(process.env.DATABASE_URL)return process.env.DATABASE_URL;const env=await readFile(resolve(root,".env"),"utf8").catch(()=>"");const value=env.match(/^DATABASE_URL=(.+)$/m)?.[1]?.trim();if(!value)throw new Error("PostgreSQL integration tests require DATABASE_URL in environment or repo .env");return value;}
-async function setup(){const connectionString=await getDatabaseUrl();const admin=new Pool({connectionString,connectionTimeoutMillis:5000});const schema=`rq_test_${randomUUID().replaceAll("-","")}`;await admin.query(`CREATE SCHEMA "${schema}"`);const pool=new Pool({connectionString,options:`-c search_path=${schema}`,max:5});try{const sql=await readFile(resolve(root,"database/migrations/0001_initial.sql"),"utf8");await pool.query(sql);const next=await readFile(resolve(root,"database/migrations/0002_single_source_config.sql"),"utf8");await pool.query(next);const platformId=await readFile(resolve(root,"database/migrations/0004_platform_requirement_id.sql"),"utf8");await pool.query(platformId);const platformIdBackfill=await readFile(resolve(root,"database/migrations/0005_platform_requirement_id_backfill.sql"),"utf8");await pool.query(platformIdBackfill);const manualOwner=await readFile(resolve(root,"database/migrations/0006_requirement_manual_owner.sql"),"utf8");await pool.query(manualOwner);const ownerAndDuplicates=await readFile(resolve(root,"database/migrations/0007_requirement_owner_conflict_duplicates.sql"),"utf8");await pool.query(ownerAndDuplicates);const nameFix=await readFile(resolve(root,"database/migrations/0008_fix_team_directory_name.sql"),"utf8");await pool.query(nameFix);const sourceExpand=await readFile(resolve(root,"database/migrations/0009_extend_requirement_source.sql"),"utf8");await pool.query(sourceExpand);const defContext=await readFile(resolve(root,"database/migrations/0010_manual_definition_context.sql"),"utf8");await pool.query(defContext);const intakeModuleOwner=await readFile(resolve(root,"database/migrations/0011_requirement_intake_module_owner.sql"),"utf8");await pool.query(intakeModuleOwner);const editReceipts=await readFile(resolve(root,"database/migrations/0012_manual_edit_receipts.sql"),"utf8");await pool.query(editReceipts);const audience=await readFile(resolve(root,"database/migrations/0013_requirement_audience.sql"),"utf8");await pool.query(audience);const rice=await readFile(resolve(root,"database/migrations/0014_rice_drafts.sql"),"utf8");await pool.query(rice);return{pool,admin,schema,repos:new PostgresRepositories(pool as never)};}catch(error){await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();throw error;}}
+async function setup(){const connectionString=await getDatabaseUrl();const admin=new Pool({connectionString,connectionTimeoutMillis:5000});const schema=`rq_test_${randomUUID().replaceAll("-","")}`;await admin.query(`CREATE SCHEMA "${schema}"`);const pool=new Pool({connectionString,options:`-c search_path=${schema}`,max:5});try{const sql=await readFile(resolve(root,"database/migrations/0001_initial.sql"),"utf8");await pool.query(sql);const next=await readFile(resolve(root,"database/migrations/0002_single_source_config.sql"),"utf8");await pool.query(next);const platformId=await readFile(resolve(root,"database/migrations/0004_platform_requirement_id.sql"),"utf8");await pool.query(platformId);const platformIdBackfill=await readFile(resolve(root,"database/migrations/0005_platform_requirement_id_backfill.sql"),"utf8");await pool.query(platformIdBackfill);const manualOwner=await readFile(resolve(root,"database/migrations/0006_requirement_manual_owner.sql"),"utf8");await pool.query(manualOwner);const ownerAndDuplicates=await readFile(resolve(root,"database/migrations/0007_requirement_owner_conflict_duplicates.sql"),"utf8");await pool.query(ownerAndDuplicates);const nameFix=await readFile(resolve(root,"database/migrations/0008_fix_team_directory_name.sql"),"utf8");await pool.query(nameFix);const sourceExpand=await readFile(resolve(root,"database/migrations/0009_extend_requirement_source.sql"),"utf8");await pool.query(sourceExpand);const defContext=await readFile(resolve(root,"database/migrations/0010_manual_definition_context.sql"),"utf8");await pool.query(defContext);const intakeModuleOwner=await readFile(resolve(root,"database/migrations/0011_requirement_intake_module_owner.sql"),"utf8");await pool.query(intakeModuleOwner);const editReceipts=await readFile(resolve(root,"database/migrations/0012_manual_edit_receipts.sql"),"utf8");await pool.query(editReceipts);const audience=await readFile(resolve(root,"database/migrations/0013_requirement_audience.sql"),"utf8");await pool.query(audience);const rice=await readFile(resolve(root,"database/migrations/0014_rice_drafts.sql"),"utf8");await pool.query(rice);const kano=await readFile(resolve(root,"database/migrations/0015_kano_evidence_versions.sql"),"utf8");await pool.query(kano);return{pool,admin,schema,repos:new PostgresRepositories(pool as never)};}catch(error){await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();throw error;}}
 async function cleanup(ctx:{pool:Pool;admin:Pool;schema:string}){await ctx.pool.end();await ctx.admin.query(`DROP SCHEMA "${ctx.schema}" CASCADE`);await ctx.admin.end();}
 const config={projectId:"tb-project",projectName:"Product",requirementTypeId:"req-type",enabled:true,schedule:{enabled:true,weekday:1,time:"09:30",timezone:"Asia/Shanghai"},ownerNames:["PM Owner"],fieldMap:{description:"cf-description"}};
 function requirementWrite(sourceConfigId:string, latestBatchId:string, overrides:Partial<import("./repositories.js").RequirementRowWrite>={}) {
@@ -413,5 +413,31 @@ test("V02-T11 RICE draft: save, merge, optimistic conflict, history, no side eff
     const row=await ctx.repos.requirements.get(manual.requirementId);
     assert.equal(row?.pipeline.analysis,"pending");
     assert.equal(row?.pipeline.push,"pending");
+  }finally{await cleanup(ctx);}
+});
+
+test("V02-T13 Kano evidence: import, PII flag blocks approval, clean approve, immutable versions",async()=>{
+  const ctx=await setup();
+  try{
+    // 含手机号/邮箱的材料：导入成功但被标记，批准拒绝（AC03）
+    const flagged=await ctx.repos.requirements.createKanoEvidence({title:"含PII的访谈总结",summary:"用户 13800138000 反馈…邮箱 a@b.com",evidenceFragments:[{ref:"S1",text:"反馈人：张三"}],createdBy:"maintainer"});
+    assert.equal(flagged.piiFlagged,true);
+    assert.equal(flagged.status,"draft");
+    assert.equal((await ctx.repos.requirements.approveKanoEvidence(flagged.id,"approver")).outcome,"pii_flagged");
+    // 干净材料（安全合成样本）：导入→批准→可被模型输入引用
+    const clean=await ctx.repos.requirements.createKanoEvidence({title:"骑行训练需求访谈（去标识化）",summary:"多名竞技与爱好者用户关注训练计划的准确性与完成度分析。",evidenceFragments:[{ref:"S1",text:"竞技用户重视训练完成度分析"},{ref:"S2",text:"爱好者关注数据可读性"}],coverageNotes:"L2/L3 在总结中合并，无法区分；L1 缺直接样本。",knownAudiences:["L2","L3"],createdBy:"maintainer"});
+    assert.equal(clean.piiFlagged,false);
+    assert.equal(clean.version,2);
+    assert.deepEqual((await ctx.repos.requirements.approveKanoEvidence(clean.id,"approver")),{outcome:"approved"});
+    const listed=await ctx.repos.requirements.listKanoEvidence();
+    assert.equal(listed.length,2);
+    const approvedRow=listed.find((v)=>v.id===clean.id);
+    assert.equal(approvedRow?.status,"approved");
+    // 版本不可变：更新=新版本（导入第三版），旧版内容不变（AC05）
+    const third=await ctx.repos.requirements.createKanoEvidence({title:"更新后的总结",summary:"新增通勤场景线索。",evidenceFragments:[{ref:"S1",text:"通勤用户希望路况提醒"}],createdBy:"maintainer"});
+    assert.equal(third.version,3);
+    assert.equal((await ctx.repos.requirements.listKanoEvidence()).find((v)=>v.id===clean.id)?.summary,"多名竞技与爱好者用户关注训练计划的准确性与完成度分析。");
+    // 未知批准目标
+    assert.equal((await ctx.repos.requirements.approveKanoEvidence("00000000-0000-4000-8000-000000000000","a")).outcome,"not_found");
   }finally{await cleanup(ctx);}
 });

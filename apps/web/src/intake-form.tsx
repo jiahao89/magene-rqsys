@@ -2,7 +2,7 @@
 // 只必填标题/描述/渠道；四段提示是 placeholder 引导，不是四个必填项（PRD 3.2）。
 // 幂等键在同一次提交意图内复用（失败重试不换键），成功或重新展开表单后重置。
 import { useEffect, useRef, useState } from "react";
-import { ApiError, AUDIENCE_LEVELS, AUDIENCE_LEVEL_NAMES, REQUIREMENT_INTAKE_CHANNELS, REQUIREMENT_INTAKE_TYPES, createRequirement, getFunctionModules, getRiceDraft, saveRiceDraft, setAudienceTags, updateRequirement, type RiceDraft } from "./api";
+import { ApiError, AUDIENCE_LEVELS, AUDIENCE_LEVEL_NAMES, REQUIREMENT_INTAKE_CHANNELS, REQUIREMENT_INTAKE_TYPES, createRequirement, getFunctionModules, getRiceDraft, listKanoEvidence, saveRiceDraft, setAudienceTags, updateRequirement, type KanoEvidenceVersionDto, type RiceDraft } from "./api";
 
 export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) => void }) {
   const [open, setOpen] = useState(false);
@@ -234,8 +234,11 @@ export function BetaPanel({ requirementId }: { requirementId: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [evidence, setEvidence] = useState<KanoEvidenceVersionDto[]>([]);
   useEffect(() => {
     if (!open) return;
+    // V02-T13：只读列出已批准资料；打开面板不运行任何模型。
+    void listKanoEvidence().then((result) => setEvidence(result.items.filter((item) => item.status === "approved" && !item.piiFlagged))).catch(() => setEvidence([]));
     void getRiceDraft(requirementId).then((loaded) => {
       setDraft(loaded);
       setReach(loaded.inputs.reach ?? ""); setImpact(loaded.inputs.impact ?? "");
@@ -272,6 +275,12 @@ export function BetaPanel({ requirementId }: { requirementId: string }) {
       <button className="button button-secondary button-small" onClick={() => setOpen(false)} disabled={busy}>收起</button>
       {draft && <span className="status-hint" role="status">状态：{draft.status} · 依据源版本 v{draft.sourceVersion} · 草稿版本 v{draft.editVersion}</span>}
       {notice && <span className="status-hint" role="status">{notice}</span>}
+    </div>
+    <div className="req-field" style={{ flexBasis: "100%", marginTop: 8 }}>
+      <strong>Kano 资料（已批准快照 · 只读）</strong>
+      {evidence.length === 0 ? <p className="status-hint">暂无已批准的访谈资料。</p> : <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+        {evidence.map((item) => <li key={item.id}>v{item.version} · {item.title}{item.coverageNotes ? `（覆盖限制：${item.coverageNotes}）` : ""}{item.sourceUrl ? <> · <a href={item.sourceUrl} target="_blank" rel="noreferrer">来源</a></> : null}</li>)}
+      </ul>}
     </div>
     {error && <div className="field-error" role="alert" style={{ flexBasis: "100%" }}>{error}</div>}
   </div>;

@@ -382,3 +382,22 @@ test("V02-T11 RICE draft routes: read defaults, save with optimistic version, co
   const stale = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/rice-draft`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ reach: "x", expectedEditVersion: 0 }) }), d);
   assert.equal(stale.status, 409);
 });
+
+test("V02-T13 Kano evidence routes: import validates, approve rejects flagged material", async () => {
+  const d = makeDependencies();
+  const requirements = d.repositories!.requirements as unknown as Record<string, unknown>;
+  const imported: unknown[] = [];
+  requirements.createKanoEvidence = async (input: { summary: string }) => {
+    const record = { id: "ev-1", version: 1, status: "draft", piiFlagged: input.summary.includes("13800138000") };
+    imported.push(input);
+    return record;
+  };
+  requirements.approveKanoEvidence = async () => ({ outcome: "pii_flagged" });
+  const badUrl = await handleApiRequest(new Request("http://localhost/api/kano/evidence", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "t", summary: "s", evidenceFragments: [], sourceUrl: "not-a-url" }) }), d);
+  assert.equal(badUrl.status, 400);
+  const importOk = await handleApiRequest(new Request("http://localhost/api/kano/evidence", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "访谈总结", summary: "含 13800138000 的总结", evidenceFragments: [{ ref: "S1", text: "片段" }] }) }), d);
+  assert.equal(importOk.status, 201);
+  assert.equal((await importOk.json() as Record<string, unknown>).piiFlagged, true);
+  const approve = await handleApiRequest(new Request("http://localhost/api/kano/evidence/ev-1/approve", { method: "POST" }), d);
+  assert.equal(approve.status, 409);
+});

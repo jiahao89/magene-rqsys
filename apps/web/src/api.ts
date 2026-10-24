@@ -449,3 +449,12 @@ export function getRiceDraft(id: string, fetcher: typeof fetch = fetch): Promise
 export function saveRiceDraft(id: string, input: { reach?: string | null; impact?: string | null; confidence?: string | null; effort?: string | null; notes?: string | null; expectedEditVersion: number }, fetcher: typeof fetch = fetch): Promise<{ requirementId: string; editVersion: number; status: string }> {
   return putJson(`/api/requirements/${id}/rice-draft`, input, fetcher);
 }
+export interface KanoEvidenceVersionDto {
+  id: string; version: number; title: string; sourceUrl: string | null; sourceSection: string | null;
+  summary: string; evidenceFragments: Array<{ ref: string; text: string }>; coverageNotes: string | null;
+  knownAudiences: string[]; knownScenes: string | null; interviewDate: string | null;
+  status: "draft" | "approved" | "retired"; piiFlagged: boolean; createdAt: string; approvedAt: string | null;
+}
+export function listKanoEvidence(fetcher: typeof fetch = fetch): Promise<{ items: KanoEvidenceVersionDto[] }> {
+  return requestJson<{ items: KanoEvidenceVersionDto[] }>("/api/kano/evidence", fetcher);
+}

@@ -8,7 +8,7 @@ import { stableJson } from "../sync/hashes.js";
 import type { AuditEventRepository, AnalysisRunRepository, PipelineJobRepository, SourceConfigRepository, SyncBatchRepository, SyncItemRepository, PersonMappingRepository, RequirementQueryRepository, BasePushRunRepository, ModuleDictionaryRepository, PriorityRuleRepository, SourceSnapshotRepository, TeamDirectoryRepository } from "../application/repositories.js";
 import type { PersonMappingRecord, AnalysisRunRecord, ModuleDictionaryVersionRecord, PriorityRuleVersionRecord, RequirementRecord, SourceConfigRecord, SyncBatchRecord } from "../domain/persistence.js";
 import type { TeamPersonRecord } from "../domain/team-directory.js";
-import { AuditListQuerySchema, AudienceUpdateSchema, BatchListQuerySchema, RiceDraftUpdateSchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementIntakeEditSchema, RequirementIntakeSchema, RequirementListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
+import { AuditListQuerySchema, KanoEvidenceImportSchema, AudienceUpdateSchema, BatchListQuerySchema, RiceDraftUpdateSchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementIntakeEditSchema, RequirementIntakeSchema, RequirementListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
 import { createHash, randomUUID } from "node:crypto";
 import { SourceConfigUpdateSchema, type ResolvedSourceConfigUpdate } from "../contracts/source.js";
 import { DictionaryCreateSchema, PriorityRuleCreateSchema, TeamModulesSaveSchema, TeamPersonCreateSchema, TeamPersonFeishuBindSchema, TeamPersonRenameSchema } from "../contracts/rules.js";
@@ -474,6 +474,34 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
       items: page.items.map((item) => ({ ...requirementSearchDto(item), ownerName: manualOwnerName(item) ?? (item.executorUserId ? nameByTbUser.get(item.executorUserId) ?? null : null) })),
       nextCursor: page.nextCursor,
     });
+  }
+  if (url.pathname === "/api/kano/evidence" && method === "GET") {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const versions = await repositories.requirements.listKanoEvidence?.() ?? [];
+    // 读取可见全部状态；只有 approved 且未标记 PII 的版本可被 T14 运行引用（模型输入门禁）。
+    return json({ items: versions.map((v) => ({ id: v.id, version: v.version, title: v.title, sourceUrl: v.sourceUrl, sourceSection: v.sourceSection, summary: v.summary, evidenceFragments: v.evidenceFragments, coverageNotes: v.coverageNotes, knownAudiences: v.knownAudiences, knownScenes: v.knownScenes, interviewDate: v.interviewDate, status: v.status, piiFlagged: v.piiFlagged, createdAt: v.createdAt, approvedAt: v.approvedAt })) });
+  }
+  if (url.pathname === "/api/kano/evidence" && method === "POST") {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const parsed = KanoEvidenceImportSchema.safeParse(await request.json().catch(() => null)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
+    try {
+      const created = await repositories.requirements.createKanoEvidence({ ...parsed.data, createdBy: auth.actor.id } as Parameters<NonNullable<typeof repositories.requirements.createKanoEvidence>>[0]);
+      return json({ id: created.id, version: created.version, status: created.status, piiFlagged: created.piiFlagged }, 201);
+    } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
+  }
+  const kanoApproveMatch = url.pathname.match(/^\/api\/kano\/evidence\/([^/]+)\/approve$/);
+  if (method === "POST" && kanoApproveMatch) {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
+    try {
+      const result = await repositories.requirements.approveKanoEvidence?.(decodeURIComponent(kanoApproveMatch[1]!), auth.actor.id);
+      if (!result) return jsonError("DEPENDENCY_UNAVAILABLE");
+      if (result.outcome === "not_found") return jsonError("NOT_FOUND");
+      if (result.outcome === "pii_flagged") return jsonError("CONFLICT", "资料包含疑似个人信息，去标识化后重新导入再批准。");
+      return json({ outcome: "approved" });
+    } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
   }
   const riceMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/rice-draft$/);
   if ((method === "GET" || method === "PUT") && riceMatch) {

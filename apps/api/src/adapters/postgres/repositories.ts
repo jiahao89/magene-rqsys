@@ -1,5 +1,6 @@
 import type { Pool, PoolClient } from "pg";
 import { stableHash, substantiveHash } from "../../sync/hashes.js";
+import { countPiiFindings } from "../../analysis/contract.js";
 import { randomUUID } from "node:crypto";
 import type {
   AnalysisRunRecord, AuditEventRecord, BasePushRunRecord, BatchState, FunctionModuleEntry,
@@ -52,6 +53,7 @@ const manualOwner=(r:any):RequirementManualOwner|null=>r.manual_owner_feishu_use
 const requirement=(r:any):RequirementRecord=>({id:r.id,platformRequirementId:r.platform_requirement_id,sourceType:r.source_type??"teambition",sourceChannel:r.source_channel??null,productModel:r.product_model??null,requirementType:r.requirement_type??null,constraintNotes:r.constraint_notes??null,supplementUrl:r.supplement_url??null,intakeModule:r.intake_module??null,audienceTags:Array.isArray(r.audience_tags)?r.audience_tags.filter((level:unknown): level is AudienceLevel=>typeof level==="string"&&["L1","L2","L3","L4","L5","L6"].includes(level as string)):[],audienceConfirmed:Boolean(r.audience_confirmed),audienceVersion:Number(r.audience_version??0),sourceConfigId:r.source_config_id,teambitionRequirementId:r.teambition_requirement_id,teambitionUniqueId:r.teambition_unique_id,title:r.title,description:r.description,scope:r.scope,acceptanceCriteria:r.acceptance_criteria,proposerUserId:r.proposer_user_id,proposerName:r.proposer_name,executorUserId:r.executor_user_id,executorName:r.executor_name,sourceStatusId:r.source_status_id,sourceCreatedAt:asDate(r.source_created_at),sourceUpdatedAt:asDate(r.source_updated_at),sourceUrl:r.source_url,attachmentRefs:r.attachment_refs,sourceCustomFields:r.source_custom_fields,sourcePayload:r.source_payload,sourceHash:r.source_hash,substantiveHash:r.substantive_hash,sourceVersion:Number(r.source_version),latestBatchId:r.latest_batch_id,baseRecordId:r.base_record_id,lastPushedAt:asDate(r.last_pushed_at),pipeline:{pull:r.pull_state,analysis:r.analysis_state,owner:r.owner_state,push:r.push_state},manualOwner:manualOwner(r),lastPushedOwner:r.last_pushed_owner_feishu_user_id?{feishuUserId:r.last_pushed_owner_feishu_user_id,feishuIdType:r.last_pushed_owner_feishu_id_type}:null,duplicateOfRequirementId:r.duplicate_of_requirement_id??null,firstSeenAt:asDate(r.first_seen_at)!,lastSeenAt:asDate(r.last_seen_at)!,createdAt:asDate(r.created_at)!,updatedAt:asDate(r.updated_at)!});
 
 const asDate=(v:Date|string|null):string|null=>v===null?null:new Date(v).toISOString();
+function kanoEvidence(r:any):import("../../domain/persistence.js").KanoEvidenceVersion{return{id:String(r.id),version:Number(r.version),title:r.title,sourceUrl:r.source_url??null,sourceSection:r.source_section??null,summary:r.summary,evidenceFragments:Array.isArray(r.evidence_fragments)?r.evidence_fragments:[],coverageNotes:r.coverage_notes??null,knownAudiences:Array.isArray(r.known_audiences)?r.known_audiences:[],knownScenes:r.known_scenes??null,interviewDate:r.interview_date??null,status:r.status,piiFlagged:Boolean(r.pii_flagged),createdBy:r.created_by??"",createdAt:(r.created_at instanceof Date?r.created_at.toISOString():String(r.created_at)),approvedBy:r.approved_by??null,approvedAt:r.approved_at?(r.approved_at instanceof Date?r.approved_at.toISOString():String(r.approved_at)):null};}
 const sourceConfig=(r:any):SourceConfigRecord=>({id:r.id,provider:r.provider,externalProjectId:r.external_project_id,externalProjectName:r.external_project_name,requirementTypeId:r.requirement_type_id,enabled:r.enabled,scheduleEnabled:r.schedule_enabled,scheduleWeekday:r.schedule_weekday,scheduleLocalTime:normalizeScheduleTime(r.schedule_local_time),scheduleTimezone:r.schedule_timezone,ownerNames:r.owner_names,fieldMap:r.field_map,createdAt:asDate(r.created_at)!,updatedAt:asDate(r.updated_at)!});
 const batch=(r:any):SyncBatchRecord=>({id:r.id,sourceConfigId:r.source_config_id,triggerType:r.trigger_type,actorId:r.actor_id,idempotencyKey:r.idempotency_key,status:r.status,startedAt:asDate(r.started_at)!,completedAt:asDate(r.completed_at),totalCount:r.total_count,succeededCount:r.succeeded_count,failedCount:r.failed_count,errorSummary:r.error_summary,createdAt:asDate(r.created_at)!});
 const item=(r:any):SyncItemRecord=>({id:r.id,batchId:r.batch_id,requirementId:r.requirement_id,teambitionRequirementId:r.teambition_requirement_id,action:r.action,status:r.status,errorCode:r.error_code,errorDetail:r.error_detail,startedAt:asDate(r.started_at)!,completedAt:asDate(r.completed_at)});
@@ -225,6 +227,30 @@ async saveRiceDraft(p:{requirementId:string;expectedEditVersion:number;actorId:s
     await c.query("COMMIT");
     return{outcome:"saved" as const,editVersion:1};
   }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}
+}
+// V02-T13：Kano 资料版本。导入即不可变（新版本=MAX+1）；PII 检测在导入时落标记，批准时拒绝 flagged。
+async listKanoEvidence(){const{rows}=await this.pool.query("SELECT * FROM kano_evidence_versions ORDER BY version DESC");return rows.map((r:any)=>kanoEvidence(r));}
+async createKanoEvidence(p:{title:string;sourceUrl?:string|null;sourceSection?:string|null;summary:string;evidenceFragments:Array<{ref:string;text:string}>;coverageNotes?:string|null;knownAudiences?:string[];knownScenes?:string|null;interviewDate?:string|null;createdBy:string;}){
+  const c=await this.pool.connect();
+  try{
+    await c.query("BEGIN");
+    await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0)) IS NULL AS lock_acquired",["kano:evidence:version"]);
+    const next=(await c.query("SELECT COALESCE(MAX(version),0)+1 AS v FROM kano_evidence_versions")).rows[0].v;
+    // PII 检测覆盖摘要与全部证据片段：命中即标记，标记版本不能进入模型输入。
+    const scannedText=[p.summary,...p.evidenceFragments.map((f)=>f.text)].join("\n");
+    const piiFlagged=countPiiFindings(scannedText)>0;
+    const{rows}=await c.query("INSERT INTO kano_evidence_versions(id,version,title,source_url,source_section,summary,evidence_fragments,coverage_notes,known_audiences,known_scenes,interview_date,status,pii_flagged,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'draft',$12,$13) RETURNING *",[randomUUID(),next,p.title,p.sourceUrl??null,p.sourceSection??null,p.summary,JSON.stringify(p.evidenceFragments),p.coverageNotes??null,JSON.stringify(p.knownAudiences??[]),p.knownScenes??null,p.interviewDate??null,piiFlagged,p.createdBy]);
+    await c.query("COMMIT");
+    return kanoEvidence(rows[0]);
+  }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}
+}
+async approveKanoEvidence(id:string,actorId:string){
+  const{rows}=await this.pool.query("SELECT status,pii_flagged FROM kano_evidence_versions WHERE id=$1",[id]);
+  if(!rows[0])return{outcome:"not_found" as const};
+  if(rows[0].pii_flagged)return{outcome:"pii_flagged" as const};
+  if(rows[0].status!=="draft")return{outcome:"approved" as const};
+  await this.pool.query("UPDATE kano_evidence_versions SET status='approved',approved_by=$2,approved_at=now() WHERE id=$1",[id,actorId]);
+  return{outcome:"approved" as const};
 }
 async findIntakeReceipt(key:string){const{rows}=await this.pool.query("SELECT requirement_id,request_hash,actor_id FROM requirement_intake_receipts WHERE idempotency_key=$1",[key]);return rows[0]?{requirementId:String(rows[0].requirement_id),requestHash:String(rows[0].request_hash),actorId:String(rows[0].actor_id)}:null;}
 async createManualRequirement(p:{idempotencyKey:string;actorId:string;requestHash:string;title:string;description:string|null;sourceChannel:string;productModel?:string|null;requirementType?:string|null;constraintNotes?:string|null;supplementUrl?:string|null;intakeModule?:string|null;owner?:{feishuUserId:string;feishuIdType:"open_id"|"user_id"|"union_id";name?:string|null};}){
