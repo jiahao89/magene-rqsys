@@ -746,3 +746,68 @@ describe("团队字典维护", () => {
     expect(within(row).getByRole("button", { name: "删除" })).toHaveAttribute("aria-disabled", "true");
   });
 });
+
+describe("RequirementsPanel intake (V02-T04)", () => {
+  const intakeRow = {
+    id: "req-1",
+    sourceRequirementId: "tb-1",
+    title: "需要报表",
+    sourceVersion: 2,
+    pipeline: { pull: "synced", analysis: "analyzed", owner: "auto_mapped", push: "pushed" },
+    ownerName: "Ada",
+    updatedAt: "2026-10-09T00:00:00.000Z",
+    source: { created: "2026-10-08T00:00:00.000Z", description: "支持报表导出" },
+  };
+  const intakeDetail = { ...intakeRow, analysis: null, analyses: [] };
+
+  it("submits title/description/channel with an idempotency key and opens the created detail", async () => {
+    const posts: Array<{ init?: RequestInit }> = [];
+    let detailOpened = false;
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/requirements" && init?.method === "POST") {
+        posts.push({ init });
+        return Response.json({ requirementId: "req-new", platformRequirementId: "RQ-000042", sourceType: "web_manual", status: "collected" }, { status: 201 });
+      }
+      if (path.startsWith("/api/requirements/")) { detailOpened = true; return Response.json(intakeDetail); }
+      if (path === "/api/people") return Response.json({ items: [] });
+      return Response.json({ items: [intakeRow], nextCursor: null });
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    fireEvent.click(await screen.findByRole("button", { name: "新建需求" }));
+    fireEvent.change(screen.getByLabelText("新建需求标题"), { target: { value: "售后反馈的诉求" } });
+    fireEvent.change(screen.getByLabelText("新建来源渠道"), { target: { value: "售后" } });
+    fireEvent.change(screen.getByLabelText("新建需求描述"), { target: { value: "用户希望导出报表" } });
+    fireEvent.click(screen.getByRole("button", { name: "提交并进入分析" }));
+    await waitFor(() => expect(posts.length).toBe(1));
+    expect(new Headers(posts[0]!.init!.headers).get("Idempotency-Key")?.length ?? 0).toBeGreaterThanOrEqual(8);
+    expect(JSON.parse(String(posts[0]!.init!.body))).toEqual({ title: "售后反馈的诉求", description: "用户希望导出报表", sourceChannel: "售后" });
+    // 成功后打开新需求详情（AC08 成功详情入口）
+    await waitFor(() => expect(detailOpened).toBe(true));
+  });
+
+  it("keeps the same idempotency key when a submission fails and is retried", async () => {
+    const keys: string[] = [];
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/requirements" && init?.method === "POST") {
+        keys.push(new Headers(init.headers).get("Idempotency-Key") ?? "");
+        if (keys.length === 1) return Response.json({ error: { code: "DEPENDENCY_UNAVAILABLE", message: "upstream" } }, { status: 503 });
+        return Response.json({ requirementId: "req-new", sourceType: "web_manual", status: "collected" }, { status: 201 });
+      }
+      if (path.startsWith("/api/requirements/")) return Response.json(intakeDetail);
+      if (path === "/api/people") return Response.json({ items: [] });
+      return Response.json({ items: [intakeRow], nextCursor: null });
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    fireEvent.click(await screen.findByRole("button", { name: "新建需求" }));
+    fireEvent.change(screen.getByLabelText("新建需求标题"), { target: { value: "售后反馈的诉求" } });
+    fireEvent.change(screen.getByLabelText("新建来源渠道"), { target: { value: "售后" } });
+    fireEvent.change(screen.getByLabelText("新建需求描述"), { target: { value: "用户希望导出报表" } });
+    fireEvent.click(screen.getByRole("button", { name: "提交并进入分析" }));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "提交并进入分析" }));
+    await waitFor(() => expect(keys.length).toBe(2));
+    expect(keys[0]).toBe(keys[1]);
+  });
+});

@@ -1,0 +1,62 @@
+// V02-T04：需求池「新建需求」表单（Web 手工收录，web_manual）。
+// 只必填标题/描述/渠道；四段提示是 placeholder 引导，不是四个必填项（PRD 3.2）。
+// 幂等键在同一次提交意图内复用（失败重试不换键），成功或重新展开表单后重置。
+import { useRef, useState } from "react";
+import { ApiError, REQUIREMENT_INTAKE_CHANNELS, createRequirement } from "./api";
+
+export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [channel, setChannel] = useState<string>("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const idempotencyKey = useRef<string>(crypto.randomUUID());
+
+  if (!open) {
+    return <div className="toolbar-actions"><button className="button button-primary button-small" onClick={() => { setOpen(true); setError(null); }}>新建需求</button></div>;
+  }
+
+  const reset = () => {
+    setTitle(""); setDescription(""); setChannel(""); setError(null);
+    idempotencyKey.current = crypto.randomUUID();
+  };
+
+  const submit = async () => {
+    if (!title.trim() || !description.trim() || !channel) { setError("请填写标题、需求描述，并选择来源渠道。"); return; }
+    setBusy(true); setError(null);
+    try {
+      const created = await createRequirement({ title: title.trim(), description: description.trim(), sourceChannel: channel }, undefined, idempotencyKey.current);
+      reset();
+      setOpen(false);
+      onCreated(created.requirementId);
+    } catch (cause) {
+      // 失败保留输入与幂等键：网络恢复后重试仍是同一次提交，不会重复建需求。
+      setError(cause instanceof ApiError ? cause.message : "提交失败，请重试；同一提交重试不会重复建需求。");
+    } finally { setBusy(false); }
+  };
+
+  return <div className="rules-form intake-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
+    <label className="field" style={{ flex: 2, minWidth: 240 }}>
+      <span>标题 *</span>
+      <input aria-label="新建需求标题" placeholder="一句话描述用户的问题或诉求" value={title} onChange={(event) => setTitle(event.target.value)} disabled={busy} />
+    </label>
+    <label className="field">
+      <span>来源渠道 *</span>
+      <select aria-label="新建来源渠道" value={channel} onChange={(event) => setChannel(event.target.value)} disabled={busy}>
+        <option value="">请选择</option>
+        {REQUIREMENT_INTAKE_CHANNELS.map((item) => <option key={item} value={item}>{item}</option>)}
+      </select>
+    </label>
+    <label className="field" style={{ flexBasis: "100%" }}>
+      <span>需求描述 *</span>
+      <textarea aria-label="新建需求描述" rows={4} placeholder={"建议按四段描述（缺段不阻断提交，AI 会标出缺失项）：\n用户/场景：谁在什么场景下…\n现状问题：当前遇到…\n期望结果：希望…\n补充：约束、链接等（可留空）"} value={description} onChange={(event) => setDescription(event.target.value)} disabled={busy} />
+    </label>
+    <div className="field" style={{ flexBasis: "100%", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+      <button className="button button-primary button-small" onClick={() => void submit()} disabled={busy}>提交并进入分析</button>
+      <button className="button button-secondary button-small" onClick={() => { setOpen(false); reset(); }} disabled={busy}>取消</button>
+      {busy && <span className="status-hint" role="status">正在提交…</span>}
+    </div>
+    {error && <div className="field-error" role="alert" style={{ flexBasis: "100%" }}>{error}</div>}
+  </div>;
+}

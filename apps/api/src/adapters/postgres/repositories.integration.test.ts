@@ -268,6 +268,9 @@ test("V02-T02 manual intake: transactional create, idempotent replay, shared RQ 
     // 手工需求也排了首分析作业（同一事务）
     const job=await ctx.repos.jobs.findByDedupeKey(`analysis:${manual.requirementId}:v1`);
     assert.equal(job?.jobType,"analysis");
+    // 审计与需求同事务提交（V02-T04-AC04）
+    const events=await ctx.repos.audit.search({entityId:manual.requirementId,limit:10});
+    assert.equal(events.some((event)=>event.eventType==="intake.created"),true);
     // 统计不因空 TB ID 漏计手工行
     const counts=await ctx.repos.requirements.getPipelineCounts();
     assert.equal(counts.total,2);

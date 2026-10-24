@@ -219,6 +219,48 @@ paths:
           schema: { type: string }
       responses:
         '200': { description: Requirement page }
+    post:
+      summary: Create a web-manual requirement (V02-T04)
+      description: >-
+        Minimal intake requires title, description and a fixed source channel. The actor,
+        server time, source type (web_manual) and the RQ platform id are generated server-side.
+        Requires an Idempotency-Key: the same key with the same payload replays the original
+        result; the same key with a different payload is rejected as a conflict. The
+        requirement, first source snapshot, audit event, intake receipt and first analysis
+        job are committed in one transaction.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 8, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, description, sourceChannel]
+              properties:
+                title: { type: string, minLength: 1, maxLength: 200 }
+                description: { type: string, minLength: 1, maxLength: 20000 }
+                sourceChannel: { type: string, enum: [销售, 售后, 电商, 运营/用研, 终端用户, 产品/研发/测试] }
+      responses:
+        '201':
+          description: Requirement collected; analysis and push will proceed asynchronously.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  requirementId: { type: string, format: uuid }
+                  platformRequirementId: { type: string }
+                  sourceType: { type: string, enum: [web_manual] }
+                  status: { type: string, enum: [collected] }
+        '200': { description: Idempotent replay of the same key and payload. }
+        '400': { $ref: '#/components/responses/Validation' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { description: The idempotency key was already used with a different payload. }
+        '503': { $ref: '#/components/responses/DependencyUnavailable' }
   /api/requirements/{id}:
     get:
       summary: Get requirement source snapshot and latest analysis

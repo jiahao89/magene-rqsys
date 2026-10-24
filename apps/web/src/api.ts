@@ -384,3 +384,15 @@ export function listAudit(params: { entityId?: string; since?: string; until?: s
   const { fetcher = fetch, entityId, since, until, limit } = params;
   return requestJson<{ items: AuditEvent[] }>(`/api/audit${buildSearch({ entityId, since, until, limit })}`, fetcher).then((result) => result.items);
 }
+
+export interface IntakeResult {
+  requirementId: string;
+  platformRequirementId?: string;
+  sourceType: "web_manual";
+  status: string;
+}
+export const REQUIREMENT_INTAKE_CHANNELS = ["销售", "售后", "电商", "运营/用研", "终端用户", "产品/研发/测试"] as const;
+// 同一次提交（含失败重试）复用同一幂等键；成功后由表单重新生成（V02-T04-AC03）。
+export function createRequirement(input: { title: string; description: string; sourceChannel: string }, fetcher: typeof fetch = fetch, idempotencyKey: string = crypto.randomUUID()): Promise<IntakeResult> {
+  return postJson<IntakeResult>("/api/requirements", input, fetcher, { "Idempotency-Key": idempotencyKey });
+}

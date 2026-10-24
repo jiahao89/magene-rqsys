@@ -2,6 +2,7 @@
 // 权限拒绝、空数据、加载中、局部失败和 API 不可用都显示可恢复状态。
 // 需求池/批次/审计面板自治加载，支持服务端筛选与游标分页。
 import { useCallback, useEffect, useId, useRef, useState, Component, type KeyboardEvent, type ReactNode } from "react";
+import { IntakeForm } from "./intake-form";
 import { Accordion as HeroAccordion, AlertDialog as HeroAlertDialog, Button as HeroButton, Card as HeroCard, Chip as HeroChip, Input as HeroInput, TextArea as HeroTextArea } from "@heroui/react";
 import { ArrowLeft, RefreshCw, X } from "lucide-react";
 import { stateLabel } from "./state-labels";
@@ -870,6 +871,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
           </div>
         </details>
       </div>
+      <IntakeForm onCreated={(id) => { refresh(); void open(id, { push: true }); }} />
       <div className="toolbar-actions">
         {appliedFilterCount > 0 && <span className="toolbar-active-count" role="status">{appliedFilterCount} 个筛选已生效</span>}
         {activeFilterCount > 0 && <button className="link-button" onClick={clearFilters}>清除筛选</button>}

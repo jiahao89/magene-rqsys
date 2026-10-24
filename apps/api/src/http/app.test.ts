@@ -254,3 +254,46 @@ test("still rejects a retry while the analysis job is genuinely running", async 
   const response = await handleApiRequest(new Request(`http://localhost/api/analysis/${requirement.id}/retry`, { method: "POST" }), d);
   assert.equal(response.status, 409);
 });
+
+test("V02-T04 web manual intake: server-side actor, idempotent replay, payload-bound key", async () => {
+  const d = makeDependencies();
+  const receipts = new Map<string, { requestHash: string; requirementId: string; actorId: string }>();
+  const createdInputs: Array<{ actorId: string; requestHash: string; title: string }> = [];
+  const requirements = d.repositories!.requirements as unknown as Record<string, unknown>;
+  requirements.findIntakeReceipt = async (key: string) => receipts.get(key) ?? null;
+  requirements.createManualRequirement = async (input: { idempotencyKey: string; requestHash: string; actorId: string; title: string }) => {
+    createdInputs.push(input);
+    receipts.set(input.idempotencyKey, { requestHash: input.requestHash, requirementId: requirement.id, actorId: input.actorId });
+    return { requirementId: requirement.id, platformRequirementId: "RQ-000001", replay: false };
+  };
+  const body = JSON.stringify({ title: "售后反馈", description: "用户希望导出报表", sourceChannel: "售后" });
+  const post = (payload: string, key = "intake-key-123") => new Request("http://localhost/api/requirements", { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": key }, body: payload });
+  const first = await handleApiRequest(post(body), d);
+  assert.equal(first.status, 201);
+  const firstBody = await first.json() as Record<string, unknown>;
+  assert.equal(firstBody.requirementId, requirement.id);
+  assert.equal(firstBody.platformRequirementId, "RQ-000001");
+  assert.equal(firstBody.status, "collected");
+  // actor、来源类型、编号都由服务端生成（AC02）
+  assert.equal(createdInputs[0]!.actorId, "actor-1");
+  // 同键同内容重放：200 同一需求，不再创建（AC03/AC07）
+  const replay = await handleApiRequest(post(body), d);
+  assert.equal(replay.status, 200);
+  assert.equal(createdInputs.length, 1);
+  // 同键不同内容：明确冲突
+  const conflict = await handleApiRequest(post(JSON.stringify({ title: "另一个诉求", description: "不同内容", sourceChannel: "售后" })), d);
+  assert.equal(conflict.status, 409);
+});
+
+test("V02-T04 intake rejects a missing idempotency key, an unknown channel, or an empty description", async () => {
+  const d = makeDependencies();
+  const requirements = d.repositories!.requirements as unknown as Record<string, unknown>;
+  requirements.findIntakeReceipt = async () => null;
+  requirements.createManualRequirement = async () => { throw new Error("must not create"); };
+  const noKey = await handleApiRequest(new Request("http://localhost/api/requirements", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "t", description: "d", sourceChannel: "售后" }) }), d);
+  assert.equal(noKey.status, 400);
+  const badChannel = await handleApiRequest(new Request("http://localhost/api/requirements", { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": "intake-key-456" }, body: JSON.stringify({ title: "t", description: "d", sourceChannel: "未知渠道" }) }), d);
+  assert.equal(badChannel.status, 400);
+  const noDescription = await handleApiRequest(new Request("http://localhost/api/requirements", { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": "intake-key-457" }, body: JSON.stringify({ title: "t", sourceChannel: "售后" }) }), d);
+  assert.equal(noDescription.status, 400);
+});

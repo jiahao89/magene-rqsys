@@ -4,10 +4,11 @@ import { canTransition } from "../domain/transitions.js";
 import { analysisRunningJobKeys } from "../scheduler/analysis-recovery.js";
 import { SourceProjectResolutionError, type FeishuUserDirectory, type FeishuUserSelectionResolver, type IdentityProvider, type TeambitionSourceProjectResolver } from "../application/ports.js";
 import { isIntakeComplete, normalizeScheduleTime } from "../domain/workflow.js";
+import { stableJson } from "../sync/hashes.js";
 import type { AuditEventRepository, AnalysisRunRepository, PipelineJobRepository, SourceConfigRepository, SyncBatchRepository, SyncItemRepository, PersonMappingRepository, RequirementQueryRepository, BasePushRunRepository, ModuleDictionaryRepository, PriorityRuleRepository, SourceSnapshotRepository, TeamDirectoryRepository } from "../application/repositories.js";
 import type { PersonMappingRecord, AnalysisRunRecord, ModuleDictionaryVersionRecord, PriorityRuleVersionRecord, RequirementRecord, SourceConfigRecord, SyncBatchRecord } from "../domain/persistence.js";
 import type { TeamPersonRecord } from "../domain/team-directory.js";
-import { AuditListQuerySchema, BatchListQuerySchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
+import { AuditListQuerySchema, BatchListQuerySchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementIntakeSchema, RequirementListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
 import { createHash, randomUUID } from "node:crypto";
 import { SourceConfigUpdateSchema, type ResolvedSourceConfigUpdate } from "../contracts/source.js";
 import { DictionaryCreateSchema, PriorityRuleCreateSchema, TeamModulesSaveSchema, TeamPersonCreateSchema, TeamPersonFeishuBindSchema, TeamPersonRenameSchema } from "../contracts/rules.js";
@@ -396,6 +397,26 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     if (!parsed.success) return jsonError("VALIDATION_FAILED");
     try { return json({ items: (await dependencies.feishuUsers.search(parsed.data.q)).slice(0, 20) }); }
     catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
+  }
+  if (method === "POST" && url.pathname === "/api/requirements") {
+    // V02-T04：Web 手工收录。actor、时间、来源类型与平台编号都由服务端生成；
+    // 同幂等键同内容返回原结果，同键不同内容明确冲突（AC02/AC03）。
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.requirements || !repositories.audit) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const key = SyncIdempotencyHeaderSchema.safeParse(request.headers.get("Idempotency-Key")); if (!key.success) return jsonError("VALIDATION_FAILED");
+    const parsedBody = RequirementIntakeSchema.safeParse(await request.json().catch(() => null)); if (!parsedBody.success) return jsonError("VALIDATION_FAILED");
+    const requestHash = createHash("sha256").update(stableJson(parsedBody.data)).digest("hex");
+    const receipt = await repositories.requirements.findIntakeReceipt(key.data);
+    if (receipt) {
+      if (receipt.requestHash !== requestHash) return jsonError("CONFLICT", "该幂等键已用于不同的提交内容。");
+      const existing = await repositories.requirements.get(receipt.requirementId);
+      if (!existing) return jsonError("DEPENDENCY_UNAVAILABLE");
+      return json({ requirementId: existing.id, platformRequirementId: existing.platformRequirementId, sourceType: "web_manual", status: "collected" }, 200);
+    }
+    try {
+      const created = await repositories.requirements.createManualRequirement({ idempotencyKey: key.data, actorId: auth.actor.id, requestHash, title: parsedBody.data.title, description: parsedBody.data.description, sourceChannel: parsedBody.data.sourceChannel });
+      return json({ requirementId: created.requirementId, platformRequirementId: created.platformRequirementId, sourceType: "web_manual", status: "collected" }, created.replay ? 200 : 201);
+    } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
   }
   if (method === "GET" && url.pathname === "/api/requirements") {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;

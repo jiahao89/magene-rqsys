@@ -68,3 +68,12 @@ export type OwnerMappingUpdate = z.infer<typeof OwnerMappingUpdateSchema>;
 export type BatchListQuery = z.infer<typeof BatchListQuerySchema>;
 export type RequirementListQuery = z.infer<typeof RequirementListQuerySchema>;
 export type AuditListQuery = z.infer<typeof AuditListQuerySchema>;
+
+// V02-T04：Web 手工收录（web_manual）的固定渠道与创建请求校验。
+// 必填仅标题/描述/渠道（PRD 3.2）；描述是单字段，四段提示是 UI 引导不是四个必填项。
+export const REQUIREMENT_INTAKE_CHANNELS = ["销售", "售后", "电商", "运营/用研", "终端用户", "产品/研发/测试"] as const;
+export const RequirementIntakeSchema = z.strictObject({
+  title: z.string().trim().min(1).max(200),
+  description: z.string().trim().min(1).max(20_000),
+  sourceChannel: z.enum(REQUIREMENT_INTAKE_CHANNELS),
+});

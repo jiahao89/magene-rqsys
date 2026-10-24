@@ -135,7 +135,7 @@ async createManualRequirement(p:{idempotencyKey:string;actorId:string;requestHas
   try{
     await c.query("BEGIN");
     const existing=await c.query("SELECT requirement_id,request_hash FROM requirement_intake_receipts WHERE idempotency_key=$1",[p.idempotencyKey]);
-    if(existing.rows[0]){await c.query("COMMIT");return{requirementId:String(existing.rows[0].requirement_id),platformRequirementId:"",replay:true};}
+    if(existing.rows[0]){const replayRow=await c.query("SELECT platform_requirement_id FROM requirements WHERE id=$1",[existing.rows[0].requirement_id]);await c.query("COMMIT");return{requirementId:String(existing.rows[0].requirement_id),platformRequirementId:String(replayRow.rows[0]?.platform_requirement_id??""),replay:true};}
     await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0)) IS NULL AS lock_acquired",["rqsys:platform-requirement-id"]);
     const next=await c.query("SELECT COALESCE(MAX(SUBSTRING(platform_requirement_id FROM 4)::bigint),0)+1 AS next_number FROM requirements WHERE platform_requirement_id ~ '^RQ-[0-9]+$'");
     const platformRequirementId=`RQ-${String(next.rows[0].next_number).padStart(6,"0")}`;
@@ -147,6 +147,8 @@ async createManualRequirement(p:{idempotencyKey:string;actorId:string;requestHas
     await c.query("INSERT INTO source_snapshots(id,requirement_id,source_version,source_hash,substantive_hash,payload,is_substantive_change,captured_at) VALUES($1,$2,1,$3,$4,$5,true,now())",[randomUUID(),id,hash,sub,JSON.stringify(payload)]);
     await c.query("INSERT INTO requirement_intake_receipts(idempotency_key,actor_id,request_hash,requirement_id) VALUES($1,$2,$3,$4)",[p.idempotencyKey,p.actorId,p.requestHash,id]);
     await c.query("INSERT INTO pipeline_jobs(id,job_type,dedupe_key,payload,available_at,max_attempts) VALUES($1,'analysis',$2,$3,now(),5) ON CONFLICT(dedupe_key) DO NOTHING",[randomUUID(),`analysis:${id}:v1`,JSON.stringify({requirementId:id,sourceVersion:1,actorId:p.actorId})]);
+    // 审计与需求同事务提交（V02-T04-AC04）：入库失败时整笔回滚，不留无审计的收录。
+    await c.query("INSERT INTO audit_events(id,actor_id,event_type,entity_type,entity_id,result,safe_details,occurred_at) VALUES($1,$2,'intake.created','requirement',$3,'succeeded',$4,now())",[randomUUID(),p.actorId,id,JSON.stringify({sourceType:"web_manual",sourceChannel:p.sourceChannel})]);
     await c.query("COMMIT");
     return{requirementId:id,platformRequirementId,replay:false};
   }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}
