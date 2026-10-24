@@ -129,6 +129,60 @@ export class PostgresRequirementRepository implements RequirementQueryRepository
 }
 // V02-T02/T04：手工收录（web_manual）。需求、首个来源快照、幂等回执与首分析作业在同一事务提交；
 // 失败整体回滚，不留"已收录却永久无任务"的半条需求。编号与 TB 导入复用同一事务锁分配器。
+// V02-T07：手工编辑（仅 web_manual）。一个事务内完成：回执幂等判定 → 行锁版本比对 →
+// 实质/元数据分流（实质=标题/描述/产品/边界：新版本+快照+审计+分析任务+推送重置；
+// 元数据=渠道/链接/类型：仅更新投影并入队非实质推送）；无变化不新建版本。
+async updateManualRequirement(p:{requirementId:string;expectedSourceVersion:number;idempotencyKey:string;actorId:string;requestHash:string;title?:string;description?:string|null;sourceChannel?:string;productModel?:string|null;requirementType?:string|null;constraintNotes?:string|null;supplementUrl?:string|null;}){
+  const c=await this.pool.connect();
+  try{
+    await c.query("BEGIN");
+    const receipt=await c.query("SELECT request_hash,outcome,substantive_changed,source_version FROM requirement_edit_receipts WHERE idempotency_key=$1",[p.idempotencyKey]);
+    if(receipt.rows[0]){
+      const hit=receipt.rows[0];
+      await c.query("COMMIT");
+      if(String(hit.request_hash)!==p.requestHash) return{outcome:"key_conflict" as const};
+      return{outcome:"replay" as const,sourceVersion:Number(hit.source_version),substantiveChanged:Boolean(hit.substantive_changed)};
+    }
+    const row=(await c.query("SELECT id,source_type,source_version,title,description,source_channel,product_model,requirement_type,constraint_notes,supplement_url,source_hash,substantive_hash FROM requirements WHERE id=$1 FOR UPDATE",[p.requirementId])).rows[0];
+    if(!row){await c.query("COMMIT");return{outcome:"not_found" as const};}
+    if(String(row.source_type)!=="web_manual"){await c.query("COMMIT");return{outcome:"not_manual" as const};}
+    const currentVersion=Number(row.source_version);
+    if(currentVersion!==p.expectedSourceVersion){await c.query("COMMIT");return{outcome:"version_conflict" as const,currentSourceVersion:currentVersion};}
+    const nextTitle=p.title!==undefined?p.title.trim():String(row.title);
+    const nextDescription=p.description!==undefined?p.description:String(row.description??null);
+    const nextChannel=p.sourceChannel!==undefined?p.sourceChannel:String(row.source_channel);
+    const nextProduct=p.productModel!==undefined?p.productModel:row.product_model===null?null:String(row.product_model);
+    const nextType=p.requirementType!==undefined?p.requirementType:row.requirement_type===null?null:String(row.requirement_type);
+    const nextNotes=p.constraintNotes!==undefined?p.constraintNotes:row.constraint_notes===null?null:String(row.constraint_notes);
+    const nextUrl=p.supplementUrl!==undefined?p.supplementUrl:row.supplement_url===null?null:String(row.supplement_url);
+    const payload={sourceType:"web_manual",title:nextTitle,description:nextDescription,sourceChannel:nextChannel,productModel:nextProduct,requirementType:nextType,constraintNotes:nextNotes,supplementUrl:nextUrl};
+    const nextSubstantive=substantiveHash({title:nextTitle,description:nextDescription,scope:null,acceptanceCriteria:null,attachmentRefs:[]});
+    const metadataChanged=(nextChannel!==String(row.source_channel))||(nextUrl!==(row.supplement_url===null?null:String(row.supplement_url)))||(nextType!==(row.requirement_type===null?null:String(row.requirement_type)));
+    const definitionChanged=(nextSubstantive!==String(row.substantive_hash))||(nextProduct!==(row.product_model===null?null:String(row.product_model)))||(nextNotes!==(row.constraint_notes===null?null:String(row.constraint_notes)));
+    if(!definitionChanged&&!metadataChanged){
+      await c.query("INSERT INTO requirement_edit_receipts(idempotency_key,actor_id,request_hash,requirement_id,outcome,substantive_changed,source_version) VALUES($1,$2,$3,$4,'unchanged',false,$5)",[p.idempotencyKey,p.actorId,p.requestHash,p.requirementId,currentVersion]);
+      await c.query("COMMIT");
+      return{outcome:"unchanged" as const,sourceVersion:currentVersion,replay:false as const};
+    }
+    const hash=stableHash(payload);
+    const latestAnalysis=(await c.query("SELECT COALESCE(MAX(analysis_version),0) AS v FROM analysis_runs WHERE requirement_id=$1",[p.requirementId])).rows[0];
+    const analysisVersion=Number(latestAnalysis?.v??0);
+    let newVersion=currentVersion;
+    if(definitionChanged){
+      newVersion=currentVersion+1;
+      await c.query("UPDATE requirements SET title=$2,description=$3,source_channel=$4,product_model=$5,requirement_type=$6,constraint_notes=$7,supplement_url=$8,source_hash=$9,substantive_hash=$10,source_version=$11,analysis_state='pending',push_state='pending',updated_at=now() WHERE id=$1",[p.requirementId,nextTitle,nextDescription,nextChannel,nextProduct,nextType,nextNotes,nextUrl,hash,nextSubstantive,newVersion]);
+      await c.query("INSERT INTO source_snapshots(id,requirement_id,source_version,source_hash,substantive_hash,payload,is_substantive_change,captured_at) VALUES($1,$2,$3,$4,$5,$6,true,now())",[randomUUID(),p.requirementId,newVersion,hash,nextSubstantive,JSON.stringify(payload)]);
+      await c.query("INSERT INTO pipeline_jobs(id,job_type,dedupe_key,payload,available_at,max_attempts) VALUES($1,'analysis',$2,$3,now(),5) ON CONFLICT(dedupe_key) DO NOTHING",[randomUUID(),`analysis:${p.requirementId}:v${newVersion}`,JSON.stringify({requirementId:p.requirementId,sourceVersion:newVersion,actorId:p.actorId})]);
+    }else{
+      await c.query("UPDATE requirements SET source_channel=$2,requirement_type=$3,supplement_url=$4,source_hash=$5,updated_at=now() WHERE id=$1",[p.requirementId,nextChannel,nextType,nextUrl,hash]);
+      await c.query("INSERT INTO pipeline_jobs(id,job_type,dedupe_key,payload,available_at,max_attempts) VALUES($1,'base_push',$2,$3,now(),5) ON CONFLICT(dedupe_key) DO NOTHING",[randomUUID(),`base-push:${p.requirementId}:sv${currentVersion}:av${analysisVersion}:meta:${randomUUID().slice(0,8)}`,JSON.stringify({requirementId:p.requirementId,actorId:p.actorId,sourceVersion:currentVersion,analysisVersion})]);
+    }
+    await c.query("INSERT INTO audit_events(id,actor_id,event_type,entity_type,entity_id,result,safe_details,occurred_at) VALUES($1,$2,'intake.updated','requirement',$3,'succeeded',$4,now())",[randomUUID(),p.actorId,p.requirementId,JSON.stringify({sourceVersion:newVersion,substantive:definitionChanged})]);
+    await c.query("INSERT INTO requirement_edit_receipts(idempotency_key,actor_id,request_hash,requirement_id,outcome,substantive_changed,source_version) VALUES($1,$2,$3,$4,'updated',$5,$6)",[p.idempotencyKey,p.actorId,p.requestHash,p.requirementId,definitionChanged,newVersion]);
+    await c.query("COMMIT");
+    return{outcome:"updated" as const,sourceVersion:newVersion,substantiveChanged:definitionChanged,replay:false as const};
+  }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}
+}
 async findIntakeReceipt(key:string){const{rows}=await this.pool.query("SELECT requirement_id,request_hash,actor_id FROM requirement_intake_receipts WHERE idempotency_key=$1",[key]);return rows[0]?{requirementId:String(rows[0].requirement_id),requestHash:String(rows[0].request_hash),actorId:String(rows[0].actor_id)}:null;}
 async createManualRequirement(p:{idempotencyKey:string;actorId:string;requestHash:string;title:string;description:string|null;sourceChannel:string;productModel?:string|null;requirementType?:string|null;constraintNotes?:string|null;supplementUrl?:string|null;intakeModule?:string|null;owner?:{feishuUserId:string;feishuIdType:"open_id"|"user_id"|"union_id";name?:string|null};}){
   const c=await this.pool.connect();

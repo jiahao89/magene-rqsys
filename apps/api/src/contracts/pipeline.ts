@@ -90,3 +90,15 @@ export const RequirementIntakeSchema = z.strictObject({
     tbDisplayName: z.string().trim().max(100).nullish(),
   }).nullish(),
 });
+// V02-T07：手工编辑（仅 web_manual）。全部字段可选（未传=保持不变，null=清空可选值）；
+// 期望源版本做乐观并发；渠道/类型仍受固定枚举约束。
+export const RequirementIntakeEditSchema = z.strictObject({
+  expectedSourceVersion: z.number().int().min(1),
+  title: z.string().trim().min(1).max(200).optional(),
+  description: z.string().trim().min(1).max(20_000).nullish(),
+  sourceChannel: z.enum(REQUIREMENT_INTAKE_CHANNELS).optional(),
+  productModel: z.string().trim().max(100).nullish(),
+  requirementType: z.enum(REQUIREMENT_INTAKE_TYPES).nullish(),
+  constraintNotes: z.string().trim().max(2_000).nullish(),
+  supplementUrl: z.string().trim().url().max(500).nullish(),
+});

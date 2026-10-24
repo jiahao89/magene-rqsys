@@ -292,6 +292,29 @@ export interface RequirementQueryRepository {
     intakeModule?: string | null;
     owner?: { feishuUserId: string; feishuIdType: "open_id" | "user_id" | "union_id"; name?: string | null };
   }): Promise<{ requirementId: string; platformRequirementId: string; replay: boolean }>;
+  // V02-T07：手工需求编辑（仅 web_manual）。期望源版本乐观并发；实质变更原子落新版本/快照/审计/分析任务；
+  // 元数据变更仅更新投影并入队非实质推送；规范化后无变化不新建版本。编辑回执同事务写入。
+  updateManualRequirement(input: {
+    requirementId: string;
+    expectedSourceVersion: number;
+    idempotencyKey: string;
+    actorId: string;
+    requestHash: string;
+    title?: string;
+    description?: string | null;
+    sourceChannel?: string;
+    productModel?: string | null;
+    requirementType?: string | null;
+    constraintNotes?: string | null;
+    supplementUrl?: string | null;
+  }): Promise<
+    | { outcome: "updated"; sourceVersion: number; substantiveChanged: boolean; replay: false }
+    | { outcome: "unchanged"; sourceVersion: number; replay: false }
+    | { outcome: "replay"; sourceVersion: number; substantiveChanged: boolean }
+    | { outcome: "key_conflict" }
+    | { outcome: "version_conflict"; currentSourceVersion: number }
+    | { outcome: "not_manual" }
+    | { outcome: "not_found" }>;
   getPipelineCounts(): Promise<{
     total: number;
     pullSynced: number;

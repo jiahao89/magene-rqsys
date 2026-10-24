@@ -10,7 +10,7 @@ import { createBasePushService } from "../../base/push-service.js";
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),"../../../../../");
 async function getDatabaseUrl(){if(process.env.DATABASE_URL)return process.env.DATABASE_URL;const env=await readFile(resolve(root,".env"),"utf8").catch(()=>"");const value=env.match(/^DATABASE_URL=(.+)$/m)?.[1]?.trim();if(!value)throw new Error("PostgreSQL integration tests require DATABASE_URL in environment or repo .env");return value;}
-async function setup(){const connectionString=await getDatabaseUrl();const admin=new Pool({connectionString,connectionTimeoutMillis:5000});const schema=`rq_test_${randomUUID().replaceAll("-","")}`;await admin.query(`CREATE SCHEMA "${schema}"`);const pool=new Pool({connectionString,options:`-c search_path=${schema}`,max:5});try{const sql=await readFile(resolve(root,"database/migrations/0001_initial.sql"),"utf8");await pool.query(sql);const next=await readFile(resolve(root,"database/migrations/0002_single_source_config.sql"),"utf8");await pool.query(next);const platformId=await readFile(resolve(root,"database/migrations/0004_platform_requirement_id.sql"),"utf8");await pool.query(platformId);const platformIdBackfill=await readFile(resolve(root,"database/migrations/0005_platform_requirement_id_backfill.sql"),"utf8");await pool.query(platformIdBackfill);const manualOwner=await readFile(resolve(root,"database/migrations/0006_requirement_manual_owner.sql"),"utf8");await pool.query(manualOwner);const ownerAndDuplicates=await readFile(resolve(root,"database/migrations/0007_requirement_owner_conflict_duplicates.sql"),"utf8");await pool.query(ownerAndDuplicates);const nameFix=await readFile(resolve(root,"database/migrations/0008_fix_team_directory_name.sql"),"utf8");await pool.query(nameFix);const sourceExpand=await readFile(resolve(root,"database/migrations/0009_extend_requirement_source.sql"),"utf8");await pool.query(sourceExpand);const defContext=await readFile(resolve(root,"database/migrations/0010_manual_definition_context.sql"),"utf8");await pool.query(defContext);const intakeModuleOwner=await readFile(resolve(root,"database/migrations/0011_requirement_intake_module_owner.sql"),"utf8");await pool.query(intakeModuleOwner);return{pool,admin,schema,repos:new PostgresRepositories(pool as never)};}catch(error){await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();throw error;}}
+async function setup(){const connectionString=await getDatabaseUrl();const admin=new Pool({connectionString,connectionTimeoutMillis:5000});const schema=`rq_test_${randomUUID().replaceAll("-","")}`;await admin.query(`CREATE SCHEMA "${schema}"`);const pool=new Pool({connectionString,options:`-c search_path=${schema}`,max:5});try{const sql=await readFile(resolve(root,"database/migrations/0001_initial.sql"),"utf8");await pool.query(sql);const next=await readFile(resolve(root,"database/migrations/0002_single_source_config.sql"),"utf8");await pool.query(next);const platformId=await readFile(resolve(root,"database/migrations/0004_platform_requirement_id.sql"),"utf8");await pool.query(platformId);const platformIdBackfill=await readFile(resolve(root,"database/migrations/0005_platform_requirement_id_backfill.sql"),"utf8");await pool.query(platformIdBackfill);const manualOwner=await readFile(resolve(root,"database/migrations/0006_requirement_manual_owner.sql"),"utf8");await pool.query(manualOwner);const ownerAndDuplicates=await readFile(resolve(root,"database/migrations/0007_requirement_owner_conflict_duplicates.sql"),"utf8");await pool.query(ownerAndDuplicates);const nameFix=await readFile(resolve(root,"database/migrations/0008_fix_team_directory_name.sql"),"utf8");await pool.query(nameFix);const sourceExpand=await readFile(resolve(root,"database/migrations/0009_extend_requirement_source.sql"),"utf8");await pool.query(sourceExpand);const defContext=await readFile(resolve(root,"database/migrations/0010_manual_definition_context.sql"),"utf8");await pool.query(defContext);const intakeModuleOwner=await readFile(resolve(root,"database/migrations/0011_requirement_intake_module_owner.sql"),"utf8");await pool.query(intakeModuleOwner);const editReceipts=await readFile(resolve(root,"database/migrations/0012_manual_edit_receipts.sql"),"utf8");await pool.query(editReceipts);return{pool,admin,schema,repos:new PostgresRepositories(pool as never)};}catch(error){await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();throw error;}}
 async function cleanup(ctx:{pool:Pool;admin:Pool;schema:string}){await ctx.pool.end();await ctx.admin.query(`DROP SCHEMA "${ctx.schema}" CASCADE`);await ctx.admin.end();}
 const config={projectId:"tb-project",projectName:"Product",requirementTypeId:"req-type",enabled:true,schedule:{enabled:true,weekday:1,time:"09:30",timezone:"Asia/Shanghai"},ownerNames:["PM Owner"],fieldMap:{description:"cf-description"}};
 function requirementWrite(sourceConfigId:string, latestBatchId:string, overrides:Partial<import("./repositories.js").RequirementRowWrite>={}) {
@@ -303,5 +303,47 @@ test("V02-T02 source branch constraints: TB rows require identity; manual rows r
     const first=await ctx.repos.requirements.createManualRequirement({idempotencyKey:"m-1",actorId:"a",requestHash:"1".repeat(64),title:"同标题诉求",description:null,sourceChannel:"运营"});
     const second=await ctx.repos.requirements.createManualRequirement({idempotencyKey:"m-2",actorId:"a",requestHash:"2".repeat(64),title:"同标题诉求",description:null,sourceChannel:"运营"});
     assert.notEqual(first.requirementId,second.requirementId);
+  }finally{await cleanup(ctx);}
+});
+
+test("V02-T07 manual edit: substantive/metadata/no-change/version-conflict/TB-read-only/replay",async()=>{
+  const ctx=await setup();
+  try{
+    const manual=await ctx.repos.requirements.createManualRequirement({idempotencyKey:"edit-m-1",actorId:"a1",requestHash:"1".repeat(64),title:"原始诉求",description:"原始描述",sourceChannel:"售后"});
+    // 实质变更：新版本 + 快照 + 分析任务 + 推送重置
+    const substantive=await ctx.repos.requirements.updateManualRequirement({requirementId:manual.requirementId,expectedSourceVersion:1,idempotencyKey:"edit-k-1",actorId:"a1",requestHash:"2".repeat(64),title:"明确的诉求",description:"补充了期望结果"});
+    assert.deepEqual(substantive,{outcome:"updated",sourceVersion:2,substantiveChanged:true,replay:false});
+    const row1=await ctx.repos.requirements.get(manual.requirementId);
+    assert.equal(row1?.title,"明确的诉求");
+    assert.equal(row1?.sourceVersion,2);
+    assert.equal(row1?.pipeline.analysis,"pending");
+    assert.equal(row1?.pipeline.push,"pending");
+    assert.ok(await ctx.repos.jobs.findByDedupeKey(`analysis:${manual.requirementId}:v2`));
+    // 同键同内容重放：返回原结果，不产生 v3
+    const replay=await ctx.repos.requirements.updateManualRequirement({requirementId:manual.requirementId,expectedSourceVersion:1,idempotencyKey:"edit-k-1",actorId:"a1",requestHash:"2".repeat(64),title:"ignored"});
+    assert.equal(replay.outcome,"replay");
+    assert.equal(replay.sourceVersion,2);
+    // 同键不同内容：键冲突
+    const keyConflict=await ctx.repos.requirements.updateManualRequirement({requirementId:manual.requirementId,expectedSourceVersion:2,idempotencyKey:"edit-k-1",actorId:"a1",requestHash:"3".repeat(64),title:"x"});
+    assert.equal(keyConflict.outcome,"key_conflict");
+    // 过期版本：明确冲突并返回当前版本
+    const stale=await ctx.repos.requirements.updateManualRequirement({requirementId:manual.requirementId,expectedSourceVersion:1,idempotencyKey:"edit-k-2",actorId:"a1",requestHash:"4".repeat(64),title:"y"});
+    assert.deepEqual(stale,{outcome:"version_conflict",currentSourceVersion:2});
+    // 元数据变更：不加版本、不重跑分析，只更新投影并入队非实质推送
+    const meta=await ctx.repos.requirements.updateManualRequirement({requirementId:manual.requirementId,expectedSourceVersion:2,idempotencyKey:"edit-k-3",actorId:"a1",requestHash:"5".repeat(64),sourceChannel:"运营/用研"});
+    assert.deepEqual(meta,{outcome:"updated",sourceVersion:2,substantiveChanged:false,replay:false});
+    const row2=await ctx.repos.requirements.get(manual.requirementId);
+    assert.equal(row2?.sourceChannel,"运营/用研");
+    assert.equal(row2?.sourceVersion,2);
+    assert.equal(row2?.pipeline.analysis,"pending");
+    // 无变化：不新建版本/任务
+    const noop=await ctx.repos.requirements.updateManualRequirement({requirementId:manual.requirementId,expectedSourceVersion:2,idempotencyKey:"edit-k-4",actorId:"a1",requestHash:"6".repeat(64)});
+    assert.deepEqual(noop,{outcome:"unchanged",sourceVersion:2,replay:false});
+    // TB 行：手工编辑拒绝
+    const source=await ctx.repos.sources.create(config);
+    const batch=await ctx.repos.batches.create({sourceConfigId:source.id,triggerType:"manual",actorId:null,idempotencyKey:"edit-tb-batch",startedAt:"2026-10-25T00:00:00Z"});
+    const tb=await ctx.repos.requirements.upsertRequirement(source.id,"tb-edit-1",requirementWrite(source.id,batch.id,{teambitionRequirementId:"tb-edit-1"}));
+    const tbEdit=await ctx.repos.requirements.updateManualRequirement({requirementId:tb.id,expectedSourceVersion:1,idempotencyKey:"edit-k-5",actorId:"a1",requestHash:"7".repeat(64),title:"x"});
+    assert.equal(tbEdit.outcome,"not_manual");
   }finally{await cleanup(ctx);}
 });

@@ -1,6 +1,6 @@
 # RQ-Sys V0.2 Tickets
 
-> 拆分已于2026-10-23由用户确认并发布至本地tracker。共18张Ticket；除已标注的 implemented-local 外均为 ready-for-agent，尚未实施或目标验收。
+> 拆分已于2026-10-23由用户确认并发布至本地tracker。共18张Ticket；核心链路 01-07 与 15 已 implemented-local（2026-10-24/25，两仓验证），其余（08/09/11/13/14 及门槛票 10/12/16-18）见各行状态。
 
 ## 使用方式
 
@@ -19,7 +19,7 @@
 | V02-T04 | [最小新建需求贯通AI与Base](04-manual-intake-minimal.md) | implemented-local | 03 | 核心 |
 | V02-T05 | [补齐精简需求上下文并展示来源](05-manual-definition-context.md) | implemented-local | 04 | 核心 |
 | V02-T06 | [需求级选择模块与负责人并通知分配人](06-direct-owner-and-module.md) | implemented-local | 04 | 核心 |
-| V02-T07 | [手工编辑需求保留版本并安全更新Base](07-manual-edit-versioning.md) | ready-for-agent | 04 | 核心 |
+| V02-T07 | [手工编辑需求保留版本并安全更新Base](07-manual-edit-versioning.md) | implemented-local | 04 | 核心 |
 | V02-T08 | [主AI增加需求类型与六层人群建议](08-analysis-audience-contract.md) | ready-for-agent | 02 | 核心 |
 | V02-T09 | [PM修改人群并保留人工确认](09-audience-confirmation.md) | ready-for-agent | 08 | 核心 |
 | V02-T10 | [确认并实现版本化U/M/S/C规则](10-priority-rule-calibration.md) | ready-for-agent | — | 规则条件 |
@@ -34,7 +34,7 @@
 
 ## 当前可领取的前沿
 
-- **07**：手工编辑版本化（05/06 已于 2026-10-25 implemented-local：精简上下文入库进安全输入、需求级模块/负责人+分配版本，两仓全量验证；目标链路验收按 16）。
+- **08→09**：主 AI 类型/人群建议与 PM 人群确认（核心链路 01-07 已全部 implemented-local；08 依赖的 02 已就绪，09 依赖 08；目标链路验收按 16）。
 - **15** 已于 2026-10-23 实现为"同标题仅提示、独立处理"（implemented-local；AC04 计数拆分与 AC06 联合回归待后续票补齐，正式结论汇合到 16）。
 - **10** 规则确认包已备（见票内链接）；新算法实施仍等待 PM Leader 确认输入、公式、阈值和校准案例。
 - 02完成后，08、11、13可与03→04分支独立推进；实际开发先协调共享契约和仓储的文件归属。

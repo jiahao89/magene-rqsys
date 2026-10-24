@@ -311,3 +311,29 @@ test("V02-T04 intake rejects a missing idempotency key, an unknown channel, or a
   const unknownModule = await handleApiRequest(new Request("http://localhost/api/requirements", { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": "intake-key-460" }, body: JSON.stringify({ title: "t", description: "d", sourceChannel: "售后", intakeModule: "不存在的模块" }) }), d);
   assert.equal(unknownModule.status, 400);
 });
+
+test("V02-T07 PATCH edits manual requirements with version and idempotency semantics", async () => {
+  const d = makeDependencies();
+  const requirements = d.repositories!.requirements as unknown as Record<string, unknown>;
+  requirements.updateManualRequirement = async (input: { expectedSourceVersion: number }) => input.expectedSourceVersion === 1
+    ? { outcome: "updated", sourceVersion: 2, substantiveChanged: true, replay: false }
+    : input.expectedSourceVersion === 99
+      ? { outcome: "version_conflict", currentSourceVersion: 2 }
+      : { outcome: "not_manual" };
+  const request = (body: unknown, key = "edit-key-123", expected = 1) => new Request(`http://localhost/api/requirements/${requirement.id}`, { method: "PATCH", headers: { "content-type": "application/json", "Idempotency-Key": key }, body: JSON.stringify({ expectedSourceVersion: expected, ...typeof body === "object" && body !== null ? body : {} }) });
+  const ok = await handleApiRequest(request({ title: "改后的诉求" }), d);
+  assert.equal(ok.status, 200);
+  const okBody = await ok.json() as Record<string, unknown>;
+  assert.equal(okBody.outcome, "updated");
+  assert.equal(okBody.sourceVersion, 2);
+  assert.equal(okBody.substantiveChanged, true);
+  const stale = await handleApiRequest(request({ title: "旧版本" }, "edit-key-124", 99), d);
+  assert.equal(stale.status, 409);
+  assert.match(await stale.text(), /源版本 2/);
+  const tbRow = await handleApiRequest(request({ title: "x" }, "edit-key-125", 3), d);
+  assert.equal(tbRow.status, 409);
+  const noKey = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ expectedSourceVersion: 1 }) }), d);
+  assert.equal(noKey.status, 400);
+  const badBody = await handleApiRequest(request({ title: "" }, "edit-key-126"), d);
+  assert.equal(badBody.status, 400);
+});

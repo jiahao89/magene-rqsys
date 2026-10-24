@@ -274,6 +274,55 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { description: The idempotency key was already used with a different payload. }
         '503': { $ref: '#/components/responses/DependencyUnavailable' }
+    patch:
+      summary: Edit a web-manual requirement with optimistic versioning (V02-T07)
+      description: >-
+        Only web_manual requirements are editable; Teambition facts stay read-only. Requires
+        an Idempotency-Key and expectedSourceVersion. Definition changes (title/description/
+        product/constraints) atomically create a new source version, snapshot, audit event and
+        analysis job and reset the push; metadata changes (channel/type/link) only update the
+        projection and queue a non-substantive push; a normalized no-op returns unchanged.
+        The same key with the same payload replays the stored outcome; a different payload is
+        rejected. A stale expectedSourceVersion returns 409 with the current version.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 8, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedSourceVersion]
+              properties:
+                expectedSourceVersion: { type: integer, minimum: 1 }
+                title: { type: string, minLength: 1, maxLength: 200 }
+                description: { type: string, minLength: 1, maxLength: 20000, nullable: true }
+                sourceChannel: { type: string, enum: [销售, 售后, 电商, 运营/用研, 终端用户, 产品/研发/测试] }
+                productModel: { type: string, maxLength: 100, nullable: true }
+                requirementType: { type: string, nullable: true }
+                constraintNotes: { type: string, maxLength: 2000, nullable: true }
+                supplementUrl: { type: string, maxLength: 500, format: uri, nullable: true }
+      responses:
+        '200':
+          description: Edit applied (updated / unchanged) or idempotent replay.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  requirementId: { type: string, format: uuid }
+                  outcome: { type: string, enum: [updated, unchanged, replay] }
+                  sourceVersion: { type: integer }
+                  substantiveChanged: { type: boolean }
+        '400': { $ref: '#/components/responses/Validation' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Stale expectedSourceVersion (message carries the current version), TB-source requirement, or idempotency-key payload conflict. }
+        '503': { $ref: '#/components/responses/DependencyUnavailable' }
   /api/requirements/{id}:
     get:
       summary: Get requirement source snapshot and latest analysis

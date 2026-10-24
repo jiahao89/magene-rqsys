@@ -8,7 +8,7 @@ import { stableJson } from "../sync/hashes.js";
 import type { AuditEventRepository, AnalysisRunRepository, PipelineJobRepository, SourceConfigRepository, SyncBatchRepository, SyncItemRepository, PersonMappingRepository, RequirementQueryRepository, BasePushRunRepository, ModuleDictionaryRepository, PriorityRuleRepository, SourceSnapshotRepository, TeamDirectoryRepository } from "../application/repositories.js";
 import type { PersonMappingRecord, AnalysisRunRecord, ModuleDictionaryVersionRecord, PriorityRuleVersionRecord, RequirementRecord, SourceConfigRecord, SyncBatchRecord } from "../domain/persistence.js";
 import type { TeamPersonRecord } from "../domain/team-directory.js";
-import { AuditListQuerySchema, BatchListQuerySchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementIntakeSchema, RequirementListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
+import { AuditListQuerySchema, BatchListQuerySchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementIntakeEditSchema, RequirementIntakeSchema, RequirementListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
 import { createHash, randomUUID } from "node:crypto";
 import { SourceConfigUpdateSchema, type ResolvedSourceConfigUpdate } from "../contracts/source.js";
 import { DictionaryCreateSchema, PriorityRuleCreateSchema, TeamModulesSaveSchema, TeamPersonCreateSchema, TeamPersonFeishuBindSchema, TeamPersonRenameSchema } from "../contracts/rules.js";
@@ -427,6 +427,33 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     try {
       const created = await repositories.requirements.createManualRequirement({ idempotencyKey: key.data, actorId: auth.actor.id, requestHash, title: parsedBody.data.title, description: parsedBody.data.description, sourceChannel: parsedBody.data.sourceChannel, ...(parsedBody.data.productModel ? { productModel: parsedBody.data.productModel } : {}), ...(parsedBody.data.requirementType ? { requirementType: parsedBody.data.requirementType } : {}), ...(parsedBody.data.constraintNotes ? { constraintNotes: parsedBody.data.constraintNotes } : {}), ...(parsedBody.data.supplementUrl ? { supplementUrl: parsedBody.data.supplementUrl } : {}), ...(parsedBody.data.intakeModule ? { intakeModule: parsedBody.data.intakeModule } : {}), ...(parsedBody.data.owner ? { owner: { feishuUserId: parsedBody.data.owner.feishuUserId, feishuIdType: parsedBody.data.owner.feishuIdType, ...(parsedBody.data.owner.tbDisplayName ? { name: parsedBody.data.owner.tbDisplayName } : {}) } } : {}) });
       return json({ requirementId: created.requirementId, platformRequirementId: created.platformRequirementId, sourceType: "web_manual", status: "collected" }, created.replay ? 200 : 201);
+    } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
+  }
+  const intakeEditMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)$/);
+  if (method === "PATCH" && intakeEditMatch) {
+    // V02-T07：手工编辑（仅 web_manual）。TB 事实只读；期望源版本 + 幂等键。
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const key = SyncIdempotencyHeaderSchema.safeParse(request.headers.get("Idempotency-Key")); if (!key.success) return jsonError("VALIDATION_FAILED");
+    const parsedBody = RequirementIntakeEditSchema.safeParse(await request.json().catch(() => null)); if (!parsedBody.success) return jsonError("VALIDATION_FAILED");
+    const requestHash = createHash("sha256").update(stableJson(parsedBody.data)).digest("hex");
+    const body = parsedBody.data;
+    try {
+      const result = await repositories.requirements.updateManualRequirement({
+        requirementId: decodeURIComponent(intakeEditMatch[1]!), expectedSourceVersion: body.expectedSourceVersion, idempotencyKey: key.data, actorId: auth.actor.id, requestHash,
+        ...(body.title !== undefined ? { title: body.title } : {}),
+        ...(body.description !== undefined ? { description: body.description } : {}),
+        ...(body.sourceChannel !== undefined ? { sourceChannel: body.sourceChannel } : {}),
+        ...(body.productModel !== undefined ? { productModel: body.productModel } : {}),
+        ...(body.requirementType !== undefined ? { requirementType: body.requirementType } : {}),
+        ...(body.constraintNotes !== undefined ? { constraintNotes: body.constraintNotes } : {}),
+        ...(body.supplementUrl !== undefined ? { supplementUrl: body.supplementUrl } : {}),
+      });
+      if (result.outcome === "not_found") return jsonError("NOT_FOUND");
+      if (result.outcome === "not_manual") return jsonError("CONFLICT", "Teambition 来源的事实由 Teambition 维护，Web 仅编辑手工需求。");
+      if (result.outcome === "key_conflict") return jsonError("CONFLICT", "该幂等键已用于不同的提交内容。");
+      if (result.outcome === "version_conflict") return jsonError("CONFLICT", `版本冲突：该需求已被更新到源版本 ${result.currentSourceVersion}，请刷新后重试。`);
+      return json({ requirementId: decodeURIComponent(intakeEditMatch[1]!), outcome: result.outcome, sourceVersion: result.sourceVersion, ...(result.outcome === "updated" || result.outcome === "replay" ? { substantiveChanged: result.substantiveChanged } : {}) }, 200);
     } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
   }
   if (method === "GET" && url.pathname === "/api/requirements") {

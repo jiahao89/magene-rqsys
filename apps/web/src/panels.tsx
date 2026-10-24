@@ -2,7 +2,7 @@
 // 权限拒绝、空数据、加载中、局部失败和 API 不可用都显示可恢复状态。
 // 需求池/批次/审计面板自治加载，支持服务端筛选与游标分页。
 import { useCallback, useEffect, useId, useRef, useState, Component, type KeyboardEvent, type ReactNode } from "react";
-import { IntakeForm } from "./intake-form";
+import { IntakeForm, ManualEditSection } from "./intake-form";
 import { Accordion as HeroAccordion, AlertDialog as HeroAlertDialog, Button as HeroButton, Card as HeroCard, Chip as HeroChip, Input as HeroInput, TextArea as HeroTextArea } from "@heroui/react";
 import { ArrowLeft, RefreshCw, X } from "lucide-react";
 import { stateLabel } from "./state-labels";
@@ -1105,6 +1105,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
           {detail.supplementUrl ? <div><dt>来源链接</dt><dd>{/^https?:/i.test(detail.supplementUrl) ? <a href={detail.supplementUrl} target="_blank" rel="noreferrer">{detail.supplementUrl}</a> : detail.supplementUrl}</dd></div> : null}
         </dl>
       ) : null}
+      <ManualEditSection detail={detail} onSaved={() => void open(detail.id)} />
     </section>
 
     <section className="req-section" aria-labelledby="req-l2-heading">

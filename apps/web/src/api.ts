@@ -319,6 +319,7 @@ export interface RequirementDetail {
   supplementUrl: string | null;
   intakeModule: string | null;
   title: string;
+  description: string | null;
   sourceVersion: number;
   pipeline: { pull: string; analysis: string; owner: RequirementOwnerState; push: string };
   source: Record<string, unknown>;
@@ -407,3 +408,19 @@ export function createRequirement(input: { title: string; description: string; s
   return postJson<IntakeResult>("/api/requirements", input, fetcher, { "Idempotency-Key": idempotencyKey });
 }
 export const REQUIREMENT_INTAKE_TYPES = ["新增功能", "功能扩展", "体验优化", "性能优化", "质量修复", "安全合规", "成本效率", "技术治理"] as const;
+
+async function patchJson<T>(path: string, body: unknown, fetcher: typeof fetch, headers: Record<string, string> = {}): Promise<T> {
+  const response = await fetcher(path, { method: "PATCH", headers: { accept: "application/json", "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
+  return parseJsonResponse<T>(response);
+}
+
+export interface ManualEditResult {
+  requirementId: string;
+  outcome: "updated" | "unchanged" | "replay";
+  sourceVersion: number;
+  substantiveChanged?: boolean;
+}
+// V02-T07：手工编辑。同一次保存（含失败重试）复用同一幂等键；expectedSourceVersion 做乐观并发。
+export function updateRequirement(id: string, input: { expectedSourceVersion: number; title?: string; description?: string | null; sourceChannel?: string; productModel?: string | null; requirementType?: string | null; constraintNotes?: string | null; supplementUrl?: string | null }, fetcher: typeof fetch = fetch, idempotencyKey: string = crypto.randomUUID()): Promise<ManualEditResult> {
+  return patchJson<ManualEditResult>(`/api/requirements/${id}`, input, fetcher, { "Idempotency-Key": idempotencyKey });
+}
