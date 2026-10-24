@@ -5,6 +5,7 @@ import { analysisRunningJobKeys } from "../scheduler/analysis-recovery.js";
 import { SourceProjectResolutionError, type FeishuUserDirectory, type FeishuUserSelectionResolver, type IdentityProvider, type TeambitionSourceProjectResolver } from "../application/ports.js";
 import { isIntakeComplete, normalizeScheduleTime } from "../domain/workflow.js";
 import { stableJson } from "../sync/hashes.js";
+import { RICE_CONFIG_VERSION, RICE_EFFORT_UNIT, RICE_IMPACT_LEVELS, RICE_REACH_UNIT, computeRiceScore } from "../beta/rice.js";
 import type { AuditEventRepository, AnalysisRunRepository, PipelineJobRepository, SourceConfigRepository, SyncBatchRepository, SyncItemRepository, PersonMappingRepository, RequirementQueryRepository, BasePushRunRepository, ModuleDictionaryRepository, PriorityRuleRepository, SourceSnapshotRepository, TeamDirectoryRepository } from "../application/repositories.js";
 import type { PersonMappingRecord, AnalysisRunRecord, ModuleDictionaryVersionRecord, PriorityRuleVersionRecord, RequirementRecord, SourceConfigRecord, SyncBatchRecord } from "../domain/persistence.js";
 import type { TeamPersonRecord } from "../domain/team-directory.js";
@@ -539,9 +540,10 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     if (method === "GET") {
       const draft = await repositories.requirements.getRiceDraft?.(requirement.id) ?? null;
       const inputs = draft ? { reach: draft.reachInput, impact: draft.impactInput, confidence: draft.confidenceInput, effort: draft.effortInput } : { reach: null, impact: null, confidence: null, effort: null };
-      const complete = Object.values(inputs).every((value) => typeof value === "string" && value.trim().length > 0);
-      // RICE 量纲配置未获批（G-RICE，T12 前）：有草稿也只显示待配置。
-      return json({ requirementId: requirement.id, inputs, notes: draft?.notes ?? null, sourceVersion: draft?.sourceVersion ?? requirement.sourceVersion, editVersion: draft?.editVersion ?? 0, updatedBy: draft?.updatedBy ?? null, updatedAt: draft?.updatedAt ?? null, status: draft ? (complete ? "待配置" : "待补充") : "待补充", score: null });
+      // V02-T12：量纲已确认（rice-v1，2026-10-25）。完整且合法的输入给出可复算分数；
+      // 缺项/非法值一律待补充，不输出 NaN/Infinity/0 分兜底。
+      const scored = computeRiceScore(inputs);
+      return json({ requirementId: requirement.id, inputs, notes: draft?.notes ?? null, sourceVersion: draft?.sourceVersion ?? requirement.sourceVersion, editVersion: draft?.editVersion ?? 0, updatedBy: draft?.updatedBy ?? null, updatedAt: draft?.updatedAt ?? null, status: scored.status === "computed" ? "已计算" : "待补充", score: scored.score, configVersion: RICE_CONFIG_VERSION, units: { reach: RICE_REACH_UNIT, effort: RICE_EFFORT_UNIT }, impactLevels: RICE_IMPACT_LEVELS });
     }
     const parsed = RiceDraftUpdateSchema.safeParse(await request.json().catch(() => null)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
     try {

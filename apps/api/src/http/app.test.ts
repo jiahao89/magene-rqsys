@@ -362,7 +362,7 @@ test("V02-T11 RICE draft routes: read defaults, save with optimistic version, co
   const d = makeDependencies();
   const requirements = d.repositories!.requirements as unknown as Record<string, unknown>;
   let stored: { editVersion: number } = { editVersion: 0 };
-  requirements.getRiceDraft = async () => stored.editVersion === 0 ? null : { requirementId: requirement.id, reachInput: "200/月", impactInput: "3", confidenceInput: "80%", effortInput: "2人月", notes: "依据", sourceVersion: 1, editVersion: stored.editVersion, updatedBy: "actor-1", updatedAt: "2026-10-25T00:00:00.000Z" };
+  requirements.getRiceDraft = async () => stored.editVersion === 0 ? null : { requirementId: requirement.id, reachInput: "200", impactInput: "3", confidenceInput: "80", effortInput: "4", notes: "依据", sourceVersion: 1, editVersion: stored.editVersion, updatedBy: "actor-1", updatedAt: "2026-10-25T00:00:00.000Z" };
   requirements.saveRiceDraft = async (input: { expectedEditVersion: number }) => input.expectedEditVersion === stored.editVersion
     ? { outcome: "saved", editVersion: (stored = { editVersion: input.expectedEditVersion + 1 }).editVersion }
     : { outcome: "version_conflict", currentEditVersion: stored.editVersion };
@@ -374,11 +374,12 @@ test("V02-T11 RICE draft routes: read defaults, save with optimistic version, co
   const save = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/rice-draft`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ reach: "200/月", notes: "依据", expectedEditVersion: 0 }) }), d);
   assert.equal(save.status, 200);
   assert.equal((await save.json() as Record<string, unknown>).editVersion, 1);
-  // 量纲未获批：即使四项齐全也是待配置，不出分数（AC03）
+  // V02-T12：量纲已确认（rice-v1）：完整合法输入给出可复算分数（200×3×0.8÷4=120）
   const read = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/rice-draft`), d);
   const readBody = await read.json() as Record<string, unknown>;
-  assert.equal(readBody.status, "待配置");
-  assert.equal(readBody.score, null);
+  assert.equal(readBody.status, "已计算");
+  assert.equal(readBody.score, 120);
+  assert.equal(readBody.configVersion, "rice-v1");
   const stale = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/rice-draft`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ reach: "x", expectedEditVersion: 0 }) }), d);
   assert.equal(stale.status, 409);
 });
