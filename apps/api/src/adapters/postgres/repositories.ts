@@ -6,8 +6,7 @@ import type {
   ModuleDictionaryVersionRecord, PersonMappingRecord, PmSnapshotRecord,
   PipelineJobRecord, PipelineJobType, PriorityLevel, PriorityRuleVersionRecord,
   RequirementManualOwner, RequirementRecord, SourceConfigRecord, SourceSnapshotRecord, SyncBatchRecord, SyncItemAction,
-  SyncItemRecord, SyncTrigger,
-} from "../../domain/persistence.js";
+  SyncItemRecord, SyncTrigger, AudienceLevel } from "../../domain/persistence.js";
 import { normalizeScheduleTime, type AnalysisState, type OwnerState, type PullState, type PushState } from "../../domain/workflow.js";
 import { assertTransition } from "../../domain/transitions.js";
 import type { ResolvedSourceConfigUpdate } from "../../contracts/source.js";
@@ -50,7 +49,7 @@ export interface RequirementRowWrite {
 }
 
 const manualOwner=(r:any):RequirementManualOwner|null=>r.manual_owner_feishu_user_id?{feishuUserId:r.manual_owner_feishu_user_id,feishuIdType:r.manual_owner_feishu_id_type,name:r.manual_owner_name??null,assignedBy:r.manual_owner_assigned_by??null,assignedAt:asDate(r.manual_owner_assigned_at)!,pushedFeishuUserId:r.manual_owner_pushed_feishu_user_id??null,assignmentVersion:Number(r.manual_owner_assignment_version??1)}:null;
-const requirement=(r:any):RequirementRecord=>({id:r.id,platformRequirementId:r.platform_requirement_id,sourceType:r.source_type??"teambition",sourceChannel:r.source_channel??null,productModel:r.product_model??null,requirementType:r.requirement_type??null,constraintNotes:r.constraint_notes??null,supplementUrl:r.supplement_url??null,intakeModule:r.intake_module??null,sourceConfigId:r.source_config_id,teambitionRequirementId:r.teambition_requirement_id,teambitionUniqueId:r.teambition_unique_id,title:r.title,description:r.description,scope:r.scope,acceptanceCriteria:r.acceptance_criteria,proposerUserId:r.proposer_user_id,proposerName:r.proposer_name,executorUserId:r.executor_user_id,executorName:r.executor_name,sourceStatusId:r.source_status_id,sourceCreatedAt:asDate(r.source_created_at),sourceUpdatedAt:asDate(r.source_updated_at),sourceUrl:r.source_url,attachmentRefs:r.attachment_refs,sourceCustomFields:r.source_custom_fields,sourcePayload:r.source_payload,sourceHash:r.source_hash,substantiveHash:r.substantive_hash,sourceVersion:Number(r.source_version),latestBatchId:r.latest_batch_id,baseRecordId:r.base_record_id,lastPushedAt:asDate(r.last_pushed_at),pipeline:{pull:r.pull_state,analysis:r.analysis_state,owner:r.owner_state,push:r.push_state},manualOwner:manualOwner(r),lastPushedOwner:r.last_pushed_owner_feishu_user_id?{feishuUserId:r.last_pushed_owner_feishu_user_id,feishuIdType:r.last_pushed_owner_feishu_id_type}:null,duplicateOfRequirementId:r.duplicate_of_requirement_id??null,firstSeenAt:asDate(r.first_seen_at)!,lastSeenAt:asDate(r.last_seen_at)!,createdAt:asDate(r.created_at)!,updatedAt:asDate(r.updated_at)!});
+const requirement=(r:any):RequirementRecord=>({id:r.id,platformRequirementId:r.platform_requirement_id,sourceType:r.source_type??"teambition",sourceChannel:r.source_channel??null,productModel:r.product_model??null,requirementType:r.requirement_type??null,constraintNotes:r.constraint_notes??null,supplementUrl:r.supplement_url??null,intakeModule:r.intake_module??null,audienceTags:Array.isArray(r.audience_tags)?r.audience_tags.filter((level:unknown): level is AudienceLevel=>typeof level==="string"&&["L1","L2","L3","L4","L5","L6"].includes(level as string)):[],audienceConfirmed:Boolean(r.audience_confirmed),audienceVersion:Number(r.audience_version??0),sourceConfigId:r.source_config_id,teambitionRequirementId:r.teambition_requirement_id,teambitionUniqueId:r.teambition_unique_id,title:r.title,description:r.description,scope:r.scope,acceptanceCriteria:r.acceptance_criteria,proposerUserId:r.proposer_user_id,proposerName:r.proposer_name,executorUserId:r.executor_user_id,executorName:r.executor_name,sourceStatusId:r.source_status_id,sourceCreatedAt:asDate(r.source_created_at),sourceUpdatedAt:asDate(r.source_updated_at),sourceUrl:r.source_url,attachmentRefs:r.attachment_refs,sourceCustomFields:r.source_custom_fields,sourcePayload:r.source_payload,sourceHash:r.source_hash,substantiveHash:r.substantive_hash,sourceVersion:Number(r.source_version),latestBatchId:r.latest_batch_id,baseRecordId:r.base_record_id,lastPushedAt:asDate(r.last_pushed_at),pipeline:{pull:r.pull_state,analysis:r.analysis_state,owner:r.owner_state,push:r.push_state},manualOwner:manualOwner(r),lastPushedOwner:r.last_pushed_owner_feishu_user_id?{feishuUserId:r.last_pushed_owner_feishu_user_id,feishuIdType:r.last_pushed_owner_feishu_id_type}:null,duplicateOfRequirementId:r.duplicate_of_requirement_id??null,firstSeenAt:asDate(r.first_seen_at)!,lastSeenAt:asDate(r.last_seen_at)!,createdAt:asDate(r.created_at)!,updatedAt:asDate(r.updated_at)!});
 
 const asDate=(v:Date|string|null):string|null=>v===null?null:new Date(v).toISOString();
 const sourceConfig=(r:any):SourceConfigRecord=>({id:r.id,provider:r.provider,externalProjectId:r.external_project_id,externalProjectName:r.external_project_name,requirementTypeId:r.requirement_type_id,enabled:r.enabled,scheduleEnabled:r.schedule_enabled,scheduleWeekday:r.schedule_weekday,scheduleLocalTime:normalizeScheduleTime(r.schedule_local_time),scheduleTimezone:r.schedule_timezone,ownerNames:r.owner_names,fieldMap:r.field_map,createdAt:asDate(r.created_at)!,updatedAt:asDate(r.updated_at)!});
@@ -181,6 +180,23 @@ async updateManualRequirement(p:{requirementId:string;expectedSourceVersion:numb
     await c.query("INSERT INTO requirement_edit_receipts(idempotency_key,actor_id,request_hash,requirement_id,outcome,substantive_changed,source_version) VALUES($1,$2,$3,$4,'updated',$5,$6)",[p.idempotencyKey,p.actorId,p.requestHash,p.requirementId,definitionChanged,newVersion]);
     await c.query("COMMIT");
     return{outcome:"updated" as const,sourceVersion:newVersion,substantiveChanged:definitionChanged,replay:false as const};
+  }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}
+}
+// V02-T09：人工人群标签保存。多选（含明确空集）→ confirmed=true、版本递增；不改优先级/PM 状态、
+// 不触发 AI/推送/通知（调用方仅落库与审计）。期望版本不匹配返回冲突供前端恢复。
+async setAudienceTags(requirementId:string,p:{tags:("L1"|"L2"|"L3"|"L4"|"L5"|"L6")[];expectedVersion:number;actorId:string;}):Promise<{outcome:"updated";version:number}|{outcome:"version_conflict";currentVersion:number}|{outcome:"not_found"}>{
+  const c=await this.pool.connect();
+  try{
+    await c.query("BEGIN");
+    const{rows}=await c.query("SELECT audience_version FROM requirements WHERE id=$1 FOR UPDATE",[requirementId]);
+    if(!rows[0]){await c.query("COMMIT");return{outcome:"not_found" as const};}
+    const current=Number(rows[0].audience_version);
+    if(current!==p.expectedVersion){await c.query("COMMIT");return{outcome:"version_conflict" as const,currentVersion:current};}
+    const next=current+1;
+    await c.query("UPDATE requirements SET audience_tags=$2,audience_confirmed=true,audience_version=$3,updated_at=now() WHERE id=$1",[requirementId,JSON.stringify([...new Set(p.tags)]),next]);
+    await c.query("INSERT INTO audit_events(id,actor_id,event_type,entity_type,entity_id,result,safe_details,occurred_at) VALUES($1,$2,'audience.updated','requirement',$3,'succeeded',$4,now())",[randomUUID(),p.actorId,requirementId,JSON.stringify({fromVersion:current,toVersion:next,tags:[...new Set(p.tags)]})]);
+    await c.query("COMMIT");
+    return{outcome:"updated" as const,version:next};
   }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}
 }
 async findIntakeReceipt(key:string){const{rows}=await this.pool.query("SELECT requirement_id,request_hash,actor_id FROM requirement_intake_receipts WHERE idempotency_key=$1",[key]);return rows[0]?{requirementId:String(rows[0].requirement_id),requestHash:String(rows[0].request_hash),actorId:String(rows[0].actor_id)}:null;}

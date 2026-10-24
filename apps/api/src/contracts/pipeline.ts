@@ -102,3 +102,9 @@ export const RequirementIntakeEditSchema = z.strictObject({
   constraintNotes: z.string().trim().max(2_000).nullish(),
   supplementUrl: z.string().trim().url().max(500).nullish(),
 });
+// V02-T09：人工人群标签保存。多选（含明确空集=已确认空）；期望版本乐观并发。
+export const AUDIENCE_LEVELS = ["L1", "L2", "L3", "L4", "L5", "L6"] as const;
+export const AudienceUpdateSchema = z.strictObject({
+  tags: z.array(z.enum(AUDIENCE_LEVELS)).max(6),
+  expectedVersion: z.number().int().min(0),
+});

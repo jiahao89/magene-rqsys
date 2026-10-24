@@ -10,7 +10,7 @@ const source: SourceConfigRecord = { id: "11111111-1111-4111-8111-111111111111",
 const batch: SyncBatchRecord = { id: "22222222-2222-4222-8222-222222222222", sourceConfigId: source.id, triggerType: "manual", actorId: "actor-1", idempotencyKey: "request-key-0001", status: "running", startedAt: "2026-10-08T00:00:00.000Z", completedAt: null, totalCount: 0, succeededCount: 0, failedCount: 0, errorSummary: null, createdAt: "2026-10-08T00:00:00.000Z" };
 const item: SyncItemRecord = { id: "33333333-3333-4333-8333-333333333333", batchId: batch.id, requirementId: null, teambitionRequirementId: "tb-1", action: "created", status: "succeeded", errorCode: null, errorDetail: null, startedAt: "2026-10-08T00:00:00.000Z", completedAt: "2026-10-08T00:00:00.000Z" };
 const auditEvent: AuditEventRecord = { id: "44444444-4444-4444-8444-444444444444", actorId: "actor-1", eventType: "sync.requested", entityType: "sync_batch", entityId: batch.id, result: "succeeded", safeDetails: {}, occurredAt: "2026-10-08T00:00:00.000Z" };
-const requirement = { id: "66666666-6666-4666-8666-666666666666", platformRequirementId: "RQ-000001", sourceType: "teambition", sourceChannel: null, productModel: null, requirementType: null, constraintNotes: null, supplementUrl: null, intakeModule: null, sourceConfigId: source.id, teambitionRequirementId: "tb-1", teambitionUniqueId: null, title: "Need", description: null, scope: null, acceptanceCriteria: null, proposerUserId: null, proposerName: null, executorUserId: null, executorName: null, sourceStatusId: null, sourceCreatedAt: null, sourceUpdatedAt: null, sourceUrl: null, attachmentRefs: [], sourceCustomFields: [], sourcePayload: {}, sourceHash: "h", substantiveHash: "s", sourceVersion: 1, latestBatchId: batch.id, baseRecordId: null, lastPushedAt: null, pipeline: { pull: "synced", analysis: "analyzed", owner: "not_required", push: "pending" }, firstSeenAt: "2026-10-08T00:00:00.000Z", lastSeenAt: "2026-10-08T00:00:00.000Z", createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z" };
+const requirement = { id: "66666666-6666-4666-8666-666666666666", platformRequirementId: "RQ-000001", sourceType: "teambition", sourceChannel: null, productModel: null, requirementType: null, constraintNotes: null, supplementUrl: null, intakeModule: null, audienceTags: [], audienceConfirmed: false, audienceVersion: 0, sourceConfigId: source.id, teambitionRequirementId: "tb-1", teambitionUniqueId: null, title: "Need", description: null, scope: null, acceptanceCriteria: null, proposerUserId: null, proposerName: null, executorUserId: null, executorName: null, sourceStatusId: null, sourceCreatedAt: null, sourceUpdatedAt: null, sourceUrl: null, attachmentRefs: [], sourceCustomFields: [], sourcePayload: {}, sourceHash: "h", substantiveHash: "s", sourceVersion: 1, latestBatchId: batch.id, baseRecordId: null, lastPushedAt: null, pipeline: { pull: "synced", analysis: "analyzed", owner: "not_required", push: "pending" }, firstSeenAt: "2026-10-08T00:00:00.000Z", lastSeenAt: "2026-10-08T00:00:00.000Z", createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z" };
 const analysisRun = { id: "run-1", requirementId: source.id, sourceVersion: 1, analysisVersion: 2, status: "analyzed", moduleSuggestion: "报表分析", confidence: "medium", confidenceReason: "理由", priority: "P1", structuredResult: null, provider: "deepseek", model: "m", promptVersion: "p", moduleDictionaryVersion: 1, priorityRuleVersionId: null, safeErrorCode: null, safeErrorSummary: null, startedAt: "2026-10-08T00:00:00.000Z", completedAt: "2026-10-08T00:00:01.000Z" };
 function makeDependencies(actor: { id: string } = { id: "actor-1" }): ApiDependencies {
  const batches: SyncBatchRecord[] = [];
@@ -336,4 +336,24 @@ test("V02-T07 PATCH edits manual requirements with version and idempotency seman
   assert.equal(noKey.status, 400);
   const badBody = await handleApiRequest(request({ title: "" }, "edit-key-126"), d);
   assert.equal(badBody.status, 400);
+});
+
+test("V02-T09 audience tags route saves with optimistic version and rejects unknown levels", async () => {
+  const d = makeDependencies();
+  const requirements = d.repositories!.requirements as unknown as Record<string, unknown>;
+  let saved: { tags: string[]; expectedVersion: number } | null = null;
+  requirements.setAudienceTags = async (_id: string, input: { tags: string[]; expectedVersion: number }) => {
+    saved = input;
+    return input.expectedVersion === 0 ? { outcome: "updated", version: 1 } : { outcome: "version_conflict", currentVersion: 1 };
+  };
+  const put = (body: unknown) => new Request(`http://localhost/api/requirements/${requirement.id}/audience`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const ok = await handleApiRequest(put({ tags: ["L2", "L5"], expectedVersion: 0 }), d);
+  assert.equal(ok.status, 200);
+  assert.deepEqual(await ok.json(), { requirementId: requirement.id, audienceVersion: 1, confirmed: true, tags: ["L2", "L5"] });
+  assert.deepEqual(saved, { tags: ["L2", "L5"], expectedVersion: 0, actorId: "actor-1" });
+  const stale = await handleApiRequest(put({ tags: ["L1"], expectedVersion: 5 }), d);
+  assert.equal(stale.status, 409);
+  assert.match(await stale.text(), /版本 1/);
+  const badLevel = await handleApiRequest(put({ tags: ["L9"], expectedVersion: 0 }), d);
+  assert.equal(badLevel.status, 400);
 });

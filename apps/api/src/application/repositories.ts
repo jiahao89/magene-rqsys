@@ -3,7 +3,7 @@
 // （05 手动同步、06 AI 分析、07 负责人与 Base 推送、08 调度重试审计）实际需要的操作。
 // 唯一性约束由 DDL 保证（见 domain/persistence.ts 注释），端口语义与之对齐。
 
-import type { AuditEventRecord, BasePushRunRecord, BatchState, AnalysisRunRecord, FunctionModuleEntry, ModuleDictionaryVersionRecord, PersonMappingRecord, PmSnapshotRecord, PipelineJobRecord, PipelineJobType, PriorityLevel, PriorityRuleVersionRecord, SourceConfigRecord, SourceSnapshotRecord, SyncBatchRecord, SyncItemAction, SyncItemRecord, SyncTrigger, FeishuIdType } from "../domain/persistence.js";
+import type { AuditEventRecord, BasePushRunRecord, BatchState, AnalysisRunRecord, FunctionModuleEntry, ModuleDictionaryVersionRecord, PersonMappingRecord, PmSnapshotRecord, PipelineJobRecord, PipelineJobType, PriorityLevel, PriorityRuleVersionRecord, SourceConfigRecord, SourceSnapshotRecord, SyncBatchRecord, SyncItemAction, SyncItemRecord, SyncTrigger, FeishuIdType, AudienceLevel } from "../domain/persistence.js";
 import type { AnalysisState, OwnerState, PullState, PushState } from "../domain/workflow.js";
 import type { ResolvedSourceConfigUpdate } from "../contracts/source.js";
 import type { RequirementManualOwner, RequirementRecord } from "../domain/persistence.js";
@@ -276,6 +276,12 @@ export interface RequirementSearchCursor {
 }
 
 export interface RequirementQueryRepository {
+
+  // V02-T09：人工人群标签（多选/空集，确认语义）。乐观版本；修改只落库与审计，不触发任何主流程。
+  setAudienceTags(requirementId: string, input: { tags: AudienceLevel[]; expectedVersion: number; actorId: string }): Promise<
+    | { outcome: "updated"; version: number }
+    | { outcome: "version_conflict"; currentVersion: number }
+    | { outcome: "not_found" }>;
   // V02-T02/T04：手工收录。同幂等键重放返回同一需求；hash 不一致视为冲突由调用方拒绝。
   findIntakeReceipt(key: string): Promise<{ requirementId: string; requestHash: string; actorId: string } | null>;
   createManualRequirement(input: {

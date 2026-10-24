@@ -69,6 +69,8 @@ export interface SyncBatchRecord {
 // 唯一约束：(source_config_id, teambition_requirement_id)。
 // source_url 与 attachment_refs 在当前 Teambition 接口上未验证，保持可空、不推断。
 export type RequirementSourceType = "teambition" | "web_manual";
+/** 六层人群固定枚举（与 analysis/contract 的 AUDIENCE_LEVELS 同值；独立声明避免领域层反向依赖）。 */
+export type AudienceLevel = "L1" | "L2" | "L3" | "L4" | "L5" | "L6";
 /** PRD 4.1 固定八类；人工录入与后续 AI 建议分开（V02-T05-AC04）。 */
 export type RequirementType = "新增功能" | "功能扩展" | "体验优化" | "性能优化" | "质量修复" | "安全合规" | "成本效率" | "技术治理";
 
@@ -85,6 +87,11 @@ export interface RequirementRecord {
   supplementUrl: string | null;
   /** V02-T06：Web 录入的受控词典模块（与 AI 建议/Base PM 确认模块分开）。 */
   intakeModule: string | null;
+  /** V02-T09：PM 当前人群标签（L1–L6 多选，可为已确认空集）；AI 建议在 analysis_runs，互不覆盖。 */
+  audienceTags: AudienceLevel[];
+  audienceConfirmed: boolean;
+  /** 每次人工修改递增；0=从未修改（乐观并发）。 */
+  audienceVersion: number;
   sourceConfigId: string | null;
   teambitionRequirementId: string | null;
   teambitionUniqueId: number | null; // 仅展示用，不参与去重

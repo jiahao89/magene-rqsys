@@ -2,7 +2,7 @@
 // 只必填标题/描述/渠道；四段提示是 placeholder 引导，不是四个必填项（PRD 3.2）。
 // 幂等键在同一次提交意图内复用（失败重试不换键），成功或重新展开表单后重置。
 import { useEffect, useRef, useState } from "react";
-import { ApiError, REQUIREMENT_INTAKE_CHANNELS, REQUIREMENT_INTAKE_TYPES, createRequirement, getFunctionModules, updateRequirement } from "./api";
+import { ApiError, AUDIENCE_LEVELS, AUDIENCE_LEVEL_NAMES, REQUIREMENT_INTAKE_CHANNELS, REQUIREMENT_INTAKE_TYPES, createRequirement, getFunctionModules, setAudienceTags, updateRequirement } from "./api";
 
 export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) => void }) {
   const [open, setOpen] = useState(false);
@@ -189,5 +189,36 @@ export function ManualEditSection({ detail, onSaved }: { detail: ManualEditSourc
       {notice && <span className="status-hint" role="status">{notice}</span>}
     </div>
     {error && <div className="field-error" role="alert" style={{ flexBasis: "100%" }}>{error}</div>}
+  </div>;
+}
+
+export interface AudienceState { tags: string[]; confirmed: boolean; version: number }
+
+/** V02-T09：PM 人群标签编辑。区分未确认（展示 AI 建议为参考）与已确认空集；修改不触发任何主流程。 */
+export function AudienceEditor({ requirementId, audience, onSaved }: { requirementId: string; audience: AudienceState; onSaved: () => void }) {
+  const [selected, setSelected] = useState<string[]>(audience.tags);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { setSelected(audience.tags); setError(null); }, [audience.version, audience.tags]);
+  const toggle = (level: string) => setSelected((prev) => prev.includes(level) ? prev.filter((item) => item !== level) : [...prev, level]);
+  const save = async () => {
+    setBusy(true); setError(null);
+    try {
+      await setAudienceTags(requirementId, { tags: selected, expectedVersion: audience.version });
+      onSaved();
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : "保存失败，请重试。");
+    } finally { setBusy(false); }
+  };
+  return <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+    {AUDIENCE_LEVELS.map((level) => (
+      <button key={level} type="button" aria-pressed={selected.includes(level)} className={`button button-small ${selected.includes(level) ? "button-primary" : "button-secondary"}`} onClick={() => toggle(level)} disabled={busy} title={AUDIENCE_LEVEL_NAMES[level]}>
+        {AUDIENCE_LEVEL_NAMES[level]}
+      </button>
+    ))}
+    <button className="button button-primary button-small" onClick={() => void save()} disabled={busy}>保存人群标签</button>
+    {audience.confirmed && audience.tags.length === 0 && <span className="status-hint">已确认为空（不再默认采用 AI 建议）</span>}
+    {!audience.confirmed && <span className="status-hint">未确认；上方 AI 建议仅供参考</span>}
+    {error && <span className="field-error" role="alert">{error}</span>}
   </div>;
 }

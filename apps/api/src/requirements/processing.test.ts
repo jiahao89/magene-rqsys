@@ -26,7 +26,7 @@ test("pii markers cover roster plus proposer and executor without duplicates or 
 function makeRequirement(id: string): RequirementRecord {
   return {
     id, platformRequirementId: "RQ-000001", sourceType: "teambition", sourceChannel: null, sourceConfigId: "source-1", teambitionRequirementId: `tb-${id}`, teambitionUniqueId: null,
-    title: "需要报表", description: "用户张三希望导出报表", scope: "码表", acceptanceCriteria: null, productModel: "码表 C606", constraintNotes: "需兼容旧表带", requirementType: "体验优化", supplementUrl: "https://example.com/t/1?token=secret", intakeModule: null,
+    title: "需要报表", description: "用户张三希望导出报表", scope: "码表", acceptanceCriteria: null, productModel: "码表 C606", constraintNotes: "需兼容旧表带", requirementType: "体验优化", supplementUrl: "https://example.com/t/1?token=secret", intakeModule: null, audienceTags: [], audienceConfirmed: false, audienceVersion: 0,
     proposerUserId: null, proposerName: "张三", executorUserId: null, executorName: null,
     sourceStatusId: null, sourceCreatedAt: null, sourceUpdatedAt: null, sourceUrl: null, attachmentRefs: [], sourceCustomFields: [], sourcePayload: {},
     sourceHash: "h", substantiveHash: "s1", sourceVersion: 1, latestBatchId: null, baseRecordId: null, lastPushedAt: null,

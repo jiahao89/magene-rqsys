@@ -283,6 +283,7 @@ export interface RequirementSummary {
   constraintNotes: string | null;
   supplementUrl: string | null;
   intakeModule: string | null;
+  audience: { tags: string[]; confirmed: boolean; version: number };
   title: string;
   sourceVersion: number;
   pipeline: { pull: string; analysis: string; owner: RequirementOwnerState; push: string };
@@ -318,6 +319,7 @@ export interface RequirementDetail {
   constraintNotes: string | null;
   supplementUrl: string | null;
   intakeModule: string | null;
+  audience: { tags: string[]; confirmed: boolean; version: number };
   title: string;
   description: string | null;
   sourceVersion: number;
@@ -423,4 +425,10 @@ export interface ManualEditResult {
 // V02-T07：手工编辑。同一次保存（含失败重试）复用同一幂等键；expectedSourceVersion 做乐观并发。
 export function updateRequirement(id: string, input: { expectedSourceVersion: number; title?: string; description?: string | null; sourceChannel?: string; productModel?: string | null; requirementType?: string | null; constraintNotes?: string | null; supplementUrl?: string | null }, fetcher: typeof fetch = fetch, idempotencyKey: string = crypto.randomUUID()): Promise<ManualEditResult> {
   return patchJson<ManualEditResult>(`/api/requirements/${id}`, input, fetcher, { "Idempotency-Key": idempotencyKey });
+}
+export const AUDIENCE_LEVELS = ["L1", "L2", "L3", "L4", "L5", "L6"] as const;
+export const AUDIENCE_LEVEL_NAMES: Record<string, string> = { L1: "L1 职业级 Pro", L2: "L2 竞技级 Racing", L3: "L3 爱好者/专业入门", L4: "L4 健身锻炼", L5: "L5 休闲娱乐", L6: "L6 通勤代步" };
+
+export function setAudienceTags(id: string, input: { tags: string[]; expectedVersion: number }, fetcher: typeof fetch = fetch): Promise<{ requirementId: string; audienceVersion: number; confirmed: boolean; tags: string[] }> {
+  return putJson(`/api/requirements/${id}/audience`, input, fetcher);
 }

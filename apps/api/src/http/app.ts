@@ -8,7 +8,7 @@ import { stableJson } from "../sync/hashes.js";
 import type { AuditEventRepository, AnalysisRunRepository, PipelineJobRepository, SourceConfigRepository, SyncBatchRepository, SyncItemRepository, PersonMappingRepository, RequirementQueryRepository, BasePushRunRepository, ModuleDictionaryRepository, PriorityRuleRepository, SourceSnapshotRepository, TeamDirectoryRepository } from "../application/repositories.js";
 import type { PersonMappingRecord, AnalysisRunRecord, ModuleDictionaryVersionRecord, PriorityRuleVersionRecord, RequirementRecord, SourceConfigRecord, SyncBatchRecord } from "../domain/persistence.js";
 import type { TeamPersonRecord } from "../domain/team-directory.js";
-import { AuditListQuerySchema, BatchListQuerySchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementIntakeEditSchema, RequirementIntakeSchema, RequirementListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
+import { AuditListQuerySchema, AudienceUpdateSchema, BatchListQuerySchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementIntakeEditSchema, RequirementIntakeSchema, RequirementListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
 import { createHash, randomUUID } from "node:crypto";
 import { SourceConfigUpdateSchema, type ResolvedSourceConfigUpdate } from "../contracts/source.js";
 import { DictionaryCreateSchema, PriorityRuleCreateSchema, TeamModulesSaveSchema, TeamPersonCreateSchema, TeamPersonFeishuBindSchema, TeamPersonRenameSchema } from "../contracts/rules.js";
@@ -67,6 +67,7 @@ function requirementDto(req: RequirementRecord, analysis: Record<string, unknown
     constraintNotes: req.constraintNotes,
     supplementUrl: req.supplementUrl,
     intakeModule: req.intakeModule,
+    audience: { tags: req.audienceTags, confirmed: req.audienceConfirmed, version: req.audienceVersion },
     platformRequirementId: req.platformRequirementId ?? null,
     title: req.title,
     description: req.description,
@@ -473,6 +474,19 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
       items: page.items.map((item) => ({ ...requirementSearchDto(item), ownerName: manualOwnerName(item) ?? (item.executorUserId ? nameByTbUser.get(item.executorUserId) ?? null : null) })),
       nextCursor: page.nextCursor,
     });
+  }
+  const audienceMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/audience$/);
+  if (method === "PUT" && audienceMatch) {
+    // V02-T09：人工人群标签。只落库与审计：不改优先级、不重置 Base PM 状态、不触发 AI/推送/通知。
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const parsed = AudienceUpdateSchema.safeParse(await request.json().catch(() => null)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
+    try {
+      const result = await repositories.requirements.setAudienceTags(decodeURIComponent(audienceMatch[1]!), { tags: parsed.data.tags, expectedVersion: parsed.data.expectedVersion, actorId: auth.actor.id });
+      if (result.outcome === "not_found") return jsonError("NOT_FOUND");
+      if (result.outcome === "version_conflict") return jsonError("CONFLICT", `人群标签已被他人更新到版本 ${result.currentVersion}，请刷新后重试。`);
+      return json({ requirementId: decodeURIComponent(audienceMatch[1]!), audienceVersion: result.version, confirmed: true, tags: parsed.data.tags });
+    } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
   }
   const requirementMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)$/);
   if (method === "GET" && requirementMatch) {

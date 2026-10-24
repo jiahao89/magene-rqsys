@@ -5,7 +5,7 @@ import { createSourceMetadataAdvancer, type AdvanceDeps } from "./advance.js";
 
 function requirement(overrides: Partial<RequirementRecord> = {}): RequirementRecord {
   return {
-    id: "req-1", platformRequirementId: "RQ-000001", sourceType: "teambition", sourceChannel: null, productModel: null, requirementType: null, constraintNotes: null, supplementUrl: null, intakeModule: null, sourceConfigId: "source-1", teambitionRequirementId: "tb-1", teambitionUniqueId: null,
+    id: "req-1", platformRequirementId: "RQ-000001", sourceType: "teambition", sourceChannel: null, productModel: null, requirementType: null, constraintNotes: null, supplementUrl: null, intakeModule: null, audienceTags: [], audienceConfirmed: false, audienceVersion: 0, sourceConfigId: "source-1", teambitionRequirementId: "tb-1", teambitionUniqueId: null,
     title: "Need", description: null, scope: null, acceptanceCriteria: null,
     proposerUserId: null, proposerName: null, executorUserId: "tb-new", executorName: "New Owner",
     sourceStatusId: "status", sourceCreatedAt: null, sourceUpdatedAt: null, sourceUrl: null,

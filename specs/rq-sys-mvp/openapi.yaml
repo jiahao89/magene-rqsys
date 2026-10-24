@@ -323,6 +323,47 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: Stale expectedSourceVersion (message carries the current version), TB-source requirement, or idempotency-key payload conflict. }
         '503': { $ref: '#/components/responses/DependencyUnavailable' }
+  /api/requirements/{id}/audience:
+    put:
+      summary: Save PM-confirmed audience tags (V02-T09)
+      description: >-
+        Multi-select L1-L6 tags; an explicitly saved empty set is a confirmed-empty (distinct from
+        unconfirmed). Optimistic audienceVersion; the update only persists tags, confirmation flag,
+        a bumped version and an audit event — it never touches priority, Base PM state, or triggers
+        analysis/push/notifications. AI suggestions live in the analysis result and are never
+        overwritten by or overwriting these tags.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tags, expectedVersion]
+              properties:
+                tags:
+                  type: array
+                  maxItems: 6
+                  items: { type: string, enum: [L1, L2, L3, L4, L5, L6] }
+                expectedVersion: { type: integer, minimum: 0 }
+      responses:
+        '200':
+          description: Tags saved.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  requirementId: { type: string, format: uuid }
+                  audienceVersion: { type: integer }
+                  confirmed: { type: boolean }
+                  tags: { type: array, items: { type: string } }
+        '400': { $ref: '#/components/responses/Validation' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Stale expectedVersion; the message carries the current version. }
+        '503': { $ref: '#/components/responses/DependencyUnavailable' }
   /api/requirements/{id}:
     get:
       summary: Get requirement source snapshot and latest analysis
@@ -894,6 +935,13 @@ components:
         constraintNotes: { type: string, nullable: true }
         supplementUrl: { type: string, nullable: true }
         intakeModule: { type: string, nullable: true, description: Web-entered module from the controlled dictionary (G-MODULE). }
+        audience:
+          type: object
+          description: PM-confirmed audience state (V02-T09); AI suggestions stay in the analysis result.
+          properties:
+            tags: { type: array, items: { type: string, enum: [L1, L2, L3, L4, L5, L6] } }
+            confirmed: { type: boolean }
+            version: { type: integer }
         # RQ-Sys 展示用连续编号（RQ-000001）；迁移未执行时为 null。
         platformRequirementId: { type: string, nullable: true }
         title: { type: string }
