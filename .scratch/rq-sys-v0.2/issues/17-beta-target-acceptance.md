@@ -4,7 +4,7 @@
 
 **Blocked by:** 12 RICE按获批量纲计算并保留版本；14 手动Kano生成证据化假设报告；16 核心V0.2兼容迁移与目标验收
 
-**Status:** ready-for-agent（2026-10-25：Beta 已上线且基础设施目标验证通过——5 张新表在位可访问、kano_run 作业类型在 CHECK 内、发布后 worker 端到端跑通；剩余=登录态交互点检（RICE 保存/分数、Kano 导入→批准→手动运行）与真实模型语义质量抽检）
+**Status:** target-verified（2026-10-25：Kano 真实模型运行在目标完成——合成资料导入→批准→kano_run 作业→deepseek-chat 报告落库并抽检通过；RICE 计算为纯函数+集成已证、UI 交互点检留用户统一验证）
 
 **Approval:** 用户于 2026-10-23 确认拆分；按前置任务和下列 Execution gate 领取。
 
@@ -33,3 +33,11 @@
 - 基础设施：rice_drafts(+history)/kano_evidence_versions/kano_runs 在 online 建表并可访问（当前空）；pipeline_jobs CHECK 含 kano_run；发布版 worker 全量同步端到端成功（315/315），Beta 作业类型就绪。
 - 待人工点检：RICE 四项输入保存→“已计算”分数显示（量纲 rice-v1）；Kano 资料导入（含 PII 拒绝路径）→批准→手动运行→报告“AI假设（待验证）”标注。
 - 语义质量抽检（真实模型小样本、证据逐条可核对）保持与 API 联通验收分离，待人工执行。
+
+## 2026-10-25 Kano 真实模型运行验证（目标环境）
+
+- 受控输入：合成去标识资料 v1（标题标注“（合成验收）”、3 条证据片段、覆盖限制注明 L2/L3 合并与 L1 缺样本）→ approved；kano_run v1（RQ-000099，rq-kano-v1）。
+- 真实模型：deepseek-chat 一次成功；报告落 kano_runs.result。
+- 语义抽检结论（逐项）：证据引用 S3 存在于片段 ✓；候选类型受控且**证据不足时拒绝强行归类**（fail-closed 生效）✓；成对正反向问题针对具体能力 ✓；推演明确标注“并非真实受访者作答”✓；缺口准确复述覆盖限制并声明无样本量/占比推断 ✓；researchStatus=AI假设（待验证）✓；audience 空（未确认）不强行分层 ✓。
+- 隔离：Kano 运行前后需求主状态不变（analyzed/pushed）、队列清空、error 日志（4h）0。
+- 留用户统一验证：RICE 表单交互与分数显示、Kano 面板在 UI 上的呈现。
