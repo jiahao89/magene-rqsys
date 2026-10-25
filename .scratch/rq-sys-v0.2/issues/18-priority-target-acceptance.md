@@ -4,7 +4,7 @@
 
 **Blocked by:** 10 确认并实现版本化U/M/S/C规则；16 核心V0.2兼容迁移与目标验收
 
-**Status:** ready-for-agent（2026-10-25：规则 v1 已随迁移在目标库发布（published_rules=1），发布后新分析即产 P0–P3；目标验证待新分析产生后核对 Base AI优先级建议写入）
+**Status:** ready-for-agent（2026-10-25：规则 v1 目标库已发布且阈值核对 p0=3/p1=2/p2=1；同步后无实质变更→暂无新分析可核对 Base 写入；待下一条新需求/实质变更后核对 AI优先级建议 P0–P3 落 Base）
 
 **Approval:** 用户于 2026-10-23 确认拆分；按前置任务和下列 Execution gate 领取。
 

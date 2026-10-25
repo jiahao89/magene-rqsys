@@ -44,3 +44,11 @@
 - **发布后核对**：未登录 app 与 /api/health 均 302 到飞书登录（fail-closed 正确）；近 1h error 日志 0；库态 315 需求/315 已分析/270 已推送/0 活动作业/规则 v=1；315 行 source_type 全部正确回填 teambition、0 手工行、5 张新表在位。
 - **待人工点检**（需登录态，非阻塞）：Web 建单→分析→推送全链路点一次；真实指派一次（验证 0006 后该路径首次在目标环境可用）；Kano 手动运行一次；RICE 草稿+分数查看。
 - **边界**：语义质量抽检（Kano/模块分类）不在本轮；全量同步未触发（无登录态、计划窗口未到期），列于人工点检首项。
+
+## 2026-10-25 全量同步端到端验证（无登录态，经 DB 入队 + 恢复触发器执行）
+
+- 入队：sync_batches `31ab33ec`（manual，幂等键 t16-verify-full-sync-20261025）+ sync 作业；恢复触发器随即认领执行。
+- **结果：315/315 succeeded、0 failed、作业 succeeded、无错误摘要**（约 100 秒完成）。
+- 不变量核对（同步后）：sync_items 315 全 succeeded；分析 315 analyzed / 0 failed_retryable（无实质变更→零新分析，正确）；**0 次新 Base 推送**（近 1h base_push_runs=0，无变更不推送）；27 条同标题提示保持（T15 语义不变）；315 行 source_type 在 upsert ON CONFLICT 路径下保持 teambition（新列未被旧数据路径破坏）；队列 0 queued/running；error 日志（2h）0。
+- 规则 v1 阈值核对：p0=3/p1=2/p2=1 在库；5 张新表可访问且为空（0 回执/草稿/运行）。
+- 结论：发布版 worker + 新 schema + 全部 01-15 新代码在目标环境端到端跑通；剩余仅登录态交互点检（建单/指派/Kano 触发/RICE 查看）。
