@@ -199,7 +199,9 @@ export function AudienceEditor({ requirementId, audience, onSaved }: { requireme
   const [selected, setSelected] = useState<string[]>(audience.tags);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => { setSelected(audience.tags); setError(null); }, [audience.version, audience.tags]);
+  // 仅按确认版本重置：detail 刷新重建 tags 数组引用不应清掉未保存的选择（复查 #10）。
+  const confirmedTags = audience.confirmed ? audience.tags.join(",") : "";
+  useEffect(() => { setSelected(audience.confirmed ? audience.tags : []); setError(null); }, [audience.version, confirmedTags]); // eslint-disable-line react-hooks/exhaustive-deps
   const toggle = (level: string) => setSelected((prev) => prev.includes(level) ? prev.filter((item) => item !== level) : [...prev, level]);
   const save = async () => {
     setBusy(true); setError(null);
@@ -265,9 +267,12 @@ export function BetaPanel({ requirementId }: { requirementId: string }) {
         reach: reach || null, impact: impact || null, confidence: confidence || null, effort: effort || null,
         notes: notes || null, expectedEditVersion: draft.editVersion,
       });
-      setNotice(`草稿已保存（v${result.editVersion}）；量纲未配置，暂不计算分数。`);
+      // 保存成功即推进本地版本：后续刷新失败不再让下一次保存携带过期 expectedEditVersion（复查 #10）。
+      setDraft((prev) => prev ? { ...prev, editVersion: result.editVersion } : prev);
+      setNotice(`草稿已保存（v${result.editVersion}）。`);
       const reloaded = await getRiceDraft(requirementId);
       setDraft(reloaded);
+      setNotice(`草稿已保存（v${result.editVersion}）${reloaded.score !== null ? ` · RICE = ${reloaded.score}` : " · 分数待补充完整输入"}。`);
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "保存失败，请重试。");
     } finally { setBusy(false); }

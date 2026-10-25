@@ -418,7 +418,10 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
       const names = (published?.entries ?? []).map((entry) => typeof entry === "string" ? entry : String((entry as { name?: unknown }).name ?? entry));
       if (!names.includes(parsedBody.data.intakeModule)) return jsonError("VALIDATION_FAILED", "功能模块不在已发布词典中。");
     }
-    const requestHash = createHash("sha256").update(stableJson(parsedBody.data)).digest("hex");
+    // POST 语义中可选字段 null 与省略等价（下方展开只保留真值）：哈希前归一化，
+// 客户端重试时序列化差异（null vs 缺省）不会被误判为“同键不同内容”（复查 #8）。
+    const canonicalBody = Object.fromEntries(Object.entries(parsedBody.data).filter(([, value]) => value !== null && value !== undefined));
+    const requestHash = createHash("sha256").update(stableJson(canonicalBody)).digest("hex");
     const receipt = await repositories.requirements.findIntakeReceipt(key.data);
     if (receipt) {
       if (receipt.requestHash !== requestHash) return jsonError("CONFLICT", "该幂等键已用于不同的提交内容。");
@@ -428,6 +431,7 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     }
     try {
       const created = await repositories.requirements.createManualRequirement({ idempotencyKey: key.data, actorId: auth.actor.id, requestHash, title: parsedBody.data.title, description: parsedBody.data.description, sourceChannel: parsedBody.data.sourceChannel, ...(parsedBody.data.productModel ? { productModel: parsedBody.data.productModel } : {}), ...(parsedBody.data.requirementType ? { requirementType: parsedBody.data.requirementType } : {}), ...(parsedBody.data.constraintNotes ? { constraintNotes: parsedBody.data.constraintNotes } : {}), ...(parsedBody.data.supplementUrl ? { supplementUrl: parsedBody.data.supplementUrl } : {}), ...(parsedBody.data.intakeModule ? { intakeModule: parsedBody.data.intakeModule } : {}), ...(parsedBody.data.owner ? { owner: { feishuUserId: parsedBody.data.owner.feishuUserId, feishuIdType: parsedBody.data.owner.feishuIdType, ...(parsedBody.data.owner.tbDisplayName ? { name: parsedBody.data.owner.tbDisplayName } : {}) } } : {}) });
+      if ("outcome" in created) return jsonError("CONFLICT", "该幂等键已用于不同的提交内容。");
       return json({ requirementId: created.requirementId, platformRequirementId: created.platformRequirementId, sourceType: "web_manual", status: "collected" }, created.replay ? 200 : 201);
     } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
   }

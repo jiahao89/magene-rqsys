@@ -327,7 +327,7 @@ export interface RequirementQueryRepository {
     supplementUrl?: string | null;
     intakeModule?: string | null;
     owner?: { feishuUserId: string; feishuIdType: "open_id" | "user_id" | "union_id"; name?: string | null };
-  }): Promise<{ requirementId: string; platformRequirementId: string; replay: boolean }>;
+  }): Promise<{ requirementId: string; platformRequirementId: string; replay: boolean } | { outcome: "key_conflict" }>;
   // V02-T07：手工需求编辑（仅 web_manual）。期望源版本乐观并发；实质变更原子落新版本/快照/审计/分析任务；
   // 元数据变更仅更新投影并入队非实质推送；规范化后无变化不新建版本。编辑回执同事务写入。
   updateManualRequirement(input: {

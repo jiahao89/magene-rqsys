@@ -250,6 +250,7 @@ test("V02-T02 manual intake: transactional create, idempotent replay, shared RQ 
     const tb=await ctx.repos.requirements.upsertRequirement(source.id,"task-1",requirementWrite(source.id,batch.id));
     assert.equal((await ctx.repos.requirements.get(tb.id))?.platformRequirementId,"RQ-000001");
     const manual=await ctx.repos.requirements.createManualRequirement({idempotencyKey:"intake-key-1",actorId:"operator-1",requestHash:"c".repeat(64),title:"售后反馈的诉求",description:"用户@张三 反馈…",sourceChannel:"售后",productModel:"码表 C606",requirementType:"体验优化",constraintNotes:"需兼容旧表带",supplementUrl:"https://example.com/t/1",intakeModule:"报表分析",owner:{feishuUserId:"u-assignee",feishuIdType:"user_id",name:"贾浩"}});
+    if(!("requirementId" in manual)) throw new Error("expected created outcome");
     assert.equal(manual.replay,false);
     // 编号与 TB 分配器连续、不碰撞
     assert.equal(manual.platformRequirementId,"RQ-000002");
@@ -277,6 +278,7 @@ test("V02-T02 manual intake: transactional create, idempotent replay, shared RQ 
     assert.equal(reassigned?.manualOwner?.assignmentVersion,2);
     // 同幂等键重放：同一需求，不再消耗编号
     const replay=await ctx.repos.requirements.createManualRequirement({idempotencyKey:"intake-key-1",actorId:"operator-1",requestHash:"c".repeat(64),title:"售后反馈的诉求",description:null,sourceChannel:"售后"});
+    if(!("requirementId" in replay)) throw new Error("expected created outcome");
     assert.equal(replay.replay,true);
     assert.equal(replay.requirementId,manual.requirementId);
     const receipt=await ctx.repos.requirements.findIntakeReceipt("intake-key-1");
@@ -302,7 +304,9 @@ test("V02-T02 source branch constraints: TB rows require identity; manual rows r
     await assert.rejects(()=>ctx.pool.query("INSERT INTO requirements(id,source_type,source_config_id,teambition_requirement_id,title,source_hash,substantive_hash,platform_requirement_id,pull_state,analysis_state,owner_state,push_state) VALUES($1,'web_manual',$2,'tb-x','x',$3,$4,'RQ-000098','collected','pending','not_required','pending')",[randomUUID(),source.id,"a".repeat(64),"b".repeat(64)]),{code:"23514"});
     // 手工行不受 TB 唯一键约束：两条同标题手工需求独立保留（T15 口径）
     const first=await ctx.repos.requirements.createManualRequirement({idempotencyKey:"m-1",actorId:"a",requestHash:"1".repeat(64),title:"同标题诉求",description:null,sourceChannel:"运营"});
+    if(!("requirementId" in first)) throw new Error("expected created outcome");
     const second=await ctx.repos.requirements.createManualRequirement({idempotencyKey:"m-2",actorId:"a",requestHash:"2".repeat(64),title:"同标题诉求",description:null,sourceChannel:"运营"});
+    if(!("requirementId" in second)) throw new Error("expected created outcome");
     assert.notEqual(first.requirementId,second.requirementId);
   }finally{await cleanup(ctx);}
 });
@@ -311,6 +315,7 @@ test("V02-T07 manual edit: substantive/metadata/no-change/version-conflict/TB-re
   const ctx=await setup();
   try{
     const manual=await ctx.repos.requirements.createManualRequirement({idempotencyKey:"edit-m-1",actorId:"a1",requestHash:"1".repeat(64),title:"原始诉求",description:"原始描述",sourceChannel:"售后"});
+    if(!("requirementId" in manual)) throw new Error("expected created outcome");
     // 实质变更：新版本 + 快照 + 分析任务 + 推送重置
     const substantive=await ctx.repos.requirements.updateManualRequirement({requirementId:manual.requirementId,expectedSourceVersion:1,idempotencyKey:"edit-k-1",actorId:"a1",requestHash:"2".repeat(64),title:"明确的诉求",description:"补充了期望结果"});
     assert.deepEqual(substantive,{outcome:"updated",sourceVersion:2,substantiveChanged:true,replay:false});
@@ -353,6 +358,7 @@ test("V02-T09 audience tags: multi-select, confirmed-empty, optimistic version, 
   const ctx=await setup();
   try{
     const manual=await ctx.repos.requirements.createManualRequirement({idempotencyKey:"aud-m-1",actorId:"a1",requestHash:"1".repeat(64),title:"训练人群诉求",description:"竞技用户需要训练计划",sourceChannel:"运营/用研"});
+    if(!("requirementId" in manual)) throw new Error("expected created outcome");
     const before=await ctx.repos.requirements.get(manual.requirementId);
     assert.deepEqual(before?.audienceTags,[]);
     assert.equal(before?.audienceConfirmed,false);
@@ -387,6 +393,7 @@ test("V02-T11 RICE draft: save, merge, optimistic conflict, history, no side eff
   const ctx=await setup();
   try{
     const manual=await ctx.repos.requirements.createManualRequirement({idempotencyKey:"rice-m-1",actorId:"a1",requestHash:"1".repeat(64),title:"Beta诉求",description:"描述",sourceChannel:"售后"});
+    if(!("requirementId" in manual)) throw new Error("expected created outcome");
     assert.equal(await ctx.repos.requirements.getRiceDraft(manual.requirementId),null);
     // 首次保存（expected 0）：草稿 v1，记录来源版本
     const first=await ctx.repos.requirements.saveRiceDraft({requirementId:manual.requirementId,expectedEditVersion:0,actorId:"pm-1",sourceVersion:1,reachInput:"约200次/月",notes:"依据客服月报"});
@@ -447,6 +454,7 @@ test("V02-T14 Kano runs: versioned create with active guard, job+audit in txn, l
   const ctx=await setup();
   try{
     const manual=await ctx.repos.requirements.createManualRequirement({idempotencyKey:"kano-m-1",actorId:"a1",requestHash:"1".repeat(64),title:"训练计划诉求",description:"竞技用户需要训练计划",sourceChannel:"运营/用研"});
+    if(!("requirementId" in manual)) throw new Error("expected created outcome");
     const evidence=await ctx.repos.requirements.createKanoEvidence({title:"合成总结",summary:"竞技用户重视训练完成度分析。",evidenceFragments:[{ref:"S1",text:"竞技用户重视训练完成度分析"}],createdBy:"maintainer"});
     await ctx.repos.requirements.approveKanoEvidence(evidence.id,"approver");
     // 创建：v1 + kano_run 作业 + 审计，同事务

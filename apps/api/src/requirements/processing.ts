@@ -50,6 +50,8 @@ export interface RequirementWorkflowDeps {
     basePushes: BasePushRunRepository;
     audit: AuditEventRepository;
     sourceSnapshots: SourceSnapshotRepository;
+    // V02-S02：团队目录花名册——手工需求无来源配置时掩码线索的唯一来源，不得跳过。
+    directory?: { listPeople(): Promise<Array<{ name: string }>> };
   };
   /** Base 传输与字段映射由组合根按环境装配；缺省（本地无 Base 凭据）时仅推送作业不可用。 */
   base?: FeishuBasePushAdapter | undefined;
@@ -89,6 +91,12 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
     requirements: deps.repositories.requirements, people: deps.repositories.people,
     jobs: deps.repositories.jobs, audit: deps.repositories.audit,
   });
+
+  /** 掩码名单 = 团队目录花名册（+TB 来源花名册，由调用方并入）。目录读取失败不阻断分析（名单缺失只降级掩码覆盖）。 */
+  async function loadRosterNames(): Promise<string[]> {
+    try { return (await deps.repositories.directory?.listPeople() ?? []).map((person) => person.name).filter((name): name is string => Boolean(name)); }
+    catch { return []; }
+  }
 
   async function loadPublishedDictionary() {
     const published = (await deps.repositories.dictionaries.list()).find((version) => version.status === "published");
@@ -143,6 +151,7 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
       // 手工来源没有 TB 来源配置：不依赖它加载（V02-T04 起花名册改由团队目录提供）。
       const source = requirement.sourceConfigId ? await deps.repositories.sources.get(requirement.sourceConfigId) : null;
       if (requirement.sourceConfigId && !source) throw new Error("Analysis source configuration was not found");
+      const rosterNames = [...new Set([...(source?.ownerNames ?? []), ...(await loadRosterNames())])];
       const dictionary = await loadPublishedDictionary();
       const priorityRule = await loadPriorityRule();
       const provider = createProvider();
@@ -150,7 +159,7 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
       const run = await runAnalysis({
         requirementId: requirement.id, sourceVersion: requirement.sourceVersion, sourcePersisted: true,
         title: requirement.title, description: requirement.description ?? "", context: analysisModelContext(requirement),
-        piiMarkers: analysisPiiMarkers(requirement, source?.ownerNames ?? []),
+        piiMarkers: analysisPiiMarkers(requirement, rosterNames),
         dictionary, priorityRule,
       }, { repository: new AnalysisRepositoryAdapter(deps.repositories.analyses), provider });
       const current = await deps.repositories.requirements.get(requirement.id);
@@ -165,20 +174,28 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
     async handleKanoRunJob(job: { payload: Record<string, unknown> }): Promise<void> {
       const runId = job.payload.kanoRunId;
       if (typeof runId !== "string") throw new Error("Invalid kano_run job payload");
-      const run = await deps.repositories.requirements.getKanoRun?.(runId);
-      if (!run || run.status !== "running") return;
-      const requirement = await deps.repositories.requirements.get(run.requirementId);
-      if (!requirement) throw new Error("Kano requirement was not found");
-      const evidence = ((await deps.repositories.requirements.listKanoEvidence?.() ?? []).find((version) => version.version === run.evidenceVersion)) ?? null;
-      // 输入门禁：资料必须仍是 approved 且未标记 PII（导入后被退休/标记的版本不再可用）。
-      if (!evidence || evidence.status !== "approved" || evidence.piiFlagged) {
-        await deps.repositories.requirements.failKanoRun?.(runId, "KANO_EVIDENCE_UNAVAILABLE", "选定资料版本不可用（未批准或含未脱敏内容）。");
-        return;
-      }
-      const provider = (deps.createKanoProvider ?? (() => createDeepSeekKanoProvider()))();
+      // 作业 max_attempts=1 且不自动重试：任何失败都必须落到 run.failed，
+      // 否则运行永久停在 running、需求 Kano 功能被活动守卫锁死（复查 #2）。
+      const failSafe = async (code: string, summary: string): Promise<void> => {
+        try { await deps.repositories.requirements.failKanoRun?.(runId, code, summary); }
+        catch (cause) { log(`kano run ${runId} failed to record failure: ${(cause as Error)?.name ?? "unknown"}`); }
+      };
       try {
+        const run = await deps.repositories.requirements.getKanoRun?.(runId);
+        if (!run || run.status !== "running") return;
+        const requirement = await deps.repositories.requirements.get(run.requirementId);
+        if (!requirement) { await failSafe("KANO_REQUIREMENT_MISSING", "Kano requirement was not found."); return; }
+        assertFixtureWorkAllowed({ sourceId: requirement.sourceConfigId ?? "", fixture: isSyntheticFixtureRequirement(requirement.teambitionRequirementId) }, deps.fixtureEnvironment, new Date());
+        const evidence = ((await deps.repositories.requirements.listKanoEvidence?.() ?? []).find((version) => version.version === run.evidenceVersion)) ?? null;
+        // 输入门禁：资料必须仍是 approved 且未标记 PII（导入后被退休/标记的版本不再可用）。
+        if (!evidence || evidence.status !== "approved" || evidence.piiFlagged) {
+          await failSafe("KANO_EVIDENCE_UNAVAILABLE", "选定资料版本不可用（未批准或含未脱敏内容）。");
+          return;
+        }
+        const markers = analysisPiiMarkers(requirement, await loadRosterNames());
+        const provider = (deps.createKanoProvider ?? (() => createDeepSeekKanoProvider()))();
         const raw = await provider.run(kanoPrompt(buildKanoRequest(
-          { title: requirement.title, description: requirement.description, audienceTags: requirement.audienceTags, audienceConfirmed: requirement.audienceConfirmed },
+          { title: requirement.title, description: requirement.description, audienceTags: requirement.audienceTags, audienceConfirmed: requirement.audienceConfirmed, piiMarkers: markers },
           { version: evidence.version, title: evidence.title, summary: evidence.summary, evidenceFragments: evidence.evidenceFragments, coverageNotes: evidence.coverageNotes, knownAudiences: evidence.knownAudiences },
         )));
         const report = validateKanoReport(raw, { version: evidence.version, title: evidence.title, summary: evidence.summary, evidenceFragments: evidence.evidenceFragments, coverageNotes: evidence.coverageNotes, knownAudiences: evidence.knownAudiences });
@@ -187,8 +204,8 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
       } catch (error) {
         const code = error instanceof KanoProviderError ? `KANO_${error.code.toUpperCase()}` : error instanceof Error && error.name === "ZodError" ? "KANO_INVALID_OUTPUT" : "KANO_FAILED";
         const summary = error instanceof KanoProviderError ? error.message : "Kano run failed; manual retry is available.";
-        await deps.repositories.requirements.failKanoRun?.(runId, code, summary);
-        // 作业按成功结算：Beta 失败不自动重试、不饿死主流程（AC02/AC07）。
+        await failSafe(code, summary);
+        // 作业按成功结算（不自动重试，绝不触碰主分析/推送/通知状态）；用户手动重跑生成新版本。
       }
     },
 

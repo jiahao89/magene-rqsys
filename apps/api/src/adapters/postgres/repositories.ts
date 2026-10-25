@@ -138,6 +138,8 @@ async updateManualRequirement(p:{requirementId:string;expectedSourceVersion:numb
   const c=await this.pool.connect();
   try{
     await c.query("BEGIN");
+    // 行锁先行：并发同键编辑在行锁上串行，之后回执检查才能正确重放/冲突（与 create 同理）。
+    const row=(await c.query("SELECT id,source_type,source_version,title,description,source_channel,product_model,requirement_type,constraint_notes,supplement_url,source_hash,substantive_hash FROM requirements WHERE id=$1 FOR UPDATE",[p.requirementId])).rows[0];
     const receipt=await c.query("SELECT request_hash,outcome,substantive_changed,source_version FROM requirement_edit_receipts WHERE idempotency_key=$1",[p.idempotencyKey]);
     if(receipt.rows[0]){
       const hit=receipt.rows[0];
@@ -145,13 +147,12 @@ async updateManualRequirement(p:{requirementId:string;expectedSourceVersion:numb
       if(String(hit.request_hash)!==p.requestHash) return{outcome:"key_conflict" as const};
       return{outcome:"replay" as const,sourceVersion:Number(hit.source_version),substantiveChanged:Boolean(hit.substantive_changed)};
     }
-    const row=(await c.query("SELECT id,source_type,source_version,title,description,source_channel,product_model,requirement_type,constraint_notes,supplement_url,source_hash,substantive_hash FROM requirements WHERE id=$1 FOR UPDATE",[p.requirementId])).rows[0];
     if(!row){await c.query("COMMIT");return{outcome:"not_found" as const};}
     if(String(row.source_type)!=="web_manual"){await c.query("COMMIT");return{outcome:"not_manual" as const};}
     const currentVersion=Number(row.source_version);
     if(currentVersion!==p.expectedSourceVersion){await c.query("COMMIT");return{outcome:"version_conflict" as const,currentSourceVersion:currentVersion};}
     const nextTitle=p.title!==undefined?p.title.trim():String(row.title);
-    const nextDescription=p.description!==undefined?p.description:String(row.description??null);
+    const nextDescription=p.description!==undefined?p.description:(row.description===null?null:String(row.description));
     const nextChannel=p.sourceChannel!==undefined?p.sourceChannel:String(row.source_channel);
     const nextProduct=p.productModel!==undefined?p.productModel:row.product_model===null?null:String(row.product_model);
     const nextType=p.requirementType!==undefined?p.requirementType:row.requirement_type===null?null:String(row.requirement_type);
@@ -174,7 +175,7 @@ async updateManualRequirement(p:{requirementId:string;expectedSourceVersion:numb
       newVersion=currentVersion+1;
       await c.query("UPDATE requirements SET title=$2,description=$3,source_channel=$4,product_model=$5,requirement_type=$6,constraint_notes=$7,supplement_url=$8,source_hash=$9,substantive_hash=$10,source_version=$11,analysis_state='pending',push_state='pending',updated_at=now() WHERE id=$1",[p.requirementId,nextTitle,nextDescription,nextChannel,nextProduct,nextType,nextNotes,nextUrl,hash,nextSubstantive,newVersion]);
       await c.query("INSERT INTO source_snapshots(id,requirement_id,source_version,source_hash,substantive_hash,payload,is_substantive_change,captured_at) VALUES($1,$2,$3,$4,$5,$6,true,now())",[randomUUID(),p.requirementId,newVersion,hash,nextSubstantive,JSON.stringify(payload)]);
-      await c.query("INSERT INTO pipeline_jobs(id,job_type,dedupe_key,payload,available_at,max_attempts) VALUES($1,'analysis',$2,$3,now(),5) ON CONFLICT(dedupe_key) DO NOTHING",[randomUUID(),`analysis:${p.requirementId}:v${newVersion}`,JSON.stringify({requirementId:p.requirementId,sourceVersion:newVersion,actorId:p.actorId})]);
+      await c.query("INSERT INTO pipeline_jobs(id,job_type,dedupe_key,payload,available_at,max_attempts) VALUES($1,'analysis',$2,$3,now(),5) ON CONFLICT(dedupe_key) DO NOTHING",[randomUUID(),`analysis:${p.requirementId}:v${newVersion}`,JSON.stringify({requirementId:p.requirementId,sourceVersion:newVersion,substantiveHash:nextSubstantive,actorId:p.actorId})]);
     }else{
       await c.query("UPDATE requirements SET source_channel=$2,requirement_type=$3,supplement_url=$4,source_hash=$5,updated_at=now() WHERE id=$1",[p.requirementId,nextChannel,nextType,nextUrl,hash]);
       await c.query("INSERT INTO pipeline_jobs(id,job_type,dedupe_key,payload,available_at,max_attempts) VALUES($1,'base_push',$2,$3,now(),5) ON CONFLICT(dedupe_key) DO NOTHING",[randomUUID(),`base-push:${p.requirementId}:sv${currentVersion}:av${analysisVersion}:meta:${randomUUID().slice(0,8)}`,JSON.stringify({requirementId:p.requirementId,actorId:p.actorId,sourceVersion:currentVersion,analysisVersion})]);
@@ -238,7 +239,7 @@ async createKanoEvidence(p:{title:string;sourceUrl?:string|null;sourceSection?:s
     await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0)) IS NULL AS lock_acquired",["kano:evidence:version"]);
     const next=(await c.query("SELECT COALESCE(MAX(version),0)+1 AS v FROM kano_evidence_versions")).rows[0].v;
     // PII 检测覆盖摘要与全部证据片段：命中即标记，标记版本不能进入模型输入。
-    const scannedText=[p.summary,...p.evidenceFragments.map((f)=>f.text)].join("\n");
+    const scannedText=[p.title,p.summary,...p.evidenceFragments.map((f)=>f.text),p.coverageNotes??null].filter((x):x is string=>typeof x==="string").join("\n");
     const piiFlagged=countPiiFindings(scannedText)>0;
     const{rows}=await c.query("INSERT INTO kano_evidence_versions(id,version,title,source_url,source_section,summary,evidence_fragments,coverage_notes,known_audiences,known_scenes,interview_date,status,pii_flagged,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'draft',$12,$13) RETURNING *",[randomUUID(),next,p.title,p.sourceUrl??null,p.sourceSection??null,p.summary,JSON.stringify(p.evidenceFragments),p.coverageNotes??null,JSON.stringify(p.knownAudiences??[]),p.knownScenes??null,p.interviewDate??null,piiFlagged,p.createdBy]);
     await c.query("COMMIT");
@@ -278,9 +279,14 @@ async createManualRequirement(p:{idempotencyKey:string;actorId:string;requestHas
   const c=await this.pool.connect();
   try{
     await c.query("BEGIN");
-    const existing=await c.query("SELECT requirement_id,request_hash FROM requirement_intake_receipts WHERE idempotency_key=$1",[p.idempotencyKey]);
-    if(existing.rows[0]){const replayRow=await c.query("SELECT platform_requirement_id FROM requirements WHERE id=$1",[existing.rows[0].requirement_id]);await c.query("COMMIT");return{requirementId:String(existing.rows[0].requirement_id),platformRequirementId:String(replayRow.rows[0]?.platform_requirement_id??""),replay:true};}
+    // 回执检查必须在事务锁之后：否则并发同键请求都在检查时落空，第二个撞回执唯一键变成 503，
+    // 而不是正确的重放/键冲突（2026-10-25 复查发现）。
     await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0)) IS NULL AS lock_acquired",["rqsys:platform-requirement-id"]);
+    const existing=await c.query("SELECT requirement_id,request_hash FROM requirement_intake_receipts WHERE idempotency_key=$1",[p.idempotencyKey]);
+    if(existing.rows[0]){
+      if(String(existing.rows[0].request_hash)!==p.requestHash){await c.query("COMMIT");return{outcome:"key_conflict" as const};}
+      const replayRow=await c.query("SELECT platform_requirement_id FROM requirements WHERE id=$1",[existing.rows[0].requirement_id]);await c.query("COMMIT");return{requirementId:String(existing.rows[0].requirement_id),platformRequirementId:String(replayRow.rows[0]?.platform_requirement_id??""),replay:true};
+    }
     const next=await c.query("SELECT COALESCE(MAX(SUBSTRING(platform_requirement_id FROM 4)::bigint),0)+1 AS next_number FROM requirements WHERE platform_requirement_id ~ '^RQ-[0-9]+$'");
     const platformRequirementId=`RQ-${String(next.rows[0].next_number).padStart(6,"0")}`;
     const payload={sourceType:"web_manual",title:p.title,description:p.description,sourceChannel:p.sourceChannel,productModel:p.productModel??null,requirementType:p.requirementType??null,constraintNotes:p.constraintNotes??null,supplementUrl:p.supplementUrl??null,intakeModule:p.intakeModule??null};
@@ -291,7 +297,7 @@ async createManualRequirement(p:{idempotencyKey:string;actorId:string;requestHas
     await c.query("INSERT INTO requirements(id,source_type,source_channel,source_config_id,teambition_requirement_id,title,description,product_model,requirement_type,constraint_notes,supplement_url,intake_module,source_hash,substantive_hash,source_version,platform_requirement_id,pull_state,analysis_state,owner_state,push_state,manual_owner_feishu_user_id,manual_owner_feishu_id_type,manual_owner_name,manual_owner_assigned_by,manual_owner_assigned_at,source_payload) VALUES($1,'web_manual',$2,NULL,NULL,$3,$4,$5,$6,$7,$8,$9,$10,$11,1,$12,'collected','pending',$13,'pending',$14,$15,$16,$17,$18,$19)",[id,p.sourceChannel,p.title,p.description,p.productModel??null,p.requirementType??null,p.constraintNotes??null,p.supplementUrl??null,p.intakeModule??null,hash,sub,platformRequirementId,ownerState,p.owner?.feishuUserId??null,p.owner?.feishuIdType??null,p.owner?.name??null,p.actorId,p.owner?new Date().toISOString():null,JSON.stringify(payload)]);
     await c.query("INSERT INTO source_snapshots(id,requirement_id,source_version,source_hash,substantive_hash,payload,is_substantive_change,captured_at) VALUES($1,$2,1,$3,$4,$5,true,now())",[randomUUID(),id,hash,sub,JSON.stringify(payload)]);
     await c.query("INSERT INTO requirement_intake_receipts(idempotency_key,actor_id,request_hash,requirement_id) VALUES($1,$2,$3,$4)",[p.idempotencyKey,p.actorId,p.requestHash,id]);
-    await c.query("INSERT INTO pipeline_jobs(id,job_type,dedupe_key,payload,available_at,max_attempts) VALUES($1,'analysis',$2,$3,now(),5) ON CONFLICT(dedupe_key) DO NOTHING",[randomUUID(),`analysis:${id}:v1`,JSON.stringify({requirementId:id,sourceVersion:1,actorId:p.actorId})]);
+    await c.query("INSERT INTO pipeline_jobs(id,job_type,dedupe_key,payload,available_at,max_attempts) VALUES($1,'analysis',$2,$3,now(),5) ON CONFLICT(dedupe_key) DO NOTHING",[randomUUID(),`analysis:${id}:v1`,JSON.stringify({requirementId:id,sourceVersion:1,substantiveHash:sub,actorId:p.actorId})]);
     // 审计与需求同事务提交（V02-T04-AC04）：入库失败时整笔回滚，不留无审计的收录。
     await c.query("INSERT INTO audit_events(id,actor_id,event_type,entity_type,entity_id,result,safe_details,occurred_at) VALUES($1,$2,'intake.created','requirement',$3,'succeeded',$4,now())",[randomUUID(),p.actorId,id,JSON.stringify({sourceType:"web_manual",sourceChannel:p.sourceChannel})]);
     await c.query("COMMIT");

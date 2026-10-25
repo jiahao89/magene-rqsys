@@ -44,13 +44,16 @@ export interface KanoRequirementInput {
   description: string | null;
   audienceTags: string[];
   audienceConfirmed: boolean;
+  /** 花名册掩码名单（目录 + TB 来源 + 逐条负责人名）；空数组仅保留正则掩码。 */
+  piiMarkers?: string[];
 }
 
 export function buildKanoRequest(requirement: KanoRequirementInput, evidence: KanoEvidenceInput) {
-  // 需求文本先经掩码（姓名/联系方式/证件/平台 ID/@提及）；资料快照已过导入 PII 门禁，按数据透传。
+  // 需求文本先经掩码（花名册姓名 + 联系方式/证件/平台 ID/@提及）；资料快照已过导入 PII 门禁，按数据透传。
+  const markers = requirement.piiMarkers ?? [];
   return {
-    requirementTitle: maskPii(requirement.title, []),
-    requirementDescription: maskPii(requirement.description ?? "", []),
+    requirementTitle: maskPii(requirement.title, markers),
+    requirementDescription: maskPii(requirement.description ?? "", markers),
     audienceTags: requirement.audienceTags,
     audienceConfirmed: requirement.audienceConfirmed,
     evidence: {
