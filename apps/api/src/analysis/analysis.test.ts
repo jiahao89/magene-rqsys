@@ -173,6 +173,17 @@ test("analysis config keeps API credential absent rather than making an external
   assert.equal(maskPii("张三 alice@example.com", ["张三"]).includes("alice@example.com"), false);
 });
 
+test("V02-T14 target finding: fact check tolerates whitespace/width but rejects paraphrase", async () => {
+  const { validateAnalysisOutput } = await import("./contract.js");
+  const base = { ...validResult, facts: [] };
+  const options = { dictionary: { version: 1, modules: ["基础数据"] }, priorityRule: null, sourceText: "标题\n支持查询和筛选\n目标用户：骑行用户" };
+  // 全角/分段差异仍放行（真实模型逐字摘抄时的常见变形）
+  const widthShift = validateAnalysisOutput({ ...base, facts: [{ text: "支持查询和筛选", evidence: "支持查询和筛选" }, { text: "目标用户： 骑行用户", evidence: "目标用户：骑行用户" }] }, options);
+  assert.equal(widthShift.facts.length, 2);
+  // 转述（非源文字串）依然拒绝
+  assert.throws(() => validateAnalysisOutput({ ...base, facts: [{ text: "用户希望支持查询功能", evidence: "支持查询和筛选" }] }, options), /does not occur/);
+});
+
 test("maskPii covers extra identity markers: platform user IDs, ID cards and @mentions", () => {
   const masked = maskPii("用户 aabbccddeeff001122334455 证件 110101199003078515 提到 @李四 需要报表", []);
   for (const secret of ["aabbccddeeff001122334455", "110101199003078515", "@李四"]) {

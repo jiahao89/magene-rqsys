@@ -133,6 +133,10 @@ export function validateAnalysisOutput(
   if (evidence.some((quote) => !sourceText.includes(quote))) throw new Error("Analysis evidence does not occur in source text");
   // facts 声称是"源文事实"：同样必须能在源文里找到，防止需求正文里的提示注入
   // 伪造出源文没有的"事实"进入结构化结果与详情页。
-  if (result.facts.some((item) => !sourceText.includes(item.text))) throw new Error("Analysis fact does not occur in source text");
+  // 匹配对空白/全半角做归一化：真实模型会正确摘抄但可能改动分段与全半角；
+  // 归一化后仍要求逐字包含，转述/编造依然被拒（2026-10-25 目标环境真实模型验证发现过严，放宽此一处）。
+  const compact = (value: string) => value.normalize("NFKC").replace(/\s+/gu, "");
+  const compactSource = compact(sourceText);
+  if (result.facts.some((item) => !compactSource.includes(compact(item.text)))) throw new Error("Analysis fact does not occur in source text");
   return { ...result, priority: null };
 }
