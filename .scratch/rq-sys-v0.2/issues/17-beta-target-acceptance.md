@@ -4,7 +4,7 @@
 
 **Blocked by:** 12 RICE按获批量纲计算并保留版本；14 手动Kano生成证据化假设报告；16 核心V0.2兼容迁移与目标验收
 
-**Status:** ready-for-agent
+**Status:** ready-for-agent（2026-10-25：Beta 功能已随 release `7700439218250206220` 上线（RICE 量纲 rice-v1 已确认、Kano 资料门禁/手动运行可用）；目标验收的交互点检与语义质量抽检待人工登录执行）
 
 **Approval:** 用户于 2026-10-23 确认拆分；按前置任务和下列 Execution gate 领取。
 
