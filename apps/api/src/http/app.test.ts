@@ -41,6 +41,20 @@ test("rejects non-UUID path IDs with 404 before touching uuid repositories", asy
     assert.equal(response.status, 404, `${method} ${path}`);
   }
 });
+test("malformed percent-encoding in a path segment returns 4xx instead of throwing", async () => {
+  // %E0%A4%A 是无效 UTF-8 序列：decodeURIComponent 会抛 URIError。
+  // 路径解码必须把它收敛成客户端错误，不能落到 server.ts 的 500 兜底。
+  const d = { ...makeDependencies(), database: {} as never };
+  const cases: Array<[string, string]> = [
+    ["GET", "/api/requirements/%E0%A4%A"],
+    ["GET", "/api/batches/%E0%A4%A"],
+    ["POST", "/api/items/%E0%A4%A/retry"],
+  ];
+  for (const [method, path] of cases) {
+    const response = await handleApiRequest(new Request(`http://localhost${path}`, { method }), d);
+    assert.equal(response.status, 404, `${method} ${path}`);
+  }
+});
 test("liveness reports the API service", async () => { const r = await handleApiRequest(new Request("http://localhost/api/health"), unauthenticated); assert.equal(r.status, 200); assert.deepEqual(await r.json(), { status: "ok", service: "rq-sys-api" }); });
 
 test("readiness reports unavailable when no database is configured", async () => { const r = await handleApiRequest(new Request("http://localhost/api/health/ready"), unauthenticated); assert.equal(r.status, 503); assert.deepEqual(await r.json(), { status: "not_ready", reason: "database_unavailable_or_not_configured" }); });

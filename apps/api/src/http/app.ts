@@ -50,8 +50,14 @@ function json(body: unknown, status = 200): Response { return Response.json(body
 // 否则查询会抛 22P02 并被兜底成 500（PRD 8.5 EQ-02）。只有真实数据库组合根强制 UUID；
 // HTTP 单测使用短 ID 夹具，仓储替身不做 uuid 转换。
 const UUID_PATH_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+// 路径里的畸形百分号编码（如 %E0%A4%A）会让 decodeURIComponent 抛 URIError；
+// 这是客户端输入错误，必须收敛为 4xx，不能落进 server.ts 的 500 兜底。
+function safeDecodePath(raw: string): string | null {
+  try { return decodeURIComponent(raw); } catch { return null; }
+}
 function pathUuid(raw: string, dependencies: ApiDependencies): string | null {
-  const value = decodeURIComponent(raw);
+  const value = safeDecodePath(raw);
+  if (value === null) return null;
   if (dependencies.database && !UUID_PATH_RE.test(value)) return null;
   return value;
 }
@@ -299,7 +305,7 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.directory) return jsonError("DEPENDENCY_UNAVAILABLE");
     const body = TeamPersonFeishuBindSchema.safeParse(await readJson(request)); if (!body.success) return jsonError("VALIDATION_FAILED");
-    const name = decodeURIComponent(personFeishuMatch[1]!);
+    const name = safeDecodePath(personFeishuMatch[1]!); if (name === null) return jsonError("VALIDATION_FAILED");
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
     try {
       const items = await repositories.directory.bindPersonFeishu(name, body.data, { id: randomUUID(), actorId: auth.actor.id, eventType: "team_person.feishu_bound", entityType: "team_person", result: "succeeded", safeDetails: {}, occurredAt: now });
@@ -309,7 +315,7 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
   if (method === "DELETE" && personFeishuMatch) {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.directory) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const name = decodeURIComponent(personFeishuMatch[1]!);
+    const name = safeDecodePath(personFeishuMatch[1]!); if (name === null) return jsonError("VALIDATION_FAILED");
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
     try {
       const items = await repositories.directory.unbindPersonFeishu(name, { id: randomUUID(), actorId: auth.actor.id, eventType: "team_person.feishu_unbound", entityType: "team_person", result: "succeeded", safeDetails: {}, occurredAt: now });
@@ -321,7 +327,7 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.directory) return jsonError("DEPENDENCY_UNAVAILABLE");
     const body = TeamPersonRenameSchema.safeParse(await readJson(request)); if (!body.success) return jsonError("VALIDATION_FAILED");
-    const oldName = decodeURIComponent(personMatch[1]!);
+    const oldName = safeDecodePath(personMatch[1]!); if (oldName === null) return jsonError("VALIDATION_FAILED");
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
     try {
       const items = await repositories.directory.renamePerson(oldName, body.data.name, { id: randomUUID(), actorId: auth.actor.id, eventType: "team_person.renamed", entityType: "team_person", result: "succeeded", safeDetails: {}, occurredAt: now });
@@ -331,7 +337,7 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
   if (method === "DELETE" && personMatch) {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.directory) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const name = decodeURIComponent(personMatch[1]!);
+    const name = safeDecodePath(personMatch[1]!); if (name === null) return jsonError("VALIDATION_FAILED");
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
     try {
       const items = await repositories.directory.deletePerson(name, { id: randomUUID(), actorId: auth.actor.id, eventType: "team_person.deleted", entityType: "team_person", result: "succeeded", safeDetails: {}, occurredAt: now });

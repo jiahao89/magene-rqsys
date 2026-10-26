@@ -2,7 +2,7 @@
 
 - 日期：2026-10-26（Asia/Shanghai）
 - 范围：V0.2 PRD 全部功能（Web 手工建单/编辑、来源模型、主 AI、六层人群、负责人、Base 平台键、U/M/S/C 规则、RICE Beta、Kano Beta、TB 兼容与同标题保留），并回看 MVP 主链路。
-- 结论：**本地全链路验证通过；F-09/F-10 修复已发布到目标（release `7700859734937226543` / commit `7359934`）并完成目标复验；PRD §7 的 12 项验收标准本地全部通过；目标环境已复验 #1–#10、#12，#11 人群写入仅本地覆盖（目标 UI 入口可读、未写入）。** 目标复验确认手工需求重复推送始终只有 1 条 Base 行，负责人/内容变更通知字段正确；F-04 非法 UUID 目标返回 404；F-05 契约矩阵已核对目标 Base 312/312 平台键；F-01/F-02/F-03 前端修复已在目标 UI 点检。另记录一次 Bitable filter 瞬时 1254607（自动重试成功，见 F-11）。
+- 结论：**本地全链路验证通过；F-09/F-10 修复已发布到目标（release `7700859734937226543` / commit `7359934`）并完成目标复验；PRD §7 的 12 项验收标准本地全部通过；目标环境已复验 #1–#10、#12，#11 人群写入仅本地覆盖（目标 UI 入口可读、未写入）。** 目标复验确认手工需求重复推送始终只有 1 条 Base 行，负责人/内容变更通知字段正确；F-04 非法 UUID 目标返回 404；F-05 契约矩阵已核对目标 Base 312/312 平台键；F-01/F-02/F-03 前端修复已在目标 UI 点检。另记录一次 Bitable filter 瞬时 1254607（自动重试成功，见 F-11）；T16 票面 AC05 的 POC Base 口径与 AC06 的改派/重复静默/快照失败/自动化联合抽检仍未完成，T16 仅记为部分目标验证。
 
 ## 1. 基线
 
@@ -21,7 +21,7 @@
 |---|---|---|
 | 根仓 typecheck | 通过 | `typecheck.log` |
 | 根仓 build（API + Web） | 通过；Web JS 508.07 kB（gzip 156.54 kB） | `build.log` |
-| 根仓 API 测试 | **447 / 447 通过**（含 F-04 非法 UUID 404、F-09/F-10 回归用例） | `full-test-f10.log` |
+| 根仓 API 测试 | **448 / 448 通过**（含 F-04 非法 UUID 404、F-12 畸形 URL 编码、F-09/F-10 回归用例） | `full-test-f10.log` / `harness-malformed.log` |
 | 根仓 Web 测试 | **82 / 82 通过**（新增手工详情显示回归用例） | `full-test-f10.log` |
 | 两仓对齐 | 通过：43 个模块逐字一致、28/28 共用逻辑一致、无未声明漂移 | `alignment.log` |
 | 契约矩阵 | 20 通过 / 0 失败 / 1 警告 / 3 跳过（警告为联系人搜索缺 employee-id；跳过项为 TB 网关、真实 AI、Base 写入） | `contract.log` |
@@ -113,11 +113,13 @@ node --import tsx .scratch/rq-sys-v0.2/verification-20261026/e2e/harness.mts
 - 发布链：`7700844703307533617 / 9f16d18`（F-09 + F-04 + F-01/F-02/F-03）→ 复验 F-10 未过 → `7700859734937226543 / 7359934`（F-10）。
 - **F-09 单行幂等**：`RQ-000344` 首推创建 `reczz28RwmjHFsj3` 1 行；指派贾浩后仍为同 1 行同一 `base_record_id`；内容编辑 v1→v2 后仍为同 1 行同一 `base_record_id`，`base_push_runs` 三次均 `pushed`。
 - **F-10 通知**：指派后 Base 回读 `系统通知事件ID=owner_assigned:cf525833-…:sv1:none:99f56141`、`系统通知类型=已分配负责人`、`系统通知收件人=贾浩`、`系统负责人通知归并值=贾浩`；编辑后 `系统通知事件ID=substantive_update:cf525833-…:sv2`、`系统通知类型=需求内容变更`、收件人仍为贾浩，`PM状态=待处理`，`pm_snapshots=1`，分析 v2 P2 且仍在同一 Base 行。
-- **F-04**：目标应用内 `fetch` `/api/requirements/not-a-uuid`、`/api/batches/not-a-uuid`、`/api/items/not-a-uuid/retry` 均返回 404。
+- **F-04**：目标应用内 `fetch` `/api/requirements/not-a-uuid`、`/api/batches/not-a-uuid`、`/api/items/not-a-uuid/retry` 均返回 404；普通非法 UUID 已闭环。
+- **F-12（畸形 URL 编码）**：本地已修复（`safeDecodePath`），未发布前目标仍返回 500；发布后需用 `%E0%A4%A` 复验 4xx。
 - **F-05**：`CONTRACT_TARGET_BASE_TOKEN/TABLE_ID` 只读核对目标正式 Base：312 行 / 312 唯一平台键 / 0 空值；POC 字段结构检查 13 通过 / 0 失败。
 - **F-01/F-02/F-03**：目标详情显示编辑后的当前描述（v2），8 个“手工”徽标、0 个“TB”徽标，已分析后不再出现“AI 分析未完成”；截图 `ui/target-final-edit.png`。
 - **清理**：删除 2 条合成 Base 行及 RQ-000343/344 关联的分析、推送、快照、审计等行；回读 315 需求 / 0 手工 / Base 312 行 / 0 活动作业 / 0 PM 快照。
 - 观察 **F-11**：一次 Base `records filter` 返回 1254607，worker 自动重试后成功且未新建行；属外部 API 瞬时错误，但会短暂置 `push_state=failed`，需纳入监控。
+- **票面口径限制**：本节验证的是 AC05 的“正式 Base 最小目标写入”主路径，不是票面原写的 POC Base；AC06 只覆盖空→A 指派与内容变更通知，未覆盖 A→B 改派、同键重复静默、PM 快照失败恢复、Base 原生自动化消息联合抽检。因此 T16 只记“部分目标验证”，AC05/06 不勾选。
 
 ## 6. PRD 第 7 节验收矩阵
 
@@ -142,7 +144,7 @@ node --import tsx .scratch/rq-sys-v0.2/verification-20261026/e2e/harness.mts
 |---|---|---|
 | T01–T09、T11–T15 | implemented-local | 本地测试/对齐全绿；本轮 E2E 覆盖其行为 |
 | T10 | implemented-local | 规则 v1 种子与 P0–P3 复算通过；目标规则已发布 |
-| T16 | target-verified | AC01–10 均有目标证据；**AC05/AC06 已在发布后复验通过**（RQ-000344：三次推送同一 Base 行、owner_assigned/substantive_update 通知字段正确、PM 快照与待处理状态正确） |
+| T16 | target-verified（部分） | AC01–04/07–10 有目标证据；AC05 正式 Base 主链路通过但票面要求 POC Base（需确认例外或补 POC）；AC06 仅完成空→A 指派/内容变更/PM 快照成功，改派、重复静默、PM 快照失败恢复、Base 原生自动化联合抽检未完成；AC05/06 保持未勾选 |
 | T17 | target-verified | Kano 目标真实模型运行与报告回读通过；RICE 目标 UI 点检（RICE=120）；Beta 不影响主流程已复核 |
 | T18 | target-verified | 目标 Base RQ-000099 回读与 T18 记录一致；**票内 AC01–AC06 复选框仍为空**，属记录未同步，建议按已有证据补勾并注明 AC01 的“简单好用”授权来源 |
 
@@ -217,6 +219,12 @@ npm run type:check && npm run test:rqsys-route && npm run build:prod && npm run 
 - 判断：外部 Bitable filter 的瞬时错误，不是平台键逻辑回归；失败路径在创建前抛出，因此不会新建行。
 - 建议：监控该错误码；若频率上升，在 Base filter 调用上增加有限指数退避或告警，不要用新建行兜底。
 
+### F-12（中，路径解码，已修复本地、待发布）畸形 URL 编码返回 500
+
+- 现象：`GET /api/requirements/%E0%A4%A` 等非法百分号编码会让 `decodeURIComponent` 抛 `URIError`，落进 `server.ts` 的 500 兜底；普通非法 UUID 已由 F-04 收敛为 404。
+- 修复：两仓 `http/app.ts` 新增 `safeDecodePath`；UUID 路径解码失败返回 404，人员姓名路径解码失败返回 400，不再抛异常。补 `app.test.ts` 回归用例与本地 E2E `畸形 URL 编码返回 4xx` 断言。
+- 验证：API 448/448、E2E 233 项全绿且该断言通过；**目标需发布后复验**。
+
 ### F-07（观察）目标 45 条待处理不是失败
 
 - 45 条 `pending_mapping` 中：42 条已有 Base 行（负责人未映射，保持旧行），3 条为 T15 重新导入的同标题记录（RQ-000317/332/342）尚未首推；`push_failed=0`、活动作业=0。符合“无负责人/未映射不阻断其他需求”的不变量，但发布前建议确认这 45 条的负责人映射处理口径。
@@ -227,9 +235,9 @@ npm run type:check && npm run test:rqsys-route && npm run build:prod && npm run 
 
 ## 10. 剩余工作（建议顺序）
 
-1. 观察 F-11（Bitable filter 瞬时 1254607）；若再次出现，记录 log_id 与时间窗，评估是否需要在推送层增加指数退避或 provider 状态告警。
-2. 按证据更新票内复选框：T16 AC01–10 可全部勾选（AC05/06 已复验）；T17 RICE UI 已可勾选；T18 的 AC01–06 记录待补勾。
-3. 生产 315 条需求仍按既有 45 条待映射推进，不在本轮改动范围内。
+1. 发布 F-12（畸形 URL 编码 4xx）后，用 `%E0%A4%A` 复验目标返回 4xx；目标当前仍是旧代码。
+2. 对齐 T16：先由用户确认 AC05 的“正式 Base 作为验收载体”例外，或补 POC 验证；AC06 的 A→B 改派（需第二个批准账号）、重复静默、PM 快照失败恢复、Base 原生自动化联合抽检补齐后再勾选。
+3. 观察 F-11（Bitable filter 瞬时 1254607），必要时增加退避/告警；生产 315 条需求仍按既有 45 条待映射推进。
 
 ## 11. 证据索引
 
