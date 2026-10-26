@@ -108,6 +108,34 @@ test("snapshot failure leaves existing Base row untouched", async () => {
   assert.deepEqual(fake.row(), before);
 });
 
+test("Base PM read failure aborts the write and a retry after recovery snapshots and resets PM state", async () => {
+  const fake = fakeBase({ recordId: "existing", fields: { "TB项目ID": "p", "TB需求ID": "r", "标题": "Old", "PM状态": "已采纳", "PM确认模块": "M" } });
+  const before = structuredClone(fake.row());
+  const snapshots: unknown[] = [];
+  let failNextRead = true;
+  const originalRead = fake.client.readPmFields.bind(fake.client);
+  fake.client.readPmFields = async (recordId) => {
+    const value = await originalRead(recordId);
+    if (failNextRead) { failNextRead = false; throw new Error("Base read unavailable"); }
+    return value;
+  };
+  const adapter = new FeishuBasePushAdapter(fake.client, { projectId: "TB项目ID", requirementId: "TB需求ID", owner: "执行人", source: { title: "标题" }, ai: {}, pm: ["PM状态", "PM确认模块"] }, { savePmSnapshot: async (snapshot) => { snapshots.push(snapshot); } });
+  const input = { projectId: "p", requirementId: "r", requirementDbId: "11111111-2222-4333-8444-555555555555", title: "New", owner: null, sourceVersion: 2, substantiveChanged: true, idempotencyKey: "p:r:v2" };
+
+  await assert.rejects(() => adapter.push(input), /Base read unavailable/);
+  assert.deepEqual(fake.calls, ["find", "snapshot"]);
+  assert.deepEqual(fake.row(), before);
+  assert.equal(snapshots.length, 0);
+
+  const result = await adapter.push(input);
+  assert.equal(result.created, false);
+  assert.equal(snapshots.length, 1);
+  assert.deepEqual(fake.calls, ["find", "snapshot", "find", "snapshot", "update"]);
+  assert.equal(fake.row()?.fields["标题"], "New");
+  assert.equal(fake.row()?.fields["PM状态"], "待处理");
+  assert.equal(fake.row()?.fields["PM确认模块"], "M");
+});
+
 test("reports an out-of-options select value instead of silently dropping it", async () => {
   const fake = fakeBase();
   const adapter = new FeishuBasePushAdapter(fake.client, {

@@ -21,7 +21,7 @@
 |---|---|---|
 | 根仓 typecheck | 通过 | `typecheck.log` |
 | 根仓 build（API + Web） | 通过；Web JS 508.07 kB（gzip 156.54 kB） | `build.log` |
-| 根仓 API 测试 | **448 / 448 通过**（含 F-04 非法 UUID 404、F-12 畸形 URL 编码、F-09/F-10 回归用例） | `full-test-f10.log` / `harness-malformed.log` |
+| 根仓 API 测试 | **449 / 449 通过**（含 F-04 非法 UUID 404、F-12 畸形 URL 编码、F-09/F-10/PM 快照失败恢复回归用例） | `full-test-f10.log` / `harness-malformed.log` |
 | 根仓 Web 测试 | **82 / 82 通过**（新增手工详情显示回归用例） | `full-test-f10.log` |
 | 两仓对齐 | 通过：43 个模块逐字一致、28/28 共用逻辑一致、无未声明漂移 | `alignment.log` |
 | 契约矩阵 | 20 通过 / 0 失败 / 1 警告 / 3 跳过（警告为联系人搜索缺 employee-id；跳过项为 TB 网关、真实 AI、Base 写入） | `contract.log` |
@@ -119,9 +119,9 @@ node --import tsx .scratch/rq-sys-v0.2/verification-20261026/e2e/harness.mts
 - **F-01/F-02/F-03**：目标详情显示编辑后的当前描述（v2），8 个“手工”徽标、0 个“TB”徽标，已分析后不再出现“AI 分析未完成”；截图 `ui/target-final-edit.png`。
 - **清理**：删除 2 条合成 Base 行及 RQ-000343/344 关联的分析、推送、快照、审计等行；回读 315 需求 / 0 手工 / Base 312 行 / 0 活动作业 / 0 PM 快照。
 - **AC05 例外确认**：用户 2026-10-26 确认正式 Base 可作为 AC05 验收载体（POC 表无 `需求平台ID`）；AC05 按例外通过。
-- **AC06 补测**：重复静默通过（同一 `idempotencyKey` 重放 job succeeded、审计 `replay:true`、Base 时间/通知字段不变）；同人不同 ID 类型的 owner_changed 尝试因 Base 人员字段拒绝跨应用 open_id（1254066）失败，真正 A→B 需第二个批准账号；PM 快照失败恢复无安全故障注入；Base 自动化 workflow 已读（enabled，监控事件 ID、按收件人发消息）但未做端到端送达断言。AC06 保持未勾选。
+- **AC06 补测**：A→B 改派通过（贾浩→史东升，同 Base 行，`owner_changed`/“负责人变更”/收件人史东升，3 次推送均成功）；重复静默通过（`replay:true`、Base 时间/通知不变）；PM 快照失败恢复按用户选择做**本地故障注入**（首读失败不写 Base、恢复后重试快照 1 条、PM 状态重置）；Base 自动化 workflow 已读（enabled，监控事件 ID、按收件人发消息），实际送达待史东升确认。AC06 保持未勾选。
 - 观察 **F-11**：一次 Base `records filter` 返回 1254607，worker 自动重试后成功且未新建行；属外部 API 瞬时错误，但会短暂置 `push_state=failed`，需纳入监控。
-- **票面口径限制**：AC05 经用户确认以正式 Base 为验收例外；AC06 只覆盖空→A 指派、内容变更、重复静默，未覆盖 A→B 改派、PM 快照失败恢复、Base 原生自动化消息联合抽检。因此 T16 记“部分目标验证”，AC06 不勾选。
+- **票面口径限制**：AC05 经用户确认以正式 Base 为验收例外；AC06 的空→A、A→B、内容变更、重复静默、PM 快照失败本地注入均已覆盖，仅 Base 自动化真实送达未由收件人确认。因此 T16 记“部分目标验证”，AC06 暂不勾选。
 
 ## 6. PRD 第 7 节验收矩阵
 
@@ -146,7 +146,7 @@ node --import tsx .scratch/rq-sys-v0.2/verification-20261026/e2e/harness.mts
 |---|---|---|
 | T01–T09、T11–T15 | implemented-local | 本地测试/对齐全绿；本轮 E2E 覆盖其行为 |
 | T10 | implemented-local | 规则 v1 种子与 P0–P3 复算通过；目标规则已发布 |
-| T16 | target-verified（部分） | AC01–05/07–10 有目标证据（AC05 经用户确认以正式 Base 为验收例外）；AC06 仅重复静默、空→A 指派、内容变更、PM 快照成功通过；A→B 改派（缺第二个批准账号）、PM 快照失败恢复（无安全故障注入）、Base 自动化联合抽检（仅配置核对）未完成；AC06 保持未勾选 |
+| T16 | target-verified（部分） | AC01–05/07–10 有目标证据（AC05 经用户确认以正式 Base 为验收例外）；AC06 空→A、A→B、内容变更、重复静默、PM 快照失败本地注入均通过；仅 Base 自动化真实送达待史东升确认，AC06 保持未勾选 |
 | T17 | target-verified | Kano 目标真实模型运行与报告回读通过；RICE 目标 UI 点检（RICE=120）；Beta 不影响主流程已复核 |
 | T18 | target-verified | 目标 Base RQ-000099 回读与 T18 记录一致；**票内 AC01–AC06 复选框仍为空**，属记录未同步，建议按已有证据补勾并注明 AC01 的“简单好用”授权来源 |
 
@@ -237,7 +237,7 @@ npm run type:check && npm run test:rqsys-route && npm run build:prod && npm run 
 
 ## 10. 剩余工作（建议顺序）
 
-1. AC06 剩余：提供第二个批准的测试 `user_id` 账号以验证 A→B 改派；确认是否允许受控故障注入验证 PM 快照失败恢复；Base 自动化如需端到端送达断言，可在批准账号上做一次联合抽检。
+1. AC06 仅剩 Base 自动化真实送达确认：请史东升确认收到 1 条“负责人变更”通知（或由用户确认接受配置+字段核对作为抽检）；确认后即可勾选 AC06。
 2. 观察 F-11（Bitable filter 瞬时 1254607），必要时增加退避/告警；生产 315 条需求仍按既有 45 条待映射推进。
 
 ## 11. 证据索引
