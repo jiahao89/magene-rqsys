@@ -113,13 +113,15 @@ node --import tsx .scratch/rq-sys-v0.2/verification-20261026/e2e/harness.mts
 - 发布链：`7700844703307533617 / 9f16d18`（F-09 + F-04 + F-01/F-02/F-03）→ 复验 F-10 未过 → `7700859734937226543 / 7359934`（F-10）。
 - **F-09 单行幂等**：`RQ-000344` 首推创建 `reczz28RwmjHFsj3` 1 行；指派贾浩后仍为同 1 行同一 `base_record_id`；内容编辑 v1→v2 后仍为同 1 行同一 `base_record_id`，`base_push_runs` 三次均 `pushed`。
 - **F-10 通知**：指派后 Base 回读 `系统通知事件ID=owner_assigned:cf525833-…:sv1:none:99f56141`、`系统通知类型=已分配负责人`、`系统通知收件人=贾浩`、`系统负责人通知归并值=贾浩`；编辑后 `系统通知事件ID=substantive_update:cf525833-…:sv2`、`系统通知类型=需求内容变更`、收件人仍为贾浩，`PM状态=待处理`，`pm_snapshots=1`，分析 v2 P2 且仍在同一 Base 行。
-- **F-04**：目标应用内 `fetch` `/api/requirements/not-a-uuid`、`/api/batches/not-a-uuid`、`/api/items/not-a-uuid/retry` 均返回 404；普通非法 UUID 已闭环。
-- **F-12（畸形 URL 编码）**：本地已修复（`safeDecodePath`），未发布前目标仍返回 500；发布后需用 `%E0%A4%A` 复验 4xx。
+- **F-04**：目标应用 API（带 CSRF）`/api/requirements/not-a-uuid` 返回 404 JSON；普通非法 UUID 已闭环。
+- **F-12（畸形 URL 编码）**：已发布 `7700883606495153388 / 3beaec0`；目标应用 API 对 `%E0%A4%A` 返回 400（网关层拦截），本地 `safeDecodePath` 单测/E2E 覆盖 app 内解码路径，均不再 500。
 - **F-05**：`CONTRACT_TARGET_BASE_TOKEN/TABLE_ID` 只读核对目标正式 Base：312 行 / 312 唯一平台键 / 0 空值；POC 字段结构检查 13 通过 / 0 失败。
 - **F-01/F-02/F-03**：目标详情显示编辑后的当前描述（v2），8 个“手工”徽标、0 个“TB”徽标，已分析后不再出现“AI 分析未完成”；截图 `ui/target-final-edit.png`。
 - **清理**：删除 2 条合成 Base 行及 RQ-000343/344 关联的分析、推送、快照、审计等行；回读 315 需求 / 0 手工 / Base 312 行 / 0 活动作业 / 0 PM 快照。
+- **AC05 例外确认**：用户 2026-10-26 确认正式 Base 可作为 AC05 验收载体（POC 表无 `需求平台ID`）；AC05 按例外通过。
+- **AC06 补测**：重复静默通过（同一 `idempotencyKey` 重放 job succeeded、审计 `replay:true`、Base 时间/通知字段不变）；同人不同 ID 类型的 owner_changed 尝试因 Base 人员字段拒绝跨应用 open_id（1254066）失败，真正 A→B 需第二个批准账号；PM 快照失败恢复无安全故障注入；Base 自动化 workflow 已读（enabled，监控事件 ID、按收件人发消息）但未做端到端送达断言。AC06 保持未勾选。
 - 观察 **F-11**：一次 Base `records filter` 返回 1254607，worker 自动重试后成功且未新建行；属外部 API 瞬时错误，但会短暂置 `push_state=failed`，需纳入监控。
-- **票面口径限制**：本节验证的是 AC05 的“正式 Base 最小目标写入”主路径，不是票面原写的 POC Base；AC06 只覆盖空→A 指派与内容变更通知，未覆盖 A→B 改派、同键重复静默、PM 快照失败恢复、Base 原生自动化消息联合抽检。因此 T16 只记“部分目标验证”，AC05/06 不勾选。
+- **票面口径限制**：AC05 经用户确认以正式 Base 为验收例外；AC06 只覆盖空→A 指派、内容变更、重复静默，未覆盖 A→B 改派、PM 快照失败恢复、Base 原生自动化消息联合抽检。因此 T16 记“部分目标验证”，AC06 不勾选。
 
 ## 6. PRD 第 7 节验收矩阵
 
@@ -144,7 +146,7 @@ node --import tsx .scratch/rq-sys-v0.2/verification-20261026/e2e/harness.mts
 |---|---|---|
 | T01–T09、T11–T15 | implemented-local | 本地测试/对齐全绿；本轮 E2E 覆盖其行为 |
 | T10 | implemented-local | 规则 v1 种子与 P0–P3 复算通过；目标规则已发布 |
-| T16 | target-verified（部分） | AC01–04/07–10 有目标证据；AC05 正式 Base 主链路通过但票面要求 POC Base（需确认例外或补 POC）；AC06 仅完成空→A 指派/内容变更/PM 快照成功，改派、重复静默、PM 快照失败恢复、Base 原生自动化联合抽检未完成；AC05/06 保持未勾选 |
+| T16 | target-verified（部分） | AC01–05/07–10 有目标证据（AC05 经用户确认以正式 Base 为验收例外）；AC06 仅重复静默、空→A 指派、内容变更、PM 快照成功通过；A→B 改派（缺第二个批准账号）、PM 快照失败恢复（无安全故障注入）、Base 自动化联合抽检（仅配置核对）未完成；AC06 保持未勾选 |
 | T17 | target-verified | Kano 目标真实模型运行与报告回读通过；RICE 目标 UI 点检（RICE=120）；Beta 不影响主流程已复核 |
 | T18 | target-verified | 目标 Base RQ-000099 回读与 T18 记录一致；**票内 AC01–AC06 复选框仍为空**，属记录未同步，建议按已有证据补勾并注明 AC01 的“简单好用”授权来源 |
 
@@ -219,11 +221,11 @@ npm run type:check && npm run test:rqsys-route && npm run build:prod && npm run 
 - 判断：外部 Bitable filter 的瞬时错误，不是平台键逻辑回归；失败路径在创建前抛出，因此不会新建行。
 - 建议：监控该错误码；若频率上升，在 Base filter 调用上增加有限指数退避或告警，不要用新建行兜底。
 
-### F-12（中，路径解码，已修复本地、待发布）畸形 URL 编码返回 500
+### F-12（中，路径解码，已修复并发布）畸形 URL 编码返回 500
 
 - 现象：`GET /api/requirements/%E0%A4%A` 等非法百分号编码会让 `decodeURIComponent` 抛 `URIError`，落进 `server.ts` 的 500 兜底；普通非法 UUID 已由 F-04 收敛为 404。
 - 修复：两仓 `http/app.ts` 新增 `safeDecodePath`；UUID 路径解码失败返回 404，人员姓名路径解码失败返回 400，不再抛异常。补 `app.test.ts` 回归用例与本地 E2E `畸形 URL 编码返回 4xx` 断言。
-- 验证：API 448/448、E2E 233 项全绿且该断言通过；**目标需发布后复验**。
+- 验证：API 448/448、E2E 233 项全绿且该断言通过；目标 release `7700883606495153388 / 3beaec0` 后，应用 API 对 `%E0%A4%A` 返回 400（网关层拦截），不再 500。
 
 ### F-07（观察）目标 45 条待处理不是失败
 
@@ -235,9 +237,8 @@ npm run type:check && npm run test:rqsys-route && npm run build:prod && npm run 
 
 ## 10. 剩余工作（建议顺序）
 
-1. 发布 F-12（畸形 URL 编码 4xx）后，用 `%E0%A4%A` 复验目标返回 4xx；目标当前仍是旧代码。
-2. 对齐 T16：先由用户确认 AC05 的“正式 Base 作为验收载体”例外，或补 POC 验证；AC06 的 A→B 改派（需第二个批准账号）、重复静默、PM 快照失败恢复、Base 原生自动化联合抽检补齐后再勾选。
-3. 观察 F-11（Bitable filter 瞬时 1254607），必要时增加退避/告警；生产 315 条需求仍按既有 45 条待映射推进。
+1. AC06 剩余：提供第二个批准的测试 `user_id` 账号以验证 A→B 改派；确认是否允许受控故障注入验证 PM 快照失败恢复；Base 自动化如需端到端送达断言，可在批准账号上做一次联合抽检。
+2. 观察 F-11（Bitable filter 瞬时 1254607），必要时增加退避/告警；生产 315 条需求仍按既有 45 条待映射推进。
 
 ## 11. 证据索引
 

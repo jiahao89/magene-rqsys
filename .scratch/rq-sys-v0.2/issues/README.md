@@ -28,7 +28,7 @@
 | V02-T13 | [Kano选择获批访谈资料版本](13-kano-evidence-snapshots.md) | implemented-local | 02 | Beta |
 | V02-T14 | [手动Kano生成证据化假设报告](14-kano-report.md) | implemented-local | 08、13 | Beta |
 | V02-T15 | [对齐同标题不同TB ID的保留规则](15-source-id-invariant.md) | implemented-local | — | 核心 |
-| V02-T16 | [核心V0.2兼容迁移与目标验收](16-core-target-acceptance.md) | target-verified（部分：AC01–04/07–10 已过；AC05 正式 Base 例外待确认；AC06 主路径通过，改派/重复静默/PM快照失败/原生自动化联合抽检待补） | 05、06、07、09、15 | 验收 |
+| V02-T16 | [核心V0.2兼容迁移与目标验收](16-core-target-acceptance.md) | target-verified（部分：AC01–05/07–10 已过；AC06 仅重复静默通过，改派/PM快照失败/原生自动化联合抽检待补） | 05、06、07、09、15 | 验收 |
 | V02-T17 | [RICE与Kano Beta独立目标验收](17-beta-target-acceptance.md) | target-verified（Kano 真实模型运行+报告抽检通过；2026-10-26 目标 UI RICE=120 与 Kano 报告点检完成） | 12、14、16 | 验收 |
 | V02-T18 | [获批U/M/S/C规则目标验收](18-priority-target-acceptance.md) | target-verified（规则 v1→P2 落 Base 回读通过） | 10、16 | 验收 |
 
