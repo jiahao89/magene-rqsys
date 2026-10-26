@@ -85,6 +85,10 @@ const ALLOWED_DETAIL_KEYS: readonly string[] = [
   "errorClass",
   "trigger",
   "mode",
+  // V02-T15-AC04：同步导入计数来源说明
+  "fetched",
+  "duplicateIds",
+  "processed",
   "workerId",
   "scheduleWindow",
   "httpStatus",

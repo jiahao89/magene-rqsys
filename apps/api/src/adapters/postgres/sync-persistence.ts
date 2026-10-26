@@ -70,7 +70,8 @@ export function createPostgresSyncPersistence(
         id: crypto.randomUUID(), actorId: completed.actorId, eventType: "sync.completed",
         entityType: "sync_batch", entityId: batchId,
         result: completed.status === "failed" || completed.failedCount > 0 ? "failed" : "succeeded",
-        safeDetails: { trigger: completed.triggerType, reason: completed.status },
+        // V02-T15-AC04：导入计数（取得数/重复 ID 数/实际处理数）进入审计，批次计数口径可追溯。
+        safeDetails: { trigger: completed.triggerType, reason: completed.status, ...(result.counts ? { fetched: result.counts.fetched, duplicateIds: result.counts.duplicateIds, processed: result.totalCount } : {}) },
         occurredAt: result.completedAt,
       });
     },

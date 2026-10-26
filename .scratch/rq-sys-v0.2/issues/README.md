@@ -1,6 +1,6 @@
 # RQ-Sys V0.2 Tickets
 
-> 拆分已于2026-10-23由用户确认并发布至本地tracker。共18张Ticket；**全部完成**（2026-10-25）：01-15 implemented-local、16-18 target-verified。
+> 拆分已于2026-10-23由用户确认并发布至本地tracker。共18张Ticket；**全部完成**（2026-10-25）：01-15 implemented-local、16-18 target-verified。T16-AC05/AC06 的登录态交互点检（建单/指派）留用户统一验证。
 
 ## 使用方式
 

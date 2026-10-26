@@ -95,6 +95,9 @@ test("fetches all pages including archived tasks and deduplicates repeated IDs",
   assert.equal(result.totalCount, 2);
   assert.ok(h.calls.includes("upsert:archived"));
   assert.equal(h.calls.filter((call) => call.startsWith("upsert:one")).length, 1);
+  // V02-T15-AC04：取得数/重复 ID 数单独上报（3 取得、1 重复、2 实际处理）
+  assert.equal(result.fetchedCount, 3);
+  assert.equal(result.duplicateIdCount, 1);
 });
 
 test("keeps every same-title TB record and links later ones as suspected duplicates", async () => {

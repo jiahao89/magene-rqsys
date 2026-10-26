@@ -12,7 +12,7 @@ export interface SyncPersistence {
   upsertRequirement(input: NormalizedTeambitionRequirement & { sourceHash: string; substantiveHash: string; sourceVersion: number; latestBatchId: string; analysisRequired: boolean; snapshot: { payload: Record<string, unknown>; isSubstantiveChange: boolean; capturedAt: string } }): Promise<{id:string;created:boolean}>;
   appendSourceSnapshot(input:{requirementId:string;sourceVersion:number;sourceHash:string;substantiveHash:string;payload:Record<string,unknown>;isSubstantiveChange:boolean;capturedAt:string}):Promise<void>;
   writeSyncItem(input:{batchId:string;requirementId:string|null;teambitionRequirementId:string;action:"created"|"updated"|"unchanged";status:"succeeded"|"failed";errorCode:string|null;errorDetail:string|null;startedAt:string;completedAt:string}):Promise<void>;
-  completeBatch(batchId:string,result:{status:BatchState;totalCount:number;succeededCount:number;failedCount:number;errorSummary:string|null;completedAt:string}):Promise<void>;
+  completeBatch(batchId:string,result:{status:BatchState;totalCount:number;succeededCount:number;failedCount:number;errorSummary:string|null;completedAt:string;counts?:{fetched:number;duplicateIds:number}}):Promise<void>;
   // 疑似重复检测：读取当前来源全部需求，再把同标题后出现的记录指向最早一条。
   listTitleCandidates(sourceConfigId:string):Promise<Array<{id:string;teambitionRequirementId:string;title:string;sourceCreatedAt:string|null;duplicateOfRequirementId:string|null}>>;
   setDuplicateOf(requirementId:string,canonicalRequirementId:string|null):Promise<void>;
@@ -23,7 +23,9 @@ export type SyncExecutionMode = "full_pipeline" | "source_only";
 export interface SyncJobContext { batchId:string;sourceConfigId:string;trigger:"manual"|"scheduled";actorId:string|null;onlyIds?:string[];testFixture?:boolean;mode?:SyncExecutionMode }
 export function shouldProcessSyncDownstream(mode: SyncExecutionMode | undefined): boolean { return mode !== "source_only"; }
 export type SyncJobRunner = (job: SyncJobContext) => Promise<SyncResult>;
-export interface SyncResult {batchId:string;status:BatchState;totalCount:number;succeededCount:number;failedCount:number;}
+export interface SyncResult {batchId:string;status:BatchState;totalCount:number;succeededCount:number;failedCount:number;
+  /** V02-T15-AC04：接口取得数与重复源 ID 数——批次计数只报实际处理数，这里补充计数来源说明。 */
+  fetchedCount?:number;duplicateIdCount?:number;}
 
 
 /** 标题比较键：仅用于“疑似重复”提示，不参与需求身份或去重。 */
@@ -79,9 +81,9 @@ function persistedPayload(requirement:NormalizedTeambitionRequirement):Record<st
 export class SyncOrchestrator {
   constructor(private readonly source:SyncSourceReader,private readonly persistence:SyncPersistence,private readonly options:{now?:()=>Date;id?:()=>string}={}){}
   async run(input:SyncInput):Promise<SyncResult>{
-    let cursor:string|null=null;let all:TeambitionTaskRecord[]=[];const seen=new Set<string>();const clock=this.options.now??(()=>new Date());
+    let cursor:string|null=null;let all:TeambitionTaskRecord[]=[];const seen=new Set<string>();let fetchedCount=0;let duplicateIdCount=0;const clock=this.options.now??(()=>new Date());
     try {
-      while(true){const page=await this.source.listRequirements(input.config,cursor);for(const record of page.items){if(!record.id){all.push(record);continue;}if(seen.has(record.id))continue;seen.add(record.id);all.push(record);}if(!page.hasMore)break;if(!page.nextCursor||page.nextCursor===cursor)throw new Error("Teambition pagination cursor did not advance");cursor=page.nextCursor;}
+      while(true){const page=await this.source.listRequirements(input.config,cursor);for(const record of page.items){fetchedCount++;if(!record.id){all.push(record);continue;}if(seen.has(record.id)){duplicateIdCount++;continue;}seen.add(record.id);all.push(record);}if(!page.hasMore)break;if(!page.nextCursor||page.nextCursor===cursor)throw new Error("Teambition pagination cursor did not advance");cursor=page.nextCursor;}
     } catch (error) {
       // 此前这里把原因整个丢掉，只写一句固定文案：5 次重试无法区分"网关 key 过期"与"偶发抖动"，
       // 目标环境排障只能靠猜。现在落一个**脱敏的结构化代码**（不写 provider 原文、不含凭据）。
@@ -120,9 +122,9 @@ export class SyncOrchestrator {
     let duplicateHintsFailed=false;
     try{await markDuplicateTitles(this.persistence,input.sourceConfigId);}
     catch{duplicateHintsFailed=true;}
-    const result:SyncResult={batchId:input.batchId,status:failedCount===0?"succeeded":succeededCount===0?"failed":"partial_failure",totalCount:all.length,succeededCount,failedCount};
+    const result:SyncResult={batchId:input.batchId,status:failedCount===0?"succeeded":succeededCount===0?"failed":"partial_failure",totalCount:all.length,succeededCount,failedCount,fetchedCount,duplicateIdCount};
     const errorSummary=failedCount?`${failedCount} item(s) failed; inspect item results.`:duplicateHintsFailed?"All items synced, but duplicate-title hints could not be refreshed; manual retry is available.":null;
-    await this.persistence.completeBatch(input.batchId,{...result,errorSummary,completedAt:clock().toISOString()});return result;
+    await this.persistence.completeBatch(input.batchId,{...result,errorSummary,completedAt:clock().toISOString(),counts:{fetched:fetchedCount,duplicateIds:duplicateIdCount}});return result;
   }
 }
 
