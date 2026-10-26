@@ -4,7 +4,7 @@
 
 **Blocked by:** 08 主AI增加需求类型与六层人群建议
 
-**Status:** implemented-local（2026-10-25：迁移 0013 + audience 保存 API + 前端标签编辑器，两仓全量验证）
+**Status:** target-verified（2026-10-26：目标合成需求完成多选→空集→AI 重跑保留，版本/审计/无 Base 副作用复核）
 
 **Approval:** 用户于 2026-10-23 确认拆分；按前置任务和下列 Execution gate 领取。
 
@@ -34,3 +34,12 @@
 - 前端：`AudienceEditor`（L1–L6 切换按钮 + 保存 + 确认状态提示；两客户端）；详情挂载带防御默认（滚动发布期旧响应无该字段不崩）。
 - 测试：集成（多选/乐观冲突/确认空集/无副作用/审计 2 条）、root HTTP（保存/409 带版本/未知层 400）、妙搭路由（服务端 actor）。
 - 验证：root typecheck/API **429**/Web **81**/build/对齐/契约 20 通过/diff --check 全绿；妙搭 type:check/路由 **111**/build:prod/eslint 全绿。
+
+
+## 2026-10-26 目标验证记录
+
+- 合成需求 `RQ-000343`：首次未确认时正常分析/推送；详情 UI 保存 `L2+L5` → DB `audience_tags=["L2","L5"]`、`confirmed=true`、`version=1`，审计 `audience.updated {fromVersion:0,toVersion:1,tags:["L2","L5"]}`。
+- 再次保存**确认空集** → `tags=[]`、`confirmed=true`、`version=2`，审计 `{fromVersion:1,toVersion:2,tags:[]}`；UI 显示“已确认为空（不再默认采用 AI 建议）”。
+- 点击“重新分析” → 分析 v2 成功（P2），人工 `tags=[]`、`version=2` 保持不变；`base_push_runs` 仍为 1，无新 Base 推送/通知。
+- 目标 UI 刷新后 L1–L6 均未选中、确认空集提示正确。
+- 清理：删除合成需求与 Base 行；回读 315 需求 / 0 手工 / Base 312 行 / 0 活动作业。

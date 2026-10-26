@@ -21,7 +21,7 @@
 | V02-T06 | [需求级选择模块与负责人并通知分配人](06-direct-owner-and-module.md) | implemented-local | 04 | 核心 |
 | V02-T07 | [手工编辑需求保留版本并安全更新Base](07-manual-edit-versioning.md) | implemented-local | 04 | 核心 |
 | V02-T08 | [主AI增加需求类型与六层人群建议](08-analysis-audience-contract.md) | implemented-local | 02 | 核心 |
-| V02-T09 | [PM修改人群并保留人工确认](09-audience-confirmation.md) | implemented-local | 08 | 核心 |
+| V02-T09 | [PM修改人群并保留人工确认](09-audience-confirmation.md) | target-verified（多选/空集/AI 重跑保留/版本审计/无 Base 副作用均已在目标复核） | 08 | 核心 |
 | V02-T10 | [确认并实现版本化U/M/S/C规则](10-priority-rule-calibration.md) | implemented-local | — | 规则条件 |
 | V02-T11 | [详情Beta入口保存RICE人工草稿](11-rice-beta-draft.md) | implemented-local | 02 | Beta |
 | V02-T12 | [RICE按获批量纲计算并保留版本](12-rice-configured-score.md) | implemented-local | 11 | Beta |
@@ -34,7 +34,7 @@
 
 ## 当前可领取的前沿
 
-- **核心链路 01-09 与 15 全部 implemented-local（2026-10-24/25）**。**18 张工单全部收口（2026-10-25）：01-15 implemented-local、16/17/18 target-verified。2026-10-26 登录态目标点检发现并修复阻断缺陷 F-09/F-10（限流装饰器漏转发平台键查找、手工来源无 TB 负责人字段导致 owner_assigned 被吞）；发布 `7700859734937226543` 后复验通过，详见 [验证报告](../verification-20261026/VERIFICATION-REPORT.md)。**
+- **核心链路 01-09 与 15 全部 implemented-local（2026-10-24/25）**。**18 张工单全部收口：T09 与 16/17/18 target-verified，其余 implemented-local。2026-10-26 登录态目标点检发现并修复阻断缺陷 F-09/F-10（限流装饰器漏转发平台键查找、手工来源无 TB 负责人字段导致 owner_assigned 被吞）；发布 `7700859734937226543` 后复验通过，详见 [验证报告](../verification-20261026/VERIFICATION-REPORT.md)。**
 - **15** 已于 2026-10-23 实现为"同标题仅提示、独立处理"（implemented-local；AC04 计数拆分与 AC06 联合回归待后续票补齐，正式结论汇合到 16）。
 - **10** 规则确认包已备（见票内链接）；新算法实施仍等待 PM Leader 确认输入、公式、阈值和校准案例。
 - 02完成后，08、11、13可与03→04分支独立推进；实际开发先协调共享契约和仓储的文件归属。
