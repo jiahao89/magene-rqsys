@@ -705,6 +705,28 @@ test("assigning an owner after an empty-owner push notifies the newly assigned o
   assert.equal(h.baseInput?.notification?.recipientUserId, "u-assignee");
 });
 
+test("manual source snapshots without TB owner fields still notify on a later hand-picked owner", async () => {
+  // 真实手工来源快照只有 title/description 等字段，没有 sourceExecutorId/mappedFields。
+  // “字段不存在”必须等价于“上一次没写负责人”，不能判成 unknown 而吞掉 owner_assigned。
+  const req = requirement({
+    sourceType: "web_manual", sourceConfigId: null, teambitionRequirementId: null,
+    manualOwner: manualOwner(), pipeline: { pull: "collected", analysis: "analyzed", owner: "manually_mapped", push: "pending" },
+  });
+  const h = makeHarness({
+    req, pmLeaderUserId: PM_LEADER_USER_ID,
+    lastSuccessful: pushRun({ sourceVersion: 2 }),
+    sourceSnapshot: sourceSnapshot({
+      sourceVersion: 2, substantiveHash: req.substantiveHash,
+      payload: { sourceType: "web_manual", title: "Manual", description: "Desc" },
+    }),
+  });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2:manual-owner");
+  assert.equal(result.kind, "pushed");
+  assert.equal(h.baseInput?.notification?.eventId, "owner_assigned:req-1:sv2:none:u-assignee");
+  assert.equal(h.baseInput?.notification?.recipientUserId, "u-assignee");
+  assert.equal(h.baseInput?.notification?.recipientIdType, "user_id");
+});
+
 test("once the hand-picked owner is in Base, later pushes neither rewrite the owner nor notify again", async () => {
   // PM 之后可能直接在 Base 改了负责人：同一人工负责人已写入过，就不再覆盖 Base 的人员字段。
   const req = requirement({ manualOwner: manualOwner({ pushedFeishuUserId: "u-assignee" }), pipeline: { pull: "synced", analysis: "analyzed", owner: "manually_mapped", push: "pending" } });

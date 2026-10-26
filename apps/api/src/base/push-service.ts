@@ -180,6 +180,9 @@ export function createBasePushService(deps: BasePushServiceDeps) {
     if (req.lastPushedOwner?.feishuUserId) return { kind: "known", userId: req.lastPushedOwner.feishuUserId };
     const pushedManualOwner = owner?.perRequirement ? req.manualOwner?.pushedFeishuUserId ?? null : null;
     if (pushedManualOwner) return { kind: "known", userId: pushedManualOwner };
+    // 手工来源的源快照不含 TB 负责人字段（无 sourceExecutorId / mappedFields），不能把
+    // “字段不存在”误判成“负责人未知”；若上一次成功推送没写过负责人，历史就是 none。
+    if (req.sourceType === "web_manual") return { kind: "none" };
     if (!previousSource) return { kind: "unknown" };
     const snapshot = snapshotOwnerLookup(previousSource.payload);
     if (!snapshot.answered) return { kind: "unknown" };
