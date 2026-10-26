@@ -148,7 +148,7 @@ node --import tsx .scratch/rq-sys-v0.2/verification-20261026/e2e/harness.mts
 | T10 | implemented-local | 规则 v1 种子与 P0–P3 复算通过；目标规则已发布 |
 | T16 | target-verified | AC01–10 全部通过；AC05 经用户确认以正式 Base 为验收例外；AC06 空→A/A→B/内容变更/AI重试/重复静默/PM快照失败本地注入均通过，Base 自动化通知经史东升确认送达 |
 | T17 | target-verified | Kano 目标真实模型运行与报告回读通过；RICE 目标 UI 点检（RICE=120）；Beta 不影响主流程已复核 |
-| T18 | target-verified | 目标 Base RQ-000099 回读与 T18 记录一致；**票内 AC01–AC06 复选框仍为空**，属记录未同步，建议按已有证据补勾并注明 AC01 的“简单好用”授权来源 |
+| T18 | target-verified | 目标 Base RQ-000099 回读与 T18 记录一致；2026-10-26 已按 T10/迁移0017、目标回读和本地边界用例补勾 AC01–06（AC01 注明“用户代确认”来源） |
 
 ## 8. 本轮可复现命令
 
