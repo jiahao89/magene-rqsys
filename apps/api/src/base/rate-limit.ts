@@ -54,6 +54,17 @@ export class RateLimitedBaseClient implements BaseClient {
     return this.schedule(() => this.inner.findByRequirementKey(key));
   }
 
+  /**
+   * V02-T03 平台键查找必须与其它 Base 调用一样受限流。
+   * 漏掉这个转发会让适配器误以为传输层不支持平台键：TB 行还能按旧 TB ID 兼容命中，
+   * 手工行（TB ID 为空）每次推送都会新建 Base 行。目标环境验收曾复现该缺陷。
+   */
+  findByPlatformKey(platformRequirementId: string): Promise<BaseRecord | null> {
+    return this.schedule(() => this.inner.findByPlatformKey
+      ? this.inner.findByPlatformKey(platformRequirementId)
+      : Promise.resolve(null));
+  }
+
   readFieldType(fieldName: string): Promise<number> {
     return this.schedule(() => this.inner.readFieldType ? this.inner.readFieldType(fieldName) : Promise.resolve(1));
   }

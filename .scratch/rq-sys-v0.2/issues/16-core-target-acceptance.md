@@ -52,3 +52,11 @@
 - 不变量核对（同步后）：sync_items 315 全 succeeded；分析 315 analyzed / 0 failed_retryable（无实质变更→零新分析，正确）；**0 次新 Base 推送**（近 1h base_push_runs=0，无变更不推送）；27 条同标题提示保持（T15 语义不变）；315 行 source_type 在 upsert ON CONFLICT 路径下保持 teambition（新列未被旧数据路径破坏）；队列 0 queued/running；error 日志（2h）0。
 - 规则 v1 阈值核对：p0=3/p1=2/p2=1 在库；5 张新表可访问且为空（0 回执/草稿/运行）。
 - 结论：发布版 worker + 新 schema + 全部 01-15 新代码在目标环境端到端跑通；剩余仅登录态交互点检（建单/指派/Kano 触发/RICE 查看）。
+
+## 2026-10-26 登录态目标点检（用户授权）
+
+- 通过目标 Online（release `7700759824770141217` / `9eba60c`）UI 完成：合成手工需求建单 `RQ-000343` → 主 AI（v1 P3）→ 正式 Base 首推；指派贾浩；描述编辑 v2（AI v2 P2）；RICE 200/3/80/4 → 120；Kano 使用已批准合成资料运行成功（`AI假设（待验证）`，3 个能力项）。测试数据随后已清理，目标恢复 315 需求 / 0 手工 / Base 312 行。
+- **发现阻断缺陷（F-09）**：每次后续推送（负责人指派、再次指派、内容变更）都新建一条 Base 行。4 次推送产生 4 个不同 `base_record_id`，清理前 3 条 `需求平台ID=RQ-000343` 并存。根因是生产组合根的 `RateLimitedBaseClient` 未实现/转发 `findByPlatformKey`；手工行无 TB 键兜底，适配器退化为每次 create。**AC05“重复任务只一条 Base 行”与 AC06 的编辑推送在当前目标版本不通过。**
+- 修复：两仓 `base/rate-limit.ts` 已补转发；新增 `client.test.ts` 回归（限流装饰器后手工需求两次推送复用同一行）与 `rate-limit.test.ts` 用例；本地 API 445/445、Web 82/82、妙搭路由 114/114、本地 E2E 233 项全绿。**目标需发布后复验。**
+- 派生观察（F-10）：负责人指派后新 Base 行的通知系统字段未观察到落库，需在 F-09 修复后复验。
+- 证据：`.scratch/rq-sys-v0.2/verification-20261026/`（报告、截图、`target/rq343-*`、`target/after-cleanup-base.ndjson`）。

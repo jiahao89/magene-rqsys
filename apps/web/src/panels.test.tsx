@@ -252,6 +252,42 @@ describe("RequirementsPanel (ticket 17)", () => {
     expect(await screen.findByText("需要报表")).toBeInTheDocument();
   });
 
+  it("shows the current manual definition, labels fields as manual, and does not claim finished analysis is incomplete", async () => {
+    const manualRow = {
+      ...row,
+      id: "req-manual",
+      sourceRequirementId: null,
+      sourceType: "web_manual",
+      sourceChannel: "终端用户",
+      title: "手工需求",
+      description: "编辑后的当前描述",
+      pipeline: { pull: "collected", analysis: "analyzed", owner: "not_required", push: "pushed" },
+    };
+    mockPanel({
+      rows: [manualRow],
+      detailBody: detail({
+        ...manualRow,
+        source: { sourceType: "web_manual", title: "手工需求", description: "初版描述" },
+        analysis: { module: "爬坡", confidence: "中", priority: "P2", typeSuggestion: "体验优化", audience: [] },
+        analyses: [],
+        audience: { tags: [], confirmed: false, version: 0 },
+        manualOwner: null,
+      }),
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await openFirstRow("手工需求");
+
+    // V02-T07 复查：手工来源的描述必须显示编辑后的当前值，而不是 source_payload 的初版快照。
+    expect(screen.getByText("编辑后的当前描述")).toBeInTheDocument();
+    expect(screen.queryByText("初版描述")).not.toBeInTheDocument();
+    // 已分析完成时不能提示“AI 分析未完成”；仍保留人工重跑入口。
+    expect(screen.queryByText(/AI 分析未完成/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重新分析" })).toBeInTheDocument();
+    // 手工来源字段不再使用 TB 徽标，改用手工徽标。
+    expect(screen.queryAllByText("TB")).toHaveLength(0);
+    expect(screen.getAllByText("手工").length).toBeGreaterThanOrEqual(8);
+  });
+
   it("puts requirements waiting for human handling first, then sorts each group by update time", async () => {
     const rows = [
       { ...row, id: "req-pushed-old", title: "已推送旧", updatedAt: "2026-10-01T00:00:00.000Z" },

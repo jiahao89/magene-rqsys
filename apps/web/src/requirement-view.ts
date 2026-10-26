@@ -254,13 +254,17 @@ export interface RequirementSourceFacts {
   updatedAt: string | null;
 }
 
-/** L1「需求信息」的 Teambition 原始字段。缺失值保持 null，由 UI 显示「—」。 */
-export function requirementSourceFacts(requirement: Pick<RequirementDetail, "source" | "sourceUrl">): RequirementSourceFacts {
+/**
+ * L1「需求信息」的当前定义字段。缺失值保持 null，由 UI 显示「—」。
+ * 描述优先取详情顶层的当前值：手工来源的 source_payload 是首个快照，编辑后不会更新；
+ * 只看 payload 会把旧描述当成当前定义展示（V02-T07 复查发现）。
+ */
+export function requirementSourceFacts(requirement: Pick<RequirementDetail, "source" | "sourceUrl" | "description">): RequirementSourceFacts {
   const source = asRecord(requirement.source) ?? {};
   const raw = rawSource(requirement.source);
   const mapped = mappedFields(requirement.source);
   return {
-    description: firstText(source.description, mapped.description),
+    description: firstText(requirement.description, source.description, mapped.description),
     proposerName: requirementProposerName(requirement),
     executorName: personName(source, raw, source.executorName, raw.executor_id ?? source.sourceExecutorId, "executorName"),
     // 只展示状态名称；仅有 taskflow_status_id 时不把内部 ID 当成业务状态展示。

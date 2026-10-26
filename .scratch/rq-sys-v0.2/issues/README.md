@@ -28,13 +28,13 @@
 | V02-T13 | [Kano选择获批访谈资料版本](13-kano-evidence-snapshots.md) | implemented-local | 02 | Beta |
 | V02-T14 | [手动Kano生成证据化假设报告](14-kano-report.md) | implemented-local | 08、13 | Beta |
 | V02-T15 | [对齐同标题不同TB ID的保留规则](15-source-id-invariant.md) | implemented-local | — | 核心 |
-| V02-T16 | [核心V0.2兼容迁移与目标验收](16-core-target-acceptance.md) | target-verified（迁移+发布+读回完成；登录态点检留人工） | 05、06、07、09、15 | 验收 |
-| V02-T17 | [RICE与Kano Beta独立目标验收](17-beta-target-acceptance.md) | target-verified（Kano 真实模型运行+报告抽检通过；RICE UI 点检留用户） | 12、14、16 | 验收 |
+| V02-T16 | [核心V0.2兼容迁移与目标验收](16-core-target-acceptance.md) | target-verified（迁移+发布+读回完成；2026-10-26 登录态点检发现 F-09 Base 幂等缺陷，AC05/06 待修复发布后复验） | 05、06、07、09、15 | 验收 |
+| V02-T17 | [RICE与Kano Beta独立目标验收](17-beta-target-acceptance.md) | target-verified（Kano 真实模型运行+报告抽检通过；2026-10-26 目标 UI RICE=120 与 Kano 报告点检完成） | 12、14、16 | 验收 |
 | V02-T18 | [获批U/M/S/C规则目标验收](18-priority-target-acceptance.md) | target-verified（规则 v1→P2 落 Base 回读通过） | 10、16 | 验收 |
 
 ## 当前可领取的前沿
 
-- **核心链路 01-09 与 15 全部 implemented-local（2026-10-24/25）**。**18 张工单全部收口（2026-10-25）：01-15 implemented-local、16/17/18 target-verified。目标验证含真实模型端到端（分析→P2 落 Base、Kano 报告抽检、通知链路），并发现且修复一处真实模型兼容缺陷（事实校验过严）。**
+- **核心链路 01-09 与 15 全部 implemented-local（2026-10-24/25）**。**18 张工单全部收口（2026-10-25）：01-15 implemented-local、16/17/18 target-verified。2026-10-26 登录态目标点检发现并本地修复阻断缺陷 F-09（限流装饰器漏转发平台键查找，手工需求重复推送新建 Base 行）；T16 AC05/06 待修复发布后复验，详见 [验证报告](../verification-20261026/VERIFICATION-REPORT.md)。**
 - **15** 已于 2026-10-23 实现为"同标题仅提示、独立处理"（implemented-local；AC04 计数拆分与 AC06 联合回归待后续票补齐，正式结论汇合到 16）。
 - **10** 规则确认包已备（见票内链接）；新算法实施仍等待 PM Leader 确认输入、公式、阈值和校准案例。
 - 02完成后，08、11、13可与03→04分支独立推进；实际开发先协调共享契约和仓储的文件归属。

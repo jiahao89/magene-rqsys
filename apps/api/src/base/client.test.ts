@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { FeishuBasePushAdapter, type BaseClient } from "./client.js";
 import { BaseKeyConflictError, FeishuApiError } from "./transport.js";
+import { RateLimitedBaseClient } from "./rate-limit.js";
 
 function fakeBase(initial?: { recordId: string; fields: Record<string, unknown> }) {
   const calls: string[] = [];
@@ -15,6 +16,27 @@ function fakeBase(initial?: { recordId: string; fields: Record<string, unknown> 
   };
   return { client, calls, row: () => row };
 }
+
+test("平台键经过限流装饰器仍生效：手工需求重复推送复用同一 Base 行", async () => {
+  const fake = fakeBase();
+  const limited = new RateLimitedBaseClient(fake.client, { minIntervalMs: 0 });
+  const adapter = new FeishuBasePushAdapter(limited, {
+    requirementId: "TB需求ID", platformRequirementId: "需求平台ID", owner: "执行人",
+    source: { title: "标题" }, ai: {}, pm: [],
+  });
+  const input = {
+    projectId: "p", requirementId: null, platformRequirementId: "RQ-000001",
+    requirementDbId: "11111111-2222-4333-8444-555555555555", title: "Manual",
+    owner: null, sourceVersion: 1, substantiveChanged: false, idempotencyKey: "manual:v1",
+  };
+  const first = await adapter.push(input);
+  const second = await adapter.push({ ...input, idempotencyKey: "manual:v2" });
+  assert.equal(first.created, true);
+  assert.equal(second.created, false);
+  assert.equal(second.recordId, first.recordId);
+  assert.equal(fake.calls.filter((call) => call === "create").length, 1);
+  assert.equal(fake.calls.filter((call) => call === "find-platform").length, 2);
+});
 
 test("creates/upserts on the Teambition requirement ID, permits empty owner, and filters fields", async () => {
   const fake = fakeBase();

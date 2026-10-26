@@ -46,6 +46,15 @@ export interface ApiDependencies {
   now: (() => Date) | undefined;
 }
 function json(body: unknown, status = 200): Response { return Response.json(body, { status }); }
+// PostgreSQL 的 uuid 列不接受任意字符串；路径里的非法 ID 必须在进入仓储层前收敛成 404，
+// 否则查询会抛 22P02 并被兜底成 500（PRD 8.5 EQ-02）。只有真实数据库组合根强制 UUID；
+// HTTP 单测使用短 ID 夹具，仓储替身不做 uuid 转换。
+const UUID_PATH_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function pathUuid(raw: string, dependencies: ApiDependencies): string | null {
+  const value = decodeURIComponent(raw);
+  if (dependencies.database && !UUID_PATH_RE.test(value)) return null;
+  return value;
+}
 function sourceDto(source: SourceConfigRecord) {
   return { id: source.id, projectName: source.externalProjectName, enabled: source.enabled, schedule: { enabled: source.scheduleEnabled, weekday: source.scheduleWeekday, time: normalizeScheduleTime(source.scheduleLocalTime), timezone: source.scheduleTimezone } };
 }
@@ -185,7 +194,8 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories) return jsonError("DEPENDENCY_UNAVAILABLE");
     const parsed = SourceConfigUpdateSchema.safeParse(await readJson(request)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
-    const sourceId = decodeURIComponent(sourceMatch[1]!);
+    const sourceId = pathUuid(sourceMatch[1]!, dependencies);
+    if (!sourceId) return jsonError("NOT_FOUND");
     const current = await repositories.sources.get(sourceId);
     if (!current) return jsonError("NOT_FOUND");
     const resolved = await resolveSourceConfig(parsed.data, dependencies, current);
@@ -245,7 +255,8 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
   if (method === "GET" && batchMatch) {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const batch = await repositories.batches.get(decodeURIComponent(batchMatch[1]!)); if (!batch) return jsonError("NOT_FOUND");
+    const batchId = pathUuid(batchMatch[1]!, dependencies); if (!batchId) return jsonError("NOT_FOUND");
+    const batch = await repositories.batches.get(batchId); if (!batch) return jsonError("NOT_FOUND");
     return json({ ...batchDto(batch), items: await repositories.items.listByBatch(batch.id) });
   }
   if (method === "GET" && url.pathname === "/api/audit") {
@@ -370,7 +381,8 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
   if (method === "POST" && rulePublishMatch) {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.priorityRules) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const id = decodeURIComponent(rulePublishMatch[1]!);
+    const id = pathUuid(rulePublishMatch[1]!, dependencies);
+    if (!id) return jsonError("NOT_FOUND");
     const existing = await repositories.priorityRules.get(id);
     if (!existing) return jsonError("NOT_FOUND");
     if (existing.status !== "draft") return jsonError("CONFLICT");
@@ -440,13 +452,14 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     // V02-T07：手工编辑（仅 web_manual）。TB 事实只读；期望源版本 + 幂等键。
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const requirementId = pathUuid(intakeEditMatch[1]!, dependencies); if (!requirementId) return jsonError("NOT_FOUND");
     const key = SyncIdempotencyHeaderSchema.safeParse(request.headers.get("Idempotency-Key")); if (!key.success) return jsonError("VALIDATION_FAILED");
     const parsedBody = RequirementIntakeEditSchema.safeParse(await request.json().catch(() => null)); if (!parsedBody.success) return jsonError("VALIDATION_FAILED");
     const requestHash = createHash("sha256").update(stableJson(parsedBody.data)).digest("hex");
     const body = parsedBody.data;
     try {
       const result = await repositories.requirements.updateManualRequirement({
-        requirementId: decodeURIComponent(intakeEditMatch[1]!), expectedSourceVersion: body.expectedSourceVersion, idempotencyKey: key.data, actorId: auth.actor.id, requestHash,
+        requirementId, expectedSourceVersion: body.expectedSourceVersion, idempotencyKey: key.data, actorId: auth.actor.id, requestHash,
         ...(body.title !== undefined ? { title: body.title } : {}),
         ...(body.description !== undefined ? { description: body.description } : {}),
         ...(body.sourceChannel !== undefined ? { sourceChannel: body.sourceChannel } : {}),
@@ -459,7 +472,7 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
       if (result.outcome === "not_manual") return jsonError("CONFLICT", "Teambition 来源的事实由 Teambition 维护，Web 仅编辑手工需求。");
       if (result.outcome === "key_conflict") return jsonError("CONFLICT", "该幂等键已用于不同的提交内容。");
       if (result.outcome === "version_conflict") return jsonError("CONFLICT", `版本冲突：该需求已被更新到源版本 ${result.currentSourceVersion}，请刷新后重试。`);
-      return json({ requirementId: decodeURIComponent(intakeEditMatch[1]!), outcome: result.outcome, sourceVersion: result.sourceVersion, ...(result.outcome === "updated" || result.outcome === "replay" ? { substantiveChanged: result.substantiveChanged } : {}) }, 200);
+      return json({ requirementId, outcome: result.outcome, sourceVersion: result.sourceVersion, ...(result.outcome === "updated" || result.outcome === "replay" ? { substantiveChanged: result.substantiveChanged } : {}) }, 200);
     } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
   }
   if (method === "GET" && url.pathname === "/api/requirements") {
@@ -501,7 +514,8 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
     try {
-      const result = await repositories.requirements.approveKanoEvidence?.(decodeURIComponent(kanoApproveMatch[1]!), auth.actor.id);
+      const evidenceId = pathUuid(kanoApproveMatch[1]!, dependencies); if (!evidenceId) return jsonError("NOT_FOUND");
+      const result = await repositories.requirements.approveKanoEvidence?.(evidenceId, auth.actor.id);
       if (!result) return jsonError("DEPENDENCY_UNAVAILABLE");
       if (result.outcome === "not_found") return jsonError("NOT_FOUND");
       if (result.outcome === "pii_flagged") return jsonError("CONFLICT", "资料包含疑似个人信息，去标识化后重新导入再批准。");
@@ -514,7 +528,8 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     // 运行中的报告；运行独立入队（kano_run），失败不触碰主分析/推送/通知。
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const requirement = await repositories.requirements.get(decodeURIComponent(kanoRunsMatch[1]!)); if (!requirement) return jsonError("NOT_FOUND");
+    const kanoRequirementId = pathUuid(kanoRunsMatch[1]!, dependencies); if (!kanoRequirementId) return jsonError("NOT_FOUND");
+    const requirement = await repositories.requirements.get(kanoRequirementId); if (!requirement) return jsonError("NOT_FOUND");
     if (method === "GET") {
       const runs = await repositories.requirements.listKanoRuns?.(requirement.id) ?? [];
       // 旧报告标明过期依据（AC08）：输入源版本或资料版本落后于当前时提示复核。
@@ -540,7 +555,8 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     // 不改主分析/优先级/PM 状态。量纲未获批 → 一律显示“待配置”，不出分数或排名。
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const requirement = await repositories.requirements.get(decodeURIComponent(riceMatch[1]!)); if (!requirement) return jsonError("NOT_FOUND");
+    const riceRequirementId = pathUuid(riceMatch[1]!, dependencies); if (!riceRequirementId) return jsonError("NOT_FOUND");
+    const requirement = await repositories.requirements.get(riceRequirementId); if (!requirement) return jsonError("NOT_FOUND");
     if (method === "GET") {
       const draft = await repositories.requirements.getRiceDraft?.(requirement.id) ?? null;
       const inputs = draft ? { reach: draft.reachInput, impact: draft.impactInput, confidence: draft.confidenceInput, effort: draft.effortInput } : { reach: null, impact: null, confidence: null, effort: null };
@@ -570,17 +586,19 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
     const parsed = AudienceUpdateSchema.safeParse(await request.json().catch(() => null)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
     try {
-      const result = await repositories.requirements.setAudienceTags(decodeURIComponent(audienceMatch[1]!), { tags: parsed.data.tags, expectedVersion: parsed.data.expectedVersion, actorId: auth.actor.id });
+      const audienceRequirementId = pathUuid(audienceMatch[1]!, dependencies); if (!audienceRequirementId) return jsonError("NOT_FOUND");
+      const result = await repositories.requirements.setAudienceTags(audienceRequirementId, { tags: parsed.data.tags, expectedVersion: parsed.data.expectedVersion, actorId: auth.actor.id });
       if (result.outcome === "not_found") return jsonError("NOT_FOUND");
       if (result.outcome === "version_conflict") return jsonError("CONFLICT", `人群标签已被他人更新到版本 ${result.currentVersion}，请刷新后重试。`);
-      return json({ requirementId: decodeURIComponent(audienceMatch[1]!), audienceVersion: result.version, confirmed: true, tags: parsed.data.tags });
+      return json({ requirementId: audienceRequirementId, audienceVersion: result.version, confirmed: true, tags: parsed.data.tags });
     } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
   }
   const requirementMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)$/);
   if (method === "GET" && requirementMatch) {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const req = await repositories.requirements.get(decodeURIComponent(requirementMatch[1]!)); if (!req) return jsonError("NOT_FOUND");
+    const requirementId = pathUuid(requirementMatch[1]!, dependencies); if (!requirementId) return jsonError("NOT_FOUND");
+    const req = await repositories.requirements.get(requirementId); if (!req) return jsonError("NOT_FOUND");
     const latest = await repositories.analyses?.latest(req.id) ?? null;
     const history = await repositories.analyses?.listByRequirement(req.id) ?? [];
     // 负责人姓名：详情单条解析一次，解析不到返回 null；前端会退回只显示映射状态。
@@ -598,7 +616,8 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
   if (method === "POST" && itemRetryMatch) {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.items || !repositories.batches || !repositories.jobs) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const item = await repositories.items.get(decodeURIComponent(itemRetryMatch[1]!)); if (!item) return jsonError("NOT_FOUND");
+    const itemId = pathUuid(itemRetryMatch[1]!, dependencies); if (!itemId) return jsonError("NOT_FOUND");
+    const item = await repositories.items.get(itemId); if (!item) return jsonError("NOT_FOUND");
     if (item.status !== "failed") return jsonError("CONFLICT");
     const batch = await repositories.batches.get(item.batchId); if (!batch) return jsonError("NOT_FOUND");
     const key = SyncIdempotencyHeaderSchema.safeParse(request.headers.get("Idempotency-Key")); if (!key.success) return jsonError("VALIDATION_FAILED");
@@ -642,7 +661,8 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
   if (method === "POST" && analysisRetryMatch) {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.requirements || !repositories.jobs || !repositories.audit) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const req = await repositories.requirements.get(decodeURIComponent(analysisRetryMatch[1]!)); if (!req) return jsonError("NOT_FOUND");
+    const analysisRequirementId = pathUuid(analysisRetryMatch[1]!, dependencies); if (!analysisRequirementId) return jsonError("NOT_FOUND");
+    const req = await repositories.requirements.get(analysisRequirementId); if (!req) return jsonError("NOT_FOUND");
     const latestAnalysis = await repositories.analyses?.latest(req.id) ?? null;
     const priorAnalysisVersion = latestAnalysis?.analysisVersion ?? 0;
     let retryAllowed = ["pending", "failed_retryable", "analyzed"].includes(req.pipeline.analysis);
@@ -687,7 +707,8 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
   if ((method === "PUT" || method === "DELETE") && ownerMatch) {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.people || !repositories.requirements || !repositories.jobs || !repositories.audit) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const req = await repositories.requirements.get(decodeURIComponent(ownerMatch[1]!)); if (!req) return jsonError("NOT_FOUND");
+    const ownerRequirementId = pathUuid(ownerMatch[1]!, dependencies); if (!ownerRequirementId) return jsonError("NOT_FOUND");
+    const req = await repositories.requirements.get(ownerRequirementId); if (!req) return jsonError("NOT_FOUND");
     if (!isIntakeComplete(req.pipeline.pull)) return jsonError("CONFLICT");
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
     const latestAnalysis = await repositories.analyses?.latest(req.id) ?? null;
@@ -743,8 +764,9 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
   if (method === "POST" && pushMatch) {
     const auth = await actorFor(request,dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.requirements || !repositories.jobs || !repositories.audit) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const pushRequirementId = pathUuid(pushMatch[1]!, dependencies); if (!pushRequirementId) return jsonError("NOT_FOUND");
     const key = SyncIdempotencyHeaderSchema.safeParse(request.headers.get("Idempotency-Key")); if (!key.success) return jsonError("VALIDATION_FAILED");
-    const req = await repositories.requirements.get(decodeURIComponent(pushMatch[1]!)); if (!req) return jsonError("NOT_FOUND");
+    const req = await repositories.requirements.get(pushRequirementId); if (!req) return jsonError("NOT_FOUND");
     if (!isIntakeComplete(req.pipeline.pull) || req.pipeline.owner === "pending_mapping" || !["pending", "failed"].includes(req.pipeline.push)) return jsonError("CONFLICT");
     const latestAnalysis = await repositories.analyses?.latest(req.id) ?? null;
     const analysisVersion = latestAnalysis?.analysisVersion ?? 0;

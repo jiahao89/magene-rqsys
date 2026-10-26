@@ -409,6 +409,7 @@ html[data-theme="dark"] .field-error { color: var(--rq-danger); }
 .req-field > .link-button, .req-description-field > .link-button { align-self: flex-start; }
 .req-field-label { display: inline-flex; align-items: center; gap: 6px; color: var(--rq-text-muted); font-size: var(--rq-font-caption); font-weight: 600; }
 .tb-badge { display: inline-grid; min-width: 21px; height: 15px; place-items: center; padding: 0 4px; border-radius: 4px; color: #3159a8; background: #edf3ff; font-size: 10px; font-weight: 750; letter-spacing: .2px; }
+.tb-badge.is-manual { color: #5b6472; background: #eef1f5; }
 .req-l1-title { margin: 0; color: var(--rq-text-strong); font-size: 20px; font-weight: 650; line-height: 1.45; white-space: normal; word-break: break-word; }
 .req-description { display: -webkit-box; overflow: hidden; margin: 0; color: var(--rq-foreground); font-size: 14px; line-height: 1.65; white-space: pre-wrap; word-break: break-word; -webkit-box-orient: vertical; -webkit-line-clamp: 6; }
 .req-description.is-expanded { display: block; overflow: visible; }
@@ -474,6 +475,7 @@ html[data-theme="dark"] .advice-conclusion,
 html[data-theme="dark"] .req-empty-state strong { color: var(--rq-foreground); }
 html[data-theme="dark"] .req-source-note { color: var(--rq-accent-text); }
 html[data-theme="dark"] .tb-badge { color: #a9c4ff; background: #1c2740; }
+html[data-theme="dark"] .tb-badge.is-manual { color: #c4ccd8; background: #2a3039; }
 html[data-theme="dark"] .req-avatar { color: var(--rq-accent-text); background: var(--rq-accent-soft); }
 html[data-theme="dark"] .req-owner.is-unassigned { color: #e0b45c; }
 html[data-theme="dark"] .req-owner.is-unassigned .req-avatar { color: #e0bd76; background: #332a17; }

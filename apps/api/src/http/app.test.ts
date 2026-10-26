@@ -26,6 +26,21 @@ function makeDependencies(actor: { id: string } = { id: "actor-1" }): ApiDepende
  return { database: null, repositories, identity: { requireActor: async () => actor }, now: () => new Date("2026-10-08T00:00:00.000Z") };
 }
 const unauthenticated: ApiDependencies = { database: null, repositories: undefined, identity: undefined, now: undefined };
+test("rejects non-UUID path IDs with 404 before touching uuid repositories", async () => {
+  const d = { ...makeDependencies(), database: {} as never };
+  const cases: Array<[string, string]> = [
+    ["GET", "/api/requirements/not-a-uuid"],
+    ["PATCH", "/api/requirements/not-a-uuid"],
+    ["GET", "/api/batches/not-a-uuid"],
+    ["POST", "/api/items/not-a-uuid/retry"],
+    ["POST", "/api/analysis/not-a-uuid/retry"],
+    ["POST", "/api/requirements/not-a-uuid/push"],
+  ];
+  for (const [method, path] of cases) {
+    const response = await handleApiRequest(new Request(`http://localhost${path}`, { method }), d);
+    assert.equal(response.status, 404, `${method} ${path}`);
+  }
+});
 test("liveness reports the API service", async () => { const r = await handleApiRequest(new Request("http://localhost/api/health"), unauthenticated); assert.equal(r.status, 200); assert.deepEqual(await r.json(), { status: "ok", service: "rq-sys-api" }); });
 
 test("readiness reports unavailable when no database is configured", async () => { const r = await handleApiRequest(new Request("http://localhost/api/health/ready"), unauthenticated); assert.equal(r.status, 503); assert.deepEqual(await r.json(), { status: "not_ready", reason: "database_unavailable_or_not_configured" }); });

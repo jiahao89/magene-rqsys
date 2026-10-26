@@ -7,6 +7,7 @@ function stub() {
   const calls: string[] = [];
   const client: BaseClient = {
     async findByRequirementKey() { calls.push("find"); return null; },
+    async findByPlatformKey() { calls.push("platform"); return null; },
     async create() { calls.push("create"); return { recordId: "r1", fields: {} } as BaseRecord; },
     async update() { calls.push("update"); return { recordId: "r1", fields: {} } as BaseRecord; },
     async readPmFields() { calls.push("read"); return {}; },
@@ -90,8 +91,9 @@ test("所有 Base 方法都受限流（含读取路径）", async () => {
   const clock = fakeClock();
   const limited = new RateLimitedBaseClient(client, { minIntervalMs: 50, now: clock.now, sleep: clock.sleep });
   await limited.findByRequirementKey({ projectId: "p", requirementId: "r" });
+  await limited.findByPlatformKey("RQ-000001");
   await limited.readPmFields("rec");
   await limited.update("rec", {});
-  assert.deepEqual(calls, ["find", "read", "update"]);
-  assert.deepEqual(clock.slept, [50, 50]);
+  assert.deepEqual(calls, ["find", "platform", "read", "update"]);
+  assert.deepEqual(clock.slept, [50, 50, 50]);
 });

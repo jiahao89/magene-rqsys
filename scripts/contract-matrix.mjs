@@ -12,6 +12,8 @@
 //   node scripts/contract-matrix.mjs --only base,db   # 只跑指定边界
 //   node scripts/contract-matrix.mjs --write          # 额外做一次 POC 表写入往返（会写飞书）
 //   node scripts/contract-matrix.mjs --ai             # 额外做一次 DeepSeek 极小调用（会产生费用）
+//   CONTRACT_TARGET_BASE_TOKEN=... CONTRACT_TARGET_TABLE_ID=... \
+//     node scripts/contract-matrix.mjs --only base    # 额外只读核对目标正式 Base 的平台键覆盖
 //
 // 安全边界：
 //   - 默认只读；写入仅 --write，且只针对隔离 POC 表，写完立即删除并核对。
@@ -44,6 +46,10 @@ const ALLOW_AI = hasFlag("--ai");
 const POC_BASE_TOKEN = process.env.POC_BASE_TOKEN ?? "OddqbqBeOamFjFsR5IXcJdjknmd";
 const POC_TABLE_ID = process.env.POC_TABLE_ID ?? "tblxbyvbdLGVnLaO";
 const FORMAL_TABLE_ID = "tbl6Gfi0KJ2a1llK"; // 仅用于断言"我们没指向它"
+// 目标正式 Base 的独立只读核对（F-05）：显式提供才运行，绝不写入。
+const TARGET_BASE_TOKEN = process.env.CONTRACT_TARGET_BASE_TOKEN;
+const TARGET_TABLE_ID = process.env.CONTRACT_TARGET_TABLE_ID;
+const TARGET_PLATFORM_FIELD = process.env.CONTRACT_TARGET_PLATFORM_FIELD ?? "需求平台ID";
 
 // 代码侧默认字段映射（apps/api/src/server.ts 的 DEFAULT_BASE_FIELDS）
 const DEFAULT_FIELDS = {
@@ -92,7 +98,42 @@ async function lark(argsList) {
 }
 
 // ============ 边界 1：飞书 Base 表结构 ============
+// 目标正式 Base 平台键只读核对（F-05）。默认不运行：必须显式提供
+// CONTRACT_TARGET_BASE_TOKEN / CONTRACT_TARGET_TABLE_ID，避免误读/误写生产表。
+async function checkTargetPlatformKey() {
+  const B = "base";
+  if (!TARGET_BASE_TOKEN || !TARGET_TABLE_ID) {
+    return skip(B, "目标正式 Base 平台键", "未设置 CONTRACT_TARGET_BASE_TOKEN / CONTRACT_TARGET_TABLE_ID");
+  }
+  const fieldRes = await lark(["base", "+field-list", "--base-token", TARGET_BASE_TOKEN, "--table-id", TARGET_TABLE_ID, "--json"]);
+  if (!fieldRes.ok) return fail(B, "目标正式 Base 平台键", `字段读取失败（${fieldRes.error}）`);
+  const field = (fieldRes.data.fields ?? []).find((item) => item.name === TARGET_PLATFORM_FIELD);
+  if (!field) return fail(B, "目标正式 Base 平台键", `缺少字段「${TARGET_PLATFORM_FIELD}」`);
+  if (field.type !== "text") return fail(B, "目标正式 Base 平台键", `「${TARGET_PLATFORM_FIELD}」类型为 ${field.type}，代码按文本写入`);
+  pass(B, "目标正式 Base 平台键字段", `${TARGET_PLATFORM_FIELD} / text`);
+
+  const ndjsonPath = resolve("/tmp", `rqsys-contract-target-platform-${process.pid}.ndjson`);
+  const listRes = await lark(["base", "+record-list", "--base-token", TARGET_BASE_TOKEN, "--table-id", TARGET_TABLE_ID,
+    "--field-id", TARGET_PLATFORM_FIELD, "--format", "ndjson", "--output", ndjsonPath, "--overwrite", "--limit", "2000"]);
+  if (!listRes.ok) return fail(B, "目标正式 Base 平台键覆盖", `记录读取失败（${listRes.error}）`);
+  let rows;
+  try {
+    const text = await readFile(ndjsonPath, "utf8");
+    rows = text.trim() ? text.trim().split("\n").map((line) => JSON.parse(line)) : [];
+  } catch (error) {
+    return fail(B, "目标正式 Base 平台键覆盖", `记录解析失败（${String(error?.message ?? error).slice(0, 120)}）`);
+  }
+  if (!rows.length) return fail(B, "目标正式 Base 平台键覆盖", "表内 0 行");
+  const values = rows.map((row) => row[TARGET_PLATFORM_FIELD]);
+  const empty = values.filter((value) => value === null || value === undefined || String(value).trim() === "").length;
+  const unique = new Set(values.map((value) => String(value).trim())).size;
+  if (empty > 0) return fail(B, "目标正式 Base 平台键覆盖", `${rows.length} 行中 ${empty} 行平台键为空`);
+  if (unique !== rows.length) return fail(B, "目标正式 Base 平台键覆盖", `${rows.length} 行只有 ${unique} 个唯一平台键（存在重复）`);
+  pass(B, "目标正式 Base 平台键覆盖", `${rows.length} 行 / ${unique} 个唯一平台键 / 0 空值`);
+}
+
 async function checkBase() {
+  if (TARGET_BASE_TOKEN && TARGET_TABLE_ID) await checkTargetPlatformKey();
   const B = "base";
   const r = await lark(["base", "+field-list", "--base-token", POC_BASE_TOKEN, "--table-id", POC_TABLE_ID, "--json"]);
   if (!r.ok) return skip(B, "读取 Base 字段结构", `无法读取（${r.error}）；需要已登录的 lark-cli 用户身份`);

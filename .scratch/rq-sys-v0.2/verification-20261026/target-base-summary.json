@@ -1,0 +1,18 @@
+{
+  "scope": "target formal base read-only aggregate (sensitive raw export deleted)",
+  "rows": 312,
+  "platform_nonempty": 312,
+  "platform_unique": 312,
+  "tb_id_nonempty": 312,
+  "push_states": {
+    "['已推送']": 312
+  },
+  "source_versions": {
+    "1": 270,
+    "None": 42
+  },
+  "ai_priority": {
+    "[]": 311,
+    "['P2']": 1
+  }
+}
