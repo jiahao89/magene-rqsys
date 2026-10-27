@@ -1,6 +1,6 @@
 # RQ-Sys V0.2 Tickets
 
-> 拆分已于2026-10-23由用户确认并发布至本地 tracker。共18张 Ticket；**截至2026-10-26，当前开发与验收范围已收口**：01–08、10–15 为 implemented-local，09、16–18 为 target-verified。T16 AC05 按用户确认使用正式 Base 验收；AC06 的 PM 快照失败路径采用本地故障注入，负责人变更通知由获批准的测试收件人确认送达。仍有运行配置需复核，见下文和[验证报告](../verification-20261026/VERIFICATION-REPORT.md)。
+> 拆分已于2026-10-23由用户确认并发布至本地 tracker。共18张 Ticket；**截至2026-10-27，当前开发与验收范围已收口**：01–08、10–15 为 implemented-local，09、16–18 为 target-verified。T16 AC05 按用户确认使用正式 Base 验收；AC06 的 PM 快照失败路径采用本地故障注入，负责人变更通知由获批准的测试收件人确认送达。多 weekday 周计划已实现并发布，目标配置为周一/三/五 09:00；恢复触发器按方案 2 保持 disabled，待约定窗口启用。详见[验证报告](../verification-20261026/VERIFICATION-REPORT.md)。
 
 ## 使用方式
 
@@ -35,7 +35,7 @@
 ## 当前状态
 
 - V0.2 当前 18 张 Ticket 均已收口；状态与验收证据以本表和各票为准。没有待领取的 V0.2 实施票。
-- 定时任务为运营配置，不作为 MVP 验收强关联项（2026-10-27 只读复核）：当前来源模型只有单个 `weekday`，Online 为**周三 09:00 Asia/Shanghai**；用户要求的“周一/周三/周五”需新增多 weekday 支持（字段+due 计算+API/UI+迁移）。恢复触发器 `rqsysWeeklySyncRecovery` enabled `*/30`；队列 0 queued/running，最近 scheduled 批次为 2026-10-23 的周三窗口（288/288 成功）。本轮只读复核使用 `apps +db-data-export`，未写目标。
+- 定时任务为运营配置，不作为 MVP 验收强关联项。多 weekday 已实现并发布（迁移 `0018`，release `7701156473946443015 / a603fed`）：Online 来源现为 **周一/周三/周五 09:00 Asia/Shanghai**，`weekdays=[1,3,5]`；恢复触发器 `rqsysWeeklySyncRecovery` 按方案 2 保持 **disabled**，待约定窗口启用。配置更新后队列 0 queued/running，作业/批次未增加，未触发 scheduled 同步。
 - 其他跟踪项：F-11 飞书 Base filter 曾出现瞬时 1254607，恢复重试后成功；F-08 前端包体仍有拆包优化空间；最近快照中的未映射负责人需求按现有流程待处理。详见[验证报告](../verification-20261026/VERIFICATION-REPORT.md)。
 - 后续新增功能或改变已确认口径时，先更新 PRD/Spec/门槛，再新增 Ticket；不要沿用本页的历史依赖顺序当作待办状态。
 

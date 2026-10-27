@@ -1,20 +1,26 @@
 {
-  "captured_at": "2026-10-27T09:10:00+08:00",
+  "captured_at": "2026-10-27T09:45:00+08:00",
   "source": {
     "id": "99331edb-663b-4635-99f4-597e26304ab1",
     "external_project_name": "室外产品-码表软固件需求池",
     "enabled": true,
     "schedule_enabled": true,
-    "schedule_weekday": 3,
+    "schedule_weekday": 1,
     "schedule_local_time": "09:00:00",
     "schedule_timezone": "Asia/Shanghai",
-    "updated_at": "2026-10-23T09:36:33.1706+08:00"
+    "updated_at": "2026-10-27T09:42:53.154271+08:00",
+    "schedule_weekdays": [
+      1,
+      3,
+      5
+    ]
   },
   "trigger": {
     "name": "rqsysWeeklySyncRecovery",
-    "status": "enabled",
+    "status": "disabled",
     "cron": "*/30 * * * *",
-    "timezone": "Asia/Shanghai"
+    "timezone": "Asia/Shanghai",
+    "plan": "方案 2：配置变更期间及之后保持 disabled，待约定窗口启用"
   },
   "queue": {
     "jobs_total": 644,
@@ -56,16 +62,47 @@
     }
   },
   "audit": {
-    "total": 1412,
+    "total": 1413,
     "last_source_config_update": {
       "event_type": "source.config_updated",
       "actor_id": "1868660374748201",
-      "occurred_at": "2026-10-23T09:36:33.165+08:00",
+      "occurred_at": "2026-10-27T09:42:53.148+08:00",
       "result": "succeeded"
     }
   },
   "expected": {
-    "schedule": "Monday 09:00 Asia/Shanghai",
-    "source": "specs/rq-sys-mvp/LOCAL-AND-TARGET-STATUS.md"
+    "schedule": "Monday/Wednesday/Friday 09:00 Asia/Shanghai",
+    "source": "user decision 2026-10-27"
+  },
+  "releases": [
+    {
+      "release_id": "7701154594076691704",
+      "commit": "8e9d67e",
+      "status": "finished",
+      "note": "feature release; array binding bug found on update"
+    },
+    {
+      "release_id": "7701156473946443015",
+      "commit": "a603fed",
+      "status": "finished",
+      "note": "array binding fix; used for config update"
+    }
+  ],
+  "migration": {
+    "file": "0018_source_multi_weekday.sql",
+    "online": "applied",
+    "changes": 3,
+    "column": "schedule_weekdays smallint[]"
+  },
+  "post_config": {
+    "jobs_total": 644,
+    "job_status": {
+      "succeeded": 640,
+      "failed": 4
+    },
+    "active_jobs": 0,
+    "batches_total": 18,
+    "scheduled_batches": 5,
+    "new_scheduled_batches": 0
   }
 }

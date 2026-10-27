@@ -1,8 +1,8 @@
 # RQ-Sys V0.2 全功能验证报告
 
-- 日期：2026-10-26（Asia/Shanghai）
+- 日期：2026-10-26/27（Asia/Shanghai）
 - 范围：V0.2 PRD 全部功能（Web 手工建单/编辑、来源模型、主 AI、六层人群、负责人、Base 平台键、U/M/S/C 规则、RICE Beta、Kano Beta、TB 兼容与同标题保留），并回看 MVP 主链路。
-- 结论：**本地全链路验证通过；F-09/F-10 与 F-12 修复已发布到目标（最新 release `7700883606495153388` / commit `3beaec0`，finished、无错误日志）并完成目标复验；PRD §7 的 12 项验收标准本地与目标环境均已复验通过（#11 人群标签新增目标合成验证：多选→空集→AI 重跑保留、版本/审计/无 Base 副作用）。** 目标复验确认手工需求重复推送始终只有 1 条 Base 行，负责人/内容变更通知字段正确；F-04 非法 UUID 目标返回 404；F-05 契约矩阵已核对目标 Base 312/312 平台键；F-01/F-02/F-03 前端修复已在目标 UI 点检；F-12 畸形 URL 编码不再导致 500。**运行层仍待复核（见 5C：周计划当前周三 09:00，预期周一 09:00；触发器 enabled；队列 0 active）**。T16 AC01–10 已全部通过：AC05 经用户确认以正式 Base 为验收例外；AC06 的空→A/A→B/内容变更/AI重试/重复静默/PM 快照失败本地注入均通过，Base 自动化“负责人变更”经史东升确认送达。**代码与验收票可收口；定时任务按运营配置单独管理，不作为 MVP 验收强关联项**（见 5C：当前单 weekday=周三 09:00；周一/周三/周五需功能改动；触发器 enabled；队列 0 active）。
+- 结论：**本地全链路验证通过；F-09/F-10 与 F-12 修复已发布到目标；多 weekday 最新 release `7701156473946443015` / commit `a603fed`（finished、无错误日志）已上线并配置周一/周三/周五；PRD §7 的 12 项验收标准本地与目标环境均已复验通过（#11 人群标签新增目标合成验证：多选→空集→AI 重跑保留、版本/审计/无 Base 副作用）。** 目标复验确认手工需求重复推送始终只有 1 条 Base 行，负责人/内容变更通知字段正确；F-04 非法 UUID 目标返回 404；F-05 契约矩阵已核对目标 Base 312/312 平台键；F-01/F-02/F-03 前端修复已在目标 UI 点检；F-12 畸形 URL 编码不再导致 500。**运行层：多 weekday 已实现，目标周计划配置为周一/周三/周五 09:00 Asia/Shanghai；恢复触发器按方案 2 保持 disabled，待约定窗口启用；队列 0 active（见 5D）。** T16 AC01–10 已全部通过：AC05 经用户确认以正式 Base 为验收例外；AC06 的空→A/A→B/内容变更/AI重试/重复静默/PM 快照失败本地注入均通过，Base 自动化“负责人变更”经史东升确认送达。**代码与验收票可收口；定时任务按运营配置单独管理，不作为 MVP 验收强关联项。**
 
 ## 1. 基线
 
@@ -70,7 +70,7 @@ node --import tsx .scratch/rq-sys-v0.2/verification-20261026/e2e/harness.mts
 | 编辑 UI | 修改描述保存成功（API 源版本 v5、审计/分析/推送完成）；修复后详情显示新描述；截图 `detail-edited-refreshed.png`、`detail-manual-fixed.png` |
 | 新建 UI | 提交后进入详情 `RQ-000007`；等待后状态变为已分析/已推送；截图 `detail-created-requirement.png`、`detail-created-analyzed.png` |
 | 负责人 UI | 负责人下拉加载已有人员映射，指派成功并显示“手动指定”；截图 `detail-owner-picker.png`、`detail-owner-assigned.png` |
-| 总览 / 来源 / 同步记录 / 规则 | 指标、四阶段、批次 4/4、周计划未启用、规则 v1 阈值 3/2/1 均正确；批次明细头显示完整批次 ID（F-02 修复验证）；截图 `overview.png`、`sources.png`、`sync-records.png`、`sync-batch-detail.png`、`rules.png` |
+| 总览 / 来源 / 同步记录 / 规则 | 指标、四阶段、批次 4/4、周计划（当前周一/三/五 09:00，触发器 disabled）、规则 v1 阈值 3/2/1 均正确；批次明细头显示完整批次 ID（F-02 修复验证）；截图 `overview.png`、`sources.png`、`sync-records.png`、`sync-batch-detail.png`、`rules.png` |
 | 深色 / 390px 移动端 | 无整页横向溢出（scrollWidth=390）；Beta/人群/编辑区可读；截图 `detail-dark.png`、`detail-mobile-390.png` |
 
 ## 5. 目标环境只读核对
@@ -124,14 +124,21 @@ node --import tsx .scratch/rq-sys-v0.2/verification-20261026/e2e/harness.mts
 - 观察 **F-11**：一次 Base `records filter` 返回 1254607，worker 自动重试后成功且未新建行；属外部 API 瞬时错误，但会短暂置 `push_state=failed`，需纳入监控。
 - **票面口径说明**：AC05 经用户确认以正式 Base 为验收例外；AC06 的空→A、A→B、内容变更、重复静默、PM 快照失败本地注入均已覆盖，Base 自动化“负责人变更”通知经史东升确认送达。T16 AC01–10 全部通过。
 
-## 5C. 运行层只读复核（2026-10-27）
+## 5C. 运行层只读复核（2026-10-27，改动前状态，已被 5D 取代）
 
-- 查询方式：`apps +db-execute` 被 CLI 归类为 high-risk-write，即使 SELECT 也需要 `--yes`（用户遇到的 exit 10 确认门禁，未绕过）。本轮改用 read-risk 的 `apps +db-data-export` 导出 `source_configs/pipeline_jobs/sync_batches/audit_events` 后本地分析，未执行任何目标写入。摘要见 `target-readonly/runtime-readonly-summary.json`。
-- **周计划当前状态**：来源 `室外产品-码表软固件需求池`，`schedule_enabled=true`，`weekday=3`（**周三**），`09:00`，`Asia/Shanghai`，最后更新 `2026-10-23 09:36`。与文档约定的**周一 09:00**不一致。
-- **恢复触发器**：`rqsysWeeklySyncRecovery`，`enabled`，cron `*/30 * * * *`，`Asia/Shanghai`。
-- **队列状态**：`pipeline_jobs` 0 queued/running（644 条历史：640 succeeded / 4 failed）；`sync_batches` 18 条（17 succeeded / 1 failed）；最近一次批次是 2026-10-25 20:21 的 manual full sync（315/315 succeeded）；最近一次 scheduled 批次是 2026-10-23 09:41，窗口 `2026-10-21T01:00Z`（= 周三 09:00 Asia/Shanghai），288/288 succeeded。
-- **结论**：代码/功能验收保持完成；**定时任务属于运营配置，不是强关联的 MVP 验收项**，因此周计划日期不作为验收阻塞。当前为单 weekday 配置（周三 09:00），与文档约定的周一不同；用户要求的“周一/周三/周五”需要多 weekday 功能支持，见下。
-- **配置能力限制**：当前来源模型只有单个 `schedule_weekday`（1–7），无法直接保存“周一/周三/周五”；需要新增多 weekday 字段、due 窗口计算、API/UI 与迁移后发布。直接改成周一还可能让下一次 30 分钟触发器立即补跑 `2026-10-26 09:00` 的逾期窗口并触发真实 315 条同步，需先确定变更窗口。
+- 查询方式：`apps +db-execute` 被 CLI 归类为 high-risk-write，即使 SELECT 也需要 `--yes`；本轮未绕过门禁，改用 read-risk 的 `apps +db-data-export` 导出后本地分析，未执行目标写入。
+- 改动前：来源为单 weekday，`weekday=3`（周三）09:00 Asia/Shanghai，触发器 enabled `*/30`；队列 0 active；最近 scheduled 批次为 2026-10-23 的周三窗口（288/288 成功）。
+- 结论：定时任务属于运营配置，不是 MVP 验收强关联项；用户要求改为周一/周三/周五，因此进入 5D 的多 weekday 实现。
+
+## 5D. 多 weekday 实现与目标配置（2026-10-27）
+
+- 迁移 `0018_source_multi_weekday.sql`：`source_configs` 新增 `schedule_weekdays smallint[]`，保留 `schedule_weekday` 作为旧兼容/首日字段；在线迁移 `db-env-migrate` 应用 3 项变更（列 + 约束 + validate）。
+- API/UI：来源配置接受/返回 `weekdays` 数组并保留 `weekday`；前端改为周一–周日多选；due 计算取所选日期中最近一个匹配窗口；两仓行为对齐。
+- 本地验证：API **452/452**、Web **84/84**、妙搭路由 **115/115**；根仓 typecheck/build、妙搭 type:check/build:prod/lint、两仓对齐和 `diff --check` 通过。
+- 目标排障：首次 release `7701154594076691704 / 8e9d67e` 修复了功能，但妙搭 Drizzle 适配器把 JS 数组展开成行元组导致来源更新 500；改为 `{1,3,5}` 字符串 + `::smallint[]` 后，本地 Drizzle 适配器实测通过，release `7701156473946443015 / a603fed` 上线。
+- 目标配置：来源 `室外产品-码表软固件需求池` 现为 `schedule_enabled=true`、`weekday=1`、`weekdays=[1,3,5]`、`09:00`、`Asia/Shanghai`；API 回读与 DB 导出一致；目标 UI 截图 `ui/target-multi-weekday.png`（周一/三/五选中，列表显示“周一/周三/周五 09:00”）。
+- 触发器按**方案 2**保持 `disabled`；配置更新后队列仍 0 active，作业 644/批次 18 未增加，未触发任何 scheduled 批次。
+- 待约定窗口启用触发器。注意：若在下一个匹配窗口前启用，due 逻辑可能立即补跑 `2026-10-26 09:00`（周一）的逾期窗口并触发真实 315 条同步；建议在 **2026-10-28 09:00 之后、09:30 之前**启用，使首轮 scheduled 批次对应周三 09:00 窗口，或在接受立即补跑时另行确认。
 
 ## 6. PRD 第 7 节验收矩阵
 
@@ -236,7 +243,7 @@ npm run type:check && npm run test:rqsys-route && npm run build:prod && npm run 
 
 - 现象：`GET /api/requirements/%E0%A4%A` 等非法百分号编码会让 `decodeURIComponent` 抛 `URIError`，落进 `server.ts` 的 500 兜底；普通非法 UUID 已由 F-04 收敛为 404。
 - 修复：两仓 `http/app.ts` 新增 `safeDecodePath`；UUID 路径解码失败返回 404，人员姓名路径解码失败返回 400，不再抛异常。补 `app.test.ts` 回归用例与本地 E2E `畸形 URL 编码返回 4xx` 断言。
-- 验证：本轮复验 API 449/449、Web 82/82、妙搭路由 114/114、E2E 233 项全绿且畸形 URL 断言通过；目标 release `7700883606495153388 / 3beaec0` 后，应用 API 对 `%E0%A4%A` 返回 400（网关层拦截），不再 500。根仓类型检查/构建、妙搭 lint/类型检查/生产构建、两仓对齐及 `diff --check` 通过。
+- 验证：本轮复验 API 452/452、Web 84/84、妙搭路由 115/115、E2E 233 项全绿且畸形 URL 断言通过；多 weekday 最新 release `7701156473946443015 / a603fed` 上线后，应用 API 对 `%E0%A4%A` 仍返回 400（网关层拦截），不再 500。根仓类型检查/构建、妙搭 lint/类型检查/生产构建、两仓对齐及 `diff --check` 通过。
 
 ### F-07（观察）目标 45 条待处理不是失败
 
@@ -248,7 +255,7 @@ npm run type:check && npm run test:rqsys-route && npm run build:prod && npm run 
 
 ## 10. 剩余工作（建议顺序）
 
-1. 复核 Online 周计划：上次只读快照是每周三 09:00，需求记录为每周一 09:00；本轮 `apps +db-execute` 的 SELECT 收到 exit 10、要求确认，未绕过该门禁，因此没有当前读数，也没有修改配置。
+1. 按约定窗口启用恢复触发器（当前 disabled）：配置已是周一/周三/周五 09:00；启用前确认是否接受逾期周一窗口补跑，建议在 2026-10-28 09:00–09:30 之间启用并验证首轮 scheduled 批次。
 2. 持续观察 F-11（Bitable filter 瞬时 1254607），必要时增加退避/告警；最近快照中的未映射负责人需求按既有流程推进。
 3. F-08 前端包体拆分属于非阻断性能优化，不在当前 V0.2 功能验收门槛内。
 
