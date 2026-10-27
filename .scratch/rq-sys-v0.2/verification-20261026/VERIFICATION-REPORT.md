@@ -2,7 +2,7 @@
 
 - 日期：2026-10-26（Asia/Shanghai）
 - 范围：V0.2 PRD 全部功能（Web 手工建单/编辑、来源模型、主 AI、六层人群、负责人、Base 平台键、U/M/S/C 规则、RICE Beta、Kano Beta、TB 兼容与同标题保留），并回看 MVP 主链路。
-- 结论：**本地全链路验证通过；F-09/F-10 与 F-12 修复已发布到目标（最新 release `7700883606495153388` / commit `3beaec0`，finished、无错误日志）并完成目标复验；PRD §7 的 12 项验收标准本地与目标环境均已复验通过（#11 人群标签新增目标合成验证：多选→空集→AI 重跑保留、版本/审计/无 Base 副作用）。** 目标复验确认手工需求重复推送始终只有 1 条 Base 行，负责人/内容变更通知字段正确；F-04 非法 UUID 目标返回 404；F-05 契约矩阵已核对目标 Base 312/312 平台键；F-01/F-02/F-03 前端修复已在目标 UI 点检；F-12 畸形 URL 编码不再导致 500。T16 AC01–10 已全部通过：AC05 经用户确认以正式 Base 为验收例外；AC06 的空→A/A→B/内容变更/AI重试/重复静默/PM 快照失败本地注入均通过，Base 自动化“负责人变更”经史东升确认送达。**开发和验收票可收口；整体运行配置收尾仍待复核周计划**（上次快照为周三 09:00，期望记录为周一 09:00，本轮数据库重读未执行，见 §10）。
+- 结论：**本地全链路验证通过；F-09/F-10 与 F-12 修复已发布到目标（最新 release `7700883606495153388` / commit `3beaec0`，finished、无错误日志）并完成目标复验；PRD §7 的 12 项验收标准本地与目标环境均已复验通过（#11 人群标签新增目标合成验证：多选→空集→AI 重跑保留、版本/审计/无 Base 副作用）。** 目标复验确认手工需求重复推送始终只有 1 条 Base 行，负责人/内容变更通知字段正确；F-04 非法 UUID 目标返回 404；F-05 契约矩阵已核对目标 Base 312/312 平台键；F-01/F-02/F-03 前端修复已在目标 UI 点检；F-12 畸形 URL 编码不再导致 500。**运行层仍待复核（见 5C：周计划当前周三 09:00，预期周一 09:00；触发器 enabled；队列 0 active）**。T16 AC01–10 已全部通过：AC05 经用户确认以正式 Base 为验收例外；AC06 的空→A/A→B/内容变更/AI重试/重复静默/PM 快照失败本地注入均通过，Base 自动化“负责人变更”经史东升确认送达。**代码与验收票可收口；运行层仍不能宣布生产全量验收完成**（见 5C：周计划当前为周三 09:00，预期周一 09:00；恢复触发器 enabled；队列 0 active）。
 
 ## 1. 基线
 
@@ -123,6 +123,15 @@ node --import tsx .scratch/rq-sys-v0.2/verification-20261026/e2e/harness.mts
 - **PRD #11 / T09 目标补验**：目标合成需求首次未确认正常推送；保存 L2/L5（version 1/审计）→ 保存确认空集（version 2/审计）→ AI 重跑成功（分析 v2 P2）后人工空集仍保留；`base_push_runs` 仍 1、无新 Base 推送/通知；UI 显示“已确认为空”。
 - 观察 **F-11**：一次 Base `records filter` 返回 1254607，worker 自动重试后成功且未新建行；属外部 API 瞬时错误，但会短暂置 `push_state=failed`，需纳入监控。
 - **票面口径说明**：AC05 经用户确认以正式 Base 为验收例外；AC06 的空→A、A→B、内容变更、重复静默、PM 快照失败本地注入均已覆盖，Base 自动化“负责人变更”通知经史东升确认送达。T16 AC01–10 全部通过。
+
+## 5C. 运行层只读复核（2026-10-27）
+
+- 查询方式：`apps +db-execute` 被 CLI 归类为 high-risk-write，即使 SELECT 也需要 `--yes`（用户遇到的 exit 10 确认门禁，未绕过）。本轮改用 read-risk 的 `apps +db-data-export` 导出 `source_configs/pipeline_jobs/sync_batches/audit_events` 后本地分析，未执行任何目标写入。摘要见 `target-readonly/runtime-readonly-summary.json`。
+- **周计划当前状态**：来源 `室外产品-码表软固件需求池`，`schedule_enabled=true`，`weekday=3`（**周三**），`09:00`，`Asia/Shanghai`，最后更新 `2026-10-23 09:36`。与文档约定的**周一 09:00**不一致。
+- **恢复触发器**：`rqsysWeeklySyncRecovery`，`enabled`，cron `*/30 * * * *`，`Asia/Shanghai`。
+- **队列状态**：`pipeline_jobs` 0 queued/running（644 条历史：640 succeeded / 4 failed）；`sync_batches` 18 条（17 succeeded / 1 failed）；最近一次批次是 2026-10-25 20:21 的 manual full sync（315/315 succeeded）；最近一次 scheduled 批次是 2026-10-23 09:41，窗口 `2026-10-21T01:00Z`（= 周三 09:00 Asia/Shanghai），288/288 succeeded。
+- **结论**：代码/功能验收可保持完成；**运行层 MVP 不能宣布全量验收完成**。当前周计划配置是周三而非预期周一，且当前 release 尚未观察到 scheduled 批次（最近 scheduled 早于最新 release）。
+- **修正影响**：若把 weekday 改为 1（周一），下一次 30 分钟触发器可能立即补跑 `2026-10-26 09:00`（周一）的逾期窗口并触发真实 315 条同步；需先批准变更窗口，或先临时关闭来源周计划/触发器。
 
 ## 6. PRD 第 7 节验收矩阵
 

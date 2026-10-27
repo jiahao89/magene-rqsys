@@ -1,0 +1,71 @@
+{
+  "captured_at": "2026-10-27T09:10:00+08:00",
+  "source": {
+    "id": "99331edb-663b-4635-99f4-597e26304ab1",
+    "external_project_name": "室外产品-码表软固件需求池",
+    "enabled": true,
+    "schedule_enabled": true,
+    "schedule_weekday": 3,
+    "schedule_local_time": "09:00:00",
+    "schedule_timezone": "Asia/Shanghai",
+    "updated_at": "2026-10-23T09:36:33.1706+08:00"
+  },
+  "trigger": {
+    "name": "rqsysWeeklySyncRecovery",
+    "status": "enabled",
+    "cron": "*/30 * * * *",
+    "timezone": "Asia/Shanghai"
+  },
+  "queue": {
+    "jobs_total": 644,
+    "job_status": {
+      "succeeded": 640,
+      "failed": 4
+    },
+    "active_jobs": 0,
+    "latest_job_updated_at": "2026-10-26T10:04:33.218+08:00"
+  },
+  "batches": {
+    "total": 18,
+    "status": {
+      "succeeded": 17,
+      "failed": 1
+    },
+    "scheduled": 5,
+    "last_batch": {
+      "id": "31ab33ec-1684-4291-89cc-1c3b452c9e42",
+      "status": "succeeded",
+      "trigger_type": "manual",
+      "idempotency_key": "t16-verify-full-sync-20261025",
+      "started_at": "2026-10-25T20:21:13.01967+08:00",
+      "completed_at": "2026-10-25T20:21:41.39+08:00",
+      "total_count": 315,
+      "succeeded_count": 315,
+      "failed_count": 0
+    },
+    "last_scheduled_batch": {
+      "id": "31b086ba-e1b0-4f03-88c5-5f445cd68444",
+      "status": "succeeded",
+      "trigger_type": "scheduled",
+      "idempotency_key": "sched:99331edb-663b-4635-99f4-597e26304ab1:_batch_:2026-10-21T01:00:00.000Z",
+      "started_at": "2026-10-23T09:41:07.449+08:00",
+      "completed_at": "2026-10-23T09:41:40.625+08:00",
+      "total_count": 288,
+      "succeeded_count": 288,
+      "failed_count": 0
+    }
+  },
+  "audit": {
+    "total": 1412,
+    "last_source_config_update": {
+      "event_type": "source.config_updated",
+      "actor_id": "1868660374748201",
+      "occurred_at": "2026-10-23T09:36:33.165+08:00",
+      "result": "succeeded"
+    }
+  },
+  "expected": {
+    "schedule": "Monday 09:00 Asia/Shanghai",
+    "source": "specs/rq-sys-mvp/LOCAL-AND-TARGET-STATUS.md"
+  }
+}
