@@ -49,7 +49,30 @@ describe("SourcesPanel (ticket 16)", () => {
     expect(createBody).not.toHaveProperty("requirementTypeId");
     expect(createBody).not.toHaveProperty("ownerNames");
     expect(createBody).not.toHaveProperty("fieldMap");
-    expect(createBody.schedule).toEqual({ enabled: false, weekday: 1, time: "09:00", timezone: "Asia/Shanghai" });
+    expect(createBody.schedule).toEqual({ enabled: false, weekday: 1, weekdays: [1], time: "09:00", timezone: "Asia/Shanghai" });
+  });
+
+  it("saves a multi-weekday selection", async () => {
+    let updateBody: Record<string, unknown> | undefined;
+    const scheduledSource: SourceConfig = { ...source, schedule: { enabled: true, weekday: 1, weekdays: [1], time: "09:00", timezone: "Asia/Shanghai" } };
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/sources/source-1" && init?.method === "PUT") {
+        updateBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+        return jsonOk(scheduledSource);
+      }
+      return jsonOk(scheduledSource);
+    });
+
+    render(<SourcesPanel sources={[scheduledSource]} loadState="ready" onRefresh={() => undefined} />);
+    fireEvent.click(screen.getByRole("button", { name: "周三" }));
+    fireEvent.click(screen.getByRole("button", { name: "周五" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存更新" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/sources/source-1", expect.objectContaining({ method: "PUT" })));
+    if (!updateBody) throw new Error("Source update request was not captured");
+    expect((updateBody.schedule as { weekdays: number[] }).weekdays).toEqual([1, 3, 5]);
+    expect((updateBody.schedule as { weekday: number }).weekday).toBe(1);
   });
 
   it("updates the existing source and re-reads a consistent result", async () => {

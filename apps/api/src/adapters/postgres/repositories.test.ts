@@ -304,8 +304,8 @@ test("source config JSON fields are passed as JSON, not PostgreSQL array literal
   const {pool,calls}=recordingPool();const store=new PostgresRepositories(pool);
   await store.sources.create({projectId:"p",projectName:"P",requirementTypeId:"t",enabled:true,schedule:{enabled:false,weekday:null,time:null,timezone:null},ownerNames:["PM Owner"],fieldMap:{description:"cf-1"}});
   const insert=calls.find((call)=>call.sql.includes("INSERT INTO source_configs"));
-  assert.equal(insert?.values?.[9],JSON.stringify(["PM Owner"]));
-  assert.equal(insert?.values?.[10],JSON.stringify({description:"cf-1"}));
+  assert.equal(insert?.values?.[10],JSON.stringify(["PM Owner"]));
+  assert.equal(insert?.values?.[11],JSON.stringify({description:"cf-1"}));
 });
 
 test("audit search uses parameterized filters and limit", async()=>{

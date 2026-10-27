@@ -4,6 +4,7 @@
 export interface WeeklySchedule {
   enabled: boolean;
   weekday: number | null;
+  weekdays?: number[] | null;
   time: string | null;
   timezone: string | null;
 }
@@ -30,8 +31,9 @@ function isValidTimezone(timezone: string): boolean {
 export function checkScheduleHealth(schedule: WeeklySchedule | null | undefined): ScheduleHealth {
   if (!schedule) return { active: false, reason: "尚未配置周计划" };
   if (!schedule.enabled) return { active: false, reason: "周计划未启用" };
-  if (schedule.weekday === null || !Number.isInteger(schedule.weekday) || schedule.weekday < 1 || schedule.weekday > 7) {
-    return { active: false, reason: "周计划星期取值需为 1–7" };
+  const days = schedule.weekdays ?? (schedule.weekday === null ? null : [schedule.weekday]);
+  if (!days || days.length === 0 || days.some((day) => !Number.isInteger(day) || day < 1 || day > 7)) {
+    return { active: false, reason: "周计划星期取值需为 1–7，且至少选择一天" };
   }
   if (!schedule.time || !TIME_PATTERN.test(schedule.time)) {
     return { active: false, reason: "执行时间格式需为 HH:MM" };
@@ -98,17 +100,21 @@ function calendarInZone(now: Date, timezone: string): { year: number; month: num
 export function nextRunAt(schedule: WeeklySchedule | null | undefined, now: Date): Date | null {
   const health = checkScheduleHealth(schedule);
   if (!health.active) return null;
-  const { weekday, time, timezone } = schedule as { weekday: number; time: string; timezone: string };
+  const checked = schedule as WeeklySchedule;
+  const { time, timezone } = checked as { time: string; timezone: string };
+  const days = (checked.weekdays ?? (checked.weekday === null ? [] : [checked.weekday])).filter((day): day is number => typeof day === "number");
   const [hour, minute] = time.split(":").map(Number) as [number, number];
-
   const today = calendarInZone(now, timezone);
-  const dayDelta = (weekday - today.weekday + 7) % 7;
-  let candidate = wallClockToInstant(today.year, today.month, today.day + dayDelta, hour, minute, timezone);
-  // 今天就是计划日但时刻已过：顺延一周。
-  if (candidate.getTime() <= now.getTime()) {
-    candidate = wallClockToInstant(today.year, today.month, today.day + dayDelta + 7, hour, minute, timezone);
+  let earliest: Date | null = null;
+  for (const weekday of days) {
+    const dayDelta = (weekday - today.weekday + 7) % 7;
+    let candidate = wallClockToInstant(today.year, today.month, today.day + dayDelta, hour, minute, timezone);
+    if (candidate.getTime() <= now.getTime()) {
+      candidate = wallClockToInstant(today.year, today.month, today.day + dayDelta + 7, hour, minute, timezone);
+    }
+    if (!earliest || candidate.getTime() < earliest.getTime()) earliest = candidate;
   }
-  return candidate;
+  return earliest;
 }
 
 /** 相对时间描述，例如「3 天 2 小时后」。 */

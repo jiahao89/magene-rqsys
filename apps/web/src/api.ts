@@ -18,7 +18,7 @@ export interface SourceConfig {
   id: string;
   projectName: string;
   enabled: boolean;
-  schedule: { enabled: boolean; weekday: number | null; time: string | null; timezone: string | null };
+  schedule: { enabled: boolean; weekday: number | null; weekdays?: number[] | null; time: string | null; timezone: string | null };
 }
 
 export interface SyncRunResponse {
@@ -184,7 +184,7 @@ export function publishPriorityRule(id: string, fetcher: typeof fetch = fetch): 
 export interface SourceConfigUpdate {
   projectName: string;
   enabled: boolean;
-  schedule: { enabled: boolean; weekday: number | null; time: string | null; timezone: string | null };
+  schedule: { enabled: boolean; weekday: number | null; weekdays?: number[] | null; time: string | null; timezone: string | null };
 }
 
 export function createSource(update: SourceConfigUpdate, fetcher: typeof fetch = fetch): Promise<SourceConfig> {

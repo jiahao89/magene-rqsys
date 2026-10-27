@@ -3,7 +3,8 @@
 
 export interface ScheduleConfig {
   enabled: boolean;
-  weekday: number | null; // 1-7（周一=1，周日=7），null 表示每日
+  weekday: number | null; // 1-7（周一=1，周日=7），旧单值字段；null 表示未设置
+  weekdays?: number[] | null; // 新的多选列表；存在时优先于 weekday
   time: string | null; // "HH:MM" 业务日历时刻（按 timezone 解释，非 UTC）
   timezone: string; // 显式时区，调用方必须传入
 }
@@ -50,9 +51,10 @@ export function computeLastDueWindow(
     windowLocal = new Date(targetLocal.getTime() - 24 * 60 * 60 * 1000);
   }
 
-  // weekday 过滤：如果指定了 weekday，找到最近符合的工作日窗口
-  if (config.weekday !== null) {
-    while (getUtcDayOfWeek(windowLocal) !== config.weekday) {
+  // weekday 过滤：支持多选；未配置星期时保持旧的“每日”语义。
+  const days = config.weekdays ?? (config.weekday === null ? null : [config.weekday]);
+  if (days && days.length > 0) {
+    for (let guard = 0; guard < 7 && !days.includes(getUtcDayOfWeek(windowLocal)); guard += 1) {
       windowLocal = new Date(windowLocal.getTime() - 24 * 60 * 60 * 1000);
     }
   }

@@ -24,6 +24,15 @@ describe("周计划预测", () => {
     expect(isoWeekdayOf(result!.toISOString(), "Asia/Shanghai")).toBe(1);
   });
 
+  it("多选周一/周三/周五时取最近的一个计划日", () => {
+    const schedule: WeeklySchedule = { enabled: true, weekday: 1, weekdays: [1, 3, 5], time: "09:00", timezone: "Asia/Shanghai" };
+    // 上海 2026-10-11 周日 → 最近的周一 10-12 09:00
+    expect(nextRunAt(schedule, new Date("2026-10-11T03:10:00Z"))?.toISOString()).toBe("2026-10-12T01:00:00.000Z");
+    // 上海 2026-10-12 周一 10:00 已过 → 最近的周三 10-14 09:00
+    expect(nextRunAt(schedule, new Date("2026-10-12T02:00:00Z"))?.toISOString()).toBe("2026-10-14T01:00:00.000Z");
+    expect(checkScheduleHealth(schedule)).toEqual({ active: true, reason: null });
+  });
+
   it("今天就是计划日但时刻已过时顺延一周", () => {
     // 上海时间 2026-10-12 10:00（周一，已过 09:00）→ 应为 2026-10-19。
     const result = nextRunAt(monday, new Date("2026-10-12T02:00:00Z"));

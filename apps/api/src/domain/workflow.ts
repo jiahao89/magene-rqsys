@@ -28,6 +28,7 @@ export interface SourceProjectConfig {
   schedule: {
     enabled: boolean;
     weekday: number | null;
+    weekdays?: number[] | null;
     time: string | null;
     timezone: string | null;
   };

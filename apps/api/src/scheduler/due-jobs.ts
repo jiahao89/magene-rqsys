@@ -49,7 +49,7 @@ export async function createDueSyncJobs(params: {
       // 窗口换算与批次探测必须在 try 内：一个坏时区/坏配置的来源不能把整个循环炸出去，
       // 否则同一轮里其余来源的调度全部停摆。
       window = computeLastDueWindow(
-        { enabled: true, weekday: source.scheduleWeekday, time: source.scheduleLocalTime, timezone: source.scheduleTimezone },
+        { enabled: true, weekday: source.scheduleWeekday, weekdays: source.scheduleWeekdays ?? null, time: source.scheduleLocalTime, timezone: source.scheduleTimezone },
         params.now,
       );
       if (!window) {

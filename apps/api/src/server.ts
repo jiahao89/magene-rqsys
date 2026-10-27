@@ -52,7 +52,7 @@ const syncJobRunner: SyncJobRunner | undefined = repositories ? async (job) => {
   const config: SourceProjectConfig = {
     id: source.id, projectId: source.externalProjectId, projectName: source.externalProjectName,
     requirementTypeId: source.requirementTypeId, enabled: source.enabled,
-    schedule: { enabled: source.scheduleEnabled, weekday: source.scheduleWeekday, time: source.scheduleLocalTime, timezone: source.scheduleTimezone },
+    schedule: { enabled: source.scheduleEnabled, weekday: source.scheduleWeekday, weekdays: source.scheduleWeekdays ?? (source.scheduleWeekday === null ? null : [source.scheduleWeekday]), time: source.scheduleLocalTime, timezone: source.scheduleTimezone },
     ownerNames: source.ownerNames, fieldMap: source.fieldMap,
   };
   const persistence = createPostgresSyncPersistence(repositories, job.sourceConfigId);

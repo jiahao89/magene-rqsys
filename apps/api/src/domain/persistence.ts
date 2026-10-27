@@ -38,7 +38,8 @@ export interface SourceConfigRecord {
   requirementTypeId: string;
   enabled: boolean;
   scheduleEnabled: boolean;
-  scheduleWeekday: number | null; // 1-7（周一=1）
+  scheduleWeekday: number | null; // 1-7（周一=1），旧单值兼容字段；新代码以 scheduleWeekdays 为准
+  scheduleWeekdays?: number[] | null; // 1-7 的多选列表（旧数据/测试桩可能缺省）
   scheduleLocalTime: string | null; // "HH:MM"
   scheduleTimezone: string | null; // 显式时区；调度计算永不回退到机器本地时区
   ownerNames: string[];

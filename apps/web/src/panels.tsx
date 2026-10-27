@@ -74,11 +74,15 @@ export function PublishStatusChip({ status }: { status: PublishStatus }) {
   return <span className={`status-chip ${chip.className}`}><span />{chip.label}</span>;
 }
 
+const WEEKDAY_LABELS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+function scheduleDays(schedule: SourceConfig["schedule"]): number[] {
+  return schedule.weekdays ?? (schedule.weekday === null ? [] : [schedule.weekday]);
+}
 function scheduleLabel(schedule: SourceConfig["schedule"]): string {
   if (!schedule.enabled) return "未启用";
-  const weekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
-  const weekday = weekdays[(schedule.weekday ?? 1) - 1] ?? "每周";
-  return `${weekday} ${schedule.time ?? "时间未设置"} ${schedule.timezone ?? ""}`.trim();
+  const days = scheduleDays(schedule);
+  const label = days.length ? days.map((day) => WEEKDAY_LABELS[day - 1] ?? String(day)).join("/") : "每周";
+  return `${label} ${schedule.time ?? "时间未设置"} ${schedule.timezone ?? ""}`.trim();
 }
 
 function FeishuUserPicker({ disabled, onMap, saveLabel = "保存负责人并入队推送" }: {
@@ -144,7 +148,7 @@ function FeishuUserPicker({ disabled, onMap, saveLabel = "保存负责人并入�
 const DEFAULT_TB_PROJECT_NAME = "室外产品-码表软固件需求池";
 const emptyUpdate: SourceConfigUpdate = {
   projectName: DEFAULT_TB_PROJECT_NAME, enabled: false,
-  schedule: { enabled: false, weekday: 1, time: "09:00", timezone: "Asia/Shanghai" },
+  schedule: { enabled: false, weekday: 1, weekdays: [1], time: "09:00", timezone: "Asia/Shanghai" },
 };
 
 // ---------- Spec 04 连接自检：只反映已保存配置，不声称已校验服务端凭据 ----------
@@ -184,7 +188,7 @@ export function SourcesPanel({ sources, loadState, onRefresh }: { sources: Sourc
 
   // 冷加载时 sources 还是空数组，useState 初始化只会拿到默认值；等数据到达后必须再同步一次，
   // 否则页面写着「已启用」，开关却是关的，直接保存会把同步和周计划一起关掉。
-  const loadedKey = existing ? `${existing.id}|${existing.enabled}|${existing.projectName}|${existing.schedule.enabled}|${existing.schedule.weekday}|${existing.schedule.time}` : "";
+  const loadedKey = existing ? `${existing.id}|${existing.enabled}|${existing.projectName}|${existing.schedule.enabled}|${scheduleDays(existing.schedule).join(",")}|${existing.schedule.time}` : "";
   useEffect(() => {
     if (!existing) return;
     setDraft({ projectName: existing.projectName, enabled: existing.enabled, schedule: { ...existing.schedule } });
@@ -192,6 +196,11 @@ export function SourcesPanel({ sources, loadState, onRefresh }: { sources: Sourc
   }, [loadedKey]);
 
   const set = <K extends keyof SourceConfigUpdate>(key: K, value: SourceConfigUpdate[K]) => setDraft((prev) => ({ ...prev, [key]: value }));
+  const selectedDays = draft.schedule.weekdays ?? (draft.schedule.weekday === null ? [] : [draft.schedule.weekday]);
+  const toggleWeekday = (day: number) => {
+    const next = selectedDays.includes(day) ? selectedDays.filter((item) => item !== day) : [...selectedDays, day].sort((a, b) => a - b);
+    set("schedule", { ...draft.schedule, weekdays: next, weekday: next[0] ?? null });
+  };
 
   const save = async () => {
     setBusy(true); setLoadError(null); setNotice(null);
@@ -212,7 +221,9 @@ export function SourcesPanel({ sources, loadState, onRefresh }: { sources: Sourc
       <label className="rules-threshold"><span>启用同步</span><input type="checkbox" aria-label="启用同步" checked={draft.enabled} onChange={(e) => set("enabled", e.target.checked)} /></label>
     </div>
     <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
-      <label className="rules-threshold"><span>周计划（1–7，周一为 1）</span><HeroInput aria-label="周计划星期" type="number" min={1} max={7} value={draft.schedule.weekday ?? ""} onChange={(e) => set("schedule", { ...draft.schedule, weekday: e.target.value === "" ? null : Number(e.target.value) })} /></label>
+      <div className="rules-threshold"><span>周计划（可多选）</span><div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+        {WEEKDAY_LABELS.map((label, index) => { const day = index + 1; return <button key={label} type="button" aria-label={label} aria-pressed={selectedDays.includes(day)} className={`button button-small ${selectedDays.includes(day) ? "button-primary" : "button-secondary"}`} onClick={() => toggleWeekday(day)}>{label}</button>; })}
+      </div></div>
       <label className="field field--short"><span>执行时间（HH:MM）</span><HeroInput aria-label="执行时间" placeholder="09:00" value={draft.schedule.time ?? ""} onChange={(e) => set("schedule", { ...draft.schedule, time: e.target.value === "" ? null : e.target.value })} /></label>
       <label className="field"><span>时区</span><HeroInput aria-label="时区" placeholder="Asia/Shanghai" value={draft.schedule.timezone ?? ""} onChange={(e) => set("schedule", { ...draft.schedule, timezone: e.target.value === "" ? null : e.target.value })} /></label>
       <label className="rules-threshold"><span>启用周计划</span><input type="checkbox" aria-label="启用周计划" checked={draft.schedule.enabled} onChange={(e) => set("schedule", { ...draft.schedule, enabled: e.target.checked })} /></label>

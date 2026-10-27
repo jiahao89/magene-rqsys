@@ -64,6 +64,30 @@ test("不变量6：weekday 过滤找到最近符合的窗口", () => {
   assert.equal(window2.start, "2025-12-31T08:00:00.000Z");
 });
 
+test("不变量6：多 weekday 取最近一个匹配日，weekdays 优先于旧 weekday", () => {
+  const config: ScheduleConfig = {
+    enabled: true,
+    weekday: 3,
+    weekdays: [1, 3, 5],
+    time: "08:00",
+    timezone: "UTC",
+  };
+  // 2026-01-01 周四；最近匹配日（周一/三/五）是 2025-12-31 周三
+  const window = computeLastDueWindow(config, new Date("2026-01-01T10:00:00.000Z"));
+  assert.ok(window);
+  assert.equal(window.start, "2025-12-31T08:00:00.000Z");
+
+  // 2026-01-05 周一且已过 08:00：取当天周一，而不是上周三
+  const monday = computeLastDueWindow(config, new Date("2026-01-05T10:00:00.000Z"));
+  assert.ok(monday);
+  assert.equal(monday.start, "2026-01-05T08:00:00.000Z");
+
+  // weekdays 优先于旧 weekday（若优先级错，周四会回退到周三 12-31）
+  const precedence = computeLastDueWindow({ ...config, weekday: 5, weekdays: [1] }, new Date("2026-01-01T10:00:00.000Z"));
+  assert.ok(precedence);
+  assert.equal(precedence.start, "2025-12-29T08:00:00.000Z");
+});
+
 test("不变量6：调度未启用或配置不完整返回 null", () => {
   const disabled: ScheduleConfig = { enabled: false, weekday: null, time: "08:00", timezone: "UTC" };
   assert.equal(computeLastDueWindow(disabled, new Date()), null);

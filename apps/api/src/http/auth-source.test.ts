@@ -54,8 +54,8 @@ function makeFixture(): AuthFixture {
     sources: {
       list: async () => sources,
       get: async (id) => sources.find((s) => s.id === id) ?? null,
-      update: async (id, u, event) => { const index = sources.findIndex((s) => s.id === id); if (index < 0) return null; if (event) await persistAudit(event, id); const updated = { ...sources[index]!, externalProjectId: u.projectId, externalProjectName: u.projectName, requirementTypeId: u.requirementTypeId, enabled: u.enabled, scheduleEnabled: u.schedule.enabled, scheduleWeekday: u.schedule.weekday, scheduleLocalTime: u.schedule.time, scheduleTimezone: u.schedule.timezone, ownerNames: u.ownerNames, fieldMap: u.fieldMap }; sources[index] = updated; return updated; },
-      create: async (p) => { const record: SourceConfigRecord = { id: crypto.randomUUID(), provider: "teambition", externalProjectId: p.projectId, externalProjectName: p.projectName, requirementTypeId: p.requirementTypeId, enabled: p.enabled, scheduleEnabled: p.schedule.enabled, scheduleWeekday: p.schedule.weekday, scheduleLocalTime: p.schedule.time, scheduleTimezone: p.schedule.timezone, ownerNames: p.ownerNames, fieldMap: p.fieldMap, createdAt: "2026-10-09T00:00:00.000Z", updatedAt: "2026-10-09T00:00:00.000Z" }; if (p.auditEvent) await persistAudit(p.auditEvent, record.id); sources.push(record); return record; },
+      update: async (id, u, event) => { const index = sources.findIndex((s) => s.id === id); if (index < 0) return null; if (event) await persistAudit(event, id); const updated = { ...sources[index]!, externalProjectId: u.projectId, externalProjectName: u.projectName, requirementTypeId: u.requirementTypeId, enabled: u.enabled, scheduleEnabled: u.schedule.enabled, scheduleWeekday: u.schedule.weekday, scheduleWeekdays: u.schedule.weekdays ?? (u.schedule.weekday === null ? null : [u.schedule.weekday]), scheduleLocalTime: u.schedule.time, scheduleTimezone: u.schedule.timezone, ownerNames: u.ownerNames, fieldMap: u.fieldMap }; sources[index] = updated; return updated; },
+      create: async (p) => { const record: SourceConfigRecord = { id: crypto.randomUUID(), provider: "teambition", externalProjectId: p.projectId, externalProjectName: p.projectName, requirementTypeId: p.requirementTypeId, enabled: p.enabled, scheduleEnabled: p.schedule.enabled, scheduleWeekday: p.schedule.weekday, scheduleWeekdays: p.schedule.weekdays ?? (p.schedule.weekday === null ? null : [p.schedule.weekday]), scheduleLocalTime: p.schedule.time, scheduleTimezone: p.schedule.timezone, ownerNames: p.ownerNames, fieldMap: p.fieldMap, createdAt: "2026-10-09T00:00:00.000Z", updatedAt: "2026-10-09T00:00:00.000Z" }; if (p.auditEvent) await persistAudit(p.auditEvent, record.id); sources.push(record); return record; },
     },
     dictionaries, priorityRules,
     audit: { append: async (e) => persistAudit(e), search: async () => [] },
@@ -76,7 +76,7 @@ test("authenticated user creates the single source and reads it back consistentl
   const body = await listed.json() as { items: { id: string; projectName: string; schedule: typeof sourceBody.schedule; enabled: boolean }[] };
   assert.equal(body.items.length, 1);
   assert.equal(body.items[0]!.id, sources[0]!.id);
-  assert.deepEqual(body.items[0]!.schedule, sourceBody.schedule);
+  assert.deepEqual(body.items[0]!.schedule, { ...sourceBody.schedule, weekdays: [1] });
   assert.equal(body.items[0]!.enabled, true);
   assert.equal("projectId" in body.items[0]!, false);
   assert.equal("requirementTypeId" in body.items[0]!, false);

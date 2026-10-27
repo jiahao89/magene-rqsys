@@ -11,7 +11,7 @@ import type { PersonMappingRecord, AnalysisRunRecord, ModuleDictionaryVersionRec
 import type { TeamPersonRecord } from "../domain/team-directory.js";
 import { AuditListQuerySchema, KanoEvidenceImportSchema, KanoRunRequestSchema, AudienceUpdateSchema, BatchListQuerySchema, RiceDraftUpdateSchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementIntakeEditSchema, RequirementIntakeSchema, RequirementListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
 import { createHash, randomUUID } from "node:crypto";
-import { SourceConfigUpdateSchema, type ResolvedSourceConfigUpdate } from "../contracts/source.js";
+import { SourceConfigUpdateSchema, normalizeSourceSchedule, type ResolvedSourceConfigUpdate } from "../contracts/source.js";
 import { DictionaryCreateSchema, PriorityRuleCreateSchema, TeamModulesSaveSchema, TeamPersonCreateSchema, TeamPersonFeishuBindSchema, TeamPersonRenameSchema } from "../contracts/rules.js";
 import { DEFAULT_TEAM_MEMBERS } from "../domain/team-directory.js";
 import { isDatabaseReady } from "../adapters/postgres/health.js";
@@ -62,7 +62,7 @@ function pathUuid(raw: string, dependencies: ApiDependencies): string | null {
   return value;
 }
 function sourceDto(source: SourceConfigRecord) {
-  return { id: source.id, projectName: source.externalProjectName, enabled: source.enabled, schedule: { enabled: source.scheduleEnabled, weekday: source.scheduleWeekday, time: normalizeScheduleTime(source.scheduleLocalTime), timezone: source.scheduleTimezone } };
+  return { id: source.id, projectName: source.externalProjectName, enabled: source.enabled, schedule: { enabled: source.scheduleEnabled, weekday: source.scheduleWeekday, weekdays: source.scheduleWeekdays ?? (source.scheduleWeekday === null ? null : [source.scheduleWeekday]), time: normalizeScheduleTime(source.scheduleLocalTime), timezone: source.scheduleTimezone } };
 }
 function batchDto(batch: SyncBatchRecord) {
   return { id: batch.id, status: batch.status, triggerType: batch.triggerType, actorId: batch.actorId, totalCount: batch.totalCount, succeededCount: batch.succeededCount, failedCount: batch.failedCount, startedAt: batch.startedAt, completedAt: batch.completedAt, errorSummary: batch.errorSummary };
@@ -147,12 +147,12 @@ async function resolveSourceConfig(
   current?: SourceConfigRecord,
 ): Promise<ResolvedSourceConfigUpdate | Response> {
   if (current && update.projectName === current.externalProjectName) {
-    return { ...update, projectId: current.externalProjectId, requirementTypeId: current.requirementTypeId, ownerNames: current.ownerNames, fieldMap: current.fieldMap };
+    return { ...update, schedule: normalizeSourceSchedule(update.schedule), projectId: current.externalProjectId, requirementTypeId: current.requirementTypeId, ownerNames: current.ownerNames, fieldMap: current.fieldMap };
   }
   if (dependencies.teambitionSourceProjects) {
     try {
       const resolved = await dependencies.teambitionSourceProjects.resolveProject(update.projectName);
-      return { ...update, projectId: resolved.projectId, requirementTypeId: resolved.requirementTypeId, ownerNames: [...DEFAULT_TEAM_MEMBERS], fieldMap: {} };
+      return { ...update, schedule: normalizeSourceSchedule(update.schedule), projectId: resolved.projectId, requirementTypeId: resolved.requirementTypeId, ownerNames: [...DEFAULT_TEAM_MEMBERS], fieldMap: {} };
     } catch (cause) {
       if (cause instanceof SourceProjectResolutionError) return jsonError("VALIDATION_FAILED", cause.message);
       return jsonError("DEPENDENCY_UNAVAILABLE", "无法连接 Teambition 项目配置，请稍后重试。");
