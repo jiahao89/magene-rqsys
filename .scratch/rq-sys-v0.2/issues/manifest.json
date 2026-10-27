@@ -485,5 +485,107 @@
     "gate": "G-UMSC及目标规则发布授权；允许核心在优先级留空的基线上先完成。",
     "status": "ready-for-agent",
     "approved_on": "2026-10-23"
+  },
+  {
+    "number": 19,
+    "slug": "score-contract-and-rule-v2",
+    "title": "AI评分契约与U/M/S/C v2计算规则",
+    "blocked_by": [],
+    "delivery": "主分析可输出九项输入分数和α及依据；服务端确定性计算综合分/P0–P3，评分版本持久化；v1历史兼容。",
+    "specs": [
+      2,
+      6
+    ],
+    "checks": [
+      "分析契约新增scoring对象：九项输入、α、逐项依据/假设、说明、安全标记、评分置信度；非法/缺项/越界/无依据/证据不匹配拒绝。",
+      "服务端固定公式与阈值计算；模型自报P被忽略；α范围/步长和输入范围校验，C≥1。",
+      "新增requirement_score_versions和当前版本指针；AI成功生成ai_suggested/current版本并固定版本快照。",
+      "发布规则v2（formulaType/输入/阈值/校准样例），v1置retired但历史FK保留，不回算历史。",
+      "详情读取current/aiSuggestion/history/formula；旧分析兼容，评分失败不阻断详情。",
+      "PII掩码、证据子串、日志脱敏沿用；两仓契约/迁移/OpenAPI对齐。"
+    ],
+    "verify": "公式边界/非法AI输出/旧版兼容/迁移仓储/API读取测试；两仓typecheck/build/对齐。",
+    "group": "scoring",
+    "gate": "本地实现可进行；目标迁移/发布按G-DEPLOY。",
+    "status": "ready-for-agent",
+    "approved_on": "2026-10-27"
+  },
+  {
+    "number": 20,
+    "slug": "score-manual-edit",
+    "title": "PM修改单项评分与α",
+    "blocked_by": [
+      19
+    ],
+    "delivery": "PM可改任一评分输入和α，服务端重算并生成确认版本；AI建议/当前值分离，支持采用AI、版本冲突和审计。",
+    "specs": [
+      6
+    ],
+    "checks": [
+      "PUT /api/requirements/{id}/scoring 校验输入/α/expectedVersion/reason，重算并写确认版本；400/404/409明确。",
+      "保存记录actor、时间、前后值、理由；审计scoring.updated；current指针更新，旧版本superseded。",
+      "POST apply-ai按有效AI建议生成ai_applied确认版本；不能跨需求/失效建议。",
+      "AI重跑不覆盖人工当前值；人工编辑不自动推Base/通知/启动Beta。",
+      "权限为已登录租户用户，actor取可信身份；两仓API/OpenAPI/集成测试对齐。"
+    ],
+    "verify": "HTTP/集成测试保存/重算/并发/采用AI/审计/失败隔离；两仓契约对齐。",
+    "group": "scoring",
+    "gate": "本地实现可进行；目标写入由T22按G-DEPLOY执行。",
+    "status": "ready-for-agent",
+    "approved_on": "2026-10-27"
+  },
+  {
+    "number": 21,
+    "slug": "score-detail-ui",
+    "title": "评分详情与人工编辑UI",
+    "blocked_by": [
+      19,
+      20
+    ],
+    "delivery": "需求详情可查看AI/当前九项评分、α、依据/假设、公式、综合分/P、置信度和历史，并编辑单项/α。",
+    "specs": [
+      6
+    ],
+    "checks": [
+      "展示current/P/版本/置信度/AI或人工标签；无评分/失败/规则未发布有明确状态。",
+      "九项表格显示AI建议/当前值/依据/假设；α默认依据；公式阈值只读。",
+      "编辑态校验范围/步长、理由必填、实时预览；保存/取消；冲突保留输入。",
+      "支持采用AI、历史只读、AI与当前差异；不提供公式/P编辑。",
+      "组件测试覆盖展示/编辑/保存/采用/冲突/历史/空失败/窄屏；两仓UI对齐。"
+    ],
+    "verify": "组件/交互测试+类型/构建；目标UI点检由T22执行。",
+    "group": "scoring",
+    "gate": "本地实现可进行；目标UI验收按G-DEPLOY。",
+    "status": "ready-for-agent",
+    "approved_on": "2026-10-27"
+  },
+  {
+    "number": 22,
+    "slug": "score-target-acceptance",
+    "title": "评分v2目标环境验收",
+    "blocked_by": [
+      19,
+      20,
+      21
+    ],
+    "delivery": "目标环境受控合成需求完成AI评分、人工改分/α、版本/审计、失败隔离、Base当前P投影与清理。",
+    "specs": [
+      6
+    ],
+    "checks": [
+      "release/迁移/规则v2就绪；仅创建标记合成需求；记录清理方案，不向干系人发消息。",
+      "真实模型输出九项+α/依据/假设/说明；证据可核对，不采信模型P。",
+      "服务端分/P与公式一致；校准样例和阈值边界复算。",
+      "UI编辑单项/α、重算、版本审计、409恢复；AI建议/当前值分离。",
+      "AI重跑不覆盖人工确认；采用AI后切换；旧版本只读。",
+      "安全标记只提示复核；失败/缺失/规则未发布不阻断主流程。",
+      "当前P按既有Base推送投影，不重复行；人工改分不自动推送/通知；队列归零。",
+      "清理合成需求/评分/审计/Base行并回读基线；更新票/报告证据。"
+    ],
+    "verify": "目标受控合成需求+真实模型+API/DB回读+UI截图；本地公式/契约/UI测试全绿；两仓对齐。",
+    "group": "acceptance",
+    "gate": "目标迁移/发布/写入/清理须按G-DEPLOY另行授权。",
+    "status": "ready-for-agent",
+    "approved_on": "2026-10-27"
   }
 ]

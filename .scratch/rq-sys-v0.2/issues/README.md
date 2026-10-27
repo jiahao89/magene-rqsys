@@ -1,6 +1,6 @@
 # RQ-Sys V0.2 Tickets
 
-> 拆分已于2026-10-23由用户确认并发布至本地 tracker。共18张 Ticket；**截至2026-10-27，当前开发与验收范围已收口**：01–08、10–15 为 implemented-local，09、16–18 为 target-verified。T16 AC05 按用户确认使用正式 Base 验收；AC06 的 PM 快照失败路径采用本地故障注入，负责人变更通知由获批准的测试收件人确认送达。多 weekday 周计划已实现并发布，目标配置为周一/三/五 09:00；恢复触发器按方案 2 保持 disabled，待约定窗口启用。详见[验证报告](../verification-20261026/VERIFICATION-REPORT.md)。
+> 拆分已于2026-10-23由用户确认并发布至本地 tracker；2026-10-27 用户确认评分v2并新增T19–T22，共22张 Ticket。**原18张V0.2范围已收口**：01–08、10–15 为 implemented-local，09、16–18 为 target-verified；**评分v2扩展T19–T22为ready-for-agent，尚未实施**。T16 AC05 按用户确认使用正式 Base 验收；AC06 的 PM 快照失败路径采用本地故障注入，负责人变更通知由获批准的测试收件人确认送达。多 weekday 周计划已实现并发布，目标配置为周一/三/五 09:00；恢复触发器按方案 2 保持 disabled，待约定窗口启用。详见[验证报告](../verification-20261026/VERIFICATION-REPORT.md)。
 
 ## 使用方式
 
@@ -31,10 +31,14 @@
 | V02-T16 | [核心V0.2兼容迁移与目标验收](16-core-target-acceptance.md) | target-verified（AC01–10 全部通过；AC05 正式 Base 例外，AC06 含 A→B、重复静默、PM 快照失败本地注入与史东升送达确认） | 05、06、07、09、15 | 验收 |
 | V02-T17 | [RICE与Kano Beta独立目标验收](17-beta-target-acceptance.md) | target-verified（Kano 真实模型运行+报告抽检通过；2026-10-26 目标 UI RICE=120 与 Kano 报告点检完成） | 12、14、16 | 验收 |
 | V02-T18 | [获批U/M/S/C规则目标验收](18-priority-target-acceptance.md) | target-verified（规则 v1→P2 落 Base 回读通过；2026-10-26 AC01–06 按证据补勾） | 10、16 | 验收 |
+| V02-T19 | [AI评分契约与U/M/S/C v2计算规则](19-score-contract-and-rule-v2.md) | ready-for-agent | — | 评分v2 |
+| V02-T20 | [PM修改单项评分与α](20-score-manual-edit.md) | ready-for-agent | 19 | 评分v2 |
+| V02-T21 | [评分详情与人工编辑UI](21-score-detail-ui.md) | ready-for-agent | 19、20 | 评分v2 |
+| V02-T22 | [评分v2目标环境验收](22-score-target-acceptance.md) | ready-for-agent（目标写入须另行授权） | 19、20、21、G-DEPLOY | 验收 |
 
 ## 当前状态
 
-- V0.2 当前 18 张 Ticket 均已收口；状态与验收证据以本表和各票为准。没有待领取的 V0.2 实施票。
+- 原 V0.2 18 张 Ticket 均已收口；评分v2扩展 T19–T22 为 `ready-for-agent`，尚未实现。状态与验收证据以本表和各票为准。
 - 定时任务为运营配置，不作为 MVP 验收强关联项。多 weekday 已实现并发布（迁移 `0018`，release `7701156473946443015 / a603fed`）：Online 来源现为 **周一/周三/周五 09:00 Asia/Shanghai**，`weekdays=[1,3,5]`；恢复触发器 `rqsysWeeklySyncRecovery` 按方案 2 保持 **disabled**，用户确认于 **2026-10-28 09:00–09:30** 启用（已设置 09:03/09:40 提醒）。配置更新后队列 0 queued/running，作业/批次未增加，未触发 scheduled 同步。
 - 其他跟踪项：F-11 飞书 Base filter 曾出现瞬时 1254607，恢复重试后成功；F-08 前端包体仍有拆包优化空间；最近快照中的未映射负责人需求按现有流程待处理。详见[验证报告](../verification-20261026/VERIFICATION-REPORT.md)。
 - 后续新增功能或改变已确认口径时，先更新 PRD/Spec/门槛，再新增 Ticket；不要沿用本页的历史依赖顺序当作待办状态。
@@ -45,11 +49,11 @@
 
 Beta：02→11→12；02→13与08汇合到14；12/14与16汇合到17。
 
-规则：10与16汇合到18；未批准新公式时核心可继续空优先级交付。
+规则：10与16汇合到18；评分v2：19→20→21，22在19–21完成后按G-DEPLOY执行目标验收；v2不改变原18张的收口状态。
 
 ## 产品和目标门槛
 
-V0.2 当前决定和执行例外已记入[门槛表](../../../specs/rq-sys-v0.2/DECISIONS-AND-GATES.md)及对应 Ticket：U/M/S/C 规则 v1 按用户授权的“简单好用”口径确认（该记录不是独立 PM Leader 签字）；RICE 量纲、Kano 资料与报告边界见 T12–T14；T16 记录了正式 Base 验收例外及目标测试收件确认。后续若治理要求增加独立审批或改变规则，需新建决策记录，不能把历史草案中的“待确认”直接当作当前阻塞项。
+V0.2 当前决定和执行例外已记入[门槛表](../../../specs/rq-sys-v0.2/DECISIONS-AND-GATES.md)及对应 Ticket：U/M/S/C 规则 v1 按用户授权的“简单好用”口径确认；2026-10-27 用户进一步确认评分v2（AI直接评分、PM可改单项/α、固定公式和阈值见V02-S06），G-UMSC产品阻塞已解除。RICE 量纲、Kano 资料与报告边界见 T12–T14；T16 记录了正式 Base 验收例外及目标测试收件确认。后续若治理要求增加独立审批或改变规则，需新建决策记录，不能把历史草案中的“待确认”直接当作当前阻塞项。
 
 ## 追踪与证据
 

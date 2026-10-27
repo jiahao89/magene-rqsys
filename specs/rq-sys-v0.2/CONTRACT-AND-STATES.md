@@ -14,7 +14,8 @@
 | Kano运行 | POST /api/requirements/{id}/beta/kano/runs | 幂等键，选定资料版本，返回独立Beta runID；运行后可读取报告/历史 |
 | Kano报告 | GET /api/requirements/{id}/beta/kano/runs及单次结果 | 只读运行状态/输入快照/假设报告，不关联主analysisState |
 | Kano材料 | 内部维护接口或批准seed；已登录只读资料版本列表 | 正式路径随实施契约评审；不新增公共编辑器或自动抓飞书内容 |
-| 优先级规则 | 现有rules/priority契约 | 扩展显式公式版本/参数；未经G-UMSC不得选择新算法 |
+| 评分读取/编辑 | GET /api/requirements/{id} 扩展scoring；PUT /api/requirements/{id}/scoring；POST /api/requirements/{id}/scoring/apply-ai | 九项输入+α，服务端重算；期望版本409；AI建议/current分离；人工改分不自动推Base |
+| 优先级规则 | 现有rules/priority契约 | 评分v2固定公式/阈值（V02-S06）；v1历史兼容；未经发布不得生产新P |
 
 ## 状态
 
