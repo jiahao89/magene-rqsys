@@ -85,6 +85,20 @@ test("provider config does not invent credentials when AI_API_KEY is unset", () 
   assert.equal(config.apiKey, undefined);
   assert.equal(config.baseUrl, "https://api.deepseek.com");
   assert.equal(config.model, "deepseek-flash");
+  assert.equal(config.temperature, 0);
+  assert.equal(getAiProviderConfig({ AI_TEMPERATURE: "none" }).temperature, null);
+});
+
+test("provider omits temperature when AI_TEMPERATURE is none for Claude-compatible gateways", async () => {
+  let requestBody: Record<string, unknown> | undefined;
+  const fetchStub: FetchLike = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return jsonResponse({ choices: [{ message: { content: JSON.stringify(validResult) } }] });
+  };
+  const provider = createDeepSeekProvider({ ...getAiProviderConfig({ AI_TEMPERATURE: "none" }), apiKey: "test-secret", fetch: fetchStub });
+  const result = await provider.analyze({ title: "支持查询", description: "支持查询和筛选", context: "", piiMarkers: [], dictionary, priorityRule: null });
+  assert.deepEqual(result, validResult);
+  assert.equal(requestBody !== undefined && "temperature" in requestBody, false);
 });
 
 test("DeepSeek provider sends JSON-mode request and parses structured response via injected fetch", async () => {
