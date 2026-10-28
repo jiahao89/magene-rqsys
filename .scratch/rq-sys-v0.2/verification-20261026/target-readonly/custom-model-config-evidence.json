@@ -1,0 +1,54 @@
+{
+  "capturedAt": "2026-10-28T13:43:00+08:00",
+  "requirement": "自定义模型配置，不新建需求；合成 RQ-000343 已清理",
+  "targetConfig": {
+    "environment": "online",
+    "configuredKeys": [
+      "AI_BASE_URL",
+      "AI_MODEL",
+      "AI_TIMEOUT_MS",
+      "AI_API_KEY"
+    ],
+    "baseUrl": "http://tops.magene.cn:11636/api/v1",
+    "model": "deepseek-v4.1-flash",
+    "timeoutMs": 60000,
+    "keyValue": "stored server-side; never written to evidence"
+  },
+  "localEndpointProbe": {
+    "models": {
+      "http": 200
+    },
+    "chatCompletions": {
+      "http": 200,
+      "responseModel": "deepseek-flash",
+      "jsonContent": "{\"ok\":true}"
+    },
+    "dns": {
+      "host": "tops.magene.cn",
+      "address": "192.168.188.61",
+      "type": "RFC1918 private"
+    }
+  },
+  "targetProbe": {
+    "release": "7701586859972988149 / 7eedbfc",
+    "requirementId": "587302b3-cccf-4d7b-b2fd-de71ba28543e",
+    "analysisVersion": 2,
+    "status": "failed_retryable",
+    "safeErrorCode": "network_error",
+    "safeErrorSummary": "AI provider is unavailable.",
+    "conclusion": "Miaoda online runtime cannot reach the private 192.168.188.x endpoint; no custom-model analysis completed."
+  },
+  "cleanup": {
+    "deletedBaseRecord": "reczz28SiKNDUWgM",
+    "deleted": [
+      "analysis_runs",
+      "requirement_score_versions",
+      "source_snapshots",
+      "base_push_runs",
+      "audit_events",
+      "pipeline_jobs",
+      "requirement_intake_receipts",
+      "requirements"
+    ]
+  }
+}

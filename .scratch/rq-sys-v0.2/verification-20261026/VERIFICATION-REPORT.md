@@ -321,3 +321,11 @@ npm run type:check && npm run test:rqsys-route && npm run build:prod && npm run 
 - T23 详情UI目标证据：`target/detail-ui-refresh-evidence.json`、`ui/target-detail-score-summary.png`、`ui/target-detail-score-section.png`、`ui/target-detail-audience.png`、`ui/local-detail-score-overview2.png`
 - T24 总览分级证据：`target/overview-priority-evidence.json`、`ui/target-overview-priority.png`、`ui/target-overview-priority-rule.png`
 - 定时运行证据：`target-readonly/batches-20261028d.json`、`target-readonly/jobs-after-cleanup.json`、`target-readonly/runtime-readonly-summary.json`
+
+## 5I. 自定义模型配置探测（2026-10-28，阻塞）
+
+- 用户提供自定义 OpenAI-compatible 入口：`http://tops.magene.cn:11636/api/v1`，模型 `deepseek-v4.1-flash`；目标 online 已设置 `AI_BASE_URL`、`AI_MODEL`、`AI_TIMEOUT_MS=60000`，并更新 `AI_API_KEY`（值仅存服务端，不写入证据）。
+- 本地直连：`/models` HTTP 200；`/chat/completions` HTTP 200，JSON 对象可返回；但 DNS 解析为 **192.168.188.61（RFC1918 私有地址）**。
+- 目标运行：合成需求 `RQ-000343` 的 v2 分析返回 `failed_retryable / network_error / AI provider is unavailable.`；release `7701586859972988149 / 7eedbfc`。说明 Miaoda 云端运行时无法访问内网地址，不是 JSON/API 协议不兼容。
+- 已清理合成需求/评分/分析/Base 行/审计/作业；不保留测试数据。
+- 结论：代码支持自定义模型（`AI_BASE_URL`/`AI_MODEL`/`AI_API_KEY` 覆盖），但该地址必须对 Miaoda 公网可达（或在公网网关/隧道后提供）。当前目标 AI 分析会因网络不可达失败；若恢复官方模型，需要重新提供原官方 `AI_API_KEY`（本次自定义 key 覆盖了原值且未留存）。
