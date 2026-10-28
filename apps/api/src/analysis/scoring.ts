@@ -46,8 +46,8 @@ export const ScoringSchema = z.strictObject({
   scoreConfidenceReason: z.string().trim().min(1),
   basis: z.record(z.string(), BasisSchema),
   rationale: z.string().trim().min(1),
-  // 只用于说明模型自己的试算，不能作为落库/展示依据。
-  proposedScore: z.number().finite().nonnegative().max(1000).optional(),
+  // 只用于说明模型自己的试算，不能作为落库/展示依据。显式 null 视为未提供。
+  proposedScore: z.preprocess((value) => value === null ? undefined : value, z.number().finite().nonnegative().max(1000).optional()),
 }).superRefine((value, context) => {
   for (const key of SCORING_BASIS_KEYS) {
     const basis = value.basis[key];

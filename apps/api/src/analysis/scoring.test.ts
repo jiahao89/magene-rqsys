@@ -33,6 +33,11 @@ const validScoring = {
   proposedScore: 6.40,
 };
 
+test("V02-S06 scoring: explicit null proposedScore is treated as omitted", () => {
+  const parsed = ScoringSchema.parse({ ...validScoring, proposedScore: null });
+  assert.equal(parsed.proposedScore, undefined);
+});
+
 test("V02-S06 scoring: fixed formula reproduces calibration examples", () => {
   assert.deepEqual(computeUmcScore(carLightInputs, 0.8), {
     score: 6.4,
