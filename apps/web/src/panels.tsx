@@ -835,6 +835,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
         onBack={closeDetail}
         onRefresh={refresh}
         onAct={runAction}
+        onSaved={(id) => void open(id)}
       />
     </section>;
   }
@@ -1032,7 +1033,7 @@ export function ScoringPanel({ requirementId, scoring, onSaved }: { requirementI
   </section>;
 }
 
-function RequirementDetailPage({ detail, detailId, loading, error, notice, busy, autoOpenOwnerPicker, onCloseNotice, onBack, onRefresh, onAct }: {
+function RequirementDetailPage({ detail, detailId, loading, error, notice, busy, autoOpenOwnerPicker, onCloseNotice, onBack, onRefresh, onAct, onSaved }: {
   detail: RequirementDetail | null;
   detailId: string;
   loading: boolean;
@@ -1044,6 +1045,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
   onBack: () => void;
   onRefresh: () => void;
   onAct: (action: () => Promise<string>, detailId: string) => Promise<boolean>;
+  onSaved: (id: string) => void;
 }) {
   const [ownerPickerOpen, setOwnerPickerOpen] = useState(autoOpenOwnerPicker);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
@@ -1235,16 +1237,16 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
           {detail.supplementUrl ? <div><dt>来源链接</dt><dd>{/^https?:/i.test(detail.supplementUrl) ? <a href={detail.supplementUrl} target="_blank" rel="noreferrer">{detail.supplementUrl}</a> : detail.supplementUrl}</dd></div> : null}
         </dl>
       ) : null}
-      <ManualEditSection detail={detail} onSaved={() => void open(detail.id)} />
+      <ManualEditSection detail={detail} onSaved={() => onSaved(detail.id)} />
       <div className="req-field" style={{ marginTop: 12 }}>
         <strong>人群标签（PM 确认）</strong>
         <p className="status-hint">人工确认值与 AI 建议分开保存；修改不触发分析、推送或通知。</p>
-        <AudienceEditor requirementId={detail.id} audience={detail.audience ?? { tags: [], confirmed: false, version: 0 }} onSaved={() => void open(detail.id)} />
+        <AudienceEditor requirementId={detail.id} audience={detail.audience ?? { tags: [], confirmed: false, version: 0 }} onSaved={() => onSaved(detail.id)} />
         <div style={{ marginTop: 8 }}><BetaPanel requirementId={detail.id} /></div>
       </div>
     </section>
 
-    <ScoringPanel requirementId={detail.id} scoring={detail.scoring} onSaved={() => void open(detail.id)} />
+    <ScoringPanel requirementId={detail.id} scoring={detail.scoring} onSaved={() => onSaved(detail.id)} />
 
     <section className="req-section" aria-labelledby="req-l2-heading">
       <div className="req-section-head"><h3 id="req-l2-heading">AI 分析与建议</h3><span className="req-source-note">AI 生成 · 可被推翻</span></div>

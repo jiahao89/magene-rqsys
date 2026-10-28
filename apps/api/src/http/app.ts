@@ -614,6 +614,8 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     let computed: ReturnType<typeof computeUmcScore>;
     try { computed = computeUmcScore(parsed.data.inputs, parsed.data.alpha); } catch { return jsonError("VALIDATION_FAILED"); }
     const current = await repositories.scoring.current(requirement.id);
+    const aiSuggestion = await repositories.scoring.aiSuggestion(requirement.id);
+    const sourceScore = current ?? aiSuggestion;
     const auditEvent = { id: randomUUID(), actorId: auth.actor.id, eventType: "scoring.updated", entityType: "requirement", result: "succeeded" as const, safeDetails: { fromVersion: current?.version ?? 0, score: computed.score, priority: computed.priority }, occurredAt: (dependencies.now?.() ?? new Date()).toISOString() };
     const result = await repositories.scoring.saveManual({
       requirementId: requirement.id,
@@ -625,10 +627,10 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
       alpha: parsed.data.alpha,
       score: computed.score,
       priority: computed.priority,
-      scoreConfidence: null,
-      scoreConfidenceReason: null,
+      scoreConfidence: sourceScore?.scoreConfidence ?? null,
+      scoreConfidenceReason: sourceScore?.scoreConfidenceReason ?? null,
       safetyFlag: parsed.data.safetyFlag,
-      basis: {},
+      basis: sourceScore?.basis ?? {},
       rationale: parsed.data.reason,
       actorId: auth.actor.id,
       reason: parsed.data.reason,
