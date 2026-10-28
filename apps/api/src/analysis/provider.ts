@@ -68,6 +68,13 @@ export function getAiProviderConfig(env: NodeJS.ProcessEnv = process.env): AiPro
   };
 }
 
+function parseAssistantJson(content: string): unknown {
+  const trimmed = content.trim();
+  // Claude-compatible gateways may return markdown fences even when response_format=json_object.
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  return JSON.parse(fenced?.[1] ?? trimmed);
+}
+
 const EnvelopeSchema = z.object({
   choices: z.array(z.object({ message: z.object({ content: z.string().nullable().optional() }).passthrough() }).passthrough()).min(1),
 }).passthrough();
@@ -259,7 +266,7 @@ export function createDeepSeekProvider(options: Partial<AiProviderConfig> & { fe
       if (!content?.trim()) throw new AiProviderError("analysis_failure", "AI provider returned empty analysis content.");
       let output: unknown;
       try {
-        output = resolveEvidenceReferences(JSON.parse(content), evidenceSegments);
+        output = resolveEvidenceReferences(parseAssistantJson(content), evidenceSegments);
         return validateAnalysisOutput(output, {
           dictionary: input.dictionary,
           priorityRule: input.priorityRule,

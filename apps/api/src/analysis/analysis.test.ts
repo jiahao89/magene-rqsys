@@ -89,6 +89,13 @@ test("provider config does not invent credentials when AI_API_KEY is unset", () 
   assert.equal(getAiProviderConfig({ AI_TEMPERATURE: "none" }).temperature, null);
 });
 
+test("provider accepts fenced JSON returned by Claude-compatible models", async () => {
+  const fetchStub: FetchLike = async () => jsonResponse({ choices: [{ message: { content: "```json\n" + JSON.stringify(validResult) + "\n```" } }] });
+  const provider = createDeepSeekProvider({ apiKey: "test-secret", fetch: fetchStub });
+  const result = await provider.analyze({ title: "支持查询", description: "支持查询和筛选", context: "", piiMarkers: [], dictionary, priorityRule: null });
+  assert.deepEqual(result, validResult);
+});
+
 test("provider omits temperature when AI_TEMPERATURE is none for Claude-compatible gateways", async () => {
   let requestBody: Record<string, unknown> | undefined;
   const fetchStub: FetchLike = async (_input, init) => {

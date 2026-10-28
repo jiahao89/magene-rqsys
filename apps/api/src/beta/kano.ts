@@ -93,6 +93,12 @@ export class KanoProviderError extends Error {
   }
 }
 
+function parseKanoJson(content: string): unknown {
+  const trimmed = content.trim();
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  return JSON.parse(fenced?.[1] ?? trimmed);
+}
+
 export interface KanoProvider {
   readonly model: string;
   run(prompt: string): Promise<unknown>;
@@ -148,7 +154,7 @@ export function createDeepSeekKanoProvider(options: { apiKey?: string; baseUrl?:
       const content = parsed.choices?.[0]?.message?.content;
       if (!content?.trim()) throw new KanoProviderError("analysis_failure", "Kano provider returned empty content.");
       try {
-        return JSON.parse(content);
+        return parseKanoJson(content);
       } catch {
         throw new KanoProviderError("analysis_failure", "Kano provider returned non-JSON content.");
       }
