@@ -252,6 +252,15 @@ function App() {
   }, [latestBatch?.status, loadData]);
   const counts = { pull: metrics?.pullSynced ?? 0, analysis: metrics?.analysisAnalyzed ?? 0, owner: metrics?.ownerResolved ?? 0, push: metrics?.pushPushed ?? 0, failed: metrics?.failed ?? 0, pushFailed: metrics?.pushFailed ?? 0, pushPending: metrics?.pushPending ?? 0 };
   const total = metrics?.total ?? 0;
+  const priority = metrics?.priority ?? null;
+  const priorityRule = metrics?.priorityRule ?? null;
+  const priorityCards = [
+    { key: "P0", tone: "p0", value: priority?.P0 ?? 0, range: priorityRule?.thresholds ? `≥ ${priorityRule.thresholds.p0}` : "规则未发布" },
+    { key: "P1", tone: "p1", value: priority?.P1 ?? 0, range: priorityRule?.thresholds ? `${priorityRule.thresholds.p1}–${(priorityRule.thresholds.p0 - 0.01).toFixed(2)}` : "规则未发布" },
+    { key: "P2", tone: "p2", value: priority?.P2 ?? 0, range: priorityRule?.thresholds ? `${priorityRule.thresholds.p2}–${(priorityRule.thresholds.p1 - 0.01).toFixed(2)}` : "规则未发布" },
+    { key: "P3", tone: "p3", value: priority?.P3 ?? 0, range: priorityRule?.thresholds ? `< ${priorityRule.thresholds.p2}` : "规则未发布" },
+  ] as const;
+  const priorityGraded = priority ? priority.P0 + priority.P1 + priority.P2 + priority.P3 : null;
   const todoItems = [
     { key: "unassigned", label: "待分配负责人", value: metrics ? Math.max(0, total - counts.owner) : null, hint: "没有对应飞书账号，分配后会自动推送并通知", tone: "warn", filters: { ownerState: "pending_mapping" } },
     { key: "failed", label: "推送失败", value: metrics ? counts.pushFailed : null, hint: "可在需求详情页查看原因并重试", tone: metrics && counts.failed > 0 ? "danger" : "ok", filters: { push: "failed" } },
@@ -301,6 +310,33 @@ function App() {
               </div>
             </section>
 
+            </section>
+
+            <section className="panel priority-grade-panel" aria-labelledby="priority-grade-heading">
+              <div className="panel-heading"><div><h2 id="priority-grade-heading">优先级分级</h2><p>按当前综合评分统计需求数量；未评分需求单列</p></div><span className="priority-grade-total">{priority ? `${priorityGraded} / ${total} 已分级` : "统计暂不可用"}</span></div>
+              <div className="priority-grade-grid" role="group" aria-label="优先级分级统计">
+                {priorityCards.map((card) => <div className={`priority-grade-card is-${card.tone}`} key={card.key}>
+                  <div className="priority-grade-head"><span className={`priority-pill priority-${card.tone}`}>{card.key}</span><small>{card.range}</small></div>
+                  <strong>{priority ? card.value : "—"}</strong>
+                  <span>条需求</span>
+                </div>)}
+                <div className="priority-grade-card is-unscored">
+                  <div className="priority-grade-head"><span className="priority-pill priority-unscored">待评分</span><small>无评分/无历史优先级</small></div>
+                  <strong>{priority ? priority.unscored : "—"}</strong>
+                  <span>条需求</span>
+                </div>
+              </div>
+              <div className="priority-rule-box">
+                <div className="priority-rule-heading"><strong>分级规则</strong>{priorityRule ? <span>评分规则 v{priorityRule.version} · 固定公式</span> : <span>暂未发布有效评分规则</span>}</div>
+                {priorityRule?.thresholds ? <div className="priority-rule-ranges" aria-label="评分范围与对应分级">
+                  <span><b>P0</b> 综合分 ≥ {priorityRule.thresholds.p0}</span>
+                  <span><b>P1</b> {priorityRule.thresholds.p1}–{(priorityRule.thresholds.p0 - 0.01).toFixed(2)}</span>
+                  <span><b>P2</b> {priorityRule.thresholds.p2}–{(priorityRule.thresholds.p1 - 0.01).toFixed(2)}</span>
+                  <span><b>P3</b> 综合分 &lt; {priorityRule.thresholds.p2}</span>
+                </div> : <p className="priority-rule-empty">规则未发布时优先级保持为空，不使用模型自报 P 填充。</p>}
+                <code className="priority-rule-formula">{priorityRule?.formulaText ?? "U/M/S/C 固定公式"}</code>
+                <p className="priority-rule-note">{priority ? <>已分级 {priorityGraded} 条，其中 <strong>{priority.legacy}</strong> 条来自历史分析优先级（v1，不套用上方 v2 分数范围）；<strong>{priority.unscored}</strong> 条待评分。当前评分版本优先于历史分析优先级。</> : "评分统计随总览指标加载；合成验收数据不计入。"}</p>
+              </div>
             </section>
 
             <div className="overview-grid"><section className="panel pipeline-panel"><div className="panel-heading"><div><h2>处理阶段</h2><p>需求处理状态一览</p></div><span className="pipeline-help" role="img" aria-label="阶段说明" title="拉取、AI 分析、负责人匹配和 Base 推送分别记录状态；AI 分析失败不会阻止推送。"><CircleHelp size={16} /></span></div><div className="pipeline-overview">{[

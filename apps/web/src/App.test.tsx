@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import App from "./App";
 
 const fetchMock = vi.fn<typeof fetch>();
@@ -31,6 +31,32 @@ describe("RQ-Sys local workbench", () => {
 
     expect(await screen.findByText("311 / 311")).toBeInTheDocument();
     expect(screen.getByText("状态来自全量需求聚合 API")).toBeInTheDocument();
+  });
+
+  it("shows priority grade counts and scoring ranges on the overview", async () => {
+    fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/sources") return Response.json({ items: [] });
+      if (path.startsWith("/api/batches")) return Response.json({ items: [] });
+      if (path.startsWith("/api/requirements")) return Response.json({ items: [] });
+      if (path === "/api/overview/metrics") return Response.json({ counts: { total: 315, pullSynced: 315, analysisAnalyzed: 315, ownerResolved: 315, pushPushed: 312, pushFailed: 0, pushPending: 3, failed: 0, priority: { P0: 2, P1: 3, P2: 4, P3: 5, scored: 6, legacy: 8, unscored: 301 }, priorityRule: { version: 2, thresholds: { p0: 45, p1: 25, p2: 10 }, formulaText: "U=pain×frequency; ..." } } });
+      return Response.json({ items: [] });
+    });
+    render(<App />);
+
+    expect(await screen.findByText("优先级分级")).toBeInTheDocument();
+    const group = screen.getByRole("group", { name: "优先级分级统计" });
+    expect(within(group).getByText("P0")).toBeInTheDocument();
+    expect(within(group).getAllByText("2").length).toBeGreaterThanOrEqual(1);
+    expect(within(group).getByText("P3")).toBeInTheDocument();
+    expect(within(group).getByText("301")).toBeInTheDocument();
+    const ranges = screen.getByLabelText("评分范围与对应分级");
+    expect(ranges).toHaveTextContent("P0");
+    expect(ranges).toHaveTextContent("≥ 45");
+    expect(ranges).toHaveTextContent("25–44.99");
+    expect(ranges).toHaveTextContent("< 10");
+    expect(screen.getByText(/其中/)).toHaveTextContent("8");
   });
 
   it("shows a recoverable service error instead of claiming the API is configured", async () => {

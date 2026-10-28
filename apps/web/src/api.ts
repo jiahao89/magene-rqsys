@@ -12,6 +12,10 @@ export interface OverviewMetrics {
   pushFailed: number;
   pushPending: number;
   failed: number;
+  /** 总览分级统计：当前评分优先；无评分时使用最近一次已分析优先级（legacy）。 */
+  priority?: { P0: number; P1: number; P2: number; P3: number; scored: number; legacy: number; unscored: number } | null;
+  /** 当前已发布评分规则；规则未发布时为 null。 */
+  priorityRule?: { version: number; thresholds: { p0: number; p1: number; p2: number } | null; formulaText: string } | null;
 }
 
 export interface SourceConfig {
@@ -112,8 +116,9 @@ export function getHealth(fetcher: typeof fetch = fetch): Promise<HealthResponse
 
 export async function getOverviewMetrics(fetcher: typeof fetch = fetch): Promise<OverviewMetrics> {
   const result = await requestJson<{ counts: OverviewMetrics }>("/api/overview/metrics", fetcher);
-  const keys: (keyof OverviewMetrics)[] = ["total", "pullSynced", "analysisAnalyzed", "ownerResolved", "pushPushed", "failed"];
-  if (!result.counts || keys.some((key) => !Number.isInteger(result.counts[key]) || result.counts[key] < 0)) {
+  const keys = ["total", "pullSynced", "analysisAnalyzed", "ownerResolved", "pushPushed", "failed"] as const;
+  const rawCounts = result.counts as unknown as Record<string, unknown> | undefined;
+  if (!result.counts || !rawCounts || keys.some((key) => !Number.isInteger(rawCounts[key]) || Number(rawCounts[key]) < 0)) {
     throw new ApiError("Overview metrics response is invalid", 502, "INVALID_METRICS_RESPONSE");
   }
   return result.counts;

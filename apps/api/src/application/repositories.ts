@@ -419,6 +419,11 @@ export interface RequirementQueryRepository {
     pushFailed: number;
     /** 仅推送待处理，与「待推送」卡片的筛选口径一致。 */
     pushPending: number;
+    /** 总览优先级分级：优先当前评分版本，未评分时使用最近一次已分析优先级（标记为 legacy）。 */
+    priority: {
+      P0: number; P1: number; P2: number; P3: number;
+      scored: number; legacy: number; unscored: number;
+    };
   }>;
   // 按 openapi /api/requirements 查询参数检索（q 匹配标题，游标按 created_at,id 倒序）
   search(query: {

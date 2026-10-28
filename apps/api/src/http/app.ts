@@ -172,7 +172,19 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
   if (method === "GET" && url.pathname === "/api/overview/metrics") {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
-    return json({ counts: await repositories.requirements.getPipelineCounts() });
+    const counts = await repositories.requirements.getPipelineCounts();
+    const rule = await repositories.priorityRules?.getPublished();
+    const rulePayload = rule?.rules as { thresholds?: { p0?: number; p1?: number; p2?: number } } | null;
+    return json({
+      counts: {
+        ...counts,
+        priorityRule: rule ? {
+          version: rule.version,
+          thresholds: rulePayload?.thresholds ?? null,
+          formulaText: SCORING_FORMULA_TEXT,
+        } : null,
+      },
+    });
   }
   if (method === "GET" && url.pathname === "/api/dev/fixtures/status") {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;

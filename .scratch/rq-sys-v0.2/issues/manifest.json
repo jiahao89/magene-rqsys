@@ -603,5 +603,22 @@
     "checks": [
       "Web/妙搭两仓 UI 与测试对齐；目标验证后清理合成数据。"
     ]
+  },
+  {
+    "number": 24,
+    "slug": "overview-priority-distribution",
+    "title": "总览页优先级分级统计与规则展示",
+    "blocked_by": [
+      19,
+      20,
+      23
+    ],
+    "delivery": "总览显示P0-P3/待评分数量与评分范围；当前评分优先，历史优先级标注legacy；统计只读。",
+    "specs": [
+      6
+    ],
+    "checks": [
+      "两仓API/UI对齐；目标只读回读统计与规则。"
+    ]
   }
 ]

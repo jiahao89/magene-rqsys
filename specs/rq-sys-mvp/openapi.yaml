@@ -1064,8 +1064,31 @@ components:
         analysisAnalyzed: { type: integer, minimum: 0 }
         ownerResolved: { type: integer, minimum: 0 }
         pushPushed: { type: integer, minimum: 0 }
+        pushFailed: { type: integer, minimum: 0 }
+        pushPending: { type: integer, minimum: 0 }
         failed: { type: integer, minimum: 0 }
-      required: [total, pullSynced, analysisAnalyzed, ownerResolved, pushPushed, failed]
+        priority:
+          type: object
+          description: 总览优先级分级；当前评分优先，无评分时使用最近分析优先级（legacy）。
+          properties:
+            P0: { type: integer, minimum: 0 }
+            P1: { type: integer, minimum: 0 }
+            P2: { type: integer, minimum: 0 }
+            P3: { type: integer, minimum: 0 }
+            scored: { type: integer, minimum: 0 }
+            legacy: { type: integer, minimum: 0 }
+            unscored: { type: integer, minimum: 0 }
+          required: [P0, P1, P2, P3, scored, legacy, unscored]
+        priorityRule:
+          type: [object, 'null']
+          description: 当前已发布评分规则；规则未发布时为 null。
+          properties:
+            version: { type: integer }
+            thresholds:
+              type: object
+              properties: { p0: { type: number }, p1: { type: number }, p2: { type: number } }
+            formulaText: { type: string }
+      required: [total, pullSynced, analysisAnalyzed, ownerResolved, pushPushed, failed, priority, priorityRule]
     BatchStatus:
       type: string
       enum: [running, succeeded, partial_failure, failed]
