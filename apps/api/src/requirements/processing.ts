@@ -174,7 +174,7 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
             requirementId: requirement.id,
             sourceVersion: run.sourceVersion,
             analysisVersion: run.analysisVersion,
-            ruleVersionId: run.priorityRuleVersionId,
+            ruleVersionId: priorityRule?.id ?? null,
             inputs: run.result.scoring.inputs as unknown as Record<string, unknown>,
             alpha: run.result.scoring.alpha,
             score: computed.score,
