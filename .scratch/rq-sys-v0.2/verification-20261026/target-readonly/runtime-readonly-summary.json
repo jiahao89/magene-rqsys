@@ -1,5 +1,5 @@
 {
-  "captured_at": "2026-10-27T09:45:00+08:00",
+  "captured_at": "2026-10-28T09:04:00+08:00",
   "source": {
     "id": "99331edb-663b-4635-99f4-597e26304ab1",
     "external_project_name": "室外产品-码表软固件需求池",
@@ -17,10 +17,11 @@
   },
   "trigger": {
     "name": "rqsysWeeklySyncRecovery",
-    "status": "disabled",
+    "status": "enabled",
     "cron": "*/30 * * * *",
     "timezone": "Asia/Shanghai",
-    "plan": "方案 2：配置变更期间及之后保持 disabled，待约定窗口启用"
+    "plan": "方案2：2026-10-28 09:04 启用；09:40 复核周三首轮 scheduled 批次",
+    "activated_at": "2026-10-28T09:04:00+08:00"
   },
   "queue": {
     "jobs_total": 644,
