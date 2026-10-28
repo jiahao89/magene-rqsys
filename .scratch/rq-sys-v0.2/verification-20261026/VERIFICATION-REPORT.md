@@ -329,3 +329,11 @@ npm run type:check && npm run test:rqsys-route && npm run build:prod && npm run 
 - 目标运行：合成需求 `RQ-000343` 的 v2 分析返回 `failed_retryable / network_error / AI provider is unavailable.`；release `7701586859972988149 / 7eedbfc`。说明 Miaoda 云端运行时无法访问内网地址，不是 JSON/API 协议不兼容。
 - 已清理合成需求/评分/分析/Base 行/审计/作业；不保留测试数据。
 - 结论：代码支持自定义模型（`AI_BASE_URL`/`AI_MODEL`/`AI_API_KEY` 覆盖），但该地址必须对 Miaoda 公网可达（或在公网网关/隧道后提供）。当前目标 AI 分析会因网络不可达失败；若恢复官方模型，需要重新提供原官方 `AI_API_KEY`（本次自定义 key 覆盖了原值且未留存）。
+
+## 5J. 自定义 Claude 模型接入成功（2026-10-28）
+
+- 用户提供公网入口 `https://nty-hk.zhouyang168.top/v1`、模型 `claude-sonnet-5-5`；目标 online/dev 配置：`AI_BASE_URL`、`AI_MODEL=claude-sonnet-5-5`、`AI_TEMPERATURE=none`（Claude 拒绝非默认 temperature）、`AI_TIMEOUT_MS=120000`、`AI_API_KEY`（仅服务端，不写入证据）。
+- 兼容性修复（两仓已发布）：省略 temperature；解析 Claude 返回的 markdown fenced JSON；`scoring.proposedScore=null` 视为未提供。
+- 目标验证：release **`7701608102147607840 / 0b40b22`**；合成 `RQ-000343` 的 AI v3 成功，provenance `provider=deepseek, model=claude-sonnet-5-5, promptVersion=rq-analysis-v3`；服务端评分 `6.24 / P3 / α=0.8`，AI/人工/版本链路仍正常。
+- 清理：删除合成需求/评分/分析/Base 行/审计/作业；synthetic API **404**。目标数据保持 315 需求/312 Base 行，无测试残留。
+- 说明：此前的内网 `tops.magene.cn` 配置已替换；原官方 `AI_API_KEY` 已被覆盖且未留存，当前目标 AI 使用本 Claude 网关。

@@ -74,6 +74,8 @@ Spec 02 禁止发送姓名、用户 ID、联系方式。POC 在 `buildOutboundPa
 ### Credential/runtime boundary (2026-10-10)
 
 - `AI_API_KEY` is a generic environment-variable name. The current provider code defaults to DeepSeek's endpoint and `deepseek-flash`; an explicitly configured `AI_BASE_URL` or `AI_MODEL` can override those defaults. A key's appearance alone does not identify its provider.
+- Custom OpenAI-compatible gateways are supported. Set `AI_BASE_URL` to the base that precedes `/chat/completions` (for example `https://host/v1`), `AI_MODEL`, and `AI_API_KEY`. If the model rejects a non-default temperature (Claude Sonnet gateways commonly do), set `AI_TEMPERATURE=none`/`default` so the request omits the field. Claude-compatible gateways may return markdown-fenced JSON; the provider strips fences before schema validation.
+- The target runtime must be able to reach the configured base URL over the public network. Private RFC1918 addresses such as `192.168.188.61` are not reachable from Miaoda cloud even if they work on the company Wi-Fi.
 - The effective test key used for the 2026-10-09 local POC passed T1–T3 against DeepSeek. This is local POC evidence, not proof that the value currently edited in the Miaoda app is that key or that the deployed server runtime can read it.
 - The authenticated Miaoda editor currently marks `.env` modified. Its contents were not inspected. The app-scoped repository tracks a `.env` path; if a real key is in that file, do not commit or publish it. Use trusted server-side secret storage instead, and rotate the key if it has entered repository history.
 

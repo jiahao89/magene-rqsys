@@ -1,0 +1,36 @@
+{
+  "capturedAt": "2026-10-28T07:00:04.108Z",
+  "release": "7701608102147607840 / 0b40b22",
+  "platformRequirementId": "RQ-000343",
+  "baseRecordId": "reczz28SjMLzLNUZ",
+  "analyses": [
+    {
+      "v": 1,
+      "status": "failed_retryable",
+      "provider": null,
+      "model": null,
+      "promptVersion": null
+    },
+    {
+      "v": 2,
+      "status": "failed_retryable",
+      "provider": null,
+      "model": null,
+      "promptVersion": null
+    },
+    {
+      "v": 3,
+      "status": "analyzed",
+      "provider": "deepseek",
+      "model": "claude-sonnet-5-5",
+      "promptVersion": "rq-analysis-v3"
+    }
+  ],
+  "scoring": {
+    "version": 1,
+    "score": 6.24,
+    "priority": "P3",
+    "alpha": 0.8
+  },
+  "ui": "妙搭生成\n跳到主要内容\nrq·sys\nWORKSPACE\n菜单\n工作台\n总览\n需求池\n同步记录\n管理\n团队管理\n功能模块\n设置\n数据源与计划\n优先级规则\nRQ-Sys\n/\n需求池\n正在检查 API\nWORKSPACE\n需求池\n\n按需求标题、TB负责人和处理状态检索需求；负责人分配在需求详情页完成。\n\n返回需求池\n【自定义模型验收-请忽略】Claude-Sonnet-5-5-20261028\nRQ-000343 · v1\n当前综合评分\n6.24\nP3\nv1 · AI 建议 · 低置信度\n查看评分与依据\n负责人\n—\n无需负责人\n已收录\n已分析\n无需负责人\n已推送\n分配 / 变更负责人\n重新分析\n重试 Base 推送\n刷新\n\n该需求已推送完成，PM 在飞书多维表格继续处理；如需换人可在此变更负责人。\n\n需求信息\n来自 Web 收录 · 产品/研发/测试\n手工\n标题\n\n【自定义模型验收-请忽略】Claude-Sonnet-5-5-20261028\n\n手工\n描述\n\n用户：竞技骑行用户。场景：爬坡训练中查看实时坡度和剩余爬升。现状问题：坡度更新慢，爬坡中难以判断节奏。期望结果：更及时显示坡度并给出剩余爬升提示。补充：本需求为自定义模型配置合成验收，完成后删除。\n\n手工\n提出人\n—\n手工\n执行人\n—\n手工\n状态\n—\n手工\n链接\n—\n手工\n创建时间\n—\n手工\n更新时间\n—\n模块（录入）\n爬坡\n需求类型（录入）\n体验优化\n编辑需求\nAI 评分与优先级\n\nU/M/S/C 四维评分决定 P0–P3；AI 给出依据，PM 可修订单项与 α。\n\nAI 评分 · 服务端算 P\n当前综合评分\n6.24\nP3\nv1 · AI 建议 · 低置信度\n计算依据（只读）\nU=pain×frequency; M=sellingPoint×competitor; S=roadmap×dependency; C=MAX(workload,technicalRisk,resource); score=round2(U×alpha×(1+0.6M+0.4S)/C)\n综合分由服务端按此公式计算，P 按 45 / 25 / 10 阈值判定。\n编辑评分\n历史（1）\n\n评分置信度理由：仅有单一合成来源，频次、竞品、规划与工程成本均缺少依据，多数输入按假设估算。\n\nU · 用户价值\n9\n痛点 3 × 频次 3\n\nAI：高\n\n理由：竞技骑行用户在爬坡中依赖坡度和剩余爬升来判断节奏，坡度更新慢直接影响配速决策，价值明确。\n\n证据：用户：竞技骑行用户。；场景：爬坡训练中查看实时坡度和剩余爬升。；现状问题：坡度更新慢，爬坡中难以判断节奏。\n\nM · 市场价值\n2\n卖点 2 × 竞品 1\n\nAI：无法判断\n\n理由：来源未提供竞品表现、实现成本或投入数据，无法判断成本。\n\n需要补充信息\nS · 战略价值\n1\nRoadmap 1 "
+}
