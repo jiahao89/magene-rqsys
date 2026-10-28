@@ -91,6 +91,8 @@ export async function runAnalysis(input: AnalysisServiceInput, options: Analysis
       ?? (result.scoring ? null : input.priorityRule ? input.priorityRule.compute(recommendationValues(result)) : result.priority);
     const completed = await options.repository.complete(run.id, {
       status: "analyzed", result: { ...result, priority }, completedAt: (options.now ?? (() => new Date()))().toISOString(),
+      provider: run.provider, model: run.model, promptVersion: run.promptVersion,
+      moduleDictionaryVersion: run.moduleDictionaryVersion, ...(run.priorityRuleVersionId ? { priorityRuleVersionId: run.priorityRuleVersionId } : {}),
       safeErrorCode: null, safeErrorSummary: null,
     });
     if (!completed) throw new AnalysisPersistenceError("Analysis run could not be completed.");
