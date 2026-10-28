@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { BatchesPanel, MappingsPanel, ModulesPanel, PeoplePanel, RequirementsPanel, ScoringPanel, SourcesPanel } from "./panels";
+import { AudienceEditor } from "./intake-form";
 import type { SourceConfig, TeamPerson } from "./api";
 
 const fetchMock = vi.fn<typeof fetch>();
@@ -38,7 +39,8 @@ describe("ScoringPanel (V02-S06)", () => {
       return jsonOk({});
     });
     render(<ScoringPanel requirementId="req-1" scoring={{ current: scoreVersion, aiSuggestion: null, history: [scoreVersion], formula: { text: "formula", thresholds: { p0: 45, p1: 25, p2: 10 } } }} onSaved={() => undefined} />);
-    expect(screen.getByText(/综合分 6.40/)).toBeInTheDocument();
+    expect(screen.getByText("6.40")).toBeInTheDocument();
+    expect(screen.getByText("P3")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "编辑评分" }));
     fireEvent.change(screen.getByLabelText("评分 U 痛点强度"), { target: { value: "4" } });
     fireEvent.change(screen.getByLabelText("评分 alpha"), { target: { value: "1.0" } });
@@ -53,6 +55,32 @@ describe("ScoringPanel (V02-S06)", () => {
     render(<ScoringPanel requirementId="req-1" scoring={null} onSaved={() => undefined} />);
     expect(screen.getByText("暂无评分")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "手动填写评分" })).toBeInTheDocument();
+  });
+});
+
+describe("AudienceEditor (2026-10-28)", () => {
+  it("defaults to the first AI suggestion without auto-saving and distinguishes save from tags", async () => {
+    let body: Record<string, unknown> | undefined;
+    fetchMock.mockImplementation(async (_input, init) => {
+      if (init?.method === "PUT") { body = JSON.parse(String(init.body)) as Record<string, unknown>; return jsonOk({ requirementId: "req-1", audienceVersion: 1, confirmed: true, tags: body.tags }); }
+      return jsonOk({});
+    });
+    render(<AudienceEditor requirementId="req-1" audience={{ tags: [], confirmed: false, version: 0 }} suggestedTags={["L2", "L5"]} onSaved={() => undefined} />);
+    const choices = screen.getByRole("group", { name: "选择适用人群" });
+    expect(within(choices).getByRole("button", { name: "L2 竞技级 Racing" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(choices).getByRole("button", { name: "L5 休闲娱乐" })).toHaveAttribute("aria-pressed", "false");
+    const save = screen.getByRole("button", { name: "保存人群标签" });
+    expect(save).toHaveClass("audience-save-button");
+    fireEvent.click(within(choices).getByRole("button", { name: "L5 休闲娱乐" }));
+    fireEvent.click(save);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/requirements/req-1/audience", expect.objectContaining({ method: "PUT" })));
+    expect(body?.tags).toEqual(["L2", "L5"]);
+  });
+  it("does not preselect AI suggestions when the PM has confirmed an empty set", () => {
+    render(<AudienceEditor requirementId="req-1" audience={{ tags: [], confirmed: true, version: 2 }} suggestedTags={["L2"]} onSaved={() => undefined} />);
+    const choices = screen.getByRole("group", { name: "选择适用人群" });
+    expect(within(choices).getAllByRole("button").every((button) => button.getAttribute("aria-pressed") === "false")).toBe(true);
+    expect(screen.getByText("已确认为空（不再默认采用 AI 建议）")).toBeInTheDocument();
   });
 });
 
@@ -296,8 +324,8 @@ describe("RequirementsPanel (ticket 17)", () => {
     expect(screen.queryByText("需求列表")).not.toBeInTheDocument();
     expect(screen.getByText("需求信息")).toBeInTheDocument();
     expect(screen.getByText("来自 Teambition")).toBeInTheDocument();
-    expect(screen.getByText("AI 分析与建议")).toBeInTheDocument();
-    expect(screen.getByText("AI 生成 · 可被推翻")).toBeInTheDocument();
+    expect(screen.getByText("AI 评分与优先级")).toBeInTheDocument();
+    expect(screen.getByText("适用人群")).toBeInTheDocument();
     expect(screen.getByText("处理与推送")).toBeInTheDocument();
     expect(screen.getByText("系统状态")).toBeInTheDocument();
     expect(screen.getByText("查看依据与历史")).toBeInTheDocument();
@@ -306,6 +334,33 @@ describe("RequirementsPanel (ticket 17)", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /返回需求池/ }));
     expect(await screen.findByText("需要报表")).toBeInTheDocument();
+  });
+
+  it("puts score and priority in the detail summary card and keeps one integrated AI scoring section", async () => {
+    mockPanel({
+      detailBody: detail({
+        analysis: { module: "报表分析", confidence: "中", recommendations: {} },
+        scoring: {
+          current: {
+            id: "score-summary", requirementId: "req-1", version: 2, status: "current", origin: "ai",
+            sourceVersion: 1, analysisVersion: 2, ruleVersionId: "rule-v2",
+            inputs: { user: { pain: 3, frequency: 4 }, market: { sellingPoint: 1, competitor: 1 }, strategy: { roadmap: 1, dependency: 1 }, cost: { workload: 3, technicalRisk: 2, resource: 2 } },
+            alpha: 0.8, score: 6.4, priority: "P3", scoreConfidence: "中", scoreConfidenceReason: "频次不足", safetyFlag: false,
+            basis: {}, rationale: null, actorId: null, changeReason: null, createdAt: "2026-10-28T01:00:00.000Z",
+          },
+          aiSuggestion: null, history: [], formula: { text: "formula", thresholds: { p0: 45, p1: 25, p2: 10 } },
+        },
+      }),
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await openFirstRow();
+    const summary = screen.getByLabelText("评分与优先级摘要");
+    expect(within(summary).getByText("6.40")).toBeInTheDocument();
+    expect(within(summary).getByText("P3")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /返回需求池/ }).closest(".req-summary-backbar")).not.toBeNull();
+    expect(screen.getByText("AI 评分与优先级")).toBeInTheDocument();
+    expect(screen.queryByText("AI 分析与建议")).not.toBeInTheDocument();
+    expect(screen.getByText("U · 用户价值")).toBeInTheDocument();
   });
 
   it("shows the current manual definition, labels fields as manual, and does not claim finished analysis is incomplete", async () => {
@@ -459,6 +514,18 @@ describe("RequirementsPanel (ticket 17)", () => {
   });
 
   it("shows AI advice as cards and keeps evidence/inference/history in the folded audit area", async () => {
+    const integratedScoring = {
+      current: {
+        id: "score-integrated", requirementId: "req-1", version: 1, status: "current" as const, origin: "ai" as const,
+        sourceVersion: 1, analysisVersion: 2, ruleVersionId: "rule-v2",
+        inputs: { user: { pain: 3, frequency: 4 }, market: { sellingPoint: 1, competitor: 1 }, strategy: { roadmap: 1, dependency: 1 }, cost: { workload: 3, technicalRisk: 2, resource: 2 } },
+        alpha: 0.8, score: 6.4, priority: "P3" as const, scoreConfidence: "中" as const, scoreConfidenceReason: "频次不足", safetyFlag: false,
+        basis: { "user.pain": { reason: "减少重复操作", evidence: ["减少操作步骤"], assumption: false } }, rationale: "单条反馈", actorId: null, changeReason: null, createdAt: "2026-10-28T01:00:00.000Z",
+      },
+      aiSuggestion: null,
+      history: [] as unknown[],
+      formula: { text: "formula", thresholds: { p0: 45, p1: 25, p2: 10 } },
+    };
     mockPanel({
       detailBody: detail({
         analysis: {
@@ -472,6 +539,7 @@ describe("RequirementsPanel (ticket 17)", () => {
           },
           inferences: [{ text: "可能需要定时导出" }], missing_inputs: ["目标用户"], blind_spots: ["价值待确认"],
         },
+        scoring: integratedScoring,
         analyses: [
           { analysisVersion: 1, status: "failed_retryable", moduleSuggestion: null, confidence: null, priority: null, startedAt: "2026-10-09T00:00:00.000Z", completedAt: "2026-10-09T00:00:05.000Z", safeErrorSummary: "AI provider request timed out." },
           { analysisVersion: 2, status: "analyzed", moduleSuggestion: "报表分析", confidence: "中", priority: "P1", startedAt: "2026-10-09T00:01:00.000Z", completedAt: "2026-10-09T00:01:03.000Z", safeErrorSummary: null },
@@ -483,14 +551,14 @@ describe("RequirementsPanel (ticket 17)", () => {
 
     // L2 卡片：维度/结论/理由，证据不足显式标红。
     expect(screen.getByText("模块建议")).toBeInTheDocument();
-    expect(screen.getByText("优先级建议")).toBeInTheDocument();
-    expect(screen.getByText("置信度")).toBeInTheDocument();
-    expect(screen.getByText("U · 用户")).toBeInTheDocument();
-    expect(screen.getByText("改善用户效率")).toBeInTheDocument();
+    expect(screen.getByText("优先级依据")).toBeInTheDocument();
+    expect(screen.getByText("整体置信度")).toBeInTheDocument();
+    expect(screen.getByText("U · 用户价值")).toBeInTheDocument();
+    expect(screen.getByText(/改善用户效率/)).toBeInTheDocument();
     expect(screen.getByText(/理由：减少重复操作/)).toBeInTheDocument();
     expect(screen.getByText(/证据：减少操作步骤/)).toBeInTheDocument();
     expect(screen.getAllByText("需要补充信息")).toHaveLength(2);
-    expect(screen.getByText("C · 技术")).toBeInTheDocument();
+    expect(screen.getByText("C · 成本")).toBeInTheDocument();
 
     // L3 默认收起；展开后显示证据、推断、盲点、快照与分析版本历史。
     const trigger = screen.getByText("查看依据与历史");

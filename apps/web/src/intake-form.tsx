@@ -194,14 +194,26 @@ export function ManualEditSection({ detail, onSaved }: { detail: ManualEditSourc
 
 export interface AudienceState { tags: string[]; confirmed: boolean; version: number }
 
-/** V02-T09：PM 人群标签编辑。区分未确认（展示 AI 建议为参考）与已确认空集；修改不触发任何主流程。 */
-export function AudienceEditor({ requirementId, audience, onSaved }: { requirementId: string; audience: AudienceState; onSaved: () => void }) {
-  const [selected, setSelected] = useState<string[]>(audience.tags);
+/** V02-T09 / 2026-10-28 UI revision：PM 人群标签编辑。
+ *  AI 建议与 PM 当前值分开；未确认且有 AI 建议时默认选中首个建议（仅草稿，不自动保存）。
+ *  修改不触发分析、推送或通知。 */
+export function AudienceEditor({ requirementId, audience, suggestedTags = [], onSaved }: {
+  requirementId: string;
+  audience: AudienceState;
+  suggestedTags?: string[];
+  onSaved: () => void;
+}) {
+  const suggestedKey = suggestedTags.join(",");
+  const defaultSelection = audience.confirmed ? audience.tags : suggestedTags.length > 0 ? [suggestedTags[0]] : [];
+  const [selected, setSelected] = useState<string[]>(defaultSelection);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // 仅按确认版本重置：detail 刷新重建 tags 数组引用不应清掉未保存的选择（复查 #10）。
+  // 确认版本变化或 AI 建议变化时重算草稿；普通详情刷新不覆盖用户未保存的多选。
   const confirmedTags = audience.confirmed ? audience.tags.join(",") : "";
-  useEffect(() => { setSelected(audience.confirmed ? audience.tags : []); setError(null); }, [audience.version, confirmedTags]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    setSelected(audience.confirmed ? audience.tags : suggestedTags.length > 0 ? [suggestedTags[0]] : []);
+    setError(null);
+  }, [audience.version, confirmedTags, suggestedKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const toggle = (level: string) => setSelected((prev) => prev.includes(level) ? prev.filter((item) => item !== level) : [...prev, level]);
   const save = async () => {
     setBusy(true); setError(null);
@@ -212,16 +224,27 @@ export function AudienceEditor({ requirementId, audience, onSaved }: { requireme
       setError(cause instanceof ApiError ? cause.message : "保存失败，请重试。");
     } finally { setBusy(false); }
   };
-  return <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-    {AUDIENCE_LEVELS.map((level) => (
-      <button key={level} type="button" aria-pressed={selected.includes(level)} className={`button button-small ${selected.includes(level) ? "button-primary" : "button-secondary"}`} onClick={() => toggle(level)} disabled={busy} title={AUDIENCE_LEVEL_NAMES[level]}>
-        {AUDIENCE_LEVEL_NAMES[level]}
-      </button>
-    ))}
-    <button className="button button-primary button-small" onClick={() => void save()} disabled={busy}>保存人群标签</button>
-    {audience.confirmed && audience.tags.length === 0 && <span className="status-hint">已确认为空（不再默认采用 AI 建议）</span>}
-    {!audience.confirmed && <span className="status-hint">未确认；上方 AI 建议仅供参考</span>}
-    {error && <span className="field-error" role="alert">{error}</span>}
+  return <div className="audience-editor">
+    <div className="audience-ai-row">
+      <span className="audience-ai-label">AI 建议</span>
+      {suggestedTags.length > 0
+        ? <div className="audience-ai-chips">{suggestedTags.map((level) => <button key={level} type="button" className={`audience-ai-chip${selected.includes(level) ? " is-in-draft" : ""}`} onClick={() => toggle(level)} disabled={busy} aria-pressed={selected.includes(level)} title="把该 AI 建议加入/移出本次选择">{AUDIENCE_LEVEL_NAMES[level] ?? level}</button>)}</div>
+        : <span className="audience-ai-empty">AI 未给出人群建议</span>}
+      <span className="audience-ai-hint">未确认时默认选中首个 AI 建议；可修改后保存</span>
+    </div>
+    <div className="audience-choice-row" role="group" aria-label="选择适用人群">
+      {AUDIENCE_LEVELS.map((level) => (
+        <button key={level} type="button" aria-pressed={selected.includes(level)} className={`audience-tag${selected.includes(level) ? " is-selected" : ""}`} onClick={() => toggle(level)} disabled={busy} title={AUDIENCE_LEVEL_NAMES[level]}>
+          {AUDIENCE_LEVEL_NAMES[level]}
+        </button>
+      ))}
+    </div>
+    <div className="audience-actions">
+      <button className="audience-save-button" onClick={() => void save()} disabled={busy}>{busy ? "保存中…" : "保存人群标签"}</button>
+      {audience.confirmed && audience.tags.length === 0 && <span className="status-hint">已确认为空（不再默认采用 AI 建议）</span>}
+      {!audience.confirmed && <span className="status-hint">尚未确认；当前选择是草稿，保存后才成为 PM 确认值</span>}
+      {error && <span className="field-error" role="alert">{error}</span>}
+    </div>
   </div>;
 }
 

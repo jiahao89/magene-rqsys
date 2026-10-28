@@ -587,5 +587,21 @@
     "gate": "目标迁移/发布/写入/清理须按G-DEPLOY另行授权。",
     "status": "ready-for-agent",
     "approved_on": "2026-10-27"
+  },
+  {
+    "number": 23,
+    "slug": "detail-score-analysis-ui",
+    "title": "详情摘要评分卡与 AI 评分分析整合",
+    "blocked_by": [
+      21,
+      22
+    ],
+    "delivery": "摘要卡突出综合分/P并置顶返回；评分与AI分析整合为一个区域并展示U/M/S/C四维评分；人群AI建议默认选中首个建议且视觉区分。",
+    "specs": [
+      6
+    ],
+    "checks": [
+      "Web/妙搭两仓 UI 与测试对齐；目标验证后清理合成数据。"
+    ]
   }
 ]

@@ -1,7 +1,7 @@
 // 工单 16/17 工作台面板：数据全部来自本地 API，不使用演示数据；
 // 权限拒绝、空数据、加载中、局部失败和 API 不可用都显示可恢复状态。
 // 需求池/批次/审计面板自治加载，支持服务端筛选与游标分页。
-import { useCallback, useEffect, useId, useRef, useState, Component, type KeyboardEvent, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useId, useRef, useState, Component, type KeyboardEvent, type ReactNode } from "react";
 import { AudienceEditor, BetaPanel, IntakeForm, ManualEditSection } from "./intake-form";
 import { Accordion as HeroAccordion, AlertDialog as HeroAlertDialog, Button as HeroButton, Card as HeroCard, Chip as HeroChip, Input as HeroInput, TextArea as HeroTextArea } from "@heroui/react";
 import { ArrowLeft, RefreshCw, X } from "lucide-react";
@@ -932,17 +932,25 @@ function BaseRecordReference({ recordId }: { recordId: string | null }) {
   </span>;
 }
 
-const SCORE_ROWS: Array<{ path: [keyof ScoringInputs, string]; label: string; max: number }> = [
-  { path: ["user", "pain"], label: "U 痛点强度", max: 5 },
-  { path: ["user", "frequency"], label: "U 发生频次", max: 5 },
-  { path: ["market", "sellingPoint"], label: "M 卖点强度", max: 3 },
-  { path: ["market", "competitor"], label: "M 竞品差异", max: 3 },
-  { path: ["strategy", "roadmap"], label: "S Roadmap 匹配", max: 3 },
-  { path: ["strategy", "dependency"], label: "S 战略依赖/杠杆", max: 3 },
-  { path: ["cost", "workload"], label: "C 工作量", max: 5 },
-  { path: ["cost", "technicalRisk"], label: "C 技术风险", max: 5 },
-  { path: ["cost", "resource"], label: "C 资源占用", max: 5 },
+const SCORE_ROWS: Array<{ path: [keyof ScoringInputs, string]; label: string; max: number; group: string }> = [
+  { path: ["user", "pain"], label: "U 痛点强度", max: 5, group: "U 用户价值" },
+  { path: ["user", "frequency"], label: "U 发生频次", max: 5, group: "U 用户价值" },
+  { path: ["market", "sellingPoint"], label: "M 卖点强度", max: 3, group: "M 市场价值" },
+  { path: ["market", "competitor"], label: "M 竞品差异", max: 3, group: "M 市场价值" },
+  { path: ["strategy", "roadmap"], label: "S Roadmap 匹配", max: 3, group: "S 战略价值" },
+  { path: ["strategy", "dependency"], label: "S 战略依赖/杠杆", max: 3, group: "S 战略价值" },
+  { path: ["cost", "workload"], label: "C 工作量", max: 5, group: "C 成本" },
+  { path: ["cost", "technicalRisk"], label: "C 技术风险", max: 5, group: "C 成本" },
+  { path: ["cost", "resource"], label: "C 资源占用", max: 5, group: "C 成本" },
 ];
+
+export interface DimensionInsight {
+  key: "U" | "M" | "S" | "C";
+  recommendation?: string | null;
+  rationale?: string | null;
+  evidence?: string[];
+  missing?: boolean;
+}
 
 function scoringValue(inputs: ScoringInputs, path: [keyof ScoringInputs, string]): number {
   return Number((inputs[path[0]] as Record<string, number>)[path[1]] ?? 0);
@@ -952,7 +960,29 @@ function withScoringValue(inputs: ScoringInputs, path: [keyof ScoringInputs, str
   return { ...inputs, [path[0]]: { ...(inputs[path[0]] as Record<string, number>), [path[1]]: value } } as ScoringInputs;
 }
 
-export function ScoringPanel({ requirementId, scoring, onSaved }: { requirementId: string; scoring: import("./api").ScoringData | null | undefined; onSaved: () => void }) {
+function scoreDimensions(inputs: ScoringInputs) {
+  return {
+    U: inputs.user.pain * inputs.user.frequency,
+    M: inputs.market.sellingPoint * inputs.market.competitor,
+    S: inputs.strategy.roadmap * inputs.strategy.dependency,
+    C: Math.max(inputs.cost.workload, inputs.cost.technicalRisk, inputs.cost.resource),
+  };
+}
+
+function scoreOriginLabel(origin: RequirementScoreVersion["origin"]): string {
+  return origin === "ai" ? "AI 建议" : origin === "manual" ? "PM 人工" : "已采用 AI";
+}
+
+/** V02-S06 / 2026-10-28：AI 评分与 AI 建议整合为同一区域。
+ *  评分决定优先级；U/M/S/C 维度卡、九项输入和 AI 定性建议放在一起，
+ *  避免原来的“评分与优先级 + AI分析与建议”两个重复区块。 */
+export function ScoringPanel({ requirementId, scoring, dimensionInsights = [], children, onSaved }: {
+  requirementId: string;
+  scoring: import("./api").ScoringData | null | undefined;
+  dimensionInsights?: DimensionInsight[];
+  children?: ReactNode;
+  onSaved: () => void;
+}) {
   const current = scoring?.current ?? null;
   const ai = scoring?.aiSuggestion ?? null;
   const baseInputs: ScoringInputs = current?.inputs ?? ai?.inputs ?? {
@@ -974,6 +1004,15 @@ export function ScoringPanel({ requirementId, scoring, onSaved }: { requirementI
     setEditing(false); setError(null);
   }, [current?.id, ai?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const display = current ?? ai;
+  const dimensions = display ? scoreDimensions(display.inputs) : null;
+  const insightByKey = new Map(dimensionInsights.map((insight) => [insight.key, insight]));
+  const dimensionCards = display && dimensions ? ([
+    { key: "U" as const, label: "U · 用户价值", value: dimensions.U, formula: `痛点 ${display.inputs.user.pain} × 频次 ${display.inputs.user.frequency}` },
+    { key: "M" as const, label: "M · 市场价值", value: dimensions.M, formula: `卖点 ${display.inputs.market.sellingPoint} × 竞品 ${display.inputs.market.competitor}` },
+    { key: "S" as const, label: "S · 战略价值", value: dimensions.S, formula: `Roadmap ${display.inputs.strategy.roadmap} × 依赖 ${display.inputs.strategy.dependency}` },
+    { key: "C" as const, label: "C · 成本", value: dimensions.C, formula: `max(工作量 ${display.inputs.cost.workload}，风险 ${display.inputs.cost.technicalRisk}，资源 ${display.inputs.cost.resource})` },
+  ]) : [];
+  const aiAlreadyApplied = Boolean(current && ai && current.origin === "ai_applied" && current.analysisVersion === ai.analysisVersion);
   const save = async () => {
     setBusy(true); setError(null); setNotice(null);
     try {
@@ -998,38 +1037,82 @@ export function ScoringPanel({ requirementId, scoring, onSaved }: { requirementI
     if (!basis) return "—";
     return `${basis.reason}${basis.assumption ? "（假设）" : ""}`;
   };
-  return <section className="req-section" aria-labelledby="req-scoring-heading">
-    <div className="req-section-head"><h3 id="req-scoring-heading">评分与优先级</h3><span className="req-source-note">AI 直接评分 · PM 可修正</span></div>
-    <StateBanner loadError={error} notice={notice} onCloseNotice={() => setNotice(null)} />
-    {!display ? <div className="req-empty-state"><strong>暂无评分</strong><span>AI 分析完成后会生成九项评分；也可以手动填写。</span><button className="button button-secondary button-small" onClick={() => setEditing(true)} disabled={busy}>手动填写评分</button></div> : <>
-      <div className="rules-form" style={{ alignItems: "center", flexWrap: "wrap" }}>
-        <strong>综合分 {display.score.toFixed(2)}</strong><span className="status-chip status-live"><span />{display.priority}</span>
-        <span className="status-hint">版本 v{display.version} · {display.origin === "ai" ? "AI建议" : display.origin === "manual" ? "人工" : "已采用AI"} · 置信度 {display.scoreConfidence ?? "—"}</span>
-        {current && ai && ai.id !== current.id && <button className="button button-secondary button-small" onClick={() => void applyAi()} disabled={busy}>采用 AI 建议 v{ai.version}</button>}
-        <button className="button button-secondary button-small" onClick={() => setEditing((value) => !value)} disabled={busy}>{editing ? "取消编辑" : "编辑评分"}</button>
-        <button className="button button-secondary button-small" onClick={() => setHistoryOpen((value) => !value)}>{historyOpen ? "收起历史" : `历史（${scoring?.history.length ?? 0}）`}</button>
+  return <section className="req-section req-score-section" aria-labelledby="req-scoring-heading">
+    <div className="req-section-head score-section-head">
+      <div>
+        <h3 id="req-scoring-heading">AI 评分与优先级</h3>
+        <p className="score-section-subtitle">U/M/S/C 四维评分决定 P0–P3；AI 给出依据，PM 可修订单项与 α。</p>
       </div>
-      <p className="status-hint">{scoring?.formula?.text ?? "U/M/S/C 固定公式"}；综合分与 P 由服务端计算。</p>
-      {display.scoreConfidenceReason && <p className="status-hint">评分置信度理由：{display.scoreConfidenceReason}</p>}
+      <span className="req-source-note">AI 评分 · 服务端算 P</span>
+    </div>
+    <StateBanner loadError={error} notice={notice} onCloseNotice={() => setNotice(null)} />
+    {!display ? <div className="req-empty-state score-empty-state"><strong>暂无评分</strong><span>AI 分析完成后会生成九项评分；旧分析没有合法评分时也可以手动填写。</span><button className="button button-secondary button-small" onClick={() => setEditing(true)} disabled={busy}>手动填写评分</button></div> : <>
+      <div className="score-overview">
+        <div className="score-overview-main">
+          <span className="score-kicker">{current ? "当前综合评分" : "AI 建议综合评分"}</span>
+          <div className="score-number-line"><strong className="score-number">{display.score.toFixed(2)}</strong><span className={`priority-pill priority-${display.priority.toLowerCase()}`}>{display.priority}</span></div>
+          <span className="score-meta">v{display.version} · {scoreOriginLabel(display.origin)} · {display.scoreConfidence ? `${display.scoreConfidence}置信度` : "置信度 —"}</span>
+          {!current && ai && <span className="score-not-current">尚未成为当前评分，请查看后采用</span>}
+        </div>
+        <div className="score-overview-formula">
+          <span className="score-kicker">计算依据（只读）</span>
+          <code>{scoring?.formula?.text ?? "U/M/S/C 固定公式"}</code>
+          <span className="score-formula-result">综合分由服务端按此公式计算，P 按 45 / 25 / 10 阈值判定。</span>
+        </div>
+        <div className="score-overview-actions">
+          {ai && ai.id !== current?.id && !aiAlreadyApplied && <button className="button button-primary button-small" onClick={() => void applyAi()} disabled={busy}>采用 AI 建议 v{ai.version}</button>}
+          <button className="button button-secondary button-small" onClick={() => setEditing((value) => !value)} disabled={busy}>{editing ? "取消编辑" : "编辑评分"}</button>
+          <button className="button button-secondary button-small" onClick={() => setHistoryOpen((value) => !value)}>{historyOpen ? "收起历史" : `历史（${scoring?.history.length ?? 0}）`}</button>
+        </div>
+      </div>
+      {display.scoreConfidenceReason && <p className="status-hint score-confidence-note">评分置信度理由：{display.scoreConfidenceReason}</p>}
       {display.safetyFlag && <div className="notice-banner" role="status">涉及安全：需人工复核；安全标记不自动改变 P。</div>}
-      <div className="table-scroll"><table><thead><tr><th>评分项</th><th>AI建议</th><th>当前值</th><th>依据/假设</th></tr></thead><tbody>
-        {SCORE_ROWS.map(({ path, label, max }) => <tr key={label}>
-          <td>{label}</td>
-          <td>{ai ? scoringValue(ai.inputs, path) : "—"}</td>
-          <td>{editing ? <input aria-label={`评分 ${label}`} type="number" min={1} max={max} value={scoringValue(inputs, path)} onChange={(event) => setInputs(withScoringValue(inputs, path, Number(event.target.value)))} style={{ width: 72 }} /> : scoringValue(display.inputs, path)}</td>
-          <td>{rowLabel(path)}</td>
-        </tr>)}
-        <tr><td>α 修正系数</td><td>{ai?.alpha ?? "—"}</td><td>{editing ? <input aria-label="评分 alpha" type="number" min={0.5} max={2} step={0.1} value={alpha} onChange={(event) => setAlpha(Number(event.target.value))} style={{ width: 72 }} /> : display.alpha}</td><td>{display.rationale ?? "—"}</td></tr>
+      <div className="dimension-score-grid" aria-label="U/M/S/C 维度评分">
+        {dimensionCards.map((card) => {
+          const insight = insightByKey.get(card.key);
+          return <div key={card.key} className={`dimension-score-card dimension-${card.key.toLowerCase()}`}>
+            <div className="dimension-card-head"><span>{card.label}</span><strong>{card.value}</strong></div>
+            <span className="dimension-formula">{card.formula}</span>
+            {insight?.recommendation ? <p className="dimension-insight">AI：{insight.recommendation}</p> : <p className="dimension-insight is-empty">AI 维度解读未提供</p>}
+            {insight?.rationale && <p className="dimension-rationale">理由：{insight.rationale}</p>}
+            {insight?.evidence && insight.evidence.length > 0 && <p className="dimension-evidence">证据：{insight.evidence.join("；")}</p>}
+            {insight?.missing && <span className="advice-missing">需要补充信息</span>}
+          </div>;
+        })}
+      </div>
+      <div className="score-input-head"><h4>九项评分输入</h4><span>AI 建议值 vs 当前值；依据/假设可逐项核对</span></div>
+      <div className="table-scroll score-input-table"><table><thead><tr><th>评分项</th><th>AI建议</th><th>当前值</th><th>依据/假设</th></tr></thead><tbody>
+        {SCORE_ROWS.map(({ path, label, max, group }, index) => {
+          const previousGroup = index > 0 ? SCORE_ROWS[index - 1]!.group : null;
+          return <Fragment key={label}>
+            {group !== previousGroup && <tr className="score-group-row"><td colSpan={4}>{group}</td></tr>}
+            <tr>
+              <td className="score-input-label">{label}</td>
+              <td>{ai ? scoringValue(ai.inputs, path) : "—"}</td>
+              <td>{editing ? <input aria-label={`评分 ${label}`} type="number" min={1} max={max} value={scoringValue(inputs, path)} onChange={(event) => setInputs(withScoringValue(inputs, path, Number(event.target.value)))} style={{ width: 72 }} /> : scoringValue(display.inputs, path)}</td>
+              <td>{rowLabel(path)}</td>
+            </tr>
+          </Fragment>;
+        })}
+        <tr><td className="score-input-label">α 修正系数</td><td>{ai?.alpha ?? "—"}</td><td>{editing ? <input aria-label="评分 alpha" type="number" min={0.5} max={2} step={0.1} value={alpha} onChange={(event) => setAlpha(Number(event.target.value))} style={{ width: 72 }} /> : display.alpha}</td><td>{display.rationale ?? "—"}</td></tr>
       </tbody></table></div>
-      {editing && <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
+      {editing && <div className="rules-form score-edit-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
         <label className="rules-threshold"><span>涉及安全</span><input type="checkbox" checked={safetyFlag} onChange={(event) => setSafetyFlag(event.target.checked)} /></label>
         <label className="field"><span>修改理由（必填）</span><input aria-label="评分修改理由" value={reason} onChange={(event) => setReason(event.target.value)} /></label>
         <button className="button button-primary button-small" onClick={() => void save()} disabled={busy || reason.trim().length === 0}>{busy ? "保存中…" : "保存评分"}</button>
       </div>}
       {historyOpen && <div className="table-scroll"><table><thead><tr><th>版本</th><th>来源</th><th>分数/P</th><th>时间</th><th>理由</th></tr></thead><tbody>
-        {(scoring?.history ?? []).map((version) => <tr key={version.id}><td>v{version.version} · {version.status}</td><td>{version.origin === "ai" ? "AI" : version.origin === "manual" ? "人工" : "采用AI"}</td><td>{version.score.toFixed(2)} / {version.priority}</td><td>{formatDateTime(version.createdAt)}</td><td>{version.changeReason ?? "—"}</td></tr>)}
+        {(scoring?.history ?? []).map((version) => <tr key={version.id}><td>v{version.version} · {version.status}</td><td>{scoreOriginLabel(version.origin)}</td><td>{version.score.toFixed(2)} / {version.priority}</td><td>{formatDateTime(version.createdAt)}</td><td>{version.changeReason ?? "—"}</td></tr>)}
       </tbody></table></div>}
+      {children && <div className="score-analysis-detail">
+        <div className="score-analysis-head"><h4>AI 分析建议</h4><span>模块、类型、人群与整体置信度；详细证据在下方历史/依据中可查。</span></div>
+        {children}
+      </div>}
     </>}
+    {!display && children && <div className="score-analysis-detail">
+      <div className="score-analysis-head"><h4>AI 分析建议</h4><span>评分未生成时仍可查看现有 AI 分析。</span></div>
+      {children}
+    </div>}
   </section>;
 }
 
@@ -1056,8 +1139,8 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
   if (!detail) {
     return <div className="req-detail-page">
       <header className="req-detail-summary">
-        <div className="req-summary-top">
-          <HeroButton className="button button-secondary button-small" onPress={onBack}><ArrowLeft size={14} />返回需求池</HeroButton>
+        <div className="req-summary-backbar"><HeroButton className="button button-secondary button-small" onPress={onBack}><ArrowLeft size={14} />返回需求池</HeroButton></div>
+        <div className="req-summary-hero">
           <div className="req-summary-copy">
             <h2 className="req-summary-title">{loading ? "正在载入需求详情…" : "无法载入需求详情"}</h2>
             <span className="req-summary-id">REQ {detailId.slice(0, 8)}</span>
@@ -1081,12 +1164,6 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
     : [];
   const missingInputs = analysisStrings(structured.missing_inputs);
   const blindSpots = analysisStrings(structured.blind_spots);
-  const dimensionRecommendations = [
-    ["U · 用户", structured.recommendations?.user],
-    ["M · 市场", structured.recommendations?.market],
-    ["S · 商业", structured.recommendations?.business],
-    ["C · 技术", structured.recommendations?.technology],
-  ] as const;
   interface AdviceCard { label: string; conclusion: string; rationale?: string | null; evidence?: string[]; missing?: boolean }
   // V02-T08：六层人群与类型建议；旧分析缺字段 → 未提供/待判断，不推断“不适用”。
   const AUDIENCE_NAMES: Record<string, string> = { L1: "L1 职业级 Pro", L2: "L2 竞技级 Racing", L3: "L3 爱好者/专业入门", L4: "L4 健身锻炼", L5: "L5 休闲娱乐", L6: "L6 通勤代步" };
@@ -1102,15 +1179,8 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
       conclusion: audienceItems === null ? "未提供（旧版本分析）" : audienceItems.length ? audienceItems.map((item) => AUDIENCE_NAMES[String(item.level)] ?? String(item.level)).join("、") : "待判断",
       rationale: audienceItems === null ? null : audienceItems.map((item) => `${AUDIENCE_NAMES[String(item.level)] ?? item.level}：${typeof item.reason === "string" ? item.reason : ""}`).join("；") || null,
     },
-    { label: "优先级建议", conclusion: analysisText(structured.priority) ?? "空（未发布有效校准规则时保持为空）" },
-    { label: "置信度", conclusion: analysisText(structured.confidence) ?? "—", rationale: analysisText(structured.confidence_reason) },
-    ...dimensionRecommendations.map(([label, result]) => ({
-      label,
-      conclusion: analysisText(result?.recommendation) ?? "—",
-      rationale: analysisText(result?.rationale),
-      evidence: analysisStrings(result?.evidence),
-      missing: result?.missing_evidence === true,
-    })),
+    { label: "优先级依据", conclusion: "综合分由 U/M/S/C 评分公式计算；详见上方评分区", rationale: analysisText(structured.priority) ? `旧分析建议：${analysisText(structured.priority)}` : null },
+    { label: "整体置信度", conclusion: analysisText(structured.confidence) ?? "—", rationale: analysisText(structured.confidence_reason) },
   ];
 
   // 操作可用性只取决于流水线状态；不可用时保留按钮并说明原因，避免「入口消失 = 不知道能做什么」。
@@ -1154,11 +1224,46 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
       : null;
   const pushTime = formatDateTime(detail.lastPushedAt ?? null);
   const stages: Array<[PipelineStage, string]> = [["pull", detail.pipeline.pull], ["analysis", detail.pipeline.analysis], ["owner", detail.pipeline.owner], ["push", detail.pipeline.push]];
+  const summaryCurrent = detail.scoring?.current ?? null;
+  const summaryAi = detail.scoring?.aiSuggestion ?? null;
+  const summaryScore = summaryCurrent ?? summaryAi;
+  const dimensionInsights: DimensionInsight[] = [
+    { key: "U", recommendation: analysisText(structured.recommendations?.user?.recommendation), rationale: analysisText(structured.recommendations?.user?.rationale), evidence: analysisStrings(structured.recommendations?.user?.evidence), missing: structured.recommendations?.user?.missing_evidence === true },
+    { key: "M", recommendation: analysisText(structured.recommendations?.market?.recommendation), rationale: analysisText(structured.recommendations?.market?.rationale), evidence: analysisStrings(structured.recommendations?.market?.evidence), missing: structured.recommendations?.market?.missing_evidence === true },
+    { key: "S", recommendation: analysisText(structured.recommendations?.business?.recommendation), rationale: analysisText(structured.recommendations?.business?.rationale), evidence: analysisStrings(structured.recommendations?.business?.evidence), missing: structured.recommendations?.business?.missing_evidence === true },
+    { key: "C", recommendation: analysisText(structured.recommendations?.technology?.recommendation), rationale: analysisText(structured.recommendations?.technology?.rationale), evidence: analysisStrings(structured.recommendations?.technology?.evidence), missing: structured.recommendations?.technology?.missing_evidence === true },
+  ];
+  const audienceSuggestedTags = audienceItems?.map((item) => String(item.level)).filter((level) => Boolean(AUDIENCE_NAMES[level])) ?? [];
+  const audienceEditor = <div className="score-analysis-subsection audience-analysis-block">
+    <div className="score-analysis-subhead"><h5>适用人群</h5><span>AI 建议仅供参考；PM 确认值单独保存</span></div>
+    <AudienceEditor requirementId={detail.id} audience={detail.audience ?? { tags: [], confirmed: false, version: 0 }} suggestedTags={audienceSuggestedTags} onSaved={() => onSaved(detail.id)} />
+  </div>;
+  const aiAnalysisBody = detail.analysis
+    ? <>
+      <div className="score-analysis-subsection">
+        <div className="score-analysis-subhead"><h5>模块、类型与整体判断</h5><span>AI 生成 · 可被推翻</span></div>
+        <div className="advice-grid">{adviceCards.map((card) => <HeroCard key={card.label} className="advice-card">
+          <HeroCard.Content>
+            <span className="advice-label">{card.label}</span>
+            <strong className="advice-conclusion">{card.conclusion}</strong>
+            {card.rationale && <p className="advice-rationale">理由：{card.rationale}</p>}
+            {card.evidence && card.evidence.length > 0 && <p className="advice-evidence">证据：{card.evidence.join("；")}</p>}
+            {card.missing && <span className="advice-missing">需要补充信息</span>}
+          </HeroCard.Content>
+        </HeroCard>)}</div>
+      </div>
+    </>
+    : <div className="req-empty-state">
+      <strong>尚未分析</strong>
+      <span>{detail.pipeline.analysis === "running" ? "AI 分析正在进行中；完成后刷新查看结果。" : "该需求还没有可用的 AI 分析结果。"}</span>
+      <button className="button button-secondary button-small" onClick={() => void onAct(async () => { await retryAnalysis(detail.id); return "AI 分析重试已入队"; }, detail.id)} disabled={busy || !analysisRetryable} title={analysisRetryable ? "提交 AI 分析" : analysisDisabledReason}>{analysisActionLabel}</button>
+    </div>;
+  const aiAnalysisContent = <>{audienceEditor}{aiAnalysisBody}<div className="score-analysis-beta"><BetaPanel requirementId={detail.id} /></div></>;
 
   return <div className="req-detail-page">
     <header className="req-detail-summary">
-      <div className="req-summary-top">
-        <HeroButton className="button button-secondary button-small" onPress={onBack}><ArrowLeft size={14} />返回需求池</HeroButton>
+      <div className="req-summary-backbar"><HeroButton className="button button-secondary button-small" onPress={onBack}><ArrowLeft size={14} />返回需求池</HeroButton></div>
+      <div className="req-summary-hero">
         <div className="req-summary-copy">
           <h2 className="req-summary-title">{detail.title}</h2>
           <span className="req-summary-id">{detail.platformRequirementId ?? (detail.sourceRequirementId ? `REQ-${detail.sourceRequirementId.slice(0, 8)}` : "WEB")} · v{detail.sourceVersion}</span>
@@ -1170,6 +1275,14 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
             {detail.duplicates.map((duplicate, index) => <span key={duplicate.id}>{index > 0 ? "、" : ""}<a href={`?requirement=${duplicate.id}`}>{duplicate.title}</a></span>)}
             这些记录均独立保留，会按各自来源 ID 正常处理；请人工核对是否确为重复。
           </div>}
+        </div>
+        <div className="req-summary-score" aria-label="评分与优先级摘要">
+          <span className="summary-score-label">{summaryCurrent ? "当前综合评分" : summaryAi ? "AI 建议" : "综合评分"}</span>
+          {summaryScore ? <>
+            <div className="summary-score-line"><strong>{summaryScore.score.toFixed(2)}</strong><span className={`priority-pill priority-${summaryScore.priority.toLowerCase()}`}>{summaryScore.priority}</span></div>
+            <span className="summary-score-meta">v{summaryScore.version} · {scoreOriginLabel(summaryScore.origin)}{summaryScore.scoreConfidence ? ` · ${summaryScore.scoreConfidence}置信度` : ""}</span>
+            <a className="summary-score-link" href="#req-scoring-heading">查看评分与依据</a>
+          </> : <div className="summary-score-empty"><strong>暂无评分</strong><span>AI 分析后生成，或手动填写</span></div>}
         </div>
       </div>
       <div className="req-summary-meta">
@@ -1238,34 +1351,11 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
         </dl>
       ) : null}
       <ManualEditSection detail={detail} onSaved={() => onSaved(detail.id)} />
-      <div className="req-field" style={{ marginTop: 12 }}>
-        <strong>人群标签（PM 确认）</strong>
-        <p className="status-hint">人工确认值与 AI 建议分开保存；修改不触发分析、推送或通知。</p>
-        <AudienceEditor requirementId={detail.id} audience={detail.audience ?? { tags: [], confirmed: false, version: 0 }} onSaved={() => onSaved(detail.id)} />
-        <div style={{ marginTop: 8 }}><BetaPanel requirementId={detail.id} /></div>
-      </div>
     </section>
 
-    <ScoringPanel requirementId={detail.id} scoring={detail.scoring} onSaved={() => onSaved(detail.id)} />
-
-    <section className="req-section" aria-labelledby="req-l2-heading">
-      <div className="req-section-head"><h3 id="req-l2-heading">AI 分析与建议</h3><span className="req-source-note">AI 生成 · 可被推翻</span></div>
-      {!detail.analysis
-        ? <div className="req-empty-state">
-          <strong>尚未分析</strong>
-          <span>{detail.pipeline.analysis === "running" ? "AI 分析正在进行中；完成后刷新查看结果。" : "该需求还没有可用的 AI 分析结果。"}</span>
-          <button className="button button-secondary button-small" onClick={() => void onAct(async () => { await retryAnalysis(detail.id); return "AI 分析重试已入队"; }, detail.id)} disabled={busy || !analysisRetryable} title={analysisRetryable ? "提交 AI 分析" : analysisDisabledReason}>{analysisActionLabel}</button>
-        </div>
-        : <div className="advice-grid">{adviceCards.map((card) => <HeroCard key={card.label} className="advice-card">
-          <HeroCard.Content>
-            <span className="advice-label">{card.label}</span>
-            <strong className="advice-conclusion">{card.conclusion}</strong>
-            {card.rationale && <p className="advice-rationale">理由：{card.rationale}</p>}
-            {card.evidence && card.evidence.length > 0 && <p className="advice-evidence">证据：{card.evidence.join("；")}</p>}
-            {card.missing && <span className="advice-missing">需要补充信息</span>}
-          </HeroCard.Content>
-        </HeroCard>)}</div>}
-    </section>
+    <ScoringPanel requirementId={detail.id} scoring={detail.scoring} dimensionInsights={dimensionInsights} onSaved={() => onSaved(detail.id)}>
+      {aiAnalysisContent}
+    </ScoringPanel>
 
     <section className="req-section" aria-labelledby="req-status-heading">
       <div className="req-section-head"><h3 id="req-status-heading">处理与推送</h3><span className="req-source-note">系统状态</span></div>

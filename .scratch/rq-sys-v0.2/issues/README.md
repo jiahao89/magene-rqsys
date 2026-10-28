@@ -1,6 +1,6 @@
 # RQ-Sys V0.2 Tickets
 
-> 拆分已于2026-10-23由用户确认并发布至本地 tracker；2026-10-27 用户确认评分v2并新增T19–T22，共22张 Ticket。**原18张V0.2范围已收口**：01–08、10–15 为 implemented-local，09、16–18 为 target-verified；**评分v2扩展T19–T22均为target-verified**（合成RQ-000343已验证并清理）。T16 AC05 按用户确认使用正式 Base 验收；AC06 的 PM 快照失败路径采用本地故障注入，负责人变更通知由获批准的测试收件人确认送达。多 weekday 周计划已实现并发布，目标配置为周一/三/五 09:00；恢复触发器已于 2026-10-28 09:04 启用；09:00窗口scheduled批次于09:43:34迟到执行、315/315成功。评分v2目标验证与清理已完成。详见[验证报告](../verification-20261026/VERIFICATION-REPORT.md)。
+> 拆分已于2026-10-23由用户确认并发布至本地 tracker；2026-10-27 用户确认评分v2并新增T19–T22，共23张 Ticket。**原18张V0.2范围已收口**：01–08、10–15 为 implemented-local，09、16–18 为 target-verified；**评分v2扩展T19–T22均为target-verified**（合成RQ-000343已验证并清理）。T16 AC05 按用户确认使用正式 Base 验收；AC06 的 PM 快照失败路径采用本地故障注入，负责人变更通知由获批准的测试收件人确认送达。多 weekday 周计划已实现并发布，目标配置为周一/三/五 09:00；恢复触发器已于 2026-10-28 09:04 启用；09:00窗口scheduled批次于09:43:34迟到执行、315/315成功。评分v2目标验证与清理已完成；T23 详情摘要评分卡与 AI 评分分析整合为 implemented-local，目标验证待执行。详见[验证报告](../verification-20261026/VERIFICATION-REPORT.md)。
 
 ## 使用方式
 
@@ -35,6 +35,7 @@
 | V02-T20 | [PM修改单项评分与α](20-score-manual-edit.md) | target-verified | 19 | 评分v2 |
 | V02-T21 | [评分详情与人工编辑UI](21-score-detail-ui.md) | target-verified | 19、20 | 评分v2 |
 | V02-T22 | [评分v2目标环境验收](22-score-target-acceptance.md) | target-verified（合成RQ-000343已清理） | 19、20、21、G-DEPLOY | 验收 |
+| V02-T23 | [详情摘要评分卡与 AI 评分分析整合](23-detail-score-analysis-ui.md) | implemented-local（目标验证待执行） | 21、22 | 评分v2 |
 
 ## 当前状态
 
