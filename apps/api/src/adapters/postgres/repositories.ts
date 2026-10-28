@@ -720,9 +720,12 @@ export class PostgresRequirementScoringRepository implements RequirementScoringR
       if(!locked.rows[0])throw new Error("Scoring requirement was not found");
       const existing=await c.query("SELECT version FROM requirement_score_versions WHERE requirement_id=$1 AND status IN ('current','confirmed') ORDER BY version DESC LIMIT 1",[input.requirementId]);
       const status=existing.rows[0]?"ai_suggested":"current";
+      // 评分版本必须绑定当时生效的规则；旧 worker/旧分析指针可能为空时回退到当前 published 规则。
+      let ruleVersionId=input.ruleVersionId;
+      if(!ruleVersionId){const rule=await c.query("SELECT id FROM priority_rule_versions WHERE status='published' ORDER BY version DESC LIMIT 1");ruleVersionId=rule.rows[0]?.id??null;}
       const version=await this.nextVersion(c,input.requirementId);
       const id=randomUUID();
-      const{rows}=await c.query("INSERT INTO requirement_score_versions(id,requirement_id,version,status,origin,source_version,analysis_version,rule_version_id,inputs,alpha,score,priority,score_confidence,score_confidence_reason,safety_flag,basis,rationale) VALUES($1,$2,$3,$4,'ai',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *",[id,input.requirementId,version,status,input.sourceVersion,input.analysisVersion,input.ruleVersionId,JSON.stringify(input.inputs),input.alpha,input.score,input.priority,input.scoreConfidence,input.scoreConfidenceReason,input.safetyFlag,JSON.stringify(input.basis),input.rationale]);
+      const{rows}=await c.query("INSERT INTO requirement_score_versions(id,requirement_id,version,status,origin,source_version,analysis_version,rule_version_id,inputs,alpha,score,priority,score_confidence,score_confidence_reason,safety_flag,basis,rationale) VALUES($1,$2,$3,$4,'ai',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *",[id,input.requirementId,version,status,input.sourceVersion,input.analysisVersion,ruleVersionId,JSON.stringify(input.inputs),input.alpha,input.score,input.priority,input.scoreConfidence,input.scoreConfidenceReason,input.safetyFlag,JSON.stringify(input.basis),input.rationale]);
       if(status==="current")await c.query("UPDATE requirements SET current_score_version_id=$2 WHERE id=$1",[input.requirementId,id]);
       if(input.auditEvent)await appendAuditInTransaction(c,input.auditEvent,input.requirementId);
       await c.query("COMMIT");return scoreVersion(rows[0]!);
