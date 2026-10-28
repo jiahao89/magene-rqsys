@@ -4,7 +4,7 @@
 
 **Blocked by:** 19（评分契约）、20（人工评分）、23（详情评分 UI）；指标 SQL 依赖 `0019_scoring_v2.sql`。
 
-**Status:** implemented-local（2026-10-28：API/Web/妙搭 UI 与测试完成；目标发布验证待执行）
+**Status:** target-verified（2026-10-28：release 7701562751298669873 / 0835a2f；目标只读回读通过）
 
 **Approval:** 2026-10-28 用户提出总览按分级统计并显示分级规则。
 
@@ -17,7 +17,7 @@
 - [x] V02-T24-AC03：显示评分规则版本和范围 P0≥45、P1 25–44.99、P2 10–24.99、P3<10；规则未发布时明确提示。
 - [x] V02-T24-AC04：统计只读，不改变需求状态/优先级；接口/UI 空数据、规则缺失状态可恢复。
 - [x] V02-T24-AC05：两仓 API/UI 对齐；根仓/妙搭 typecheck/build/测试通过。
-- [ ] V02-T24-AC06：目标环境发布后验证统计数量、规则展示、legacy/待评分口径，并记录证据。
+- [x] V02-T24-AC06：目标环境发布后验证统计数量、规则展示、legacy/待评分口径，并记录证据。
 
 ## Verification
 
@@ -30,3 +30,12 @@
 - Web/妙搭总览：新增“优先级分级”面板（P0–P3 + 待评分）、评分范围（45/25/10）、规则版本与公式、legacy/待评分说明；响应式/深色样式。
 - 本地验证：API **460/460**、Web **90/90**、妙搭 route **115/115**；根仓 typecheck/build、妙搭 typecheck/build:prod/eslint/stylelint、两仓对齐通过；本地真实 PostgreSQL overview 返回 `P2=6, scored=1, legacy=5`，SQL 正常。
 - 目标：待 release 后只读回读；不创建合成需求。
+
+## 2026-10-28 目标验证记录
+
+- final release `7701562751298669873 / 0835a2f`，`GET /api/overview/metrics` 返回：
+  - total **315**；`priority` = `{P0:0,P1:0,P2:2,P3:0,scored:0,legacy:2,unscored:313}`；
+  - `priorityRule` = v2，阈值 45/25/10，固定公式。
+- 目标页面“优先级分级”显示 2/315 已分级、P2=2、待评分=313；规则区显示 P0 ≥45、P1 25–44.99、P2 10–24.99、P3 <10；说明“其中 2 条来自历史分析优先级（v1），不套用 v2 分数范围”。当前目标没有 v2 评分版本，`scored=0` 属实，未伪造。
+- 证据：`target/overview-priority-evidence.json`、`ui/target-overview-priority.png`、`ui/target-overview-priority-rule.png`。
+- 只读操作，未创建/修改需求；统计不含合成 fixture。

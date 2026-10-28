@@ -167,6 +167,17 @@ node --import tsx .scratch/rq-sys-v0.2/verification-20261026/e2e/harness.mts
 - 本地：Web **89/89**；妙搭 route **115/115**、typecheck/build:prod/eslint/stylelint 通过；根仓 typecheck/build、两仓对齐通过。
 - 发布过程：10:41–10:55 `release-create` 多次返回平台 500（500000049），11:01 重试成功；最终 release 已 finished。
 
+## 5H. 总览优先级分级统计（2026-10-28）
+
+- 需求：总览按 P0–P3 统计数量，并展示评分范围/规则。
+- 实现：`getPipelineCounts` 增加 priority 聚合（当前评分优先；无评分回退最近已分析优先级并标记 legacy；两者都无计入 unscored）；`/api/overview/metrics` 增加当前规则版本/阈值/公式；Web/妙搭总览新增“优先级分级”卡片、待评分、规则范围和说明。
+- 目标只读回读（release **`7701562751298669873 / 0835a2f`**）：
+  - total **315**；`priority = {P0:0,P1:0,P2:2,P3:0,scored:0,legacy:2,unscored:313}`；
+  - `priorityRule = v2`，阈值 45/25/10，固定公式；
+  - 页面显示 2/315 已分级、P2=2、待评分 313；说明 2 条为历史分析优先级（v1），不套用 v2 范围。
+- 当前目标没有 v2 评分版本，`scored=0` 属实；未创建/修改需求，未造假分级。
+- 本地：API 460/460、Web 90/90、妙搭 route 115/115；typecheck/build/对齐通过。证据：`target/overview-priority-evidence.json`、`ui/target-overview-priority.png`、`ui/target-overview-priority-rule.png`。
+
 ## 6. PRD 第 7 节验收矩阵
 
 | # | 验收标准 | 本地 | 目标环境 |
@@ -192,6 +203,7 @@ node --import tsx .scratch/rq-sys-v0.2/verification-20261026/e2e/harness.mts
 | 19 | 评分与 AI 建议整合为单一区域；U/M/S/C 四维显示合成值、公式与 AI 依据，无第二个 AI 分析大区块 | 通过（Web 测试/本地截图） | 通过：目标单一“AI 评分与优先级”，四维 U9/M2/S2/C3，次级模块/类型/人群/置信度 |
 | 20 | 人群未确认默认选中首个 AI 建议（不自动保存）；可修改后显式保存；AI 建议/PM 选择/保存按钮视觉区分 | 通过（Web 测试/本地截图） | 通过：目标 AI L2/L3 默认选中 L2；AI chips、选中标签、独立 Save 按钮 |
 | 21 | 桌面/移动/浅深色布局清晰；空/失败/冲突状态可恢复且不阻断详情 | 通过（响应式/主题检查） | 通过：目标桌面截图；既有空/失败/冲突状态保留 |
+| 22 | 总览展示 P0–P3/待评分数量、评分范围与规则版本；当前评分优先、历史优先级标注 legacy；只读 | 通过（Web 测试/本地截图） | 通过：目标 P2=2、待评分313、规则 v2 45/25/10、legacy=2 |
 
 ## 7. 工单收口状态
 
@@ -205,6 +217,7 @@ node --import tsx .scratch/rq-sys-v0.2/verification-20261026/e2e/harness.mts
 | T18 | target-verified | 目标 Base RQ-000099 回读与 T18 记录一致；2026-10-26 已按 T10/迁移0017、目标回读和本地边界用例补勾 AC01–06（AC01 注明“用户代确认”来源） |
 | T19–T22 | target-verified | 评分v2目标迁移/规则/真实模型/UI/版本/409/AI采用/清理通过；合成RQ-000343已删除，requirements 315/Base 312/活动作业0；证据见5E与T22票 |
 | T23 | target-verified | 详情摘要评分卡/AI评分分析整合/人群默认选中完成目标验证；release 7701549098247474481 / a215988，合成RQ-000343已清理 |
+| T24 | target-verified | 总览优先级分级统计只读回读：P2=2、待评分313、规则v2 45/25/10、legacy=2；release 7701562751298669873 / 0835a2f |
 
 ## 8. 本轮可复现命令
 
@@ -306,4 +319,5 @@ npm run type:check && npm run test:rqsys-route && npm run build:prod && npm run 
 - 目标写入证据：`target/rq343-db.json`（需求状态/4 次推送）、`target/rq343-base-rows.ndjson`（清理前 3 条同平台键行，仅合成需求）、`target-base-summary.json`（清理后 312 行）
 - 评分v2目标证据：`target/scoring-v2-synthetic-evidence.json`、`ui/target-scoring-v2.png`、`ui/target-scoring-v2-edited.png`、`target-readonly/scheduled-batch-and-training-summary.json`、`target-readonly/priority-rules-after.json`
 - T23 详情UI目标证据：`target/detail-ui-refresh-evidence.json`、`ui/target-detail-score-summary.png`、`ui/target-detail-score-section.png`、`ui/target-detail-audience.png`、`ui/local-detail-score-overview2.png`
+- T24 总览分级证据：`target/overview-priority-evidence.json`、`ui/target-overview-priority.png`、`ui/target-overview-priority-rule.png`
 - 定时运行证据：`target-readonly/batches-20261028d.json`、`target-readonly/jobs-after-cleanup.json`、`target-readonly/runtime-readonly-summary.json`
