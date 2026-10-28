@@ -4,7 +4,7 @@
 
 **Blocked by:** 21（评分详情UI）、22（评分v2目标验收）；本票是目标验收后的 UI 信息架构修订。
 
-**Status:** implemented-local（2026-10-28：PRD/Spec、Web/妙搭 UI 与测试已完成；目标发布验证待执行）
+**Status:** target-verified（2026-10-28：release 7701549098247474481 / a215988；合成 RQ-000343 已验证并清理）
 
 **Approval:** 2026-10-28 用户提出 5 条详情 UI 调整并确认“先整理进 PRD，然后修改”。
 
@@ -18,7 +18,7 @@
 - [x] V02-T23-AC04：人群未确认且 AI 有建议时默认选中首个建议；是否保存由用户显式操作；已确认值（含空集）不被刷新覆盖。
 - [x] V02-T23-AC05：AI 建议标签、PM 选择标签、保存按钮视觉区分；标签选中态明确；修改不触发主流程。
 - [x] V02-T23-AC06：Web/妙搭两仓 typecheck/build/test 通过；桌面/移动/浅深色布局可读。
-- [ ] V02-T23-AC07：目标环境发布后验证摘要评分卡、整合区、人群默认选中，并清理合成数据/记录证据。
+- [x] V02-T23-AC07：目标环境发布后验证摘要评分卡、整合区、人群默认选中，并清理合成数据/记录证据。
 
 ## Verification
 
@@ -31,4 +31,5 @@
 - V02-S06 D6 同步重写，新增 AC11–AC14。
 - Web：摘要卡显示当前/建议评分与 P；单一“AI 评分与优先级”区域；四张维度卡（合成值+AI 建议/理由/证据/缺失）；九项输入分组；人群 AI 建议默认选中首个、AI 建议 chips/PM 选择/Save 按钮三层样式；响应式与深色样式。
 - 妙搭仓镜像同一 UI/CSS/组件；typecheck、build:prod、route 115、eslint、stylelint 通过；Web 89/89、根仓 typecheck/build、两仓对齐通过。
-- 目标发布：2026-10-28 10:41–10:46 多次 `+release-create` 返回平台 500（500000049），release-list 无新记录；已保留本地/远端提交 `9e0e375`（另有 empty commit b7e54d5 触发重试），待平台恢复后发布并补 AC07 证据。
+- 目标发布：2026-10-28 10:41–10:55 多次 `+release-create` 返回平台 500（500000049），release-list 无新记录；11:01 重试成功，final release `7701549098247474481 / a215988`。目标复验合成 `RQ-000343`：摘要卡 7.20/P3、四维卡 U9/M2/S2/C3、单一“AI 评分与优先级”区域、AI 建议 L2/L3 默认选中 L2、保存按钮独立样式；删除需求/评分/分析/推送/审计/Base 行后 requirements 315、base_record_id 312、API 404。
+- 目标证据：`target/detail-ui-refresh-evidence.json`、`ui/target-detail-score-summary.png`、`ui/target-detail-score-section.png`、`ui/target-detail-audience.png`、`ui/local-detail-*.png`。

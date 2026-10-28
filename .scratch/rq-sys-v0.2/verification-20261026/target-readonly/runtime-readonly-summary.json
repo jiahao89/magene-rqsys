@@ -1,5 +1,5 @@
 {
-  "captured_at": "2026-10-28T10:13:00+08:00",
+  "captured_at": "2026-10-28T11:17:00+08:00",
   "source": {
     "id": "99331edb-663b-4635-99f4-597e26304ab1",
     "external_project_name": "室外产品-码表软固件需求池",
@@ -118,6 +118,12 @@
       "commit": "57db23d",
       "status": "finished",
       "note": "rule fallback; final scoring release"
+    },
+    {
+      "release_id": "7701549098247474481",
+      "commit": "a215988",
+      "status": "finished",
+      "note": "detail summary score/AI analysis UI integration"
     }
   ],
   "migration": {

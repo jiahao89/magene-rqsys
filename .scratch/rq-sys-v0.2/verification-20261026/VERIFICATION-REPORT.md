@@ -157,6 +157,16 @@ node --import tsx .scratch/rq-sys-v0.2/verification-20261026/e2e/harness.mts
 - 2026-10-28 09:00 窗口的 scheduled 批次 `e9a41461-e78f-40a7-baf0-1b0aa78741c5` 于 **09:43:34** 创建、09:44:17 完成，315/315 成功、0 失败。平台触发比窗口迟到约43分钟（09:00→09:43；相对09:30轮询约13.5分钟），不是代码/到期判断失败；队列无活动作业，Base 仍 312 行、requirements 315，无重复行。
 - 说明：首轮窗口原计划 09:40 复核；09:30/09:36/09:42 查询均无批次，09:43:34 才出现，故记录为平台调度延迟；后续按同一触发器继续观察。
 
+## 5G. 详情摘要评分卡与 AI 评分分析整合（2026-10-28）
+
+- 用户提出 5 条详情 UI 调整：摘要卡显示综合分/P、返回按钮置顶、卡片重点转向评分/P、人群 AI 建议默认选中且与保存按钮区分、评分与 AI 分析合并并展示 U/M/S/C 评分。
+- PRD 已更新：§4.2.7 重写信息架构/布局骨架/交互验收；§4.4 增加人群默认选择与视觉分层；§7 新增第 18–21 项。V02-S06 D6/AC11–AC14 同步；新增 Ticket V02-T23。
+- 实现：摘要卡（静态非吸顶、返回顶部、右置评分/P）；单一“AI 评分与优先级”区域；U/M/S/C 四维卡（合成值/公式/AI 建议/理由/证据/缺失）；九项输入分组；人群 AI 建议 chips、PM 选择标签与独立保存按钮；深色/移动端样式。
+- 目标验证：final release **`7701549098247474481 / a215988`**。合成 `RQ-000343`：摘要 7.20/P3，四维 U9/M2/S2/C3，AI 人群建议 L2/L3 默认选中 L2，单一区域与次级 AI 建议均可见；保存按钮/AI chips/选择标签样式分离；证据见 `target/detail-ui-refresh-evidence.json` 和 `ui/target-detail-*.png`。
+- 清理：删除合成需求/评分/分析/推送/审计/Base 行；requirements **315**、base_record_id **312**、synthetic API **404**。
+- 本地：Web **89/89**；妙搭 route **115/115**、typecheck/build:prod/eslint/stylelint 通过；根仓 typecheck/build、两仓对齐通过。
+- 发布过程：10:41–10:55 `release-create` 多次返回平台 500（500000049），11:01 重试成功；最终 release 已 finished。
+
 ## 6. PRD 第 7 节验收矩阵
 
 | # | 验收标准 | 本地 | 目标环境 |
@@ -178,6 +188,10 @@ node --import tsx .scratch/rq-sys-v0.2/verification-20261026/e2e/harness.mts
 | 15 | PM 可改任一单项和 α；版本/审计/409；人工改分不自动推送/通知，不启动 Beta | 通过 | 通过：目标 v11、审计、409、详情刷新；Base 行数与活动作业未变 |
 | 16 | AI 建议与当前值分离；AI 重跑不覆盖人工确认；显式采用 AI 才切换；历史只读 | 通过 | 通过：v2/v5 人工值在 v6–v9 AI重跑后保持；采用 AI v10；历史 11 版只读 |
 | 17 | 评分失败/缺失/规则未发布不阻断主流程；安全标记只提示不改 P；Base 不新增评分字段 | 通过（本地故障/UI测试） | 通过：无评分存量详情200/`scoring.current=null`；安全标记目标未单独触发（本地/契约覆盖）；Base 仍 312 行 |
+| 18 | 摘要卡突出当前综合分与 P；无评分显示空状态；返回需求池在卡片最顶部 | 通过（Web 测试/本地截图） | 通过：合成 RQ-000343 摘要 7.20/P3，返回按钮在卡片顶部 |
+| 19 | 评分与 AI 建议整合为单一区域；U/M/S/C 四维显示合成值、公式与 AI 依据，无第二个 AI 分析大区块 | 通过（Web 测试/本地截图） | 通过：目标单一“AI 评分与优先级”，四维 U9/M2/S2/C3，次级模块/类型/人群/置信度 |
+| 20 | 人群未确认默认选中首个 AI 建议（不自动保存）；可修改后显式保存；AI 建议/PM 选择/保存按钮视觉区分 | 通过（Web 测试/本地截图） | 通过：目标 AI L2/L3 默认选中 L2；AI chips、选中标签、独立 Save 按钮 |
+| 21 | 桌面/移动/浅深色布局清晰；空/失败/冲突状态可恢复且不阻断详情 | 通过（响应式/主题检查） | 通过：目标桌面截图；既有空/失败/冲突状态保留 |
 
 ## 7. 工单收口状态
 
@@ -190,6 +204,7 @@ node --import tsx .scratch/rq-sys-v0.2/verification-20261026/e2e/harness.mts
 | T17 | target-verified | Kano 目标真实模型运行与报告回读通过；RICE 目标 UI 点检（RICE=120）；Beta 不影响主流程已复核 |
 | T18 | target-verified | 目标 Base RQ-000099 回读与 T18 记录一致；2026-10-26 已按 T10/迁移0017、目标回读和本地边界用例补勾 AC01–06（AC01 注明“用户代确认”来源） |
 | T19–T22 | target-verified | 评分v2目标迁移/规则/真实模型/UI/版本/409/AI采用/清理通过；合成RQ-000343已删除，requirements 315/Base 312/活动作业0；证据见5E与T22票 |
+| T23 | target-verified | 详情摘要评分卡/AI评分分析整合/人群默认选中完成目标验证；release 7701549098247474481 / a215988，合成RQ-000343已清理 |
 
 ## 8. 本轮可复现命令
 
@@ -290,4 +305,5 @@ npm run type:check && npm run test:rqsys-route && npm run build:prod && npm run 
 - 目标只读：`target-base-summary.json`（正式 Base 312 行、平台键 312/312 的唯一性与状态聚合；为避免留存生产标题/PII，原始全表导出已删除）
 - 目标写入证据：`target/rq343-db.json`（需求状态/4 次推送）、`target/rq343-base-rows.ndjson`（清理前 3 条同平台键行，仅合成需求）、`target-base-summary.json`（清理后 312 行）
 - 评分v2目标证据：`target/scoring-v2-synthetic-evidence.json`、`ui/target-scoring-v2.png`、`ui/target-scoring-v2-edited.png`、`target-readonly/scheduled-batch-and-training-summary.json`、`target-readonly/priority-rules-after.json`
+- T23 详情UI目标证据：`target/detail-ui-refresh-evidence.json`、`ui/target-detail-score-summary.png`、`ui/target-detail-score-section.png`、`ui/target-detail-audience.png`、`ui/local-detail-score-overview2.png`
 - 定时运行证据：`target-readonly/batches-20261028d.json`、`target-readonly/jobs-after-cleanup.json`、`target-readonly/runtime-readonly-summary.json`
