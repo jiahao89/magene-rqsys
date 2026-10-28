@@ -64,6 +64,25 @@ test("buildPriorityRule：证据缺失与否不影响分数——禁止把 missi
   assert.deepEqual(recommendationValues(withEvidence), recommendationValues(analysis("中")));
 });
 
+test("buildPriorityRule：评分 v2 规则用九项输入与 α 计算，且不为旧建议映射返回 P", () => {
+  const rule = buildPriorityRule({
+    ...ruleRecord,
+    version: 2,
+    rules: { formulaType: "umsc_weighted_v2", thresholds: { p0: 45, p1: 25, p2: 10 } },
+  });
+  assert.ok(rule);
+  assert.equal(rule.compute({ user: "高", market: "高", business: "高", technology: "高" }), null);
+  const computed = rule.computeScore?.({
+    user: { pain: 4, frequency: 5 },
+    market: { sellingPoint: 2, competitor: 2 },
+    strategy: { roadmap: 1, dependency: 1 },
+    cost: { workload: 4, technicalRisk: 4, resource: 4 },
+  }, 0.8);
+  assert.deepEqual(computed, { score: 15.2, priority: "P2", breakdown: { user: 20, market: 4, strategy: 1, cost: 4, userAdjusted: 16 } });
+  assert.equal(buildPriorityRule({ ...ruleRecord, rules: { formulaType: "umsc_weighted_v2", thresholds: { p0: 45, p1: 25, p2: 10 } }, validationEvidence: [] }), null);
+});
+
+//
 test("buildPriorityRule：规则缺少评分映射、阈值或校准证据时不得用于计算（priority 留空）", () => {
   assert.equal(buildPriorityRule({ ...ruleRecord, rules: { thresholds: { p0: 11, p1: 8, p2: 5 } } }), null);
   assert.equal(buildPriorityRule({ ...ruleRecord, rules: { scoring, } }), null);

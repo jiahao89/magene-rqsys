@@ -14,9 +14,11 @@
 
 import type { AnalysisPriorityRule, ValidatedAnalysis } from "./contract.js";
 import type { PriorityLevel, PriorityRuleVersionRecord } from "../domain/persistence.js";
+import { computeUmcScore, type ScoringInputs } from "./scoring.js";
 
 type ScoringMap = Record<string, number>;
 type RulePayload = {
+  formulaType?: string;
   scoring?: Partial<Record<"user" | "market" | "business" | "technology", ScoringMap>>;
   thresholds?: { p0?: unknown; p1?: unknown; p2?: unknown };
 };
@@ -34,6 +36,17 @@ export function recommendationValues(result: ValidatedAnalysis): { user: string;
 // 已发布规则版本 → AnalysisPriorityRule；规则契约不完整或未经校准时返回 null（优先级留空）。
 export function buildPriorityRule(record: PriorityRuleVersionRecord): AnalysisPriorityRule | null {
   const rules = record.rules as RulePayload | null;
+  if (rules?.formulaType === "umsc_weighted_v2") {
+    const thresholds = rules.thresholds;
+    if (!Array.isArray(record.validationEvidence) || record.validationEvidence.length === 0) return null;
+    if (!thresholds || thresholds.p0 !== 45 || thresholds.p1 !== 25 || thresholds.p2 !== 10) return null;
+    return {
+      id: record.id,
+      version: record.version,
+      compute: () => null,
+      computeScore: (inputs: ScoringInputs, alpha: number) => computeUmcScore(inputs, alpha),
+    };
+  }
   const scoring = rules?.scoring;
   const thresholds = rules?.thresholds;
   if (!scoring || !thresholds) return null;

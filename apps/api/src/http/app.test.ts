@@ -94,6 +94,52 @@ test("updates source schedule with a multi-weekday list", async () => {
   assert.deepEqual(body.schedule.weekdays, [1, 3, 5]);
   assert.equal(body.schedule.weekday, 1);
 });
+test("saves a manual score after server-side recomputation", async () => {
+  const d = makeDependencies();
+  let saved: Record<string, unknown> | null = null;
+  d.repositories!.priorityRules = { getPublished: async () => ({ id: "rule-v2", version: 2, status: "published", rules: { formulaType: "umsc_weighted_v2", thresholds: { p0: 45, p1: 25, p2: 10 } }, validationEvidence: [{}], createdBy: null, createdAt: "2026-01-01T00:00:00.000Z", publishedAt: "2026-01-01T00:00:00.000Z" }) } as never;
+  d.repositories!.scoring = {
+    current: async () => null,
+    saveManual: async (input: Record<string, unknown>) => { saved = input; return { outcome: "saved", version: { version: 1 } }; },
+    aiSuggestion: async () => null,
+    list: async () => [],
+    createAi: async () => { throw new Error("unused"); },
+    applyAi: async () => { throw new Error("unused"); },
+  } as never;
+  const response = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/scoring`, {
+    method: "PUT", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ expectedVersion: 0, reason: "人工复核", inputs: { user: { pain: 3, frequency: 4 }, market: { sellingPoint: 1, competitor: 1 }, strategy: { roadmap: 1, dependency: 1 }, cost: { workload: 3, technicalRisk: 2, resource: 2 } }, alpha: 0.8 }),
+  }), d);
+  assert.equal(response.status, 200);
+  assert.ok(saved);
+  assert.equal((saved as { score: number }).score, 6.4);
+  assert.equal((saved as { priority: string }).priority, "P3");
+  assert.equal((saved as { actorId: string }).actorId, "actor-1");
+  assert.equal((saved as { auditEvent: { eventType: string } }).auditEvent.eventType, "scoring.updated");
+});
+
+test("applies an AI score suggestion through a versioned confirmation", async () => {
+  const d = makeDependencies();
+  let applied: Record<string, unknown> | null = null;
+  d.repositories!.scoring = {
+    current: async () => ({ version: 1, status: "current" }),
+    saveManual: async () => ({ outcome: "version_conflict", currentVersion: 1 }),
+    aiSuggestion: async () => ({ version: 2 }),
+    list: async () => [],
+    createAi: async () => { throw new Error("unused"); },
+    applyAi: async (input: Record<string, unknown>) => { applied = input; return { outcome: "saved", version: { version: 2 } }; },
+  } as never;
+  const response = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/scoring/apply-ai`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ expectedVersion: 1, aiVersion: 2, reason: "采用AI" }),
+  }), d);
+  assert.equal(response.status, 200);
+  assert.ok(applied);
+  assert.equal((applied as { aiVersion: number }).aiVersion, 2);
+  assert.equal((applied as { actorId: string }).actorId, "actor-1");
+  assert.equal((applied as { auditEvent: { eventType: string } }).auditEvent.eventType, "scoring.ai_applied");
+});
+
 test("any authenticated Feishu actor can update source settings without an application role", async () => { const d = makeDependencies({ id: "logged-in-user" }); const r = await handleApiRequest(new Request(`http://localhost/api/sources/${source.id}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectName: "Project", enabled: false, schedule: { enabled: true, weekday: 1, time: "09:00", timezone: "Asia/Shanghai" } }) }), d); assert.equal(r.status, 200); });
 test("queues a sync once and returns the batch for an idempotent repeat", async () => { const d = makeDependencies(); const req = () => new Request("http://localhost/api/sync/run", { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": "request-key-0001" }, body: JSON.stringify({ sourceId: source.id }) }); const first = await handleApiRequest(req(), d); assert.equal(first.status, 202); assert.deepEqual(await first.json(), { batchId: "batch-1", status: "running" }); const dup = await handleApiRequest(req(), d); assert.equal(dup.status, 202); assert.deepEqual(await dup.json(), { batchId: "batch-1", status: "running" }); });
 test("queues a source-only sync mode separately and records the mode in the audit", async () => {

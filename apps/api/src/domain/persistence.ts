@@ -205,6 +205,32 @@ export interface AnalysisRunRecord {
   completedAt: string | null;
 }
 
+// V02-S06：需求评分版本（AI 建议、人工确认、历史）。
+export type ScoreVersionStatus = "ai_suggested" | "current" | "confirmed" | "superseded";
+export type ScoreOrigin = "ai" | "manual" | "ai_applied";
+export interface RequirementScoreVersionRecord {
+  id: string;
+  requirementId: string;
+  version: number;
+  status: ScoreVersionStatus;
+  origin: ScoreOrigin;
+  sourceVersion: number;
+  analysisVersion: number | null;
+  ruleVersionId: string | null;
+  inputs: Record<string, unknown>;
+  alpha: number;
+  score: number;
+  priority: PriorityLevel;
+  scoreConfidence: string | null;
+  scoreConfidenceReason: string | null;
+  safetyFlag: boolean;
+  basis: Record<string, unknown>;
+  rationale: string | null;
+  actorId: string | null;
+  changeReason: string | null;
+  createdAt: string;
+}
+
 // person_mappings：TB user ID/规范化姓名到 Feishu identity 的映射。
 // 名称不设唯一约束：有歧义时不得自动匹配。
 export interface PersonMappingRecord {

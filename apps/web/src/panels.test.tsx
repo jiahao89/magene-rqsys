@@ -1,7 +1,7 @@
 // 工单 16/17 面板测试：数据全部来自 mock API；覆盖正向、权限拒绝与详情/重试交互。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { BatchesPanel, MappingsPanel, ModulesPanel, PeoplePanel, RequirementsPanel, SourcesPanel } from "./panels";
+import { BatchesPanel, MappingsPanel, ModulesPanel, PeoplePanel, RequirementsPanel, ScoringPanel, SourcesPanel } from "./panels";
 import type { SourceConfig, TeamPerson } from "./api";
 
 const fetchMock = vi.fn<typeof fetch>();
@@ -22,6 +22,39 @@ const source: SourceConfig = { id: "source-1", projectName: "需求收集与管�
 function jsonOk(body: unknown, status = 200): Response {
   return Response.json(body, { status });
 }
+
+describe("ScoringPanel (V02-S06)", () => {
+  const scoreVersion = {
+    id: "score-1", requirementId: "req-1", version: 2, status: "current" as const, origin: "manual" as const,
+    sourceVersion: 1, analysisVersion: 2, ruleVersionId: "rule-v2",
+    inputs: { user: { pain: 3, frequency: 4 }, market: { sellingPoint: 1, competitor: 1 }, strategy: { roadmap: 1, dependency: 1 }, cost: { workload: 3, technicalRisk: 2, resource: 2 } },
+    alpha: 0.8, score: 6.4, priority: "P3" as const, scoreConfidence: "中" as const, scoreConfidenceReason: "频次不足", safetyFlag: false,
+    basis: { "user.pain": { reason: "循环选择难受", evidence: ["原文"], assumption: false } }, rationale: "单条反馈", actorId: "pm-1", changeReason: "人工复核", createdAt: "2026-10-28T01:00:00.000Z",
+  };
+  it("shows current score and saves edited inputs and alpha", async () => {
+    let body: Record<string, unknown> | undefined;
+    fetchMock.mockImplementation(async (_input, init) => {
+      if (init?.method === "PUT") { body = JSON.parse(String(init.body)) as Record<string, unknown>; return jsonOk({ scoring: scoreVersion }); }
+      return jsonOk({});
+    });
+    render(<ScoringPanel requirementId="req-1" scoring={{ current: scoreVersion, aiSuggestion: null, history: [scoreVersion], formula: { text: "formula", thresholds: { p0: 45, p1: 25, p2: 10 } } }} onSaved={() => undefined} />);
+    expect(screen.getByText(/综合分 6.40/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "编辑评分" }));
+    fireEvent.change(screen.getByLabelText("评分 U 痛点强度"), { target: { value: "4" } });
+    fireEvent.change(screen.getByLabelText("评分 alpha"), { target: { value: "1.0" } });
+    fireEvent.change(screen.getByLabelText("评分修改理由"), { target: { value: "补充证据" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存评分" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/requirements/req-1/scoring", expect.objectContaining({ method: "PUT" })));
+    expect((body?.inputs as { user: { pain: number } }).user.pain).toBe(4);
+    expect(body?.alpha).toBe(1);
+    expect(body?.reason).toBe("补充证据");
+  });
+  it("offers manual fill when no score exists", () => {
+    render(<ScoringPanel requirementId="req-1" scoring={null} onSaved={() => undefined} />);
+    expect(screen.getByText("暂无评分")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "手动填写评分" })).toBeInTheDocument();
+  });
+});
 
 describe("SourcesPanel (ticket 16)", () => {
   it("defaults to the selected Teambition project name and sends no project or task type IDs", async () => {

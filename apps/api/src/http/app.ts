@@ -6,11 +6,12 @@ import { SourceProjectResolutionError, type FeishuUserDirectory, type FeishuUser
 import { isIntakeComplete, normalizeScheduleTime } from "../domain/workflow.js";
 import { stableJson } from "../sync/hashes.js";
 import { RICE_CONFIG_VERSION, RICE_EFFORT_UNIT, RICE_IMPACT_LEVELS, RICE_REACH_UNIT, computeRiceScore } from "../beta/rice.js";
-import type { AuditEventRepository, AnalysisRunRepository, PipelineJobRepository, SourceConfigRepository, SyncBatchRepository, SyncItemRepository, PersonMappingRepository, RequirementQueryRepository, BasePushRunRepository, ModuleDictionaryRepository, PriorityRuleRepository, SourceSnapshotRepository, TeamDirectoryRepository } from "../application/repositories.js";
+import type { AuditEventRepository, AnalysisRunRepository, PipelineJobRepository, SourceConfigRepository, SyncBatchRepository, SyncItemRepository, PersonMappingRepository, RequirementQueryRepository, BasePushRunRepository, ModuleDictionaryRepository, PriorityRuleRepository, SourceSnapshotRepository, TeamDirectoryRepository, RequirementScoringRepository } from "../application/repositories.js";
 import type { PersonMappingRecord, AnalysisRunRecord, ModuleDictionaryVersionRecord, PriorityRuleVersionRecord, RequirementRecord, SourceConfigRecord, SyncBatchRecord } from "../domain/persistence.js";
 import type { TeamPersonRecord } from "../domain/team-directory.js";
 import { AuditListQuerySchema, KanoEvidenceImportSchema, KanoRunRequestSchema, AudienceUpdateSchema, BatchListQuerySchema, RiceDraftUpdateSchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementIntakeEditSchema, RequirementIntakeSchema, RequirementListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
 import { createHash, randomUUID } from "node:crypto";
+import { ApplyAiScoringSchema, ManualScoringUpdateSchema, SCORING_FORMULA_TEXT, SCORING_THRESHOLDS, computeUmcScore } from "../analysis/scoring.js";
 import { SourceConfigUpdateSchema, normalizeSourceSchedule, type ResolvedSourceConfigUpdate } from "../contracts/source.js";
 import { DictionaryCreateSchema, PriorityRuleCreateSchema, TeamModulesSaveSchema, TeamPersonCreateSchema, TeamPersonFeishuBindSchema, TeamPersonRenameSchema } from "../contracts/rules.js";
 import { DEFAULT_TEAM_MEMBERS } from "../domain/team-directory.js";
@@ -34,6 +35,7 @@ export interface ApiRepositories {
   dictionaries?: ModuleDictionaryRepository;
   priorityRules?: PriorityRuleRepository;
   directory?: TeamDirectoryRepository;
+  scoring?: RequirementScoringRepository;
 }
 export interface ApiDependencies {
   database: Pool | null;
@@ -599,6 +601,56 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
       return json({ requirementId: audienceRequirementId, audienceVersion: result.version, confirmed: true, tags: parsed.data.tags });
     } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
   }
+  const scoringMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/scoring$/);
+  if (scoringMatch && method === "PUT") {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.requirements || !repositories.scoring || !repositories.priorityRules) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const requirementId = pathUuid(scoringMatch[1]!, dependencies); if (!requirementId) return jsonError("NOT_FOUND");
+    const parsed = ManualScoringUpdateSchema.safeParse(await readJson(request)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
+    const requirement = await repositories.requirements.get(requirementId); if (!requirement) return jsonError("NOT_FOUND");
+    const rule = await repositories.priorityRules.getPublished();
+    if (!rule || (rule.rules as Record<string, unknown>).formulaType !== "umsc_weighted_v2") return jsonError("CONFLICT", "评分规则未发布");
+    const latest = await repositories.analyses?.latest(requirement.id) ?? null;
+    let computed: ReturnType<typeof computeUmcScore>;
+    try { computed = computeUmcScore(parsed.data.inputs, parsed.data.alpha); } catch { return jsonError("VALIDATION_FAILED"); }
+    const current = await repositories.scoring.current(requirement.id);
+    const auditEvent = { id: randomUUID(), actorId: auth.actor.id, eventType: "scoring.updated", entityType: "requirement", result: "succeeded" as const, safeDetails: { fromVersion: current?.version ?? 0, score: computed.score, priority: computed.priority }, occurredAt: (dependencies.now?.() ?? new Date()).toISOString() };
+    const result = await repositories.scoring.saveManual({
+      requirementId: requirement.id,
+      expectedVersion: parsed.data.expectedVersion,
+      sourceVersion: requirement.sourceVersion,
+      analysisVersion: latest?.analysisVersion ?? null,
+      ruleVersionId: rule.id,
+      inputs: parsed.data.inputs as unknown as Record<string, unknown>,
+      alpha: parsed.data.alpha,
+      score: computed.score,
+      priority: computed.priority,
+      scoreConfidence: null,
+      scoreConfidenceReason: null,
+      safetyFlag: parsed.data.safetyFlag,
+      basis: {},
+      rationale: parsed.data.reason,
+      actorId: auth.actor.id,
+      reason: parsed.data.reason,
+      auditEvent,
+    });
+    if (result.outcome === "version_conflict") return jsonError("CONFLICT", `评分版本冲突，当前版本 ${result.currentVersion}`);
+    return json({ scoring: result.version });
+  }
+  const applyAiMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/scoring\/apply-ai$/);
+  if (applyAiMatch && method === "POST") {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.requirements || !repositories.scoring) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const requirementId = pathUuid(applyAiMatch[1]!, dependencies); if (!requirementId) return jsonError("NOT_FOUND");
+    const parsed = ApplyAiScoringSchema.safeParse(await readJson(request)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
+    const requirement = await repositories.requirements.get(requirementId); if (!requirement) return jsonError("NOT_FOUND");
+    const current = await repositories.scoring.current(requirement.id);
+    const auditEvent = { id: randomUUID(), actorId: auth.actor.id, eventType: "scoring.ai_applied", entityType: "requirement", result: "succeeded" as const, safeDetails: { fromVersion: current?.version ?? 0, aiVersion: parsed.data.aiVersion }, occurredAt: (dependencies.now?.() ?? new Date()).toISOString() };
+    const result = await repositories.scoring.applyAi({ requirementId: requirement.id, expectedVersion: parsed.data.expectedVersion, aiVersion: parsed.data.aiVersion, actorId: auth.actor.id, reason: parsed.data.reason ?? null, auditEvent });
+    if (result.outcome === "version_conflict") return jsonError("CONFLICT", `评分版本冲突，当前版本 ${result.currentVersion}`);
+    if (result.outcome === "ai_not_found") return jsonError("NOT_FOUND");
+    return json({ scoring: result.version });
+  }
   const requirementMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)$/);
   if (method === "GET" && requirementMatch) {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
@@ -616,7 +668,19 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
       } catch { /* 姓名是展示增强，解析失败不影响详情返回 */ }
     }
     const duplicates = await repositories.requirements.listDuplicates(req.id);
-    return json({ ...requirementDto(req, latest && latest.status === "analyzed" ? latest.structuredResult : null, history.map(analysisVersionDto), ownerName), duplicates });
+    const currentScore = repositories.scoring ? await repositories.scoring.current(req.id) : null;
+    const aiScore = repositories.scoring ? await repositories.scoring.aiSuggestion(req.id) : null;
+    const scoreHistory = repositories.scoring ? await repositories.scoring.list(req.id) : [];
+    return json({
+      ...requirementDto(req, latest && latest.status === "analyzed" ? latest.structuredResult : null, history.map(analysisVersionDto), ownerName),
+      duplicates,
+      scoring: {
+        current: currentScore,
+        aiSuggestion: aiScore,
+        history: scoreHistory,
+        formula: { text: SCORING_FORMULA_TEXT, thresholds: SCORING_THRESHOLDS },
+      },
+    });
   }
   const itemRetryMatch = url.pathname.match(/^\/api\/items\/([^/]+)\/retry$/);
   if (method === "POST" && itemRetryMatch) {

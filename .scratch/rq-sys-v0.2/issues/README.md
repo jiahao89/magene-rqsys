@@ -1,6 +1,6 @@
 # RQ-Sys V0.2 Tickets
 
-> 拆分已于2026-10-23由用户确认并发布至本地 tracker；2026-10-27 用户确认评分v2并新增T19–T22，共22张 Ticket。**原18张V0.2范围已收口**：01–08、10–15 为 implemented-local，09、16–18 为 target-verified；**评分v2扩展T19–T22为ready-for-agent，尚未实施**。T16 AC05 按用户确认使用正式 Base 验收；AC06 的 PM 快照失败路径采用本地故障注入，负责人变更通知由获批准的测试收件人确认送达。多 weekday 周计划已实现并发布，目标配置为周一/三/五 09:00；恢复触发器按方案 2 保持 disabled，待约定窗口启用。详见[验证报告](../verification-20261026/VERIFICATION-REPORT.md)。
+> 拆分已于2026-10-23由用户确认并发布至本地 tracker；2026-10-27 用户确认评分v2并新增T19–T22，共22张 Ticket。**原18张V0.2范围已收口**：01–08、10–15 为 implemented-local，09、16–18 为 target-verified；**评分v2扩展T19–T21为implemented-local，T22目标验收待执行**。T16 AC05 按用户确认使用正式 Base 验收；AC06 的 PM 快照失败路径采用本地故障注入，负责人变更通知由获批准的测试收件人确认送达。多 weekday 周计划已实现并发布，目标配置为周一/三/五 09:00；恢复触发器按方案 2 保持 disabled，待约定窗口启用。详见[验证报告](../verification-20261026/VERIFICATION-REPORT.md)。
 
 ## 使用方式
 
@@ -31,9 +31,9 @@
 | V02-T16 | [核心V0.2兼容迁移与目标验收](16-core-target-acceptance.md) | target-verified（AC01–10 全部通过；AC05 正式 Base 例外，AC06 含 A→B、重复静默、PM 快照失败本地注入与史东升送达确认） | 05、06、07、09、15 | 验收 |
 | V02-T17 | [RICE与Kano Beta独立目标验收](17-beta-target-acceptance.md) | target-verified（Kano 真实模型运行+报告抽检通过；2026-10-26 目标 UI RICE=120 与 Kano 报告点检完成） | 12、14、16 | 验收 |
 | V02-T18 | [获批U/M/S/C规则目标验收](18-priority-target-acceptance.md) | target-verified（规则 v1→P2 落 Base 回读通过；2026-10-26 AC01–06 按证据补勾） | 10、16 | 验收 |
-| V02-T19 | [AI评分契约与U/M/S/C v2计算规则](19-score-contract-and-rule-v2.md) | ready-for-agent | — | 评分v2 |
-| V02-T20 | [PM修改单项评分与α](20-score-manual-edit.md) | ready-for-agent | 19 | 评分v2 |
-| V02-T21 | [评分详情与人工编辑UI](21-score-detail-ui.md) | ready-for-agent | 19、20 | 评分v2 |
+| V02-T19 | [AI评分契约与U/M/S/C v2计算规则](19-score-contract-and-rule-v2.md) | implemented-local | — | 评分v2 |
+| V02-T20 | [PM修改单项评分与α](20-score-manual-edit.md) | implemented-local | 19 | 评分v2 |
+| V02-T21 | [评分详情与人工编辑UI](21-score-detail-ui.md) | implemented-local | 19、20 | 评分v2 |
 | V02-T22 | [评分v2目标环境验收](22-score-target-acceptance.md) | ready-for-agent（目标写入须另行授权） | 19、20、21、G-DEPLOY | 验收 |
 
 ## 当前状态

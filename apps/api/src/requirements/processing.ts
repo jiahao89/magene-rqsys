@@ -12,11 +12,14 @@ import type {
   PersonMappingRepository,
   PipelineJobRepository,
   PriorityRuleRepository,
+  RequirementScoringRepository,
   RequirementQueryRepository,
   SourceConfigRepository,
   SourceSnapshotRepository,
 } from "../application/repositories.js";
 import type { RequirementRecord } from "../domain/persistence.js";
+import { randomUUID } from "node:crypto";
+import { computeUmcScore } from "../analysis/scoring.js";
 import { DEFAULT_FUNCTION_MODULES } from "../domain/team-directory.js";
 import { analysisModelContext } from "../analysis/context.js";
 import { AnalysisRepositoryAdapter } from "../analysis/repository-adapter.js";
@@ -44,6 +47,7 @@ export interface RequirementWorkflowDeps {
     sources: SourceConfigRepository;
     dictionaries: ModuleDictionaryRepository;
     priorityRules: PriorityRuleRepository;
+    scoring?: RequirementScoringRepository;
     analyses: AnalysisRunRepository;
     jobs: PipelineJobRepository;
     people: PersonMappingRepository;
@@ -162,6 +166,30 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
         piiMarkers: analysisPiiMarkers(requirement, rosterNames),
         dictionary, priorityRule,
       }, { repository: new AnalysisRepositoryAdapter(deps.repositories.analyses), provider });
+      // V02-S06：分析成功且评分合法时，落 AI 建议版本；评分持久化失败不改变主分析终态。
+      if (run.status === "analyzed" && run.result?.scoring && run.result.priority && deps.repositories.scoring) {
+        try {
+          const computed = computeUmcScore(run.result.scoring.inputs, run.result.scoring.alpha);
+          await deps.repositories.scoring.createAi({
+            requirementId: requirement.id,
+            sourceVersion: run.sourceVersion,
+            analysisVersion: run.analysisVersion,
+            ruleVersionId: run.priorityRuleVersionId,
+            inputs: run.result.scoring.inputs as unknown as Record<string, unknown>,
+            alpha: run.result.scoring.alpha,
+            score: computed.score,
+            priority: run.result.priority,
+            scoreConfidence: run.result.scoring.scoreConfidence,
+            scoreConfidenceReason: run.result.scoring.scoreConfidenceReason,
+            safetyFlag: run.result.scoring.safetyFlag,
+            basis: run.result.scoring.basis as unknown as Record<string, unknown>,
+            rationale: run.result.scoring.rationale,
+            auditEvent: { id: randomUUID(), actorId: typeof job.payload.actorId === "string" ? job.payload.actorId : null, eventType: "scoring.suggested", entityType: "requirement", result: "succeeded", safeDetails: { scoreVersion: run.analysisVersion, score: computed.score, priority: run.result.priority }, occurredAt: new Date().toISOString() },
+          });
+        } catch (cause) {
+          log(`scoring suggestion persistence failed for ${requirement.id}: ${(cause as Error)?.name ?? "unknown"}`);
+        }
+      }
       const current = await deps.repositories.requirements.get(requirement.id);
       if (!current || current.substantiveHash !== requirement.substantiveHash) return;
       await deps.repositories.requirements.updateAnalysisState(requirement.id, run.status === "analyzed" ? "analyzed" : "failed_retryable");

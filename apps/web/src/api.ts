@@ -305,6 +305,43 @@ export interface AnalysisVersionSummary {
   safeErrorSummary: string | null;
 }
 
+export interface ScoringInputs {
+  user: { pain: number; frequency: number };
+  market: { sellingPoint: number; competitor: number };
+  strategy: { roadmap: number; dependency: number };
+  cost: { workload: number; technicalRisk: number; resource: number };
+}
+
+export interface RequirementScoreVersion {
+  id: string;
+  requirementId: string;
+  version: number;
+  status: "ai_suggested" | "current" | "confirmed" | "superseded";
+  origin: "ai" | "manual" | "ai_applied";
+  sourceVersion: number;
+  analysisVersion: number | null;
+  ruleVersionId: string | null;
+  inputs: ScoringInputs;
+  alpha: number;
+  score: number;
+  priority: "P0" | "P1" | "P2" | "P3";
+  scoreConfidence: "高" | "中" | "低" | null;
+  scoreConfidenceReason: string | null;
+  safetyFlag: boolean;
+  basis: Record<string, { reason: string; evidence: string[]; assumption: boolean }>;
+  rationale: string | null;
+  actorId: string | null;
+  changeReason: string | null;
+  createdAt: string;
+}
+
+export interface ScoringData {
+  current: RequirementScoreVersion | null;
+  aiSuggestion: RequirementScoreVersion | null;
+  history: RequirementScoreVersion[];
+  formula: { text: string; thresholds: { p0: number; p1: number; p2: number } };
+}
+
 export interface RequirementDetail {
   /** RQ-Sys 展示编号，例如 RQ-000123。 */
   platformRequirementId?: string | null;
@@ -332,6 +369,7 @@ export interface RequirementDetail {
   manualOwner?: { feishuUserId: string; feishuIdType: "open_id" | "user_id" | "union_id"; name: string | null; assignedAt: string } | null;
   duplicateOf?: string | null;
   duplicates?: Array<{ id: string; title: string; teambitionRequirementId: string }>;
+  scoring?: ScoringData | null;
   updatedAt?: string | null;
   lastPushedAt?: string | null;
 }
@@ -428,6 +466,14 @@ export function updateRequirement(id: string, input: { expectedSourceVersion: nu
 }
 export const AUDIENCE_LEVELS = ["L1", "L2", "L3", "L4", "L5", "L6"] as const;
 export const AUDIENCE_LEVEL_NAMES: Record<string, string> = { L1: "L1 职业级 Pro", L2: "L2 竞技级 Racing", L3: "L3 爱好者/专业入门", L4: "L4 健身锻炼", L5: "L5 休闲娱乐", L6: "L6 通勤代步" };
+
+export function saveRequirementScore(id: string, input: { expectedVersion: number; inputs: ScoringInputs; alpha: number; safetyFlag?: boolean; reason: string }, fetcher: typeof fetch = fetch): Promise<{ scoring: unknown }> {
+  return putJson(`/api/requirements/${id}/scoring`, input, fetcher);
+}
+
+export function applyRequirementAiScore(id: string, input: { expectedVersion: number; aiVersion: number; reason?: string | null }, fetcher: typeof fetch = fetch): Promise<{ scoring: unknown }> {
+  return postJson(`/api/requirements/${id}/scoring/apply-ai`, input, fetcher);
+}
 
 export function setAudienceTags(id: string, input: { tags: string[]; expectedVersion: number }, fetcher: typeof fetch = fetch): Promise<{ requirementId: string; audienceVersion: number; confirmed: boolean; tags: string[] }> {
   return putJson(`/api/requirements/${id}/audience`, input, fetcher);

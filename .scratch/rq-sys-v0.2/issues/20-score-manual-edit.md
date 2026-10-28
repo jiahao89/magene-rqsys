@@ -4,7 +4,7 @@
 
 **Blocked by:** 19（评分契约/计算/版本）
 
-**Status:** ready-for-agent（2026-10-27：随评分v2拆分，尚未实施）
+**Status:** implemented-local（2026-10-28：PUT/apply-ai、版本冲突/审计/采用AI 完成，本地测试全绿；未做目标写入）
 
 **Approval:** 用户于2026-10-27确认PM可修改单项评分和α。
 
@@ -26,3 +26,9 @@
 ## Verification
 
 本地：HTTP/集成测试（保存/重算/409/404/400/apply-ai/审计/当前指针）、两仓契约对齐。目标：T22用受控合成需求验证人工修改和版本审计。
+
+## 2026-10-28 本地实施记录
+
+- `PUT /api/requirements/{id}/scoring` 与 `POST /api/requirements/{id}/scoring/apply-ai`；服务端重算、期望版本409、审计、AI/人工分离、采用AI。
+- 人工编辑不自动推Base/通知，不启动Beta；权限沿用已登录租户用户。
+- HTTP、仓储、OpenAPI及两仓类型/路由测试通过；目标未写入。

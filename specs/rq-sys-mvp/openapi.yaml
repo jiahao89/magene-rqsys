@@ -450,6 +450,67 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: Stale expectedVersion; the message carries the current version. }
         '503': { $ref: '#/components/responses/DependencyUnavailable' }
+  /api/requirements/{id}/scoring:
+    put:
+      summary: Save PM-edited scoring inputs and alpha (V02-S06)
+      description: >-
+        The server validates nine integer inputs and alpha (0.5-2.0, step 0.1), computes the fixed
+        U/M/S/C v2 score and P0-P3, and stores a confirmed version with audit. Manual edits never
+        push Base or notify; expectedVersion provides optimistic concurrency.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedVersion, inputs, alpha, reason]
+              properties:
+                expectedVersion: { type: integer, minimum: 0 }
+                inputs: { $ref: '#/components/schemas/ScoringInputs' }
+                alpha: { type: number, minimum: 0.5, maximum: 2.0 }
+                safetyFlag: { type: boolean }
+                reason: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        '200':
+          description: Score saved.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScoringSaveResult' }
+        '400': { $ref: '#/components/responses/Validation' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Stale expectedVersion; the message carries the current version. }
+        '503': { $ref: '#/components/responses/DependencyUnavailable' }
+  /api/requirements/{id}/scoring/apply-ai:
+    post:
+      summary: Adopt the latest AI score suggestion (V02-S06)
+      description: Creates a confirmed version from an ai_suggested version. Does not push Base or notify.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedVersion, aiVersion]
+              properties:
+                expectedVersion: { type: integer, minimum: 0 }
+                aiVersion: { type: integer, minimum: 1 }
+                reason: { type: string, nullable: true, maxLength: 500 }
+      responses:
+        '200':
+          description: AI score adopted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScoringSaveResult' }
+        '400': { $ref: '#/components/responses/Validation' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Stale expectedVersion; the message carries the current version. }
+        '503': { $ref: '#/components/responses/DependencyUnavailable' }
   /api/requirements/{id}/rice-draft:
     get:
       summary: Read the RICE Beta draft (V02-T11)
@@ -1083,6 +1144,20 @@ components:
             tags: { type: array, items: { type: string, enum: [L1, L2, L3, L4, L5, L6] } }
             confirmed: { type: boolean }
             version: { type: integer }
+        # V02-S06：当前评分、AI 建议、历史与公式；旧分析没有评分时为 null/空。
+        scoring:
+          type: [object, 'null']
+          properties:
+            current: { $ref: '#/components/schemas/RequirementScoreVersion' }
+            aiSuggestion: { $ref: '#/components/schemas/RequirementScoreVersion' }
+            history:
+              type: array
+              items: { $ref: '#/components/schemas/RequirementScoreVersion' }
+            formula:
+              type: object
+              properties:
+                text: { type: string }
+                thresholds: { type: object, properties: { p0: { type: number }, p1: { type: number }, p2: { type: number } } }
         # RQ-Sys 展示用连续编号（RQ-000001）；迁移未执行时为 null。
         platformRequirementId: { type: string, nullable: true }
         title: { type: string }
@@ -1140,6 +1215,53 @@ components:
               safeErrorSummary: { type: [string, 'null'] }
         baseRecordId: { type: [string, 'null'] }
       required: [id, sourceRequirementId, title, sourceVersion, pipeline, source, analysis, analyses, baseRecordId]
+    ScoringInputs:
+      type: object
+      required: [user, market, strategy, cost]
+      properties:
+        user:
+          type: object
+          required: [pain, frequency]
+          properties: { pain: { type: integer, minimum: 1, maximum: 5 }, frequency: { type: integer, minimum: 1, maximum: 5 } }
+        market:
+          type: object
+          required: [sellingPoint, competitor]
+          properties: { sellingPoint: { type: integer, minimum: 1, maximum: 3 }, competitor: { type: integer, minimum: 1, maximum: 3 } }
+        strategy:
+          type: object
+          required: [roadmap, dependency]
+          properties: { roadmap: { type: integer, minimum: 1, maximum: 3 }, dependency: { type: integer, minimum: 1, maximum: 3 } }
+        cost:
+          type: object
+          required: [workload, technicalRisk, resource]
+          properties: { workload: { type: integer, minimum: 1, maximum: 5 }, technicalRisk: { type: integer, minimum: 1, maximum: 5 }, resource: { type: integer, minimum: 1, maximum: 5 } }
+    RequirementScoreVersion:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        requirementId: { type: string, format: uuid }
+        version: { type: integer }
+        status: { type: string, enum: [ai_suggested, current, confirmed, superseded] }
+        origin: { type: string, enum: [ai, manual, ai_applied] }
+        sourceVersion: { type: integer }
+        analysisVersion: { type: [integer, 'null'] }
+        ruleVersionId: { type: [string, 'null'], format: uuid }
+        inputs: { $ref: '#/components/schemas/ScoringInputs' }
+        alpha: { type: number }
+        score: { type: number }
+        priority: { type: string, enum: [P0, P1, P2, P3] }
+        scoreConfidence: { type: [string, 'null'], enum: [高, 中, 低, null] }
+        scoreConfidenceReason: { type: [string, 'null'] }
+        safetyFlag: { type: boolean }
+        basis: { type: object, additionalProperties: { type: object } }
+        rationale: { type: [string, 'null'] }
+        actorId: { type: [string, 'null'] }
+        changeReason: { type: [string, 'null'] }
+        createdAt: { type: string, format: date-time }
+    ScoringSaveResult:
+      type: object
+      properties:
+        scoring: { $ref: '#/components/schemas/RequirementScoreVersion' }
     Batch:
       type: object
       properties:

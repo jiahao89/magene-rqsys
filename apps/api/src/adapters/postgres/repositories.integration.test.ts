@@ -11,7 +11,7 @@ import { buildPriorityRule } from "../../analysis/priority-rule.js";
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),"../../../../../");
 async function getDatabaseUrl(){if(process.env.DATABASE_URL)return process.env.DATABASE_URL;const env=await readFile(resolve(root,".env"),"utf8").catch(()=>"");const value=env.match(/^DATABASE_URL=(.+)$/m)?.[1]?.trim();if(!value)throw new Error("PostgreSQL integration tests require DATABASE_URL in environment or repo .env");return value;}
-async function setup(){const connectionString=await getDatabaseUrl();const admin=new Pool({connectionString,connectionTimeoutMillis:5000});const schema=`rq_test_${randomUUID().replaceAll("-","")}`;await admin.query(`CREATE SCHEMA "${schema}"`);const pool=new Pool({connectionString,options:`-c search_path=${schema}`,max:5});try{const sql=await readFile(resolve(root,"database/migrations/0001_initial.sql"),"utf8");await pool.query(sql);const next=await readFile(resolve(root,"database/migrations/0002_single_source_config.sql"),"utf8");await pool.query(next);const platformId=await readFile(resolve(root,"database/migrations/0004_platform_requirement_id.sql"),"utf8");await pool.query(platformId);const platformIdBackfill=await readFile(resolve(root,"database/migrations/0005_platform_requirement_id_backfill.sql"),"utf8");await pool.query(platformIdBackfill);const manualOwner=await readFile(resolve(root,"database/migrations/0006_requirement_manual_owner.sql"),"utf8");await pool.query(manualOwner);const ownerAndDuplicates=await readFile(resolve(root,"database/migrations/0007_requirement_owner_conflict_duplicates.sql"),"utf8");await pool.query(ownerAndDuplicates);const nameFix=await readFile(resolve(root,"database/migrations/0008_fix_team_directory_name.sql"),"utf8");await pool.query(nameFix);const sourceExpand=await readFile(resolve(root,"database/migrations/0009_extend_requirement_source.sql"),"utf8");await pool.query(sourceExpand);const defContext=await readFile(resolve(root,"database/migrations/0010_manual_definition_context.sql"),"utf8");await pool.query(defContext);const intakeModuleOwner=await readFile(resolve(root,"database/migrations/0011_requirement_intake_module_owner.sql"),"utf8");await pool.query(intakeModuleOwner);const editReceipts=await readFile(resolve(root,"database/migrations/0012_manual_edit_receipts.sql"),"utf8");await pool.query(editReceipts);const audience=await readFile(resolve(root,"database/migrations/0013_requirement_audience.sql"),"utf8");await pool.query(audience);const rice=await readFile(resolve(root,"database/migrations/0014_rice_drafts.sql"),"utf8");await pool.query(rice);const kano=await readFile(resolve(root,"database/migrations/0015_kano_evidence_versions.sql"),"utf8");await pool.query(kano);const kanoRunsMig=await readFile(resolve(root,"database/migrations/0016_kano_runs.sql"),"utf8");await pool.query(kanoRunsMig);const umscSeed=await readFile(resolve(root,"database/migrations/0017_seed_umsc_rule_v1.sql"),"utf8");await pool.query(umscSeed);const multiWeekday=await readFile(resolve(root,"database/migrations/0018_source_multi_weekday.sql"),"utf8");await pool.query(multiWeekday);return{pool,admin,schema,repos:new PostgresRepositories(pool as never)};}catch(error){await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();throw error;}}
+async function setup(){const connectionString=await getDatabaseUrl();const admin=new Pool({connectionString,connectionTimeoutMillis:5000});const schema=`rq_test_${randomUUID().replaceAll("-","")}`;await admin.query(`CREATE SCHEMA "${schema}"`);const pool=new Pool({connectionString,options:`-c search_path=${schema}`,max:5});try{const sql=await readFile(resolve(root,"database/migrations/0001_initial.sql"),"utf8");await pool.query(sql);const next=await readFile(resolve(root,"database/migrations/0002_single_source_config.sql"),"utf8");await pool.query(next);const platformId=await readFile(resolve(root,"database/migrations/0004_platform_requirement_id.sql"),"utf8");await pool.query(platformId);const platformIdBackfill=await readFile(resolve(root,"database/migrations/0005_platform_requirement_id_backfill.sql"),"utf8");await pool.query(platformIdBackfill);const manualOwner=await readFile(resolve(root,"database/migrations/0006_requirement_manual_owner.sql"),"utf8");await pool.query(manualOwner);const ownerAndDuplicates=await readFile(resolve(root,"database/migrations/0007_requirement_owner_conflict_duplicates.sql"),"utf8");await pool.query(ownerAndDuplicates);const nameFix=await readFile(resolve(root,"database/migrations/0008_fix_team_directory_name.sql"),"utf8");await pool.query(nameFix);const sourceExpand=await readFile(resolve(root,"database/migrations/0009_extend_requirement_source.sql"),"utf8");await pool.query(sourceExpand);const defContext=await readFile(resolve(root,"database/migrations/0010_manual_definition_context.sql"),"utf8");await pool.query(defContext);const intakeModuleOwner=await readFile(resolve(root,"database/migrations/0011_requirement_intake_module_owner.sql"),"utf8");await pool.query(intakeModuleOwner);const editReceipts=await readFile(resolve(root,"database/migrations/0012_manual_edit_receipts.sql"),"utf8");await pool.query(editReceipts);const audience=await readFile(resolve(root,"database/migrations/0013_requirement_audience.sql"),"utf8");await pool.query(audience);const rice=await readFile(resolve(root,"database/migrations/0014_rice_drafts.sql"),"utf8");await pool.query(rice);const kano=await readFile(resolve(root,"database/migrations/0015_kano_evidence_versions.sql"),"utf8");await pool.query(kano);const kanoRunsMig=await readFile(resolve(root,"database/migrations/0016_kano_runs.sql"),"utf8");await pool.query(kanoRunsMig);const umscSeed=await readFile(resolve(root,"database/migrations/0017_seed_umsc_rule_v1.sql"),"utf8");await pool.query(umscSeed);const multiWeekday=await readFile(resolve(root,"database/migrations/0018_source_multi_weekday.sql"),"utf8");await pool.query(multiWeekday);const scoring=await readFile(resolve(root,"database/migrations/0019_scoring_v2.sql"),"utf8");await pool.query(scoring);return{pool,admin,schema,repos:new PostgresRepositories(pool as never)};}catch(error){await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end();throw error;}}
 async function cleanup(ctx:{pool:Pool;admin:Pool;schema:string}){await ctx.pool.end();await ctx.admin.query(`DROP SCHEMA "${ctx.schema}" CASCADE`);await ctx.admin.end();}
 const config={projectId:"tb-project",projectName:"Product",requirementTypeId:"req-type",enabled:true,schedule:{enabled:true,weekday:1,time:"09:30",timezone:"Asia/Shanghai"},ownerNames:["PM Owner"],fieldMap:{description:"cf-description"}};
 function requirementWrite(sourceConfigId:string, latestBatchId:string, overrides:Partial<import("./repositories.js").RequirementRowWrite>={}) {
@@ -485,23 +485,55 @@ test("V02-T14 Kano runs: versioned create with active guard, job+audit in txn, l
   }finally{await cleanup(ctx);}
 });
 
-test("V02-T10 seeded UMSC rule v1 computes deterministic P0-P3 from confirmed levels",async()=>{
+test("V02-S06 score versions: AI suggestion, manual confirmation and AI adoption keep one current version",async()=>{
   const ctx=await setup();
   try{
-    const published=await ctx.repos.priorityRules.getPublished();
-    assert.ok(published,"seeded rule v1 is published");
-    const rule=buildPriorityRule(published!);
+    const source=await ctx.repos.sources.create(config);
+    const batch=await ctx.repos.batches.create({sourceConfigId:source.id,triggerType:"manual",actorId:null,idempotencyKey:"scoring-version-0001",startedAt:"2026-10-08T00:00:00Z"});
+    const req=await ctx.repos.requirements.upsertRequirement(source.id,"task-score",requirementWrite(source.id,batch.id,{teambitionRequirementId:"task-score"}));
+    const rule=await ctx.repos.priorityRules.getPublished();
     assert.ok(rule);
-    // 手工复算（校准案例同源）：全高=4→P0；两高两中=3→P0；全中=2→P1；一高三低=1→P2；全无法判断=0→P3
-    assert.equal(rule!.compute({user:"高",market:"高",business:"高",technology:"高"}),"P0");
-    assert.equal(rule!.compute({user:"高",market:"中",business:"高",technology:"中"}),"P0");
-    assert.equal(rule!.compute({user:"中",market:"中",business:"中",technology:"中"}),"P1");
-    assert.equal(rule!.compute({user:"高",market:"低",business:"低",technology:"低"}),"P2");
-    assert.equal(rule!.compute({user:"无法判断",market:"无法判断",business:"无法判断",technology:"无法判断"}),"P3");
-    // 未收录取值 fail-closed：优先级为空，不造默认分
-    assert.equal(rule!.compute({user:"其它建议",market:"高",business:"高",technology:"高"}),null);
-    // 幂等：重复执行种子不产生第二版
+    const audit=(id:string)=>({id,actorId:"pm-1",eventType:"scoring.updated",entityType:"requirement",result:"succeeded" as const,safeDetails:{},occurredAt:"2026-10-08T00:00:00Z"});
+    const base={requirementId:req.id,sourceVersion:1,analysisVersion:1,ruleVersionId:rule!.id,inputs:{user:{pain:3,frequency:4},market:{sellingPoint:1,competitor:1},strategy:{roadmap:1,dependency:1},cost:{workload:3,technicalRisk:2,resource:2}},alpha:0.8,score:6.4,priority:"P3" as const,scoreConfidence:"中",scoreConfidenceReason:"r",safetyFlag:false,basis:{},rationale:"r"};
+    const first=await ctx.repos.scoring.createAi({...base,auditEvent:{...audit("00000000-0000-4000-8000-000000000201"),entityType:"requirement",eventType:"scoring.suggested"}});
+    assert.equal(first.status,"current");
+    const second=await ctx.repos.scoring.createAi({...base,inputs:{...base.inputs,user:{pain:4,frequency:5}},score:15.2,priority:"P2"});
+    assert.equal(second.status,"ai_suggested");
+    assert.equal((await ctx.repos.scoring.current(req.id))?.id,first.id);
+    assert.equal((await ctx.repos.scoring.aiSuggestion(req.id))?.id,second.id);
+    const manual=await ctx.repos.scoring.saveManual({...base,expectedVersion:1,score:10,priority:"P2",actorId:"pm-1",reason:"人工修正",auditEvent:{...audit("00000000-0000-4000-8000-000000000202"),eventType:"scoring.updated"}});
+    assert.equal(manual.outcome,"saved");
+    if(manual.outcome==="saved"){
+      assert.equal(manual.version.status,"confirmed");
+      assert.equal(manual.version.version,3);
+      assert.equal((await ctx.repos.scoring.current(req.id))?.version,3);
+      const applied=await ctx.repos.scoring.applyAi({requirementId:req.id,expectedVersion:3,aiVersion:2,actorId:"pm-1",reason:"采用AI",auditEvent:{...audit("00000000-0000-4000-8000-000000000203"),eventType:"scoring.ai_applied"}});
+      assert.equal(applied.outcome,"saved");
+      if(applied.outcome==="saved") assert.equal(applied.version.origin,"ai_applied");
+    }
+    const conflict=await ctx.repos.scoring.saveManual({...base,expectedVersion:1,score:10,priority:"P2",actorId:"pm-1",reason:"旧版本",auditEvent:audit("00000000-0000-4000-8000-000000000204")});
+    assert.equal(conflict.outcome,"version_conflict");
+    const history=await ctx.repos.scoring.list(req.id);
+    assert.equal(history.filter((entry)=>entry.status==="confirmed"||entry.status==="current").length,1);
+  }finally{await cleanup(ctx);}
+});
+
+test("V02-T10 seeded v1 rule remains historical; V02-S06 scoring v2 is the single published rule",async()=>{
+  const ctx=await setup();
+  try{
     const list=await ctx.repos.priorityRules.list();
+    const historical=list.find((v)=>v.version===1);
+    assert.ok(historical);
+    assert.equal(historical.status,"retired");
+    const v1=buildPriorityRule(historical)!;
+    assert.equal(v1.compute({user:"高",market:"高",business:"高",technology:"高"}),"P0");
+    assert.equal(v1.compute({user:"其它建议",market:"高",business:"高",technology:"高"}),null);
+    const published=await ctx.repos.priorityRules.getPublished();
+    assert.ok(published);
+    assert.equal((published!.rules as Record<string,unknown>).formulaType,"umsc_weighted_v2");
+    const v2=buildPriorityRule(published!)!;
+    const computed=v2.computeScore!({user:{pain:4,frequency:5},market:{sellingPoint:2,competitor:2},strategy:{roadmap:1,dependency:1},cost:{workload:4,technicalRisk:4,resource:4}},0.8);
+    assert.deepEqual(computed,{score:15.2,priority:"P2",breakdown:{user:20,market:4,strategy:1,cost:4,userAdjusted:16}});
     assert.equal(list.filter((v)=>v.status==="published").length,1);
   }finally{await cleanup(ctx);}
 });

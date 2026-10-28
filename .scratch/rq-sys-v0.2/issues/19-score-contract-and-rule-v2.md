@@ -4,7 +4,7 @@
 
 **Blocked by:** —（Spec与产品口径已于2026-10-27确认）
 
-**Status:** ready-for-agent（2026-10-27：评分v2 Spec和口径确认，尚未实施）
+**Status:** implemented-local（2026-10-28：评分契约、公式、规则v2、评分版本与详情读取完成；本地 API 460/Web 86/妙搭路由 115 全绿，未做目标部署）
 
 **Approval:** 用户于2026-10-27确认允许AI直接评分、必须给依据/说明，并拆分本票。
 
@@ -31,3 +31,10 @@
 
 - 旧规则v1的`priority_rule_versions`记录不删除；新分析使用v2。
 - 评分输入9项对应PRD §4.2.2；`safetyFlag`只做复核标记，不自动改P。
+
+## 2026-10-28 本地实施记录
+
+- 迁移 `0019_scoring_v2.sql`：评分版本表、当前指针、v2规则与6个校准样例，v1退休保留历史FK。
+- `scoring.ts` 固化九项输入、α、证据/假设校验、P0–P3 边界；AI输出新增`scoring`，证据/假设与原文校验；模型自报P被忽略。
+- `requirement_score_versions` 仓储支持AI建议/current、人工确认、采用AI、版本冲突；详情返回current/aiSuggestion/history/formula。
+- 验证：API **460**、Web **86**、妙搭路由 **115** 全绿；typecheck/build/对齐通过。目标环境未部署。

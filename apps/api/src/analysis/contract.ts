@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { REQUIREMENT_INTAKE_TYPES } from "../contracts/pipeline.js";
+import { ScoringSchema, validateScoringEvidence, type ComputedScore, type ScoringInputs } from "./scoring.js";
 
 export interface AnalysisDictionary {
   version: number;
@@ -11,6 +12,8 @@ export interface AnalysisPriorityRule {
   version: number;
   // 输入是四维建议取值（规则评分映射的查找键）；取值不在映射中时返回 null（优先级留空，不做默认猜测）。
   compute: (values: { user: string; market: string; business: string; technology: string }) => "P0" | "P1" | "P2" | "P3" | null;
+  // V02-S06：评分 v2 规则用九项输入和 α 计算；旧规则无此函数。
+  computeScore?: (inputs: ScoringInputs, alpha: number) => ComputedScore | null;
 }
 
 export interface AnalysisRequestInput {
@@ -106,6 +109,8 @@ const AnalysisSchema = z.object({
   // 缺省 null / [] 表示模型未给出——展示层呈现"待判断"，不推断"不适用"。
   typeSuggestion: z.enum(REQUIREMENT_INTAKE_TYPES).nullable().default(null),
   audience: z.array(z.object({ level: z.enum(AUDIENCE_LEVELS), reason: z.string().min(1), evidence: EvidenceList })).default([]),
+  // V02-S06：评分 v2 可选（旧分析无此字段仍可读）；新提示词要求模型输出。
+  scoring: ScoringSchema.optional(),
 }).strict();
 
 export type ValidatedAnalysis = z.infer<typeof AnalysisSchema>;
@@ -138,5 +143,6 @@ export function validateAnalysisOutput(
   const compact = (value: string) => value.normalize("NFKC").replace(/\s+/gu, "");
   const compactSource = compact(sourceText);
   if (result.facts.some((item) => !compactSource.includes(compact(item.text)))) throw new Error("Analysis fact does not occur in source text");
+  if (result.scoring) validateScoringEvidence(result.scoring, sourceText);
   return { ...result, priority: null };
 }

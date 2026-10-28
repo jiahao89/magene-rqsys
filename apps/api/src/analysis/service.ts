@@ -1,4 +1,4 @@
-import type { ValidatedAnalysis } from "./contract.js";
+import type { AnalysisPriorityRule, ValidatedAnalysis } from "./contract.js";
 import { AiProviderError, type AiProvider } from "./provider.js";
 import { recommendationValues } from "./priority-rule.js";
 
@@ -36,11 +36,7 @@ export interface AnalysisServiceInput {
   context: string;
   piiMarkers: string[];
   dictionary: { version: number; modules: string[] };
-  priorityRule: {
-    id: string;
-    version: number;
-    compute: (values: { user: string; market: string; business: string; technology: string }) => "P0" | "P1" | "P2" | "P3" | null;
-  } | null;
+  priorityRule: AnalysisPriorityRule | null;
   promptVersion?: string;
   model?: string;
   generatedAt?: string;
@@ -86,11 +82,13 @@ export async function runAnalysis(input: AnalysisServiceInput, options: Analysis
       dictionary: input.dictionary,
       priorityRule: input.priorityRule,
     });
-    // 已发布规则时用规则评分映射从 U/M/S/C 建议取值确定性计算优先级（不丢弃规则、不信任模型自评）；
-    // 规则未发布或建议取值不在已批准评分映射中时 priority 保持为空（宁缺毋滥）
-    const priority = input.priorityRule
-      ? input.priorityRule.compute(recommendationValues(result))
-      : result.priority;
+    // 已发布 v1 规则时用四维建议映射计算；评分 v2 则用九项输入+α由服务端公式计算。
+    // 有 scoring 但没有 v2 规则时优先级留空，不回退到 v1 的不同口径。
+    const scored = result.scoring && input.priorityRule?.computeScore
+      ? input.priorityRule.computeScore(result.scoring.inputs, result.scoring.alpha)
+      : null;
+    const priority = scored?.priority
+      ?? (result.scoring ? null : input.priorityRule ? input.priorityRule.compute(recommendationValues(result)) : result.priority);
     const completed = await options.repository.complete(run.id, {
       status: "analyzed", result: { ...result, priority }, completedAt: (options.now ?? (() => new Date()))().toISOString(),
       safeErrorCode: null, safeErrorSummary: null,

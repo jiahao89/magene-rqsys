@@ -126,6 +126,20 @@ function resolveEvidenceReferences(value: unknown, segments: EvidenceSegment[]):
       return { ...record, evidence };
     });
   }
+  if (typeof source.scoring === "object" && source.scoring !== null && !Array.isArray(source.scoring)) {
+    const scoring = source.scoring as Record<string, unknown>;
+    const basis = scoring.basis;
+    if (typeof basis === "object" && basis !== null && !Array.isArray(basis)) {
+      result.scoring = {
+        ...scoring,
+        basis: Object.fromEntries(Object.entries(basis as Record<string, unknown>).map(([key, item]) => {
+          if (typeof item !== "object" || item === null || Array.isArray(item)) return [key, item];
+          const record = item as Record<string, unknown>;
+          return [key, "evidence" in record ? { ...record, evidence: resolveList(record.evidence) } : record];
+        })),
+      };
+    }
+  }
   return result;
 }
 
@@ -151,8 +165,34 @@ function prompt(request: SafeAnalysisRequest, segments: EvidenceSegment[]): stri
       priority: null,
       typeSuggestion: "新增功能|功能扩展|体验优化|性能优化|质量修复|安全合规|成本效率|技术治理|null",
       audience: [{ level: "L1|L2|L3|L4|L5|L6", reason: "为什么适用该人群", evidence: ["T1"] }],
+      scoring: {
+        inputs: {
+          user: { pain: 3, frequency: 4 },
+          market: { sellingPoint: 1, competitor: 1 },
+          strategy: { roadmap: 1, dependency: 1 },
+          cost: { workload: 3, technicalRisk: 2, resource: 2 },
+        },
+        alpha: 0.8,
+        safetyFlag: false,
+        scoreConfidence: "中",
+        scoreConfidenceReason: "频次和竞品依据不足，已按假设估算",
+        basis: {
+          "user.pain": { reason: "为什么打这个分", evidence: ["T1"], assumption: false },
+          "user.frequency": { reason: "没有频次数据时的估算假设", evidence: [], assumption: true },
+          "market.sellingPoint": { reason: "为什么打这个分", evidence: ["T1"], assumption: false },
+          "market.competitor": { reason: "未核实竞品时的估算假设", evidence: [], assumption: true },
+          "strategy.roadmap": { reason: "未引用实际规划版本", evidence: [], assumption: true },
+          "strategy.dependency": { reason: "依赖判断的假设", evidence: [], assumption: true },
+          "cost.workload": { reason: "工作量估算假设", evidence: [], assumption: true },
+          "cost.technicalRisk": { reason: "风险估算假设", evidence: [], assumption: true },
+          "cost.resource": { reason: "资源估算假设", evidence: [], assumption: true },
+        },
+        rationale: "总体评分说明",
+        proposedScore: 6.4,
+      },
     }, null, 2),
       "Constraints: evidence fields must contain only IDs from the source segments below, never quote text; overall evidence must include at least one ID when source segments exist; missing_evidence is a boolean and true requires an empty evidence array; every inference must have ai_inference: true; facts[].text must be a VERBATIM excerpt copied character-for-character from the source text (never paraphrase, never translate, keep original punctuation); priority must always be null because the server applies any published calibrated rule deterministically; each recommendations dimension recommendation field must be exactly one of 高|中|低|无法判断 (the rationale carries the substantive reasoning) — the published rule scores those exact levels.",
+      "Scoring v2: return the scoring object exactly as shaped above. It must contain all nine inputs and alpha; every basis key is required. Use assumption=false only when you provide at least one source evidence ID; otherwise set assumption=true and state the estimation assumption in reason. Never invent competitor, roadmap, frequency or engineering facts. alpha defaults: 0.8 for a single feedback/channel without cross-evidence, 1.0 for multiple independent sources, 1.5 only when the source confirms a safety/irreversible impact. safetyFlag must be false unless the source contains safety evidence. proposedScore is optional and only explanatory; the server computes the official score and priority, so never return a priority field.",
     `Controlled modules: ${JSON.stringify(request.dictionary.modules)}. Choose one exact listed module only when the requirement clearly matches it; otherwise set module to exactly 无法识别.`,
     `Audience levels are fixed: L1=职业级 Pro, L2=竞技级 Racing, L3=爱好者/专业入门 Enthusiast, L4=健身锻炼 Fitness, L5=休闲娱乐 Recreation, L6=通勤代步 Commuter. Suggest audience entries only when the source text supports them (each with reason and evidence IDs); use an empty array when evidence is insufficient — never invent a seventh level and never infer that an unmentioned level is unsuitable. typeSuggestion must be one of the eight fixed categories or null.`,
     `Published priority rule: ${JSON.stringify(request.priorityRule)}.`,

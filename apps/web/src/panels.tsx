@@ -10,7 +10,7 @@ import { checkScheduleHealth } from "./schedule";
 import { readRequirementDeepLink } from "./deep-link";
 import { emptyRequirementListFilters, readRequirementListFilters, requirementPoolUrl, type RequirementListFilters } from "./requirements-url";
 import { formatDateTime, requirementOwnerView, requirementSourceFacts, requirementTime, sortRequirementsForAttention } from "./requirement-view";
-import { ApiError, addTeamPerson, bindTeamPersonFeishu, createSource, deleteTeamPerson, getBatch, getFunctionModules, getRequirement, listAudit, listBatches, listDictionaryVersions, listMappings, listRequirements, listTeamPeople, pushRequirement, renameTeamPerson, saveFunctionModules, retryAnalysis, retrySyncItem, searchFeishuUsers, setOwner, unbindTeamPersonFeishu, updateSource, type AnalysisVersionSummary, type AuditEvent, type BatchDetail, type BatchSummary, type DictionaryVersion, type PersonMapping, type PublishStatus, type FeishuUserSelection, type FeishuUserCandidate, type FunctionModuleEntry, type RequirementDetail, type RequirementSummary, type SourceConfig, type SourceConfigUpdate, type TeamPerson, clearOwner } from "./api";
+import { ApiError, addTeamPerson, applyRequirementAiScore, bindTeamPersonFeishu, createSource, deleteTeamPerson, getBatch, getFunctionModules, getRequirement, listAudit, listBatches, listDictionaryVersions, listMappings, listRequirements, listTeamPeople, pushRequirement, renameTeamPerson, saveFunctionModules, retryAnalysis, retrySyncItem, saveRequirementScore, searchFeishuUsers, setOwner, unbindTeamPersonFeishu, updateSource, type AnalysisVersionSummary, type AuditEvent, type BatchDetail, type BatchSummary, type DictionaryVersion, type PersonMapping, type PublishStatus, type FeishuUserSelection, type FeishuUserCandidate, type FunctionModuleEntry, type RequirementDetail, type RequirementScoreVersion, type RequirementSummary, type ScoringInputs, type SourceConfig, type SourceConfigUpdate, type TeamPerson, clearOwner } from "./api";
 import type { WorkbenchTab } from "./workbench-routing";
 
 export type LoadState = "loading" | "ready" | "error";
@@ -931,6 +931,107 @@ function BaseRecordReference({ recordId }: { recordId: string | null }) {
   </span>;
 }
 
+const SCORE_ROWS: Array<{ path: [keyof ScoringInputs, string]; label: string; max: number }> = [
+  { path: ["user", "pain"], label: "U 痛点强度", max: 5 },
+  { path: ["user", "frequency"], label: "U 发生频次", max: 5 },
+  { path: ["market", "sellingPoint"], label: "M 卖点强度", max: 3 },
+  { path: ["market", "competitor"], label: "M 竞品差异", max: 3 },
+  { path: ["strategy", "roadmap"], label: "S Roadmap 匹配", max: 3 },
+  { path: ["strategy", "dependency"], label: "S 战略依赖/杠杆", max: 3 },
+  { path: ["cost", "workload"], label: "C 工作量", max: 5 },
+  { path: ["cost", "technicalRisk"], label: "C 技术风险", max: 5 },
+  { path: ["cost", "resource"], label: "C 资源占用", max: 5 },
+];
+
+function scoringValue(inputs: ScoringInputs, path: [keyof ScoringInputs, string]): number {
+  return Number((inputs[path[0]] as Record<string, number>)[path[1]] ?? 0);
+}
+
+function withScoringValue(inputs: ScoringInputs, path: [keyof ScoringInputs, string], value: number): ScoringInputs {
+  return { ...inputs, [path[0]]: { ...(inputs[path[0]] as Record<string, number>), [path[1]]: value } } as ScoringInputs;
+}
+
+export function ScoringPanel({ requirementId, scoring, onSaved }: { requirementId: string; scoring: import("./api").ScoringData | null | undefined; onSaved: () => void }) {
+  const current = scoring?.current ?? null;
+  const ai = scoring?.aiSuggestion ?? null;
+  const baseInputs: ScoringInputs = current?.inputs ?? ai?.inputs ?? {
+    user: { pain: 3, frequency: 3 }, market: { sellingPoint: 1, competitor: 1 },
+    strategy: { roadmap: 1, dependency: 1 }, cost: { workload: 3, technicalRisk: 3, resource: 3 },
+  };
+  const [editing, setEditing] = useState(false);
+  const [inputs, setInputs] = useState<ScoringInputs>(baseInputs);
+  const [alpha, setAlpha] = useState<number>(current?.alpha ?? ai?.alpha ?? 0.8);
+  const [safetyFlag, setSafetyFlag] = useState(current?.safetyFlag ?? ai?.safetyFlag ?? false);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  useEffect(() => {
+    const source = current ?? ai;
+    if (source) { setInputs(source.inputs); setAlpha(source.alpha); setSafetyFlag(source.safetyFlag); }
+    setEditing(false); setError(null);
+  }, [current?.id, ai?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const display = current ?? ai;
+  const save = async () => {
+    setBusy(true); setError(null); setNotice(null);
+    try {
+      await saveRequirementScore(requirementId, { expectedVersion: current?.version ?? 0, inputs, alpha, safetyFlag, reason });
+      setNotice("评分已保存并重算。");
+      setEditing(false); setReason(""); onSaved();
+    } catch (cause) { setError(errorText(cause)); }
+    finally { setBusy(false); }
+  };
+  const applyAi = async () => {
+    if (!ai) return;
+    setBusy(true); setError(null); setNotice(null);
+    try {
+      await applyRequirementAiScore(requirementId, { expectedVersion: current?.version ?? 0, aiVersion: ai.version, reason: "采用AI建议" });
+      setNotice("已采用 AI 建议。"); onSaved();
+    } catch (cause) { setError(errorText(cause)); }
+    finally { setBusy(false); }
+  };
+  const rowLabel = (path: [keyof ScoringInputs, string]) => {
+    const key = `${path[0]}.${path[1]}`;
+    const basis = (display?.basis ?? {})[key];
+    if (!basis) return "—";
+    return `${basis.reason}${basis.assumption ? "（假设）" : ""}`;
+  };
+  return <section className="req-section" aria-labelledby="req-scoring-heading">
+    <div className="req-section-head"><h3 id="req-scoring-heading">评分与优先级</h3><span className="req-source-note">AI 直接评分 · PM 可修正</span></div>
+    <StateBanner loadError={error} notice={notice} onCloseNotice={() => setNotice(null)} />
+    {!display ? <div className="req-empty-state"><strong>暂无评分</strong><span>AI 分析完成后会生成九项评分；也可以手动填写。</span><button className="button button-secondary button-small" onClick={() => setEditing(true)} disabled={busy}>手动填写评分</button></div> : <>
+      <div className="rules-form" style={{ alignItems: "center", flexWrap: "wrap" }}>
+        <strong>综合分 {display.score.toFixed(2)}</strong><span className="status-chip status-live"><span />{display.priority}</span>
+        <span className="status-hint">版本 v{display.version} · {display.origin === "ai" ? "AI建议" : display.origin === "manual" ? "人工" : "已采用AI"} · 置信度 {display.scoreConfidence ?? "—"}</span>
+        {current && ai && ai.id !== current.id && <button className="button button-secondary button-small" onClick={() => void applyAi()} disabled={busy}>采用 AI 建议 v{ai.version}</button>}
+        <button className="button button-secondary button-small" onClick={() => setEditing((value) => !value)} disabled={busy}>{editing ? "取消编辑" : "编辑评分"}</button>
+        <button className="button button-secondary button-small" onClick={() => setHistoryOpen((value) => !value)}>{historyOpen ? "收起历史" : `历史（${scoring?.history.length ?? 0}）`}</button>
+      </div>
+      <p className="status-hint">{scoring?.formula?.text ?? "U/M/S/C 固定公式"}；综合分与 P 由服务端计算。</p>
+      {display.scoreConfidenceReason && <p className="status-hint">评分置信度理由：{display.scoreConfidenceReason}</p>}
+      {display.safetyFlag && <div className="notice-banner" role="status">涉及安全：需人工复核；安全标记不自动改变 P。</div>}
+      <div className="table-scroll"><table><thead><tr><th>评分项</th><th>AI建议</th><th>当前值</th><th>依据/假设</th></tr></thead><tbody>
+        {SCORE_ROWS.map(({ path, label, max }) => <tr key={label}>
+          <td>{label}</td>
+          <td>{ai ? scoringValue(ai.inputs, path) : "—"}</td>
+          <td>{editing ? <input aria-label={`评分 ${label}`} type="number" min={1} max={max} value={scoringValue(inputs, path)} onChange={(event) => setInputs(withScoringValue(inputs, path, Number(event.target.value)))} style={{ width: 72 }} /> : scoringValue(display.inputs, path)}</td>
+          <td>{rowLabel(path)}</td>
+        </tr>)}
+        <tr><td>α 修正系数</td><td>{ai?.alpha ?? "—"}</td><td>{editing ? <input aria-label="评分 alpha" type="number" min={0.5} max={2} step={0.1} value={alpha} onChange={(event) => setAlpha(Number(event.target.value))} style={{ width: 72 }} /> : display.alpha}</td><td>{display.rationale ?? "—"}</td></tr>
+      </tbody></table></div>
+      {editing && <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
+        <label className="rules-threshold"><span>涉及安全</span><input type="checkbox" checked={safetyFlag} onChange={(event) => setSafetyFlag(event.target.checked)} /></label>
+        <label className="field"><span>修改理由（必填）</span><input aria-label="评分修改理由" value={reason} onChange={(event) => setReason(event.target.value)} /></label>
+        <button className="button button-primary button-small" onClick={() => void save()} disabled={busy || reason.trim().length === 0}>{busy ? "保存中…" : "保存评分"}</button>
+      </div>}
+      {historyOpen && <div className="table-scroll"><table><thead><tr><th>版本</th><th>来源</th><th>分数/P</th><th>时间</th><th>理由</th></tr></thead><tbody>
+        {(scoring?.history ?? []).map((version) => <tr key={version.id}><td>v{version.version} · {version.status}</td><td>{version.origin === "ai" ? "AI" : version.origin === "manual" ? "人工" : "采用AI"}</td><td>{version.score.toFixed(2)} / {version.priority}</td><td>{formatDateTime(version.createdAt)}</td><td>{version.changeReason ?? "—"}</td></tr>)}
+      </tbody></table></div>}
+    </>}
+  </section>;
+}
+
 function RequirementDetailPage({ detail, detailId, loading, error, notice, busy, autoOpenOwnerPicker, onCloseNotice, onBack, onRefresh, onAct }: {
   detail: RequirementDetail | null;
   detailId: string;
@@ -1142,6 +1243,8 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
         <div style={{ marginTop: 8 }}><BetaPanel requirementId={detail.id} /></div>
       </div>
     </section>
+
+    <ScoringPanel requirementId={detail.id} scoring={detail.scoring} onSaved={() => void open(detail.id)} />
 
     <section className="req-section" aria-labelledby="req-l2-heading">
       <div className="req-section-head"><h3 id="req-l2-heading">AI 分析与建议</h3><span className="req-source-note">AI 生成 · 可被推翻</span></div>

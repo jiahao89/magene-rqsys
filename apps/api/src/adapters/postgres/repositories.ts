@@ -7,7 +7,7 @@ import type {
   ModuleDictionaryVersionRecord, PersonMappingRecord, PmSnapshotRecord,
   PipelineJobRecord, PipelineJobType, PriorityLevel, PriorityRuleVersionRecord,
   RequirementManualOwner, RequirementRecord, SourceConfigRecord, SourceSnapshotRecord, SyncBatchRecord, SyncItemAction,
-  SyncItemRecord, SyncTrigger, AudienceLevel } from "../../domain/persistence.js";
+  SyncItemRecord, SyncTrigger, AudienceLevel, RequirementScoreVersionRecord } from "../../domain/persistence.js";
 import { normalizeScheduleTime, type AnalysisState, type OwnerState, type PullState, type PushState } from "../../domain/workflow.js";
 import { assertTransition } from "../../domain/transitions.js";
 import type { ResolvedSourceConfigUpdate } from "../../contracts/source.js";
@@ -18,6 +18,7 @@ import type {
   ModuleDictionaryRepository, PersonMappingRepository, PmSnapshotRepository,
   PipelineJobRepository, PriorityRuleRepository, RequirementQueryRepository,
   RequirementSearchCursor, SourceConfigRepository, SourceSnapshotRepository, SyncBatchRepository, SyncItemRepository, TeamDirectoryRepository,
+  RequirementScoringRepository,
 } from "../../application/repositories.js";
 import { encodeRequirementCursor } from "../../application/requirement-cursor.js";
 import { encodeBatchCursor } from "../../application/batch-cursor.js";
@@ -683,4 +684,85 @@ export class PostgresPriorityRuleRepository implements PriorityRuleRepository{
     }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}
   }
 }
-export class PostgresRepositories{readonly sources:PostgresSourceConfigRepository;readonly batches:PostgresSyncBatchRepository;readonly items:PostgresSyncItemRepository;readonly audit:PostgresAuditEventRepository;readonly jobs:PostgresPipelineJobRepository;readonly sourceSnapshots:PostgresSourceSnapshotRepository;readonly requirements:PostgresRequirementRepository;readonly analyses:PostgresAnalysisRunRepository;readonly people:PostgresPersonMappingRepository;readonly pmSnapshots:PostgresPmSnapshotRepository;readonly basePushes:PostgresBasePushRunRepository;readonly dictionaries:PostgresModuleDictionaryRepository;readonly directory:PostgresTeamDirectoryRepository;readonly priorityRules:PostgresPriorityRuleRepository;constructor(pool:Pool){this.sources=new PostgresSourceConfigRepository(pool);this.batches=new PostgresSyncBatchRepository(pool);this.items=new PostgresSyncItemRepository(pool);this.audit=new PostgresAuditEventRepository(pool);this.jobs=new PostgresPipelineJobRepository(pool);this.sourceSnapshots=new PostgresSourceSnapshotRepository(pool);this.requirements=new PostgresRequirementRepository(pool);this.analyses=new PostgresAnalysisRunRepository(pool);this.people=new PostgresPersonMappingRepository(pool);this.pmSnapshots=new PostgresPmSnapshotRepository(pool);this.basePushes=new PostgresBasePushRunRepository(pool);this.dictionaries=new PostgresModuleDictionaryRepository(pool);this.directory=new PostgresTeamDirectoryRepository(pool);this.priorityRules=new PostgresPriorityRuleRepository(pool);}}
+const scoreVersion=(r:any):RequirementScoreVersionRecord=>({
+  id:String(r.id),requirementId:String(r.requirement_id),version:Number(r.version),status:r.status,origin:r.origin,
+  sourceVersion:Number(r.source_version),analysisVersion:r.analysis_version===null?null:Number(r.analysis_version),
+  ruleVersionId:r.rule_version_id??null,inputs:(r.inputs??{}) as Record<string,unknown>,alpha:Number(r.alpha),score:Number(r.score),
+  priority:r.priority,scoreConfidence:r.score_confidence??null,scoreConfidenceReason:r.score_confidence_reason??null,
+  safetyFlag:Boolean(r.safety_flag),basis:(r.basis??{}) as Record<string,unknown>,rationale:r.rationale??null,
+  actorId:r.actor_id??null,changeReason:r.change_reason??null,createdAt:asDate(r.created_at)!,
+});
+export class PostgresRequirementScoringRepository implements RequirementScoringRepository{
+  constructor(private readonly pool:Pool){}
+  async current(requirementId:string){
+    const{rows}=await this.pool.query("SELECT v.* FROM requirement_score_versions v JOIN requirements r ON r.current_score_version_id=v.id WHERE r.id=$1",[requirementId]);
+    if(rows[0])return scoreVersion(rows[0]);
+    const fallback=await this.pool.query("SELECT * FROM requirement_score_versions WHERE requirement_id=$1 AND status IN ('current','confirmed') ORDER BY version DESC LIMIT 1",[requirementId]);
+    return fallback.rows[0]?scoreVersion(fallback.rows[0]):null;
+  }
+  async aiSuggestion(requirementId:string){
+    const{rows}=await this.pool.query("SELECT * FROM requirement_score_versions WHERE requirement_id=$1 AND status='ai_suggested' ORDER BY version DESC LIMIT 1",[requirementId]);
+    return rows[0]?scoreVersion(rows[0]):null;
+  }
+  async list(requirementId:string){
+    const{rows}=await this.pool.query("SELECT * FROM requirement_score_versions WHERE requirement_id=$1 ORDER BY version DESC",[requirementId]);
+    return rows.map(scoreVersion);
+  }
+  private async nextVersion(client:PoolClient,requirementId:string){
+    const{rows}=await client.query("SELECT COALESCE(MAX(version),0)+1 AS next FROM requirement_score_versions WHERE requirement_id=$1",[requirementId]);
+    return Number(rows[0]?.next??1);
+  }
+  async createAi(input:Parameters<RequirementScoringRepository["createAi"]>[0]){
+    const c=await this.pool.connect();
+    try{
+      await c.query("BEGIN");
+      const locked=await c.query("SELECT id FROM requirements WHERE id=$1 FOR UPDATE",[input.requirementId]);
+      if(!locked.rows[0])throw new Error("Scoring requirement was not found");
+      const existing=await c.query("SELECT version FROM requirement_score_versions WHERE requirement_id=$1 AND status IN ('current','confirmed') ORDER BY version DESC LIMIT 1",[input.requirementId]);
+      const status=existing.rows[0]?"ai_suggested":"current";
+      const version=await this.nextVersion(c,input.requirementId);
+      const id=randomUUID();
+      const{rows}=await c.query("INSERT INTO requirement_score_versions(id,requirement_id,version,status,origin,source_version,analysis_version,rule_version_id,inputs,alpha,score,priority,score_confidence,score_confidence_reason,safety_flag,basis,rationale) VALUES($1,$2,$3,$4,'ai',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *",[id,input.requirementId,version,status,input.sourceVersion,input.analysisVersion,input.ruleVersionId,JSON.stringify(input.inputs),input.alpha,input.score,input.priority,input.scoreConfidence,input.scoreConfidenceReason,input.safetyFlag,JSON.stringify(input.basis),input.rationale]);
+      if(status==="current")await c.query("UPDATE requirements SET current_score_version_id=$2 WHERE id=$1",[input.requirementId,id]);
+      if(input.auditEvent)await appendAuditInTransaction(c,input.auditEvent,input.requirementId);
+      await c.query("COMMIT");return scoreVersion(rows[0]!);
+    }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}
+  }
+  async saveManual(input:Parameters<RequirementScoringRepository["saveManual"]>[0]){
+    const c=await this.pool.connect();
+    try{
+      await c.query("BEGIN");
+      const locked=await c.query("SELECT id FROM requirements WHERE id=$1 FOR UPDATE",[input.requirementId]);
+      if(!locked.rows[0])throw new Error("Scoring requirement was not found");
+      const current=await c.query("SELECT id,version FROM requirement_score_versions WHERE requirement_id=$1 AND status IN ('current','confirmed') ORDER BY version DESC LIMIT 1 FOR UPDATE",[input.requirementId]);
+      const currentVersion=current.rows[0]?Number(current.rows[0].version):0;
+      if(currentVersion!==input.expectedVersion){await c.query("ROLLBACK");return{outcome:"version_conflict" as const,currentVersion};}
+      if(current.rows[0])await c.query("UPDATE requirement_score_versions SET status='superseded' WHERE id=$1",[current.rows[0].id]);
+      const version=await this.nextVersion(c,input.requirementId);const id=randomUUID();
+      const{rows}=await c.query("INSERT INTO requirement_score_versions(id,requirement_id,version,status,origin,source_version,analysis_version,rule_version_id,inputs,alpha,score,priority,score_confidence,score_confidence_reason,safety_flag,basis,rationale,actor_id,change_reason) VALUES($1,$2,$3,'confirmed','manual',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *",[id,input.requirementId,version,input.sourceVersion,input.analysisVersion,input.ruleVersionId,JSON.stringify(input.inputs),input.alpha,input.score,input.priority,input.scoreConfidence,input.scoreConfidenceReason,input.safetyFlag,JSON.stringify(input.basis),input.rationale,input.actorId,input.reason]);
+      await c.query("UPDATE requirements SET current_score_version_id=$2 WHERE id=$1",[input.requirementId,id]);
+      await appendAuditInTransaction(c,input.auditEvent,input.requirementId);
+      await c.query("COMMIT");return{outcome:"saved" as const,version:scoreVersion(rows[0]!)};
+    }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}
+  }
+  async applyAi(input:Parameters<RequirementScoringRepository["applyAi"]>[0]){
+    const c=await this.pool.connect();
+    try{
+      await c.query("BEGIN");
+      const locked=await c.query("SELECT id FROM requirements WHERE id=$1 FOR UPDATE",[input.requirementId]);
+      if(!locked.rows[0])throw new Error("Scoring requirement was not found");
+      const current=await c.query("SELECT id,version FROM requirement_score_versions WHERE requirement_id=$1 AND status IN ('current','confirmed') ORDER BY version DESC LIMIT 1 FOR UPDATE",[input.requirementId]);
+      const currentVersion=current.rows[0]?Number(current.rows[0].version):0;
+      if(currentVersion!==input.expectedVersion){await c.query("ROLLBACK");return{outcome:"version_conflict" as const,currentVersion};}
+      const ai=await c.query("SELECT * FROM requirement_score_versions WHERE requirement_id=$1 AND version=$2 AND status='ai_suggested' FOR UPDATE",[input.requirementId,input.aiVersion]);
+      if(!ai.rows[0]){await c.query("ROLLBACK");return{outcome:"ai_not_found" as const};}
+      if(current.rows[0])await c.query("UPDATE requirement_score_versions SET status='superseded' WHERE id=$1",[current.rows[0].id]);
+      const source=scoreVersion(ai.rows[0]);const version=await this.nextVersion(c,input.requirementId);const id=randomUUID();
+      const{rows}=await c.query("INSERT INTO requirement_score_versions(id,requirement_id,version,status,origin,source_version,analysis_version,rule_version_id,inputs,alpha,score,priority,score_confidence,score_confidence_reason,safety_flag,basis,rationale,actor_id,change_reason) VALUES($1,$2,$3,'confirmed','ai_applied',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *",[id,input.requirementId,version,source.sourceVersion,source.analysisVersion,source.ruleVersionId,JSON.stringify(source.inputs),source.alpha,source.score,source.priority,source.scoreConfidence,source.scoreConfidenceReason,source.safetyFlag,JSON.stringify(source.basis),source.rationale,input.actorId,input.reason]);
+      await c.query("UPDATE requirements SET current_score_version_id=$2 WHERE id=$1",[input.requirementId,id]);
+      await appendAuditInTransaction(c,input.auditEvent,input.requirementId);
+      await c.query("COMMIT");return{outcome:"saved" as const,version:scoreVersion(rows[0]!)};
+    }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}
+  }
+}
+export class PostgresRepositories{readonly sources:PostgresSourceConfigRepository;readonly batches:PostgresSyncBatchRepository;readonly items:PostgresSyncItemRepository;readonly audit:PostgresAuditEventRepository;readonly jobs:PostgresPipelineJobRepository;readonly sourceSnapshots:PostgresSourceSnapshotRepository;readonly requirements:PostgresRequirementRepository;readonly analyses:PostgresAnalysisRunRepository;readonly people:PostgresPersonMappingRepository;readonly pmSnapshots:PostgresPmSnapshotRepository;readonly basePushes:PostgresBasePushRunRepository;readonly dictionaries:PostgresModuleDictionaryRepository;readonly directory:PostgresTeamDirectoryRepository;readonly priorityRules:PostgresPriorityRuleRepository;readonly scoring:PostgresRequirementScoringRepository;constructor(pool:Pool){this.sources=new PostgresSourceConfigRepository(pool);this.batches=new PostgresSyncBatchRepository(pool);this.items=new PostgresSyncItemRepository(pool);this.audit=new PostgresAuditEventRepository(pool);this.jobs=new PostgresPipelineJobRepository(pool);this.sourceSnapshots=new PostgresSourceSnapshotRepository(pool);this.requirements=new PostgresRequirementRepository(pool);this.analyses=new PostgresAnalysisRunRepository(pool);this.people=new PostgresPersonMappingRepository(pool);this.pmSnapshots=new PostgresPmSnapshotRepository(pool);this.basePushes=new PostgresBasePushRunRepository(pool);this.dictionaries=new PostgresModuleDictionaryRepository(pool);this.directory=new PostgresTeamDirectoryRepository(pool);this.priorityRules=new PostgresPriorityRuleRepository(pool);this.scoring=new PostgresRequirementScoringRepository(pool);}}
