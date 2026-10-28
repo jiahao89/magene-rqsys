@@ -4,7 +4,7 @@
 
 **Blocked by:** 19（评分契约/计算/版本）
 
-**Status:** implemented-local（2026-10-28：PUT/apply-ai、版本冲突/审计/采用AI 完成，本地测试全绿；未做目标写入）
+**Status:** target-verified（2026-10-28：PUT/apply-ai、409冲突、版本/审计/人工不改推送已验证；release 7701533977702993200 / 57db23d）
 
 **Approval:** 用户于2026-10-27确认PM可修改单项评分和α。
 

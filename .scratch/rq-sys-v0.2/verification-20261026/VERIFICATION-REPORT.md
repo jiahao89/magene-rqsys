@@ -140,12 +140,22 @@ node --import tsx .scratch/rq-sys-v0.2/verification-20261026/e2e/harness.mts
 - 触发器按**方案 2**于 **2026-10-28 09:04** 启用（source 配置复核仍为 `[1,3,5]`）；配置更新后队列仍 0 active，作业 644/批次 18 未增加。下一轮 cron 09:30 应生成周三 09:00 窗口的 scheduled 批次，09:40 复核。
 - 用户已确认在 **2026-10-28（周三）09:00–09:30** 之间启用触发器；**09:04 已启用**。09:40 复核首轮 scheduled 批次；预期 09:30 的 cron 为周三 `2026-10-28T01:00:00.000Z` 窗口创建 scheduled 批次并执行真实同步。
 
-## 5E. 评分 v2 本地开发（2026-10-28）
+## 5E. 评分 v2 目标环境验收（2026-10-28）
 
-- 实现：`database/migrations/0019_scoring_v2.sql`（评分版本表/当前指针/规则v2+6个校准样例）、`analysis/scoring.ts`（九项输入、α、证据/假设校验、固定公式与P0–P3）、AI输出`scoring`、服务端优先级计算、评分版本仓储、详情DTO、`PUT /api/requirements/{id}/scoring`、`POST /api/requirements/{id}/scoring/apply-ai`、Web评分面板（AI/当前/依据/编辑/α/历史）。
-- 旧v1规则退休但历史FK保留；旧分析不静默回算；模型自报P被忽略。
-- 本地验证：API **460/460**、Web **86/86**、妙搭路由 **115/115**；根仓 typecheck/build、妙搭 typecheck/build:prod/eslint、两仓对齐（28/28）与`diff --check`通过。
-- 当前票：T19–T21 `implemented-local`，T22目标验收待目标迁移/发布后执行；尚未部署到目标，目标仍为上一release。
+- 部署：migration `0019_scoring_v2.sql` 已由 dev 发布到 online（24 changes）；规则 v2 `c6ba99e7-603f-4d0e-861c-99a2314dc2ad` 为 published，v1 退休；最终 release `7701533977702993200 / 57db23d`。
+- 实现：九项输入/α、证据/假设与原文校验、固定公式、服务端综合分/P、评分版本仓储、详情DTO、`PUT /api/requirements/{id}/scoring`、`POST /api/requirements/{id}/scoring/apply-ai`、Web评分面板（AI/当前/依据/编辑/α/历史）。
+- 合成需求：`RQ-000343`（id `c40b2e34-...`）完成真实模型目标验证：AI九项+逐项依据/假设+置信度；AI v1 7.20/P3；人工 v2 12.00/P2；AI重跑仅新增 ai_suggested，人工确认 v5 不覆盖；显式采用 AI v10 4.80/P3；UI v11 8.00/P3；409冲突、依据保留、历史只读、自动刷新均通过。规则溯源修复后 AI v9 记录 v2 rule id。
+- 旧v1规则退休但历史FK保留；旧分析不静默回算；模型自报P被忽略；无评分存量需求详情返回200、`scoring.current=null`，主流程不被阻断。
+- 清理：删除合成需求/11条评分版本/4次分析/快照/推送运行/29条审计/Base行 `reczz28SeboChTxv`；回读 requirements **315**、base_record_id **312**、活动作业 **0**、synthetic API **404**。
+- 本地验证仍全绿：API **460/460**、Web **86/86**、妙搭路由 **115/115**；根仓 typecheck/build、妙搭 typecheck/build:prod/eslint、两仓对齐（28/28）与`diff --check`通过。
+- 目标验收中修复的缺陷：Miaoda客户端评分保存未走`backendFetch`（目标UI报网络错误）；详情保存后未刷新（误用全局`window.open`）；人工版本丢失AI依据；AI版本规则溯源为空（仓储回退当前published规则）。
+- 证据：`target/scoring-v2-synthetic-evidence.json`、`ui/target-scoring-v2.png`、`ui/target-scoring-v2-edited.png`、`target-readonly/runtime-readonly-summary.json`、`target-readonly/scheduled-batch-and-training-summary.json`。
+
+## 5F. 定时周计划目标运行（2026-10-28）
+
+- 目标配置：周一/三/五 09:00 Asia/Shanghai；恢复触发器 `rqsysWeeklySyncRecovery` enabled（`*/30 * * * *` Asia/Shanghai）。
+- 2026-10-28 09:00 窗口的 scheduled 批次 `e9a41461-e78f-40a7-baf0-1b0aa78741c5` 于 **09:43:34** 创建、09:44:17 完成，315/315 成功、0 失败。平台触发比窗口迟到约43分钟（09:00→09:43；相对09:30轮询约13.5分钟），不是代码/到期判断失败；队列无活动作业，Base 仍 312 行、requirements 315，无重复行。
+- 说明：首轮窗口原计划 09:40 复核；09:30/09:36/09:42 查询均无批次，09:43:34 才出现，故记录为平台调度延迟；后续按同一触发器继续观察。
 
 ## 6. PRD 第 7 节验收矩阵
 
@@ -163,6 +173,11 @@ node --import tsx .scratch/rq-sys-v0.2/verification-20261026/e2e/harness.mts
 | 10 | Kano 输出候选类型/人群/解释/证据/置信度/状态/缺口；标记 AI 假设；无虚构统计 | 通过 | 通过：目标真实模型运行 + UI 回读，`AI假设（待验证）`，无统计字段 |
 | 11 | PM 可编辑人群；区分 AI/人工并留历史；无标签不阻断 | 通过 | 通过：目标保存 L2/L5→确认空集→AI 重跑保留；版本/审计/无 Base 推送；UI 确认态正确 |
 | 12 | 已发布 U/M/S/C 规则版本化确定性执行；未发布留空 | 通过 | v1 已发布，阈值 3/2/1；手工行 P3→P2 随分析版本变化；RQ-000099 P2 |
+| 13 | AI 直接输出九项输入+α、逐项依据/假设、总体说明、置信度，证据可核对，不自报最终 P | 通过（契约/评分测试） | 通过：合成 RQ-000343 真实模型输出九项、9条依据/假设、置信度；服务端忽略模型自报P |
+| 14 | 服务端固定公式计算综合分和 P0–P3，α 0.5–2.0，阈值 45/25/10，校准样例可复算 | 通过（6条校准：6.40/8.53/16.00/15.20/12.16/3.20） | 通过：规则 v2 published，AI v1 7.20/P3、人工 v2 12.00/P2、采用AI v10 4.80/P3、UI v11 8.00/P3 |
+| 15 | PM 可改任一单项和 α；版本/审计/409；人工改分不自动推送/通知，不启动 Beta | 通过 | 通过：目标 v11、审计、409、详情刷新；Base 行数与活动作业未变 |
+| 16 | AI 建议与当前值分离；AI 重跑不覆盖人工确认；显式采用 AI 才切换；历史只读 | 通过 | 通过：v2/v5 人工值在 v6–v9 AI重跑后保持；采用 AI v10；历史 11 版只读 |
+| 17 | 评分失败/缺失/规则未发布不阻断主流程；安全标记只提示不改 P；Base 不新增评分字段 | 通过（本地故障/UI测试） | 通过：无评分存量详情200/`scoring.current=null`；安全标记目标未单独触发（本地/契约覆盖）；Base 仍 312 行 |
 
 ## 7. 工单收口状态
 
@@ -174,6 +189,7 @@ node --import tsx .scratch/rq-sys-v0.2/verification-20261026/e2e/harness.mts
 | T16 | target-verified | AC01–10 全部通过；AC05 经用户确认以正式 Base 为验收例外；AC06 空→A/A→B/内容变更/AI重试/重复静默/PM快照失败本地注入均通过，Base 自动化通知经史东升确认送达 |
 | T17 | target-verified | Kano 目标真实模型运行与报告回读通过；RICE 目标 UI 点检（RICE=120）；Beta 不影响主流程已复核 |
 | T18 | target-verified | 目标 Base RQ-000099 回读与 T18 记录一致；2026-10-26 已按 T10/迁移0017、目标回读和本地边界用例补勾 AC01–06（AC01 注明“用户代确认”来源） |
+| T19–T22 | target-verified | 评分v2目标迁移/规则/真实模型/UI/版本/409/AI采用/清理通过；合成RQ-000343已删除，requirements 315/Base 312/活动作业0；证据见5E与T22票 |
 
 ## 8. 本轮可复现命令
 
@@ -262,7 +278,7 @@ npm run type:check && npm run test:rqsys-route && npm run build:prod && npm run 
 
 ## 10. 剩余工作（建议顺序）
 
-1. 2026-10-28 09:03 启用恢复触发器（当前 disabled）：配置已是周一/周三/周五 09:00；09:40 复核首轮 scheduled 批次（周三窗口）、队列与 Base 行。
+1. 恢复触发器已启用并完成首轮 scheduled 批次（09:43:34，315/315）；继续观察后续 10:30/11:00 窗口的触发延迟是否稳定（当前观测首轮迟到约13.5分钟），若持续延迟需向平台侧确认 cron 投递时延。
 2. 持续观察 F-11（Bitable filter 瞬时 1254607），必要时增加退避/告警；最近快照中的未映射负责人需求按既有流程推进。
 3. F-08 前端包体拆分属于非阻断性能优化，不在当前 V0.2 功能验收门槛内。
 
@@ -273,3 +289,5 @@ npm run type:check && npm run test:rqsys-route && npm run build:prod && npm run 
 - 浏览器截图：`ui/`（本地列表/详情/Beta/RICE/Kano/人群/编辑/新建/负责人/总览/来源/同步记录/批次明细/规则/深色/移动端；目标 `target-created-detail.png`、`target-created-analyzed.png`、`target-owner-assigned.png`、`target-rice.png`、`target-kano.png`、`target-edited.png`）
 - 目标只读：`target-base-summary.json`（正式 Base 312 行、平台键 312/312 的唯一性与状态聚合；为避免留存生产标题/PII，原始全表导出已删除）
 - 目标写入证据：`target/rq343-db.json`（需求状态/4 次推送）、`target/rq343-base-rows.ndjson`（清理前 3 条同平台键行，仅合成需求）、`target-base-summary.json`（清理后 312 行）
+- 评分v2目标证据：`target/scoring-v2-synthetic-evidence.json`、`ui/target-scoring-v2.png`、`ui/target-scoring-v2-edited.png`、`target-readonly/scheduled-batch-and-training-summary.json`、`target-readonly/priority-rules-after.json`
+- 定时运行证据：`target-readonly/batches-20261028d.json`、`target-readonly/jobs-after-cleanup.json`、`target-readonly/runtime-readonly-summary.json`

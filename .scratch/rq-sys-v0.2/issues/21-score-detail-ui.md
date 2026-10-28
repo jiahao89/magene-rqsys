@@ -4,7 +4,7 @@
 
 **Blocked by:** 19、20
 
-**Status:** implemented-local（2026-10-28：评分详情/编辑/历史/AI采用状态完成，Web 86/妙搭构建通过；未做目标UI验证）
+**Status:** target-verified（2026-10-28：目标UI展示/编辑/保存自动刷新/采用AI/依据保留已验证；release 7701533977702993200 / 57db23d）
 
 **Approval:** 用户于2026-10-27确认AI直接评分、PM可改单项与α。
 

@@ -1,5 +1,5 @@
 {
-  "captured_at": "2026-10-28T09:04:00+08:00",
+  "captured_at": "2026-10-28T10:13:00+08:00",
   "source": {
     "id": "99331edb-663b-4635-99f4-597e26304ab1",
     "external_project_name": "室外产品-码表软固件需求池",
@@ -20,45 +20,46 @@
     "status": "enabled",
     "cron": "*/30 * * * *",
     "timezone": "Asia/Shanghai",
-    "plan": "方案2：2026-10-28 09:04 启用；09:40 复核周三首轮 scheduled 批次",
-    "activated_at": "2026-10-28T09:04:00+08:00"
+    "plan": "方案2：2026-10-28 09:03 启用；首轮 scheduled 批次于 09:43:34 迟到执行（due 09:00），315/315成功",
+    "activated_at": "2026-10-28T09:04:00+08:00",
+    "first_scheduled_batch": "e9a41461-e78f-40a7-baf0-1b0aa78741c5"
   },
   "queue": {
-    "jobs_total": 644,
+    "jobs_total": 645,
     "job_status": {
-      "succeeded": 640,
+      "succeeded": 641,
       "failed": 4
     },
     "active_jobs": 0,
-    "latest_job_updated_at": "2026-10-26T10:04:33.218+08:00"
+    "latest_job_updated_at": "2026-10-28T10:09:50+08:00"
   },
   "batches": {
-    "total": 18,
+    "total": 19,
     "status": {
-      "succeeded": 17,
+      "succeeded": 18,
       "failed": 1
     },
-    "scheduled": 5,
+    "scheduled": 6,
     "last_batch": {
-      "id": "31ab33ec-1684-4291-89cc-1c3b452c9e42",
+      "id": "e9a41461-e78f-40a7-baf0-1b0aa78741c5",
       "status": "succeeded",
-      "trigger_type": "manual",
-      "idempotency_key": "t16-verify-full-sync-20261025",
-      "started_at": "2026-10-25T20:21:13.01967+08:00",
-      "completed_at": "2026-10-25T20:21:41.39+08:00",
+      "trigger_type": "scheduled",
+      "idempotency_key": "sched:99331edb-663b-4635-99f4-597e26304ab1:_batch_:2026-10-28T01:00:00.000Z",
+      "started_at": "2026-10-28T09:43:34.974+08:00",
+      "completed_at": "2026-10-28T09:44:17.622+08:00",
       "total_count": 315,
       "succeeded_count": 315,
       "failed_count": 0
     },
     "last_scheduled_batch": {
-      "id": "31b086ba-e1b0-4f03-88c5-5f445cd68444",
+      "id": "e9a41461-e78f-40a7-baf0-1b0aa78741c5",
       "status": "succeeded",
       "trigger_type": "scheduled",
-      "idempotency_key": "sched:99331edb-663b-4635-99f4-597e26304ab1:_batch_:2026-10-21T01:00:00.000Z",
-      "started_at": "2026-10-23T09:41:07.449+08:00",
-      "completed_at": "2026-10-23T09:41:40.625+08:00",
-      "total_count": 288,
-      "succeeded_count": 288,
+      "idempotency_key": "sched:99331edb-663b-4635-99f4-597e26304ab1:_batch_:2026-10-28T01:00:00.000Z",
+      "started_at": "2026-10-28T09:43:34.974+08:00",
+      "completed_at": "2026-10-28T09:44:17.622+08:00",
+      "total_count": 315,
+      "succeeded_count": 315,
       "failed_count": 0
     }
   },
@@ -87,23 +88,55 @@
       "commit": "a603fed",
       "status": "finished",
       "note": "array binding fix; used for config update"
+    },
+    {
+      "release_id": "7701527890752965869",
+      "commit": "9773ab1",
+      "status": "finished",
+      "note": "scoring v2 first deploy"
+    },
+    {
+      "release_id": "7701529290593176820",
+      "commit": "c1b9439",
+      "status": "finished",
+      "note": "app backendFetch/rule provenance fix"
+    },
+    {
+      "release_id": "7701530829746720019",
+      "commit": "f0e66b3",
+      "status": "finished",
+      "note": "detail refresh/basis preservation"
+    },
+    {
+      "release_id": "7701531604242386165",
+      "commit": "96c642c",
+      "status": "finished",
+      "note": "ai rule id attempt"
+    },
+    {
+      "release_id": "7701533977702993200",
+      "commit": "57db23d",
+      "status": "finished",
+      "note": "rule fallback; final scoring release"
     }
   ],
   "migration": {
-    "file": "0018_source_multi_weekday.sql",
+    "file": "0019_scoring_v2.sql",
     "online": "applied",
-    "changes": 3,
-    "column": "schedule_weekdays smallint[]"
+    "changes": 24,
+    "rule": "v2 published; v1 retired"
   },
   "post_config": {
-    "jobs_total": 644,
+    "requirements": 315,
+    "base_records": 312,
+    "jobs_total": 645,
     "job_status": {
-      "succeeded": 640,
+      "succeeded": 641,
       "failed": 4
     },
     "active_jobs": 0,
-    "batches_total": 18,
-    "scheduled_batches": 5,
-    "new_scheduled_batches": 0
+    "batches_total": 19,
+    "scheduled_batches": 6,
+    "new_scheduled_batches": 1
   }
 }
