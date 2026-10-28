@@ -1198,9 +1198,9 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
   const pushDisabledReason = detail.pipeline.push === "pushed"
     ? "Base 推送已完成，无需重试；PM 在飞书多维表格继续处理。"
     : detail.pipeline.push === "running"
-      ? "Base 推送进行中，完成后状态会自动刷新。"
+      ? "Base 推送进行中，完成后刷新详情可看到最新状态。"
       : detail.pipeline.push === "pending"
-        ? "Base 推送排队中，完成后状态会自动刷新。"
+        ? "Base 推送排队中，完成后刷新详情可看到最新状态。"
         : "当前状态不可重试 Base 推送。";
   // 没有可重试项时也要给出一句明确的下一步说明，而不是留白。
   // 「可重跑」包含 already analyzed；指引不能把已完成的分析说成未完成。
@@ -1490,7 +1490,7 @@ export function MappingsPanel({ onRefresh }: { onRefresh: () => void }) {
   return <section className="panel requirements-panel">
     <div className="panel-heading"><div><h2>负责人映射</h2><p>为待匹配负责人逐条选择飞书用户；只影响选中的这一条需求，不会改写同 TB 执行人的其他需求。</p></div><HeroButton className="button button-secondary button-small" onPress={() => { onRefresh(); void load(null); }}><RefreshCw size={14} />刷新</HeroButton></div>
     <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
-    {pending.length ? <div className="table-scroll"><table><thead><tr><th>需求</th><th>TB 负责人</th><th>操作</th></tr></thead><tbody>{pending.map((row) => <tr key={row.id}><td><div className="requirement-title"><span className="req-id">REQ-{row.sourceRequirementId}</span><strong>{row.title}</strong></div></td><td>待匹配</td><td>{targetId === row.id ? <div className="mapping-editor"><FeishuUserPicker disabled={busy} onMap={submit} saveLabel="保存" /><HeroButton className="button button-secondary button-small" onPress={() => setTargetId(null)} isDisabled={busy}>取消</HeroButton></div> : <HeroButton className="button button-secondary button-small" onPress={() => setTargetId(row.id)}>选择飞书用户</HeroButton>}</td></tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadState === "loading" ? "正在载入待匹配需求…" : "没有待匹配的负责人"}</strong><span>{loadState === "loading" ? "正在从本地 API 读取。" : "未匹配需求会出现在这里，等待为每一条需求单独指定负责人。"}</span></div>}
+    {pending.length ? <div className="table-scroll"><table><thead><tr><th>需求</th><th>TB 负责人</th><th>操作</th></tr></thead><tbody>{pending.map((row) => <tr key={row.id}><td><div className="requirement-title"><span className="req-id">{row.platformRequirementId ?? (row.sourceRequirementId ? `REQ-${row.sourceRequirementId}` : "WEB")}</span><strong>{row.title}</strong></div></td><td>待匹配</td><td>{targetId === row.id ? <div className="mapping-editor"><FeishuUserPicker disabled={busy} onMap={submit} saveLabel="保存" /><HeroButton className="button button-secondary button-small" onPress={() => setTargetId(null)} isDisabled={busy}>取消</HeroButton></div> : <HeroButton className="button button-secondary button-small" onPress={() => setTargetId(row.id)}>选择飞书用户</HeroButton>}</td></tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadState === "loading" ? "正在载入待匹配需求…" : "没有待匹配的负责人"}</strong><span>{loadState === "loading" ? "正在从本地 API 读取。" : "未匹配需求会出现在这里，等待为每一条需求单独指定负责人。"}</span></div>}
     {cursor && <div style={{ display: "flex", justifyContent: "center", padding: "10px 0" }}><button className="button button-secondary button-small" disabled={loadingMore || busy} onClick={() => void load(cursor)}>{loadingMore ? "加载中…" : "加载更多待匹配需求"}</button></div>}
     {mappings.length > 0 && <div className="table-scroll"><table><thead><tr><th>TB 用户 / 姓名</th><th>飞书用户</th><th>匹配方式</th><th>更新时间</th></tr></thead><tbody>{mappings.map((m) => <tr key={m.id}><td>{m.teambitionDisplayName ?? m.teambitionUserId ?? "（仅姓名匹配占位）"}</td><td className="mono-cell">{m.feishuUserId}</td><td>{matchMethodLabel[m.matchMethod] ?? m.matchMethod}</td><td>{timeLabel(m.updatedAt)}</td></tr>)}</tbody></table></div>}
   </section>;
@@ -1523,6 +1523,7 @@ export function AuditPanel() {
       <HeroButton className="button button-secondary button-small" onPress={() => void load({ entityId: entityId.trim(), since: since ? new Date(since).toISOString() : "", until: until ? new Date(until).toISOString() : "" })}>筛选</HeroButton>
     </div></div>
     <StateBanner loadError={loadError} notice={null} onCloseNotice={() => undefined} />
+    {events.length >= 50 && <div className="list-summary-count">已加载最近 50 条审计记录；更早的记录请缩小时间范围或按对象筛选。</div>}
     {events.length ? <div className="table-scroll"><table><thead><tr><th>时间</th><th>操作者</th><th>动作</th><th>对象</th><th>结果</th><th>安全摘要</th></tr></thead><tbody>{events.map((event) => <tr key={event.id}><td>{timeLabel(event.occurredAt)}</td><td>{event.actorId ?? "系统"}</td><td className="mono-cell">{event.eventType}</td><td className="mono-cell">{event.entityType}:{event.entityId.slice(0, 8)}</td><td>{auditResultLabel(event.result)}</td><td>{Object.keys(event.safeDetails).length ? JSON.stringify(event.safeDetails) : "—"}</td></tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadState === "loading" ? "正在载入审计日志…" : "没有匹配的审计记录"}</strong><span>{loadState === "loading" ? "正在从本地 API 读取。" : "调整筛选条件或执行操作后再试。"}</span></div>}
   </section>;
 }

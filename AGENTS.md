@@ -9,12 +9,14 @@
 
 ## Current project layout
 
-- `apps/api/`: TypeScript modular-monolith API skeleton.
+- `apps/api/`: canonical platform-neutral API (TypeScript modular monolith).
+- `apps/web/`: Vite + React workbench.
+- `rq-sys-miaoda/`: separate Miaoda runtime repository (git-ignored in this checkout; released from `sprint/default`).
 - `database/migrations/`: PostgreSQL schema migrations.
 - `specs/rq-sys-mvp/openapi.yaml`: API contract source of truth.
 - `specs/rq-sys-mvp/DB-AND-API-DESIGN.md`: data ownership and endpoint rationale.
 - `specs/rq-sys-mvp/TEAMBITION-LIVE-POC.md`: read-only Teambition schema evidence and unresolved mapping items.
-- `design.md`: product design system; do not build production UI until D-08 is resolved against the actual GitHub repository and Miaoda constraints.
+- `design.md`: product design system. D-08 is resolved (HeroUI v3 + Tailwind, see `specs/rq-sys-mvp/ADR-001-ui-component-library.md`); production UI follows `design.md` + HeroUI v3.
 
 ## MVP invariants
 
@@ -50,11 +52,15 @@
 ## Commands
 
 - `npm run dev:api`: local API server.
-- `npm run typecheck`: TypeScript type check.
-- `npm run build`: compile API to `apps/api/dist`.
+- `npm run typecheck`: TypeScript type check for API and Web.
+- `npm run build`: compile API to `apps/api/dist` and build the Web app.
 - `npm run db:migrate`: apply SQL migrations to the `DATABASE_URL` database.
+- `npm run check:alignment`: two-repository alignment gate.
+- `npm run check:contract`: contract matrix check.
+- `npm run check:migrations`: migration filename prefix check.
+- With both repositories present and PostgreSQL reachable: `cd rq-sys-miaoda && npm run test:rqsys-contract` — repository behavior contract through the real Drizzle transport (needs `RQSYS_CONTRACT_DATABASE_URL` or the root `.env` `DATABASE_URL`).
 
-Run tests only when the user or ticket explicitly asks for them. For integration calls, use an approved test project/Base and do not send stakeholder notifications without a safe test configuration.
+Run the tests relevant to a behavior change, plus the checks under "Safety and verification gates", before claiming local completion. For integration calls, use an approved test project/Base and do not send stakeholder notifications without a safe test configuration.
 
 ## Source repository workflow
 
@@ -73,4 +79,4 @@ The root checkout at `jiahao89/magene-rqsys` is the canonical implementation sou
 - Keep secrets server-side; use stubs for local provider tests. Do not call the AI provider without an authorized test key.
 - Verify the deployed `@NeedLogin()` behavior and trusted `userContext.userId` after release; do not restore app-level roles unless the user explicitly changes the access model.
 - Label work “implemented, not verified in target environment” unless actual target verification evidence exists. Local PostgreSQL/tests do not prove Miaoda behavior.
-- Run typecheck, relevant/full tests, build, and `git diff --check` before claiming local completion.
+- Before claiming local completion, run typecheck, build, the tests relevant to the changed behavior, `git diff --check`, and — when shared modules changed — `npm run check:alignment`. Local tests are not target-environment evidence.

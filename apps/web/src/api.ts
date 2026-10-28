@@ -280,6 +280,8 @@ export type RequirementOwnerState = "pending_mapping" | "auto_mapped" | "manuall
  */
 export interface RequirementSummary {
   id: string;
+  /** RQ-Sys 展示编号（RQ-000001）；列表行优先显示它，缺失时才退回 TB 来源 ID。 */
+  platformRequirementId?: string | null;
   sourceRequirementId: string | null;
   sourceType: "teambition" | "web_manual";
   sourceChannel: string | null;

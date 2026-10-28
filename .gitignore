@@ -1,6 +1,7 @@
 node_modules/
 dist/
 coverage/
+*.tsbuildinfo
 .env
 .env.*
 !.env.example
@@ -22,3 +23,5 @@ __pycache__/
 .scratch/*.ndjson
 .scratch/*.manifest.json
 .scratch/dsh-*.md
+# Raw verification logs are local evidence; conclusions belong in specs/ or VERIFICATION-REPORT.md.
+.scratch/**/*.log

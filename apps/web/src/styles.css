@@ -1135,9 +1135,7 @@ html, body, #root, .app-shell { max-width: 100%; overflow-x: clip; }
   .req-summary-actions { flex-wrap: wrap; }
 }
 
-/* ---------- 规则版本表（P2-6） ---------- */
-.rules-table { table-layout: fixed; width: 100%; }
-.rules-table td, .rules-table th { overflow: hidden; text-overflow: ellipsis; }
+/* ---------- 规则版本模块明细 ---------- */
 .rules-module-count { white-space: nowrap; }
 .rules-module-detail { display: none; }
 .rules-module-detail[open] { display: block; }

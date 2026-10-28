@@ -169,3 +169,20 @@ test("audits priority rule create and publish actions", async () => {
   assert.deepEqual(auditEvents.map((e) => e.eventType), ["priority_rule.created", "priority_rule.published"]);
   assert.ok(auditEvents.every((e) => e.entityType === "priority_rule"));
 });
+
+test("refuses to publish a legacy v1 rule while the confirmed v2 formula is active", async () => {
+  const { dependencies, rules } = makeFixture();
+  const v2Rule: PriorityRuleVersionRecord = {
+    ...ruleRecord(),
+    id: "77777777-7777-4777-8777-777777777777",
+    version: 2,
+    status: "published",
+    publishedAt: "2026-10-27T00:00:00.000Z",
+    rules: { formulaType: "umsc_weighted_v2", thresholds: { p0: 45, p1: 25, p2: 10 } },
+  };
+  rules.push(v2Rule);
+  const response = await handleApiRequest(new Request(`http://localhost/api/rules/priority/${rules[0]!.id}/publish`, { method: "POST" }), dependencies);
+  assert.equal(response.status, 409);
+  assert.equal(rules[0]!.status, "draft", "the legacy draft must stay unpublished");
+  assert.equal(rules.find((rule) => rule.id === v2Rule.id)?.status, "published", "the v2 rule must stay published");
+});

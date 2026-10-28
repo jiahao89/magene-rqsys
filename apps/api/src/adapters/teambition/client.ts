@@ -69,8 +69,10 @@ export class TeambitionClient implements TeambitionSourceProjectResolver {
     this.baseUrl = (options.baseUrl ?? process.env.TEAMBITION_GATEWAY_URL ?? SKILL_GATEWAY_URL).replace(/\/$/, "");
     this.apiKey = options.apiKey ?? process.env.GATEWAY_API_KEY ?? DEFAULT_GATEWAY_API_KEY;
     this.timeoutMs = options.timeoutMs ?? 30_000;
-    if (!this.baseUrl) throw new Error("Teambition gateway URL is not configured");
-    if (!this.apiKey) throw new Error("Teambition gateway API key is not configured");
+    // Fail closed at construction: a missing gateway URL/key must never produce an outbound request
+    // with an empty credential. The message names the env var key so the failure is actionable.
+    if (!this.baseUrl) throw new Error("Teambition gateway URL is not configured; set TEAMBITION_GATEWAY_URL");
+    if (!this.apiKey) throw new Error("Teambition gateway API key is not configured; set GATEWAY_API_KEY");
   }
 
   private async getJson(path: string, params: Record<string, string> = {}): Promise<unknown> {

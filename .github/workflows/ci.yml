@@ -1,0 +1,75 @@
+name: verify
+
+# R-02 最小 CI：安装依赖 → typecheck → 迁移文件名检查 → 测试（API + Web）→ 两仓对齐（可选）→ 空白检查。
+# 目标环境（妙搭）验证不在此流水线内：本地/CI 结果不能替代目标证据。
+
+on:
+  push:
+    branches: [main, "sprint/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: rqsys
+          POSTGRES_PASSWORD: rqsys
+          POSTGRES_DB: rqsys
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rqsys"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://rqsys:rqsys@127.0.0.1:5432/rqsys
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 需要父提交来做空白检查
+          fetch-depth: 2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Migration filename check
+        run: npm run check:migrations
+
+      - name: Tests (API + Web)
+        run: npm test
+
+      - name: Two-repository alignment
+        # 对齐检查需要 rq-sys-miaoda/ 这个独立运行时仓；根仓 checkout 默认没有它。
+        # 在本地或检出妙搭仓的环境中执行；CI 中缺失时明确跳过而不是静默通过。
+        run: |
+          if [ -d rq-sys-miaoda ]; then
+            npm run check:alignment
+          else
+            echo "rq-sys-miaoda/ is not checked out; skipping the two-repository alignment gate."
+            echo "Run 'npm run check:alignment' where both repositories are present."
+          fi
+
+      - name: Whitespace check
+        run: |
+          if git rev-parse --verify -q HEAD^ >/dev/null; then
+            git diff --check HEAD^ HEAD
+          else
+            echo "No parent commit in this checkout; skipping."
+          fi

@@ -17,7 +17,7 @@
 | `apps/api/src/base/push-service.ts` | 旧owner从历史源快照和可变映射反推；通知含D-12，部分事件仅按源版本 | 增加稳定分配版本/历史；按当前Base负责人选人，分析事件含分析版本，覆盖分段写入重试 |
 | `apps/api/src/analysis/contract.ts` | 已有PII过滤、证据检查、受控模块/整体置信度/UMSC，尚无人群 | 有版本地扩展，旧输出兼容；不把整条需求或人员词典发送模型 |
 | `apps/api/src/analysis/priority-rule.ts`与`contracts/rules.ts` | 四维映射求和；阈值schema限制0–4；和PRD公式存在冲突 | 规则版本标识公式；产品确认前保留空优先级，不硬套成本C |
-| `apps/api/src/sync/service.ts` | 最新commit按规范化标题丢弃不同TB ID | 与AGENTS冲突，单列15；2026-10-22 勘查时不改代码或历史数据 |
+| `apps/api/src/sync/service.ts` | 2026-10-22 快照：当时 commit 按规范化标题丢弃不同 TB ID（**已被 2026-10-23 产品确认与 V02-T15 取代：现仅写 `duplicate_of_requirement_id` 提示，不删除、不合并**） | 与AGENTS冲突，单列15；2026-10-22 勘查时不改代码或历史数据；T15 已 implemented-local |
 | `apps/web/src/panels.tsx` | 约1405行，混合需求池/详情/配置等功能 | 新需求表单/详情扩展按feature抽出，原panel保持组装入口；不全站重写 |
 | `rq-sys-miaoda/client/src/rqsys/` | 有独立工作台与backendFetch/平台人员解析 | 业务视图/DTO与根仓对齐，平台请求前缀/人员SDK保留适配 |
 | `scripts/check-repo-alignment.mjs` | 仅声明的shared严格比较；很多核心文件允许有平台差异 | 新业务模块加入shared；允许差异的路由/仓储也要执行同一行为契约用例，不能只靠分类通过 |

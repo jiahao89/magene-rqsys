@@ -39,7 +39,12 @@ const identity = repositories ? (createLocalIdentityProvider({
 }) : undefined;
 const localIdentityNotice = describeLocalIdentity(localIdentityUserId, process.env.NODE_ENV);
 let teambitionSourceProjects: TeambitionClient | undefined;
-try { teambitionSourceProjects = new TeambitionClient(); } catch { /* source setup will report the unavailable gateway */ }
+try {
+  teambitionSourceProjects = new TeambitionClient();
+} catch (error) {
+  // 不阻断启动（来源配置页会报告网关不可用），但必须留下可定位原因；只打印变量键名，绝不打印密钥值。
+  process.stderr.write(`Teambition gateway is unavailable: ${error instanceof Error ? error.message : String(error)}\n`);
+}
 
 // ---- Worker composition：认领 pipeline_jobs 并分发到对应执行器 ----
 // 三个作业体（同步后推进 / analysis / base_push）的业务行为在 requirements/processing.ts

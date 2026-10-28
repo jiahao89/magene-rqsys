@@ -406,6 +406,14 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const existing = await repositories.priorityRules.get(id);
     if (!existing) return jsonError("NOT_FOUND");
     if (existing.status !== "draft") return jsonError("CONFLICT");
+    // V02-S06：v2 是用户已确认的固定公式（0019 迁移写入并退休旧规则），而本端点请求契约仍只接受 v1 形态。
+    // v2 生效期间发布 v1 规则会让优先级回退到未校准的四维求和，因此拒绝发布（沿用已有冲突码 409）。
+    const activeRule = await repositories.priorityRules.getPublished();
+    const activeFormula = (activeRule?.rules as { formulaType?: unknown } | null | undefined)?.formulaType;
+    const draftFormula = (existing.rules as { formulaType?: unknown } | null | undefined)?.formulaType;
+    if (activeFormula === "umsc_weighted_v2" && draftFormula !== "umsc_weighted_v2") {
+      return jsonError("CONFLICT", "A confirmed v2 scoring rule is published; legacy v1 rules cannot be published over it.");
+    }
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
     const published = await repositories.priorityRules.publish(id, now, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "priority_rule.published", entityType: "priority_rule", result: "succeeded", safeDetails: {}, occurredAt: now });
     return json(priorityRuleDto(published));

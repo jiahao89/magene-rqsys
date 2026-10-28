@@ -15,6 +15,7 @@
     "test": "npm --workspace @rq-sys/api run test && npm --workspace @rq-sys/web run test",
     "check:alignment": "node scripts/check-repo-alignment.mjs",
     "check:contract": "node scripts/contract-matrix.mjs",
+    "check:migrations": "node scripts/check-migrations.mjs",
     "rqsys:maintenance": "node scripts/rqsys-maintenance.mjs"
   },
   "engines": {

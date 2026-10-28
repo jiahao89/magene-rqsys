@@ -82,3 +82,17 @@ test("surfaces only the HTTP status for gateway failures", async (t) => {
     (error: unknown) => error instanceof TeambitionApiError && error.statusCode === 403 && !error.message.includes("secret-bearing"),
   );
 });
+
+test("fails closed at construction when the gateway URL is missing and names the env var", () => {
+  assert.throws(
+    () => new TeambitionClient({ baseUrl: "", apiKey: "test-key" }),
+    (error: unknown) => error instanceof Error && error.message.includes("TEAMBITION_GATEWAY_URL"),
+  );
+});
+
+test("fails closed at construction when the gateway API key is missing and names the env var", () => {
+  assert.throws(
+    () => new TeambitionClient({ baseUrl: "https://gateway.example", apiKey: "" }),
+    (error: unknown) => error instanceof Error && error.message.includes("GATEWAY_API_KEY"),
+  );
+});
