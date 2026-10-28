@@ -140,6 +140,13 @@ node --import tsx .scratch/rq-sys-v0.2/verification-20261026/e2e/harness.mts
 - 触发器按**方案 2**于 **2026-10-28 09:04** 启用（source 配置复核仍为 `[1,3,5]`）；配置更新后队列仍 0 active，作业 644/批次 18 未增加。下一轮 cron 09:30 应生成周三 09:00 窗口的 scheduled 批次，09:40 复核。
 - 用户已确认在 **2026-10-28（周三）09:00–09:30** 之间启用触发器；**09:04 已启用**。09:40 复核首轮 scheduled 批次；预期 09:30 的 cron 为周三 `2026-10-28T01:00:00.000Z` 窗口创建 scheduled 批次并执行真实同步。
 
+## 5E. 评分 v2 本地开发（2026-10-28）
+
+- 实现：`database/migrations/0019_scoring_v2.sql`（评分版本表/当前指针/规则v2+6个校准样例）、`analysis/scoring.ts`（九项输入、α、证据/假设校验、固定公式与P0–P3）、AI输出`scoring`、服务端优先级计算、评分版本仓储、详情DTO、`PUT /api/requirements/{id}/scoring`、`POST /api/requirements/{id}/scoring/apply-ai`、Web评分面板（AI/当前/依据/编辑/α/历史）。
+- 旧v1规则退休但历史FK保留；旧分析不静默回算；模型自报P被忽略。
+- 本地验证：API **460/460**、Web **86/86**、妙搭路由 **115/115**；根仓 typecheck/build、妙搭 typecheck/build:prod/eslint、两仓对齐（28/28）与`diff --check`通过。
+- 当前票：T19–T21 `implemented-local`，T22目标验收待目标迁移/发布后执行；尚未部署到目标，目标仍为上一release。
+
 ## 6. PRD 第 7 节验收矩阵
 
 | # | 验收标准 | 本地 | 目标环境 |
