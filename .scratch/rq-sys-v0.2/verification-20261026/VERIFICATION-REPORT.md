@@ -337,3 +337,22 @@ npm run type:check && npm run test:rqsys-route && npm run build:prod && npm run 
 - 目标验证：release **`7701608102147607840 / 0b40b22`**；合成 `RQ-000343` 的 AI v3 成功，provenance `provider=deepseek, model=claude-sonnet-5-5, promptVersion=rq-analysis-v3`；服务端评分 `6.24 / P3 / α=0.8`，AI/人工/版本链路仍正常。
 - 清理：删除合成需求/评分/分析/Base 行/审计/作业；synthetic API **404**。目标数据保持 315 需求/312 Base 行，无测试残留。
 - 说明：此前的内网 `tops.magene.cn` 配置已替换；原官方 `AI_API_KEY` 已被覆盖且未留存，当前目标 AI 使用本 Claude 网关。
+
+## 5K. Claude 五个真实需求 AI 分析验证（2026-10-28）
+
+- 当前目标 AI：`https://nty-hk.zhouyang168.top/v1` + `claude-sonnet-5-5`，`AI_TEMPERATURE=none`，release `7701608102147607840 / 0b40b22`。
+- 选择 5 条真实、非合成、待推送需求，通过详情“重新分析”触发真实 Claude 分析；没有创建或在目标测试后删除这些业务需求。
+- 结果全部成功（最新分析版本均为 `analyzed`，`model=claude-sonnet-5-5`、`promptVersion=rq-analysis-v3`；provider 字段为历史固定名 `deepseek`）：
+
+| 需求 | 分析版本 | 综合分 | P | 置信度 |
+|---|---:|---:|---|---|
+| RQ-000342 | v3 | 6.40 | P3 | 低/中（见详情） |
+| RQ-000332 | v2 | 6.40 | P3 | 低/中 |
+| RQ-000317 | v2 | 1.60 | P3 | 低 |
+| RQ-000202 | v2 | 3.20 | P3 | 低/中 |
+| RQ-000149 | v2 | 6.40 | P3 | 低/中 |
+
+- 详情页验证：RQ-000317 的“AI 评分与优先级”显示 1.60/P3、U/M/S/C 四维、逐项依据/假设和 Claude 生成理由；未出现模板套话。
+- 总览联动复核：`priority = {P0:0,P1:0,P2:1,P3:5,scored:5,legacy:1,unscored:309}`，说明 5 条从 legacy/待评分转为 v2 评分统计。
+- 队列/推送：5 条均 `owner=pending_mapping`、`push=pending`，无 queued/running 作业；其中 RQ-000202（`recvxDsIxupfG9`）与 RQ-000149（`recvxDsIbIkWt0`）已有 Base 行，其余 3 条无 Base 行；本次操作未发通知。
+- 证据：`target/claude-five-analyses-evidence.json`、`target/claude-five-overview.json`、`ui/target-claude-five-rq317.png`。

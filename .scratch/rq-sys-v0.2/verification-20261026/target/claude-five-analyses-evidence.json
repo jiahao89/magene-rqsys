@@ -1,0 +1,247 @@
+[
+  {
+    "id": "a46533bd-6f98-4da6-a5a5-48aeea6f298f",
+    "platform": "RQ-000342",
+    "title": "【海外】【C706 1.967】【606p】码表爬坡说明中注意事项一列，海外APP创建路线有高程信息，不受合规影响，但是说明页显示仅支持gpx路线",
+    "pipeline": {
+      "pull": "synced",
+      "analysis": "analyzed",
+      "owner": "pending_mapping",
+      "push": "pending"
+    },
+    "baseRecordId": null,
+    "latestAnalysis": {
+      "v": 3,
+      "status": "analyzed",
+      "provider": "deepseek",
+      "model": "claude-sonnet-5-5",
+      "promptVersion": "rq-analysis-v3",
+      "priority": "P3"
+    },
+    "module": "爬坡",
+    "confidence": "高",
+    "audience": [],
+    "scoringInputs": {
+      "cost": {
+        "resource": 1,
+        "workload": 1,
+        "technicalRisk": 1
+      },
+      "user": {
+        "pain": 2,
+        "frequency": 2
+      },
+      "market": {
+        "competitor": 1,
+        "sellingPoint": 1
+      },
+      "strategy": {
+        "roadmap": 1,
+        "dependency": 1
+      }
+    },
+    "alpha": 0.8,
+    "scoringCurrent": {
+      "version": 1,
+      "origin": "ai",
+      "score": 6.4,
+      "priority": "P3"
+    }
+  },
+  {
+    "id": "0a4784a7-5ecb-4c75-bf0e-f3ecd835d0d2",
+    "platform": "RQ-000332",
+    "title": "【国内 606p 706 海外706 】【包含freeride的码表】爬坡说明中如何使用最下方 注意：以上2种爬坡规划的方式无法同时使用",
+    "pipeline": {
+      "pull": "synced",
+      "analysis": "analyzed",
+      "owner": "pending_mapping",
+      "push": "pending"
+    },
+    "baseRecordId": null,
+    "latestAnalysis": {
+      "v": 2,
+      "status": "analyzed",
+      "provider": "deepseek",
+      "model": "claude-sonnet-5-5",
+      "promptVersion": "rq-analysis-v3",
+      "priority": "P3"
+    },
+    "module": "爬坡",
+    "confidence": "中",
+    "audience": [],
+    "scoringInputs": {
+      "cost": {
+        "resource": 1,
+        "workload": 1,
+        "technicalRisk": 1
+      },
+      "user": {
+        "pain": 2,
+        "frequency": 2
+      },
+      "market": {
+        "competitor": 1,
+        "sellingPoint": 1
+      },
+      "strategy": {
+        "roadmap": 1,
+        "dependency": 1
+      }
+    },
+    "alpha": 0.8,
+    "scoringCurrent": {
+      "version": 1,
+      "origin": "ai",
+      "score": 6.4,
+      "priority": "P3"
+    }
+  },
+  {
+    "id": "72ec098b-95b3-4594-9995-a23dc34baa2a",
+    "platform": "RQ-000317",
+    "title": "【国内CC700PRO_1.905】路线导航结束后，概率性出现比例尺缺失的情况（低概率）",
+    "pipeline": {
+      "pull": "synced",
+      "analysis": "analyzed",
+      "owner": "pending_mapping",
+      "push": "pending"
+    },
+    "baseRecordId": null,
+    "latestAnalysis": {
+      "v": 2,
+      "status": "analyzed",
+      "provider": "deepseek",
+      "model": "claude-sonnet-5-5",
+      "promptVersion": "rq-analysis-v3",
+      "priority": "P3"
+    },
+    "module": "地图",
+    "confidence": "中",
+    "audience": [],
+    "scoringInputs": {
+      "cost": {
+        "resource": 2,
+        "workload": 2,
+        "technicalRisk": 2
+      },
+      "user": {
+        "pain": 2,
+        "frequency": 1
+      },
+      "market": {
+        "competitor": 1,
+        "sellingPoint": 1
+      },
+      "strategy": {
+        "roadmap": 1,
+        "dependency": 1
+      }
+    },
+    "alpha": 0.8,
+    "scoringCurrent": {
+      "version": 1,
+      "origin": "ai",
+      "score": 1.6,
+      "priority": "P3"
+    }
+  },
+  {
+    "id": "21394f26-67ba-4381-87a6-5ea597972de8",
+    "platform": "RQ-000202",
+    "title": "【国内CC700Pro V1.904】码表蓝牙和wifi已建立连接，APP置于后台，码表骑行记录在同步上传过程中wifi回连成功，码表显示同步成功，后台进入APP查看提示“同步失败，成功0条，失败1条”",
+    "pipeline": {
+      "pull": "synced",
+      "analysis": "analyzed",
+      "owner": "pending_mapping",
+      "push": "pending"
+    },
+    "baseRecordId": "recvxDsIxupfG9",
+    "latestAnalysis": {
+      "v": 2,
+      "status": "analyzed",
+      "provider": "deepseek",
+      "model": "claude-sonnet-5-5",
+      "promptVersion": "rq-analysis-v3",
+      "priority": "P3"
+    },
+    "module": "数据传输",
+    "confidence": "中",
+    "audience": [],
+    "scoringInputs": {
+      "cost": {
+        "resource": 2,
+        "workload": 3,
+        "technicalRisk": 2
+      },
+      "user": {
+        "pain": 3,
+        "frequency": 2
+      },
+      "market": {
+        "competitor": 1,
+        "sellingPoint": 1
+      },
+      "strategy": {
+        "roadmap": 1,
+        "dependency": 1
+      }
+    },
+    "alpha": 0.8,
+    "scoringCurrent": {
+      "version": 1,
+      "origin": "ai",
+      "score": 3.2,
+      "priority": "P3"
+    }
+  },
+  {
+    "id": "e4ede553-539e-48cb-b592-8ceb07c696c2",
+    "platform": "RQ-000149",
+    "title": "【606Pro V1.722】地图下载界面继续下载福建省地图提示失败，下载其余地图均直接弹窗下载失败，之后码表重启（低概率）",
+    "pipeline": {
+      "pull": "synced",
+      "analysis": "analyzed",
+      "owner": "pending_mapping",
+      "push": "pending"
+    },
+    "baseRecordId": "recvxDsIbIkWt0",
+    "latestAnalysis": {
+      "v": 2,
+      "status": "analyzed",
+      "provider": "deepseek",
+      "model": "claude-sonnet-5-5",
+      "promptVersion": "rq-analysis-v3",
+      "priority": "P3"
+    },
+    "module": "地图",
+    "confidence": "中",
+    "audience": [],
+    "scoringInputs": {
+      "cost": {
+        "resource": 2,
+        "workload": 3,
+        "technicalRisk": 3
+      },
+      "user": {
+        "pain": 4,
+        "frequency": 3
+      },
+      "market": {
+        "competitor": 1,
+        "sellingPoint": 1
+      },
+      "strategy": {
+        "roadmap": 1,
+        "dependency": 1
+      }
+    },
+    "alpha": 0.8,
+    "scoringCurrent": {
+      "version": 1,
+      "origin": "ai",
+      "score": 6.4,
+      "priority": "P3"
+    }
+  }
+]

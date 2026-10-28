@@ -39,3 +39,8 @@
 - 目标页面“优先级分级”显示 2/315 已分级、P2=2、待评分=313；规则区显示 P0 ≥45、P1 25–44.99、P2 10–24.99、P3 <10；说明“其中 2 条来自历史分析优先级（v1），不套用 v2 分数范围”。当前目标没有 v2 评分版本，`scored=0` 属实，未伪造。
 - 证据：`target/overview-priority-evidence.json`、`ui/target-overview-priority.png`、`ui/target-overview-priority-rule.png`。
 - 只读操作，未创建/修改需求；统计不含合成 fixture。
+
+## 2026-10-28 Claude 复分析后总览变化
+
+- 对 5 条真实需求完成 Claude 重新分析后，总览 `priority` 变为 `{P0:0,P1:0,P2:1,P3:5,scored:5,legacy:1,unscored:309}`；这是评分版本落库后的正确联动，不是统计脚本改动。
+- 证据：`target/claude-five-overview.json`。
