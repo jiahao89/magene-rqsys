@@ -551,7 +551,6 @@ describe("RequirementsPanel (ticket 17)", () => {
 
     // L2 卡片：维度/结论/理由，证据不足显式标红。
     expect(screen.getByText("模块建议")).toBeInTheDocument();
-    expect(screen.getByText("优先级依据")).toBeInTheDocument();
     expect(screen.getByText("整体置信度")).toBeInTheDocument();
     expect(screen.getByText("U · 用户价值")).toBeInTheDocument();
     expect(screen.getByText(/改善用户效率/)).toBeInTheDocument();

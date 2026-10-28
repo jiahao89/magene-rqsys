@@ -1167,6 +1167,7 @@ html, body, #root, .app-shell { max-width: 100%; overflow-x: clip; }
 .source-badge { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: 12px; line-height: 18px; background: var(--rq-accent-soft, #eef2ff); color: var(--rq-accent-text, #3f5bd9); vertical-align: 1px; }
 
 /* ---------- 2026-10-28 详情信息架构：摘要评分卡 + 评分/AI 整合 ---------- */
+.req-detail-summary { position: static; top: auto; }
 .req-summary-backbar { display: flex; align-items: center; gap: 8px; margin: -2px 0 -2px; }
 .req-summary-hero { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .req-summary-hero .req-summary-copy { flex: 1 1 auto; }

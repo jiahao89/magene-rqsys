@@ -1179,7 +1179,6 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
       conclusion: audienceItems === null ? "未提供（旧版本分析）" : audienceItems.length ? audienceItems.map((item) => AUDIENCE_NAMES[String(item.level)] ?? String(item.level)).join("、") : "待判断",
       rationale: audienceItems === null ? null : audienceItems.map((item) => `${AUDIENCE_NAMES[String(item.level)] ?? item.level}：${typeof item.reason === "string" ? item.reason : ""}`).join("；") || null,
     },
-    { label: "优先级依据", conclusion: "综合分由 U/M/S/C 评分公式计算；详见上方评分区", rationale: analysisText(structured.priority) ? `旧分析建议：${analysisText(structured.priority)}` : null },
     { label: "整体置信度", conclusion: analysisText(structured.confidence) ?? "—", rationale: analysisText(structured.confidence_reason) },
   ];
 
