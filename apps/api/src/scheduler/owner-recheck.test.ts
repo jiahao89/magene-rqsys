@@ -236,7 +236,9 @@ test("limit 默认 100 且可覆盖，单轮不会全量入队", async () => {
   assert.equal(defaultRun.enqueued, 30);
 
   const limitedRun = await h.run({ limit: 5 });
-  assert.equal(h.state.searchQueries[1]?.limit, 5);
+  assert.equal(h.state.searchQueries[1]?.limit, 100);
+  assert.equal(h.state.searchQueries[2]?.limit, 5);
+  assert.equal(h.state.searchQueries[3]?.limit, 5);
   assert.equal(limitedRun.scanned, 5);
   assert.equal(limitedRun.enqueued, 5);
 });

@@ -87,10 +87,11 @@ export async function recheckOwnerMappings(
 
   let candidates: RequirementRecord[];
   try {
-    const page = await params.requirements.search({
-      pullState: "synced", analysisState: "analyzed", pushState: "pending", limit,
-    });
-    candidates = page.items;
+    // analyzed 与 failed_retryable 都可推送：AI 首次失败/可重试失败不得阻断负责人处理与推送。
+    const analyzed = await params.requirements.search({ pullState: "synced", analysisState: "analyzed", pushState: "pending", limit });
+    const retryable = await params.requirements.search({ pullState: "synced", analysisState: "failed_retryable", pushState: "pending", limit });
+    const seen = new Set<string>();
+    candidates = [...analyzed.items, ...retryable.items].filter((row) => (seen.has(row.id) ? false : (seen.add(row.id), true))).slice(0, limit);
   } catch (error) {
     // 查询失败（数据库不可用等）只记录，后续轮次再试；不阻断同轮其它调度阶段。
     report.errors.push(`search candidates: ${safeErrorMessage(error)}`);

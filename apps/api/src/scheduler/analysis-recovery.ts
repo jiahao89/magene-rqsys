@@ -361,6 +361,46 @@ async function retryFailedAnalyses(
  * 分析阶段恢复入口：先收敛 running 崩溃残留，再补排 failed_retryable。
  * 两阶段各自 try/catch，返回报告而不抛错；调用方只需打日志。
  */
+
+export interface MissingAnalysisReport { scanned: number; enqueued: number; errors: string[] }
+
+/**
+ * 补排“analysis_state='pending' 但没有任何活跃分析作业”的需求。
+ * 触发场景：收录后入队失败/进程崩溃在写状态与入队之间；此后没有任何阶段会再为它排分析。
+ * 只补排缺作业或作业已终态失败的需求；queued/running/succeeded 一律不动，避免与正常链路重复。
+ */
+export async function enqueueMissingAnalysisJobs(
+  params: AnalysisRecoveryRepositories & { now: Date; limit?: number },
+): Promise<MissingAnalysisReport> {
+  const report: MissingAnalysisReport = { scanned: 0, enqueued: 0, errors: [] };
+  let items: RequirementRecord[];
+  try {
+    const page = await params.requirements.search({ analysisState: "pending", limit: params.limit ?? ANALYSIS_RECOVERY_SCAN_LIMIT });
+    items = page.items;
+  } catch (error) {
+    report.errors.push(`search pending analysis: ${safeErrorMessage(error)}`);
+    return report;
+  }
+  report.scanned = items.length;
+  for (const requirement of items) {
+    try {
+      const dedupeKey = `analysis:${requirement.id}:v${requirement.sourceVersion}`;
+      const existing = await params.jobs.findByDedupeKey?.(dedupeKey);
+      if (existing && existing.status !== "failed" && existing.status !== "cancelled") continue;
+      await params.jobs.enqueue({
+        jobType: "analysis",
+        dedupeKey,
+        payload: { requirementId: requirement.id, sourceVersion: requirement.sourceVersion, substantiveHash: requirement.substantiveHash, actorId: null },
+        availableAt: params.now.toISOString(),
+      });
+      report.enqueued += 1;
+    } catch (error) {
+      report.errors.push(`requirement ${requirement.id}: enqueue missing analysis: ${safeErrorMessage(error)}`);
+    }
+  }
+  return report;
+}
+
 export async function recoverAnalysisPipeline(
   params: AnalysisRecoveryRepositories & { now: Date; limit?: number; maxRetries?: number },
 ): Promise<AnalysisRecoveryReport> {

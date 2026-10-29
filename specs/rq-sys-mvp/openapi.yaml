@@ -215,9 +215,10 @@ paths:
       description: >-
         Maintainer-imported, de-identified interview summary snapshots. Only approved and
         non-PII-flagged versions may feed the Kano model input; updates create new immutable
-        versions and never mutate referenced snapshots.
+        versions and never mutate referenced snapshots. PII-flagged versions are listed with raw
+        summary/fragments masked in the response so contacts never leave the server via reads.
       responses:
-        '200': { description: Version list with status and PII flags. }
+        '200': { description: Version list with status and PII flags; PII-flagged summaries/fragments are masked. }
         '401': { $ref: '#/components/responses/Unauthorized' }
     post:
       summary: Import a Kano evidence version (V02-T13)
@@ -515,14 +516,15 @@ paths:
     get:
       summary: Read the RICE Beta draft (V02-T11)
       description: >-
-        Beta entry lives only in the requirement detail. Reading never calls the model. While the
-        RICE measurement config is unapproved (G-RICE), the draft shows 待配置/待补充 and never a
-        score or ranking. Fully isolated from the main pipeline.
+        Beta entry lives only in the requirement detail. Reading never calls the model. The rice-v1
+        measurement config is approved (2026-10-25): complete and valid inputs return a deterministic
+        score; missing or invalid inputs show 待补充 and never NaN/0. Fully isolated from the main
+        pipeline.
       parameters:
         - $ref: '#/components/parameters/Id'
       responses:
         '200':
-          description: Draft state (score is always null in this slice).
+          description: Draft inputs plus computed status (已计算/待补充), score, configVersion and units.
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
     put:
@@ -548,7 +550,7 @@ paths:
                 notes: { type: string, maxLength: 4000, nullable: true }
                 expectedEditVersion: { type: integer, minimum: 0 }
       responses:
-        '200': { description: Draft saved; editVersion returned. }
+        '200': { description: Draft saved; editVersion and the persisted computed status/score are returned. }
         '400': { $ref: '#/components/responses/Validation' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }

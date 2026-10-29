@@ -10,7 +10,7 @@ import { TeambitionClient } from "./adapters/teambition/client.js";
 import { createRequirementWorkflow } from "./requirements/processing.js";
 import { createDueSyncJobs } from "./scheduler/due-jobs.js";
 import { reapExhaustedJobs, reapOrphanedBatches } from "./scheduler/reap.js";
-import { recoverAnalysisPipeline } from "./scheduler/analysis-recovery.js";
+import { enqueueMissingAnalysisJobs, recoverAnalysisPipeline } from "./scheduler/analysis-recovery.js";
 import { recheckOwnerMappings } from "./scheduler/owner-recheck.js";
 import { FeishuBasePushAdapter } from "./base/client.js";
 import { FeishuBitableClient } from "./base/transport.js";
@@ -282,6 +282,17 @@ if (worker && repositories && workerPollMs > 0) {
         for (const error of recovery.errors) process.stderr.write(`analysis recovery item failed: ${error}\n`);
       } catch (error) {
         process.stderr.write(`analysis recovery failed: ${String(error)}\n`);
+      }
+      // 补排“pending 但无活跃分析作业”的需求：收录后入队失败/崩溃残留不会永远停住。
+      try {
+        const missing = await enqueueMissingAnalysisJobs({
+          requirements: repositories.requirements, analyses: repositories.analyses,
+          jobs: repositories.jobs, audit: repositories.audit, now,
+        });
+        if (missing.enqueued > 0) process.stdout.write(`enqueued ${missing.enqueued} pending analysis job(s) with no live job\n`);
+        for (const error of missing.errors) process.stderr.write(`pending analysis recovery item failed: ${error}\n`);
+      } catch (error) {
+        process.stderr.write(`pending analysis recovery failed: ${String(error)}\n`);
       }
       // 负责人映射重新评估：人员映射补齐后，已分析完成但停在 pending_mapping 的需求
       // 不会自己前进。本轮只处理能解析出映射的需求（limit 25），按正常链路入队 base_push；
