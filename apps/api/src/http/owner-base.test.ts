@@ -125,7 +125,7 @@ test("assigning an owner to a requirement without a TB owner stores it on the re
   const queued = h.queued() as { jobType: string; dedupeKey: string; payload: { idempotencyKey: string } };
   assert.equal(queued.jobType, "base_push");
   // 每次指定都是独立意图：改派回同一个人也必须重新入队，因此键里带唯一的指定 ID。
-  assert.match(queued.dedupeKey, /^base-push:req-1:sv1:av0:owner:[0-9a-f-]{36}$/);
+  assert.match(queued.dedupeKey, /^base-push:req-1:sv1:av0:owner:av\d+:[^:]+:(open_id|user_id|union_id)$/);
   assert.equal(queued.payload.idempotencyKey, queued.dedupeKey);
   assert.equal((h.audited() as { eventType: string }).eventType, "owner.manually_mapped");
 });

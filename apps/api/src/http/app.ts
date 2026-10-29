@@ -835,7 +835,8 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
         return (cause as Error)?.name === "InvalidTransitionError" ? jsonError("CONFLICT") : jsonError("DEPENDENCY_UNAVAILABLE");
       }
       if (mapping || !hasTbOwner) {
-        const idempotencyKey = basePushIdempotencyKey(req.id, req.sourceVersion, analysisVersion, `owner-reset:${crypto.randomUUID()}`);
+        // 幂等键按当前分配版本确定：同一次清除请求重试命中同一作业，不再重复入队推送。
+      const idempotencyKey = basePushIdempotencyKey(req.id, req.sourceVersion, analysisVersion, `owner-reset:v${req.manualOwner?.assignmentVersion ?? 0}:${targetState}`);
         try {
           await repositories.jobs.enqueue({ jobType: "base_push", dedupeKey: idempotencyKey, payload: { requirementId: req.id, sourceVersion: req.sourceVersion, analysisVersion, idempotencyKey, actorId: auth.actor.id }, availableAt: now });
         } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
@@ -846,12 +847,14 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     }
     const body = OwnerMappingUpdateSchema.safeParse(await readJson(request)); if (!body.success) return jsonError("VALIDATION_FAILED");
     // 逐条负责人：只写需求本身，绝不改写 person_mappings（否则会改掉同 TB 执行人名下全部需求）。
-    const idempotencyKey = basePushIdempotencyKey(req.id, req.sourceVersion, analysisVersion, `owner:${crypto.randomUUID()}`);
     try {
       await repositories.requirements.assignManualOwner(req.id, { feishuUserId: body.data.feishuUserId, feishuIdType: body.data.feishuIdType, name: body.data.tbDisplayName ?? null, assignedBy: auth.actor.id, assignedAt: now });
     } catch (cause) {
       return (cause as Error)?.name === "InvalidTransitionError" ? jsonError("CONFLICT") : jsonError("DEPENDENCY_UNAVAILABLE");
     }
+    // 分配成功后再取新的 assignmentVersion：同一分配请求的 HTTP 重试命中同一 dedupe key，不会多入队。
+    const assigned = await repositories.requirements.get(req.id);
+    const idempotencyKey = basePushIdempotencyKey(req.id, req.sourceVersion, analysisVersion, `owner:av${assigned?.manualOwner?.assignmentVersion ?? 0}:${body.data.feishuUserId}:${body.data.feishuIdType}`);
     try {
       await repositories.jobs.enqueue({ jobType: "base_push", dedupeKey: idempotencyKey, payload: { requirementId: req.id, sourceVersion: req.sourceVersion, analysisVersion, idempotencyKey, actorId: auth.actor.id }, availableAt: now });
     } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
