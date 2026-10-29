@@ -43,7 +43,7 @@ export type OwnerRecheckRepositories = {
   requirements: Pick<RequirementQueryRepository, "search" | "setOwner">;
   people: Pick<PersonMappingRepository, "resolveActive">;
   analyses: Pick<AnalysisRunRepository, "latest">;
-  jobs: Pick<PipelineJobRepository, "enqueue">;
+  jobs: Pick<PipelineJobRepository, "enqueue" | "findByDedupeKey">;
   audit: Pick<AuditEventRepository, "append">;
 };
 
@@ -125,10 +125,18 @@ export async function recheckOwnerMappings(
 
       const latestAnalysis = await params.analyses.latest(requirement.id);
       const analysisVersion = latestAnalysis?.analysisVersion ?? 0;
+      const dedupeKey = basePushIdempotencyKey(requirement.id, requirement.sourceVersion, analysisVersion);
+      // 已有 queued/running/succeeded 作业时跳过：否则每个 tick 都会重复入队+写审计（噪音/计数失真）；
+      // 只有终态失败/取消的作业才需要重新入队（enqueue 的同键 ON CONFLICT 会重置它）。
+      const existingJob = await params.jobs.findByDedupeKey?.(dedupeKey);
+      if (existingJob && existingJob.status !== "failed" && existingJob.status !== "cancelled") {
+        report.skipped += 1;
+        continue;
+      }
       // 与正常推送链路相同的 dedupe key/payload：历史失败作业会由 enqueue 的同键 ON CONFLICT 复用。
       await params.jobs.enqueue({
         jobType: "base_push",
-        dedupeKey: basePushIdempotencyKey(requirement.id, requirement.sourceVersion, analysisVersion),
+        dedupeKey,
         payload: {
           requirementId: requirement.id, actorId: null,
           sourceVersion: requirement.sourceVersion, analysisVersion,
