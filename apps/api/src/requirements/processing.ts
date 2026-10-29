@@ -269,7 +269,15 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
         ? job.payload.idempotencyKey
         : basePushIdempotencyKey(requirementId, requirement.sourceVersion, latestAnalysis?.analysisVersion ?? 0);
       const outcome = await service.pushRequirement(requirementId, idempotencyKey);
-      if (outcome.kind === "error") throw new Error("Base push failed; retry is available.");
+      if (outcome.kind === "error") {
+        // 飞书 4xx/字段/权限类错误是永久错误：抛可分类错误，交给 worker 判终态，不再重试 5 次。
+        if (outcome.errorCode && /^FEISHU_/.test(outcome.errorCode)) {
+          const permanent = new Error("Base push failed permanently; fix the Base configuration or data and retry manually.");
+          permanent.name = "BasePushPermanentError";
+          throw permanent;
+        }
+        throw new Error("Base push failed; retry is available.");
+      }
       // 负责人待映射：不能记成 succeeded，否则映射补齐后 owner-recheck 的同键入队命中已成功作业而无效。
       if (outcome.kind === "conflict" && outcome.reason === "owner_pending_mapping") throw new JobDeferredError("owner_pending_mapping");
       // Base 行已写成功、仅本地记账失败：作业按成功处理，绝不重推外部（会重复写 Base）。

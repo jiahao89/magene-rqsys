@@ -35,6 +35,7 @@ export function classifyJobError(error: unknown): ErrorClass {
       default: return "unknown";
     }
   }
+  if ((error as Error)?.name === "BasePushPermanentError") return "validation";
   if (error instanceof FeishuApiError) {
     if (error.kind === "api" && error.apiCode !== undefined && FEISHU_PERMANENT_CODES.has(error.apiCode)) return "validation";
     if (error.kind === "invalid_response" || error.kind === "ambiguous_response") return "validation";

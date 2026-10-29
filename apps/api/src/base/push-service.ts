@@ -85,7 +85,7 @@ export type PushOutcome =
   // reason 区分冲突来源：owner_pending_mapping 是"等映射补齐后应再推"，作业层据此记为可重置的终态，
   // 不能当作已成功（否则 owner-recheck 的同键入队永远命中 succeeded 作业而失效）。
   | { kind: "conflict"; reason: PushConflictReason }
-  | { kind: "error" }; // 推送失败（safe error 已记录，可重试）
+  | { kind: "error"; errorCode?: string }; // 推送失败（safe error 已记录，可重试）
 
 export type PushConflictReason = "intake_incomplete" | "owner_pending_mapping" | "push_in_progress" | "base_key_conflict";
 
@@ -434,7 +434,7 @@ export function createBasePushService(deps: BasePushServiceDeps) {
       await deps.basePushes.updateResult(run.id, { status: "failed", safeErrorCode: failure.code, safeErrorSummary: failure.summary, completedAt: now().toISOString() });
       await deps.requirements.setPushState(req.id, "failed");
       await deps.audit.append({ id: randomUUID(), actorId: deps.actorId, eventType: "base.push", entityType: "requirement", entityId: req.id, result: "failed", safeDetails: { sourceVersion: req.sourceVersion, errorClass: "base_push_failed" }, occurredAt: now().toISOString() });
-      return { kind: "error" };
+      return { kind: "error", errorCode: failure.code };
     }
     // 外部写入已成功，以下只是本地记账。记账失败不能回退成"推送失败"：
     // Base 行已经存在，重推会在 findByRequirementKey 尚未可见时制造重复行，
