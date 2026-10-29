@@ -17,6 +17,15 @@ export type RequirementLike = Pick<RequirementSummary, "id" | "title" | "pipelin
 
 type SourceRecord = Record<string, unknown>;
 
+/**
+ * 列表/映射页的需求展示编号：优先 RQ-000001（平台编号），
+ * 缺失时退回 REQ-<TB 来源 ID>，手工需求没有来源 ID 时显示 WEB。
+ * 三处表格共用同一实现，避免同一个编号在不同页面出现不同写法。
+ */
+export function requirementDisplayId(requirement: Pick<RequirementSummary, "platformRequirementId" | "sourceRequirementId">): string {
+  return requirement.platformRequirementId ?? (requirement.sourceRequirementId ? `REQ-${requirement.sourceRequirementId}` : "WEB");
+}
+
 function asRecord(value: unknown): SourceRecord | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as SourceRecord)

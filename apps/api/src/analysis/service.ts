@@ -102,6 +102,10 @@ export async function runAnalysis(input: AnalysisServiceInput, options: Analysis
     const failure = safeFailure(error);
     const failed = await options.repository.complete(run.id, {
       status: "failed_retryable", completedAt: (options.now ?? (() => new Date()))().toISOString(),
+      // 失败记录同样要带上本次运行的模型归因：complete() 会把未传字段写成 NULL，
+      // 否则排查"是哪个模型/提示词失败"时只能看到空值。
+      provider: run.provider, model: run.model, promptVersion: run.promptVersion,
+      moduleDictionaryVersion: run.moduleDictionaryVersion, ...(run.priorityRuleVersionId ? { priorityRuleVersionId: run.priorityRuleVersionId } : {}),
       safeErrorCode: failure.code, safeErrorSummary: failure.summary,
     });
     if (!failed) throw new AnalysisPersistenceError("Failed analysis could not be recorded.");

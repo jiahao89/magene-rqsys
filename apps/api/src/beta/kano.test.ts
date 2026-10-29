@@ -1,7 +1,7 @@
 // V02-T14 接缝测试：Kano 模块公共行为——掩码输入、受控候选类型、证据 ref 校验、提示词形状。
 import test from "node:test";
 import assert from "node:assert/strict";
-import { KANO_PROMPT_VERSION, buildKanoRequest, kanoPrompt, validateKanoReport } from "./kano.js";
+import { KANO_PROMPT_VERSION, buildKanoRequest, createDeepSeekKanoProvider, kanoPrompt, validateKanoReport } from "./kano.js";
 
 const evidence = {
   version: 2, title: "合成访谈总结", summary: "竞技用户重视训练完成度分析。",
@@ -37,4 +37,55 @@ test("kano report validation: controlled types, evidence refs must exist, no sta
 
 test("kano prompt version is pinned", () => {
   assert.equal(KANO_PROMPT_VERSION, "rq-kano-v1");
+});
+
+function kanoFetch(captured: { url?: string; body?: Record<string, unknown>; aborted?: boolean }, content = "{}") {
+  return (async (input: unknown, init?: { body?: unknown; signal?: AbortSignal }) => {
+    captured.url = String(input);
+    captured.body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    init?.signal?.addEventListener("abort", () => { captured.aborted = true; });
+    return new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as unknown as typeof fetch;
+}
+
+test("kano provider shares the main analysis defaults: empty env values fall back instead of passing through", async () => {
+  const saved = { ...process.env };
+  try {
+    process.env.AI_BASE_URL = ""; process.env.AI_MODEL = ""; process.env.AI_TIMEOUT_MS = ""; process.env.AI_API_KEY = "k";
+    const captured: { url?: string; body?: Record<string, unknown> } = {};
+    const provider = createDeepSeekKanoProvider({ fetch: kanoFetch(captured) });
+    assert.equal(provider.model, "deepseek-flash", "同一份 AI_MODEL 默认值，不能和主分析分叉");
+    await provider.run("p");
+    assert.equal(captured.url, "https://api.deepseek.com/chat/completions");
+    assert.equal(captured.body?.model, "deepseek-flash");
+  } finally {
+    process.env = saved;
+  }
+});
+
+test("kano provider treats an empty AI_TIMEOUT_MS as unset rather than a zero-ms abort", async () => {
+  const saved = { ...process.env };
+  try {
+    process.env.AI_TIMEOUT_MS = ""; process.env.AI_API_KEY = "k";
+    const captured: { aborted?: boolean } = {};
+    const provider = createDeepSeekKanoProvider({ fetch: kanoFetch(captured) });
+    await provider.run("p");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(captured.aborted ?? false, false);
+  } finally {
+    process.env = saved;
+  }
+});
+
+test("kano provider omits temperature for AI_TEMPERATURE=none and accepts fenced JSON", async () => {
+  const saved = { ...process.env };
+  try {
+    process.env.AI_TEMPERATURE = "none"; process.env.AI_API_KEY = "k";
+    const captured: { body?: Record<string, unknown> } = {};
+    const provider = createDeepSeekKanoProvider({ fetch: kanoFetch(captured, "```json\n{\"ok\":true}\n```") });
+    assert.deepEqual(await provider.run("p"), { ok: true });
+    assert.equal("temperature" in (captured.body ?? {}), false);
+  } finally {
+    process.env = saved;
+  }
 });

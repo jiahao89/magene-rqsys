@@ -9,7 +9,7 @@ import { SyncOrchestrator, shouldProcessSyncDownstream, type SyncJobRunner } fro
 import { TeambitionClient } from "./adapters/teambition/client.js";
 import { createRequirementWorkflow } from "./requirements/processing.js";
 import { createDueSyncJobs } from "./scheduler/due-jobs.js";
-import { reapOrphanedBatches } from "./scheduler/reap.js";
+import { reapExhaustedJobs, reapOrphanedBatches } from "./scheduler/reap.js";
 import { recoverAnalysisPipeline } from "./scheduler/analysis-recovery.js";
 import { recheckOwnerMappings } from "./scheduler/owner-recheck.js";
 import { FeishuBasePushAdapter } from "./base/client.js";
@@ -158,7 +158,7 @@ const basePushJobHandler: ((job: { payload: Record<string, unknown> }) => Promis
 } : undefined;
 
 const worker = repositories ? new PipelineJobWorker({
-  jobs: repositories.jobs, ...(syncJobRunner ? { sync: syncJobRunner } : {}),
+  jobs: repositories.jobs, batches: repositories.batches, ...(syncJobRunner ? { sync: syncJobRunner } : {}),
   handlers: {
     ...(analysisJobHandler ? { analysis: analysisJobHandler } : {}),
     ...(basePushJobHandler ? { base_push: basePushJobHandler } : {}),
@@ -237,6 +237,17 @@ if (worker && repositories && workerPollMs > 0) {
         }
       } catch (error) {
         process.stderr.write(`batch reaper failed: ${String(error)}\n`);
+      }
+      // 卡死作业回收：base_push / kano_run 在最后一次尝试时进程死亡会永久停在 running
+      // （claimNext 不再认领、complete 也无人能收尾）。sync 由批次回收器、analysis 由分析恢复处理，
+      // 这里不重复。失败不阻断本轮调度。
+      try {
+        const reapedJobs = await reapExhaustedJobs({ jobs: repositories.jobs, requirements: repositories.requirements, basePushes: repositories.basePushes, now });
+        if (reapedJobs.length > 0) {
+          process.stdout.write(`reaped ${reapedJobs.length} exhausted job(s): ${reapedJobs.map((row) => `${row.jobId}(${row.jobType})`).join(", ")}\n`);
+        }
+      } catch (error) {
+        process.stderr.write(`job reaper failed: ${String(error)}\n`);
       }
       // createDueSyncJobs 内部按来源隔离失败；这里再兜一层，防止单个来源的未分类异常
       // 跳过本轮的分析恢复、负责人重查与 worker 消费。

@@ -49,6 +49,12 @@ export interface SyncBatchRepository {
       completedAt: string;
     },
   ): Promise<SyncBatchRecord | null>;
+  /**
+   * 重新占用批次：把 failed / partial_failure 的批次置回 running。
+   * 同步作业因可重试失败被重排时调用，让来源并发守卫覆盖"排队等重试"的窗口，
+   * 避免同一来源另起一个批次并发拉取。可选：内存实现可不提供。
+   */
+  reopen?(id: string): Promise<SyncBatchRecord | null>;
 }
 
 export interface SyncBatchSearchCursor {
@@ -244,6 +250,15 @@ export interface PipelineJobRepository {
     maxAttempts?: number;
   }): Promise<PipelineJobRecord>;
   findByDedupeKey?(key: string): Promise<PipelineJobRecord | null>;
+  /**
+   * 回收用：status='running' 且尝试次数已用尽、租约已过期的作业。
+   * 这类作业既不能被 claimNext 认领（要求 attempt_count < max_attempts），
+   * 也不能被任何存活 worker 的 complete 收尾，必须由回收器兜底。
+   * 只覆盖自身没有恢复路径的类型（base_push / kano_run）：sync 由批次回收器处理，
+   * analysis 由分析恢复处理，放进来会重复收尾。
+   * 可选：内存实现可不提供。
+   */
+  listExhaustedRunning?(now: string, limit: number): Promise<PipelineJobRecord[]>;
   claimNext(workerId: string, leaseMs: number, now: string): Promise<PipelineJobRecord | null>;
   /**
    * 续约：仅当作业仍是本次认领的那次（status='running' 且 attempt_count 匹配）才延长租约。

@@ -1,15 +1,18 @@
 import { FixturePolicyError } from "../sync/test-fixture.js";
 import type { PipelineJobRecord } from "../domain/persistence.js";
-import type { PipelineJobRepository } from "../application/repositories.js";
-import type { SyncJobRunner } from "../sync/service.js";
+import type { PipelineJobRepository, SyncBatchRepository } from "../application/repositories.js";
+import { NON_RETRYABLE_SYNC_ITEM_CODES, SyncDataError, type SyncJobRunner } from "../sync/service.js";
 import { computeBackoffMs, isRetryable } from "../retry/policy.js";
 import { classifyJobError } from "./classify-error.js";
+import { JobDeferredError } from "./deferred.js";
 
 // jobType → 重试策略阶段映射（复用 retry/policy.ts 的阶段退避）
 const STAGE_FOR_JOB_TYPE = { sync: "pull", analysis: "analysis", base_push: "push", kano_run: "analysis" } as const;
 
 export interface PipelineJobWorkerOptions {
   jobs: PipelineJobRepository;
+  /** 重排同步作业时把批次置回 running，让来源并发守卫覆盖"排队等重试"的窗口。 */
+  batches?: Pick<SyncBatchRepository, "reopen">;
   // SyncJobRunner 由组合层装配（加载来源配置并委托 SyncOrchestrator），worker 保持与来源解耦
   sync?: SyncJobRunner;
   handlers?: Partial<Record<PipelineJobRecord["jobType"], (job: PipelineJobRecord) => Promise<void>>>;
@@ -17,7 +20,7 @@ export interface PipelineJobWorkerOptions {
   leaseMs: number;
   now?: () => Date;
 }
-export type WorkerResult = { kind: "idle" } | { kind: "succeeded"; jobId: string } | { kind: "failed"; jobId: string };
+export type WorkerResult = { kind: "idle" } | { kind: "succeeded"; jobId: string } | { kind: "failed"; jobId: string } | { kind: "deferred"; jobId: string };
 
 export class PipelineJobWorker {
   private readonly now: () => Date;
@@ -70,6 +73,15 @@ export class PipelineJobWorker {
       return { kind: "succeeded", jobId: job.id };
     } catch (error) {
       stopHeartbeat();
+      // 延后：条件补齐后应再执行，记为可被同键入队重置的 cancelled，不进入重试退避、也不当作失败。
+      if (error instanceof JobDeferredError) {
+        await this.options.jobs.complete(job.id, {
+          expectedAttempt: job.attemptCount, status: "cancelled", errorCode: error.reason,
+          errorSummary: "Deferred until the blocking condition is resolved; re-enqueued automatically.",
+          now: this.now().toISOString(),
+        });
+        return { kind: "deferred", jobId: job.id };
+      }
       // 重试策略：有剩余尝试则按阶段退避重排（保留先前成功结果）；超限或永久错误进入终态
       const stage = STAGE_FOR_JOB_TYPE[job.jobType];
       // 错误分类：认证失败、4xx、飞书字段/权限契约错误（1254xxx）等永久性错误直接终态。
@@ -80,11 +92,14 @@ export class PipelineJobWorker {
       const terminal =
         error instanceof UnsupportedJobTypeError ||
         error instanceof FixturePolicyError ||
+        error instanceof SyncDataError ||
         permanent ||
         job.attemptCount >= job.maxAttempts ||
         stage === undefined;
       if (terminal) {
-        const code = error instanceof FixturePolicyError ? "fixture_policy_denied" : error instanceof UnsupportedJobTypeError ? "unsupported_job_type" : permanent ? `permanent_${errorClass}` : "max_attempts_reached";
+        const code = error instanceof FixturePolicyError ? "fixture_policy_denied"
+          : error instanceof SyncDataError ? "sync_data_errors"
+            : error instanceof UnsupportedJobTypeError ? "unsupported_job_type" : permanent ? `permanent_${errorClass}` : "max_attempts_reached";
         const recorded = await this.options.jobs.complete(job.id, {
           expectedAttempt: job.attemptCount,
           status: "failed", errorCode: code,
@@ -94,7 +109,9 @@ export class PipelineJobWorker {
           // settleSyncBatch 的 SQL 自带保护：仅当 job_type='sync' 且作业已 failed
           // 且批次仍为 running 时才置 failed，不会覆盖已收敛的批次。
           ...(job.jobType === "sync" ? { settleSyncBatch: true } : {}),
-          errorSummary: code === "fixture_policy_denied" ? `Synthetic acceptance policy denied (${error instanceof FixturePolicyError ? error.reason : "unspecified"}); restore a safe configuration before retrying.` : code === "unsupported_job_type"
+          errorSummary: code === "fixture_policy_denied" ? `Synthetic acceptance policy denied (${error instanceof FixturePolicyError ? error.reason : "unspecified"}); restore a safe configuration before retrying.` : code === "sync_data_errors"
+            ? `Source records failed validation (${(error as SyncDataError).codes.join(", ")}); fix the source data and retry the failed items.`
+            : code === "unsupported_job_type"
             ? "No handler is registered for this job type."
             : permanent ? `Permanent failure (${errorClass}); configuration must be corrected before retry.` : "Max attempts reached; manual retry is available.",
           now: this.now().toISOString(),
@@ -104,6 +121,12 @@ export class PipelineJobWorker {
         return { kind: "failed", jobId: job.id };
       }
       const backoffMs = computeBackoffMs({ stage, attempt: job.attemptCount + 1, errorClass });
+      // 批次在重排期间已落 partial_failure/failed，不再占用来源并发守卫（守卫只看 status='running'），
+      // 这段窗口里可以另起一个批次并发拉取同一来源。重排前先把它置回 running。
+      if (job.jobType === "sync" && this.options.batches?.reopen && typeof job.payload["batchId"] === "string") {
+        try { await this.options.batches.reopen(job.payload["batchId"]); }
+        catch { /* 置回失败不阻断重排：批次会在下次终态或回收时收敛 */ }
+      }
       // 安全摘要：错误详情不含密钥或 provider 原始响应
       await this.options.jobs.reschedule(job.id, {
         expectedAttempt: job.attemptCount,
@@ -125,8 +148,16 @@ export class PipelineJobWorker {
       if (testFixture !== undefined && typeof testFixture !== "boolean") throw new Error("Invalid sync job payload: testFixture");
       if (mode !== undefined && mode !== "full_pipeline" && mode !== "source_only") throw new Error("Invalid sync job payload: mode");
       const result = await this.options.sync({ batchId, sourceConfigId: sourceId, trigger: triggerType, actorId, mode: mode === "source_only" ? "source_only" : "full_pipeline", ...(Array.isArray(onlyIds) ? { onlyIds: onlyIds as string[] } : {}), ...(testFixture === true ? { testFixture: true } : {}) });
-      // 批次失败/部分失败 → 触发重试策略（保留已成功条目，重试由编排器幂等处理）
-      if (result.status === "failed" || result.status === "partial_failure") throw new Error("sync completed with retryable failures");
+      // 批次失败/部分失败 → 触发重试策略（保留已成功条目，重试由编排器幂等处理）。
+      // 例外：失败项全是数据类错误（如源记录缺 ID）时，重跑整批只会把全部条目再拉一遍再失败，
+      // 最后报 max_attempts 把数据问题伪装成偶发故障。这类直接终态，人工按条目重试。
+      if (result.status === "partial_failure" || result.status === "failed") {
+        const codes = result.failedCodes ?? [];
+        if (codes.length > 0 && codes.every((code) => NON_RETRYABLE_SYNC_ITEM_CODES.has(code))) {
+          throw new SyncDataError(codes);
+        }
+        throw new Error("sync completed with retryable failures");
+      }
       return;
     }
     throw new UnsupportedJobTypeError(job.jobType);

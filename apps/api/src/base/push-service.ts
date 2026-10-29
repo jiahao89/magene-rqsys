@@ -82,8 +82,12 @@ export type PushOutcome =
   // Base 行已写成功，但本地记账失败。绝不能当成外部写失败重推（会重复写 Base 并误报状态）。
   | { kind: "pushed_unrecorded"; baseRecordId: string; detail: string }
   | { kind: "not_found" }
-  | { kind: "conflict" } // pull 未同步，或 TB 负责人未匹配等待人工映射
+  // reason 区分冲突来源：owner_pending_mapping 是"等映射补齐后应再推"，作业层据此记为可重置的终态，
+  // 不能当作已成功（否则 owner-recheck 的同键入队永远命中 succeeded 作业而失效）。
+  | { kind: "conflict"; reason: PushConflictReason }
   | { kind: "error" }; // 推送失败（safe error 已记录，可重试）
+
+export type PushConflictReason = "intake_incomplete" | "owner_pending_mapping" | "push_in_progress" | "base_key_conflict";
 
 function safeBaseFailure(error: unknown): { code: string; summary: string } {
   if (error instanceof FeishuApiError) {
@@ -279,9 +283,11 @@ export function createBasePushService(deps: BasePushServiceDeps) {
     if (!recipient) return undefined;
     // 事件ID 确定性：同一事件重复推送得到同一个 ID，Base 自动化据此不重复发送。
     // 负责人事件追加 from/to，区分 A→B 与空→A 等不同事件。
+    // 事件ID 必须包含分析版本：同一源版本内的多次 AI 重试成功是不同事件，否则 Base 去重会吞掉合法通知。
+    const analysisVersionPart = `av${input.latestAnalysis?.analysisVersion ?? "none"}`;
     const eventId = ownerEvent
-      ? `${eventType}:${input.req.id}:sv${input.req.sourceVersion}:${fromUserId ?? "none"}:${currentOwnerUserId}`
-      : `${eventType}:${input.req.id}:sv${input.req.sourceVersion}`;
+      ? `${eventType}:${input.req.id}:sv${input.req.sourceVersion}:${analysisVersionPart}:${fromUserId ?? "none"}:${currentOwnerUserId}`
+      : `${eventType}:${input.req.id}:sv${input.req.sourceVersion}:${analysisVersionPart}`;
     return {
       eventType, eventTypeLabel: EVENT_TYPE_LABELS[eventType], eventId,
       recipientUserId: recipient.userId, recipientIdType: recipient.idType,
@@ -292,7 +298,7 @@ export function createBasePushService(deps: BasePushServiceDeps) {
   async function pushRequirementUnlocked(requirementId: string, idempotencyKey: string): Promise<PushOutcome> {
     const req = await deps.requirements.get(requirementId);
     if (!req) return { kind: "not_found" };
-    if (!isIntakeComplete(req.pipeline.pull)) return { kind: "conflict" };
+    if (!isIntakeComplete(req.pipeline.pull)) return { kind: "conflict", reason: "intake_incomplete" };
 
     const previous = await deps.basePushes.findByIdempotencyKey(idempotencyKey);
     if (previous?.status === "pushed") {
@@ -326,7 +332,7 @@ export function createBasePushService(deps: BasePushServiceDeps) {
         id: randomUUID(), actorId: deps.actorId, eventType: "base.push", entityType: "requirement", entityId: req.id,
         result: "denied", safeDetails: { reason: "owner_pending_mapping", sourceVersion: req.sourceVersion }, occurredAt: now().toISOString(),
       });
-      return { kind: "conflict" };
+      return { kind: "conflict", reason: "owner_pending_mapping" };
     }
     // TB 无负责人：先推进 owner 状态再推送（可空负责人推送，不改写 Base 已有人工值）
     if (!owner && !hasTbOwner && req.pipeline.owner === "pending_mapping") {
@@ -368,7 +374,7 @@ export function createBasePushService(deps: BasePushServiceDeps) {
         await auditPushSuccess(req.id, req.sourceVersion, false, true, []);
         return { kind: "pushed", status: "pushed", baseRecordId: current.baseRecordId, created: false, omittedFields: [] };
       }
-      return { kind: "conflict" };
+      return { kind: "conflict", reason: "push_in_progress" };
     }
 
     if (req.pipeline.push !== "running") await deps.requirements.setPushState(req.id, "running");
@@ -422,7 +428,7 @@ export function createBasePushService(deps: BasePushServiceDeps) {
         await deps.basePushes.updateResult(run.id, { status: "failed", safeErrorCode: "BASE_KEY_CONFLICT", safeErrorSummary: "Base key conflict; inspect the Base rows for this requirement.", completedAt: now().toISOString() });
         await deps.requirements.setPushState(req.id, "failed");
         await deps.audit.append({ id: randomUUID(), actorId: deps.actorId, eventType: "base.push", entityType: "requirement", entityId: req.id, result: "denied", safeDetails: { sourceVersion: req.sourceVersion, reason: "base_key_conflict" }, occurredAt: now().toISOString() });
-        return { kind: "conflict" };
+        return { kind: "conflict", reason: "base_key_conflict" };
       }
       const failure = safeBaseFailure(error);
       await deps.basePushes.updateResult(run.id, { status: "failed", safeErrorCode: failure.code, safeErrorSummary: failure.summary, completedAt: now().toISOString() });

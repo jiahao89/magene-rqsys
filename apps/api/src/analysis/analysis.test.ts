@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildAnalysisRequest, maskPii, validateAnalysisOutput } from "./contract.js";
-import { createDeepSeekProvider, getAiProviderConfig, type AiProvider, type FetchLike } from "./provider.js";
+import { createDeepSeekProvider, getAiProviderConfig, parseModelJson, type AiProvider, type FetchLike } from "./provider.js";
 import type { ValidatedAnalysis } from "./contract.js";
 import { runAnalysis, type AnalysisRepository, type AnalysisRun, type AnalysisServiceInput } from "./service.js";
 
@@ -159,6 +159,30 @@ test("provider ignores an AI-generated priority when no calibrated rule is publi
   });
   const result = await provider.analyze({ title: "支持查询", description: "支持查询和筛选", context: "", piiMarkers: [], dictionary, priorityRule: null });
   assert.equal(result.priority, null);
+});
+
+test("failed analysis keeps provider/model/prompt attribution (complete() writes unspecified columns as NULL)", async () => {
+  const repository = new MemoryAnalysisRepository();
+  const completeArgs: Array<Partial<AnalysisRun>> = [];
+  const original = repository.complete.bind(repository);
+  repository.complete = async (id: string, result: Partial<AnalysisRun>) => { completeArgs.push(result); return original(id, result); };
+  const failing: AiProvider = { name: "custom-claude", model: "claude-x", promptVersion: "p-9", analyze: async () => { throw new Error("boom"); } };
+  const failed = await runAnalysis(serviceInput({ model: "claude-x", promptVersion: "p-9" }), { repository, provider: failing });
+  assert.equal(failed.status, "failed_retryable");
+  assert.equal(completeArgs.length, 1);
+  assert.equal(completeArgs[0]?.provider, "custom-claude");
+  assert.equal(completeArgs[0]?.model, "claude-x");
+  assert.equal(completeArgs[0]?.promptVersion, "p-9");
+  assert.equal(completeArgs[0]?.moduleDictionaryVersion, failed.moduleDictionaryVersion);
+});
+
+test("parseModelJson parses plain JSON first, so fences inside string values are never mis-cut", () => {
+  const withInnerFence = JSON.stringify({ rationale: "示例：```json {\"a\":1} ``` 结束" });
+  assert.deepEqual(parseModelJson(withInnerFence), JSON.parse(withInnerFence));
+  assert.deepEqual(parseModelJson("```json\n{\"a\":1}\n```"), { a: 1 });
+  assert.deepEqual(parseModelJson("  ```\n{\"a\":1}\n```  "), { a: 1 });
+  assert.throws(() => parseModelJson("前言 ```json\n{\"a\":1}\n``` 后记"), "a fence in the middle of prose is not stripped");
+  assert.throws(() => parseModelJson("not json"));
 });
 
 test("analysis orchestration appends versions, safely records provider failures, and does not touch PM fields", async () => {

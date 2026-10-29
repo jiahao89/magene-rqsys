@@ -4,6 +4,7 @@ import type { PipelineJobRecord } from "../domain/persistence.js";
 import type { PipelineJobRepository } from "../application/repositories.js";
 import type { SyncJobRunner } from "../sync/service.js";
 import { PipelineJobWorker } from "./worker.js";
+import { JobDeferredError } from "./deferred.js";
 import { assertFixtureWorkAllowed, FixturePolicyError } from "../sync/test-fixture.js";
 import { FeishuApiError } from "../base/transport.js";
 import { AiProviderError } from "../analysis/provider.js";
@@ -16,7 +17,7 @@ function job(overrides: Partial<PipelineJobRecord> = {}): PipelineJobRecord {
     lastErrorCode: null, lastErrorSummary: null, createdAt: NOW, updatedAt: NOW, ...overrides,
   };
 }
-function harness(next: PipelineJobRecord | null, options: { syncResult?: { batchId: string; status: string; totalCount: number; succeededCount: number; failedCount: number }; handlerError?: Error } = {}) {
+function harness(next: PipelineJobRecord | null, options: { syncResult?: { batchId: string; status: string; totalCount: number; succeededCount: number; failedCount: number; failedCodes?: string[] }; handlerError?: Error } = {}) {
   const calls: unknown[] = [];
   const jobs: PipelineJobRepository = {
     async enqueue() { throw new Error("unused"); },
@@ -142,6 +143,43 @@ test("partial_failure sync is retryable; job types without a handler fail closed
   assert.equal(((unsupported.calls.at(-1) as unknown[])[2] as Record<string, unknown>).errorCode, "unsupported_job_type");
   // 非 sync 作业不碰批次
   assert.equal(((unsupported.calls.at(-1) as unknown[])[2] as Record<string, unknown>).settleSyncBatch, undefined);
+});
+
+test("同步失败项全是数据类错误时直接终态，不再整批重拉", async () => {
+  const partial = harness(job(), { syncResult: { batchId: "batch-1", status: "partial_failure", totalCount: 2, succeededCount: 1, failedCount: 1, failedCodes: ["source_item_invalid"] } });
+  const worker = new PipelineJobWorker({ jobs: partial.jobs, sync: partial.sync, workerId: "local-worker", leaseMs: 30_000, now: () => new Date(NOW) });
+  assert.deepEqual(await worker.runOnce(), { kind: "failed", jobId: "job-1" });
+  const last = partial.calls.at(-1) as unknown[];
+  assert.equal(last[0], "complete", "不重排");
+  const payload = last[2] as Record<string, unknown>;
+  assert.equal(payload.status, "failed");
+  assert.equal(payload.errorCode, "sync_data_errors");
+  assert.equal(payload.settleSyncBatch, true);
+});
+
+test("同步失败项含基础设施错误时仍可重试，并在重排前把批次置回 running", async () => {
+  const partial = harness(job(), { syncResult: { batchId: "batch-1", status: "partial_failure", totalCount: 2, succeededCount: 1, failedCount: 1, failedCodes: ["source_item_write_failed"] } });
+  const reopened: string[] = [];
+  const worker = new PipelineJobWorker({
+    jobs: partial.jobs, sync: partial.sync, workerId: "local-worker", leaseMs: 30_000, now: () => new Date(NOW),
+    batches: { async reopen(id: string) { reopened.push(id); return null; } },
+  });
+  assert.deepEqual(await worker.runOnce(), { kind: "failed", jobId: "job-1" });
+  assert.deepEqual(reopened, ["batch-1"], "重排前重新占用来源并发守卫");
+  assert.equal((partial.calls.at(-1) as unknown[])[0], "reschedule");
+});
+
+test("延后信号把作业记为 cancelled（可被同键入队重置），不重排、不当作失败", async () => {
+  const h = harness(job({ jobType: "base_push", dedupeKey: "base-push:req-1:sv1:av0", attemptCount: 1, maxAttempts: 5 }));
+  const worker = new PipelineJobWorker({
+    jobs: h.jobs, workerId: "worker", leaseMs: 30_000, now: () => new Date(NOW),
+    handlers: { base_push: async () => { throw new JobDeferredError("owner_pending_mapping"); } },
+  });
+  assert.deepEqual(await worker.runOnce(), { kind: "deferred", jobId: "job-1" });
+  assert.deepEqual(h.calls.map((call) => (call as unknown[])[0]), ["claim", "complete"]);
+  const completed = (h.calls.at(-1) as unknown[])[2] as Record<string, unknown>;
+  assert.equal(completed.status, "cancelled");
+  assert.equal(completed.errorCode, "owner_pending_mapping");
 });
 
 test("sync 作业的任意终态失败都收敛批次，不留下永久 running 的孤儿批次", async () => {

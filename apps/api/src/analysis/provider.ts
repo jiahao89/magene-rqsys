@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { buildAnalysisRequest, type AnalysisDictionary, type AnalysisPriorityRule, type SafeAnalysisRequest, validateAnalysisOutput, type ValidatedAnalysis } from "./contract.js";
 
-const DEFAULT_BASE_URL = "https://api.deepseek.com";
-const DEFAULT_MODEL = "deepseek-flash";
+export const DEFAULT_BASE_URL = "https://api.deepseek.com";
+export const DEFAULT_MODEL = "deepseek-flash";
 const DEFAULT_TIMEOUT_MS = 20_000;
 const DEFAULT_TEMPERATURE = 0;
 const DEFAULT_PROMPT_VERSION = "rq-analysis-v3";
@@ -45,7 +45,7 @@ export class AiProviderError extends Error {
   }
 }
 
-function parseTemperature(raw: string | undefined): number | null {
+export function parseTemperature(raw: string | undefined): number | null {
   const value = raw?.trim().toLowerCase();
   if (!value) return DEFAULT_TEMPERATURE;
   // Claude Sonnet 5.x through OpenAI-compatible gateways rejects a non-default temperature.
@@ -68,11 +68,20 @@ export function getAiProviderConfig(env: NodeJS.ProcessEnv = process.env): AiPro
   };
 }
 
-function parseAssistantJson(content: string): unknown {
+/**
+ * 解析模型返回的 JSON。先按原文解析：合法的 JSON 即使某个字符串字段里含有 ``` 也不能被误切。
+ * 原文解析失败时才尝试整段围栏（Claude 兼容网关即使 response_format=json_object 也会加围栏）；
+ * 围栏必须覆盖整段内容，避免从中间截取半截 JSON。
+ */
+export function parseModelJson(content: string): unknown {
   const trimmed = content.trim();
-  // Claude-compatible gateways may return markdown fences even when response_format=json_object.
-  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-  return JSON.parse(fenced?.[1] ?? trimmed);
+  try {
+    return JSON.parse(trimmed);
+  } catch (error) {
+    const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+    if (!fenced) throw error;
+    return JSON.parse(fenced[1]!);
+  }
 }
 
 const EnvelopeSchema = z.object({
@@ -266,7 +275,7 @@ export function createDeepSeekProvider(options: Partial<AiProviderConfig> & { fe
       if (!content?.trim()) throw new AiProviderError("analysis_failure", "AI provider returned empty analysis content.");
       let output: unknown;
       try {
-        output = resolveEvidenceReferences(parseAssistantJson(content), evidenceSegments);
+        output = resolveEvidenceReferences(parseModelJson(content), evidenceSegments);
         return validateAnalysisOutput(output, {
           dictionary: input.dictionary,
           priorityRule: input.priorityRule,

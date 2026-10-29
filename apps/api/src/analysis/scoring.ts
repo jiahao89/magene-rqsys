@@ -85,7 +85,8 @@ export const ManualScoringUpdateSchema = z.strictObject({
   expectedVersion: z.number().int().min(0),
   inputs: ScoringInputsSchema,
   alpha: alphaSchema,
-  safetyFlag: z.boolean().optional().default(false),
+  // 未显式提供时保留当前/AI 的安全标记，避免 PM 只改分就把安全复核标记清零。
+  safetyFlag: z.boolean().optional(),
   reason: z.string().trim().min(1).max(500),
 });
 export type ManualScoringUpdate = z.infer<typeof ManualScoringUpdateSchema>;

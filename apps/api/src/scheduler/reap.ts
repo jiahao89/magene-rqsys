@@ -12,7 +12,13 @@
 //
 // 判定不靠单纯的时间猜测：前两种看作业状态，第三种同时要求"尝试用尽 + 租约过期"。
 
-import type { PipelineJobRepository, SyncBatchRepository } from "../application/repositories.js";
+import type { PipelineJobRecord } from "../domain/persistence.js";
+import type {
+  BasePushRunRepository,
+  PipelineJobRepository,
+  RequirementQueryRepository,
+  SyncBatchRepository,
+} from "../application/repositories.js";
 
 export interface ReapedBatch {
   batchId: string;
@@ -97,4 +103,103 @@ export async function reapOrphanedBatches(params: {
     if (settled) reaped.push({ batchId: batch.id, sourceConfigId: batch.sourceConfigId, reason });
   }
   return reaped;
+}
+
+export interface ReapedJob {
+  jobId: string;
+  jobType: "base_push" | "kano_run";
+  requirementId: string | null;
+  reason: "job exhausted";
+}
+
+/**
+ * 卡死作业回收：把"尝试用尽 + 租约过期"的 base_push / kano_run 作业收尾。
+ *
+ * 背景：claimNext 只认领 attempt_count < max_attempts 的作业，complete 要求 status='running'
+ * 且 attempt 匹配。最后一次尝试时进程死亡（滚动发布、OOM），作业就永远停在 running：
+ * 没有 worker 能再认领它，也没有 worker 能收尾它。sync 由批次回收器兜底、analysis 由分析恢复
+ * 兜底，这两种必须排除，否则会与它们重复收尾。
+ *
+ * 收尾不只改作业：base_push 卡死会让需求的 push 停在 running（永远等不到下一次推送），
+ * kano_run 卡死会让需求被"运行中"守卫锁死，都不能靠人工在 UI 里点出来。
+ *
+ * 判定同时要求"尝试用尽 + 租约过期"，不做单纯的时间猜测。
+ */
+export async function reapExhaustedJobs(params: {
+  jobs: Pick<PipelineJobRepository, "listExhaustedRunning" | "complete">;
+  requirements?: Pick<RequirementQueryRepository, "get" | "setPushState" | "failKanoRun">;
+  basePushes?: Pick<BasePushRunRepository, "findByIdempotencyKey" | "updateResult">;
+  now: Date;
+  /** 单轮扫描上限，避免一次 tick 拉太多数据。 */
+  limit?: number;
+}): Promise<ReapedJob[]> {
+  const list = params.jobs.listExhaustedRunning;
+  if (!list) return [];
+  const nowIso = params.now.toISOString();
+  const exhausted = await list.call(params.jobs, nowIso, params.limit ?? 50);
+  const reaped: ReapedJob[] = [];
+
+  for (const job of exhausted) {
+    if (job.jobType !== "base_push" && job.jobType !== "kano_run") continue;
+    // 作业层先收尾（fencing：只有 attempt 仍等于本次读到的值才生效）。
+    // 返回 null 说明已被别的实例收尾，本轮不再动需求状态，避免重复写审计。
+    const settled = await params.jobs.complete(job.id, {
+      expectedAttempt: job.attemptCount,
+      status: "failed",
+      errorCode: "lease_expired",
+      errorSummary: "Reclaimed: attempts exhausted with an expired lease.",
+      now: nowIso,
+    });
+    if (!settled) continue;
+
+    const requirementId = typeof job.payload["requirementId"] === "string" ? job.payload["requirementId"] : null;
+    if (job.jobType === "base_push" && requirementId && params.requirements) {
+      await settleStuckPush(params, job, requirementId, nowIso);
+    }
+    if (job.jobType === "kano_run") {
+      const runId = typeof job.payload["kanoRunId"] === "string" ? job.payload["kanoRunId"] : null;
+      if (runId && params.requirements?.failKanoRun) {
+        // failKanoRun 自带 status='running' 谓词，已收尾的运行不会被覆盖。
+        try { await params.requirements.failKanoRun(runId, "KANO_LEASE_EXPIRED", "Kano run was reclaimed: attempts exhausted with an expired lease."); }
+        catch { /* 运行行已终态或不存在：不回滚作业收尾结果 */ }
+      }
+    }
+    reaped.push({ jobId: job.id, jobType: job.jobType, requirementId, reason: "job exhausted" });
+  }
+  return reaped;
+}
+
+/**
+ * base_push 卡死后的需求收敛：push 从 running 回 failed，同时把对应的推送运行行落 failed。
+ * 任何一步失败都不影响作业已被收尾的事实，也不应中断整轮。
+ */
+async function settleStuckPush(
+  params: {
+    requirements?: Pick<RequirementQueryRepository, "get" | "setPushState">;
+    basePushes?: Pick<BasePushRunRepository, "findByIdempotencyKey" | "updateResult">;
+  },
+  job: PipelineJobRecord,
+  requirementId: string,
+  nowIso: string,
+): Promise<void> {
+  try {
+    const req = await params.requirements?.get(requirementId);
+    // 只收敛仍在 running 的需求：已 pushed / failed / pending 的状态由正常链路负责。
+    if (req && req.pipeline.push === "running") {
+      await params.requirements?.setPushState(requirementId, "failed");
+    }
+  } catch { /* 非法迁移或并发更新：状态由后续链路纠正 */ }
+
+  try {
+    // base_push 的 dedupe key 就是推送幂等键（见 jobs/idempotency.ts），据此定位运行行。
+    const run = await params.basePushes?.findByIdempotencyKey(job.dedupeKey);
+    if (run && run.status === "running") {
+      await params.basePushes?.updateResult(run.id, {
+        status: "failed",
+        safeErrorCode: "lease_expired",
+        safeErrorSummary: "Reclaimed: attempts exhausted with an expired lease.",
+        completedAt: nowIso,
+      });
+    }
+  } catch { /* 运行行更新失败不阻断回收 */ }
 }

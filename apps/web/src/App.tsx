@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { ArrowDownToLine, ArrowRight, Blocks, Check, CircleAlert, CircleHelp, Clock3, Database, FolderSync, Gauge, GitBranch, Layers3, ListChecks, LoaderCircle, Menu, Moon, Play, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Sun, Users, X } from "lucide-react";
-import { ApiError, createPriorityRuleDraft, getHealth, getOverviewMetrics, listPriorityRules, listSources, publishPriorityRule, runSync, type OverviewMetrics, type PriorityRuleVersion, type SourceConfig, type SyncExecutionMode } from "./api";
+import { ApiError, createPriorityRuleDraft, getHealth, getOverviewMetrics, listPriorityRules, listSources, publishPriorityRule, runSync, type OverviewMetrics, type PriorityRuleVersion, type RequirementSummary, type SourceConfig, type SyncExecutionMode } from "./api";
 import { GuidePanel, ModulesPanel, PanelErrorBoundary, PublishStatusChip, RequirementsPanel, SourcesPanel, SyncRecordsPanel, TeamPanel } from "./panels";
 import { readRequirementDeepLink } from "./deep-link";
 import { readWorkbenchPage, readWorkbenchRoute, workbenchUrl, type WorkbenchPage, type WorkbenchTab } from "./workbench-routing";
 import type { RequirementListFilters } from "./requirements-url";
+import { requirementDisplayId } from "./requirement-view";
 import { stateLabel } from "./state-labels";
 import { checkScheduleHealth, describeCountdown, formatInZone, nextRunAt, type WeeklySchedule } from "./schedule";
 
 type Batch = { id: string; status: string; totalCount: number; succeededCount: number; failedCount: number; startedAt?: string; completedAt?: string; errorSummary?: string };
-type Requirement = { id: string; platformRequirementId?: string | null; sourceRequirementId: string; title: string; sourceVersion: number; pipeline: { pull: string; analysis: string; owner: string; push: string }; analysis?: { module?: string; confidence?: string } | null };
+// 与列表接口的 DTO 保持同一类型：此前这里复制了一份更窄的本地结构，字段一旦分叉就会在运行时才暴露。
+type Requirement = RequirementSummary;
 type Page = WorkbenchPage;
 type LoadState = "loading" | "ready" | "error";
 type Theme = "light" | "dark";
@@ -240,7 +242,7 @@ function App() {
     } finally { setBusy(false); }
   };
 
-  const shownRequirements = requirements.filter((item) => item.title.toLowerCase().includes(query.toLowerCase()) || item.sourceRequirementId.includes(query));
+  const shownRequirements = requirements.filter((item) => item.title.toLowerCase().includes(query.toLowerCase()) || (item.sourceRequirementId ?? "").toLowerCase().includes(query.toLowerCase()));
   const latestBatch = batches[0];
   // 运行中的批次需要可见进度：只在前端做有界轮询，终态/页面隐藏时停止。
   useEffect(() => {
@@ -364,7 +366,7 @@ function App() {
 
 function RequirementsTable({ rows, loading }: { rows: Requirement[]; loading: boolean }) {
   if (!rows.length) return <div className="table-empty"><span className="empty-icon"><ListChecks size={19} /></span><strong>{loading ? "正在载入需求…" : "没有匹配的需求"}</strong><span>{loading ? "正在从本地 API 读取需求状态。" : "数据仅在 API 返回后显示，不使用演示数据。"}</span></div>;
-  return <div className="table-scroll"><table><thead><tr><th>需求</th><th>版本</th><th>拉取</th><th>AI 分析</th><th>负责人</th><th>Base 推送</th></tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td><div className="requirement-title"><span className="req-id">{row.platformRequirementId ?? (row.sourceRequirementId ? `REQ-${row.sourceRequirementId}` : "WEB")}</span><strong>{row.title}</strong></div></td><td><span className="version-label">v{row.sourceVersion}</span></td><td><StagePill stage="pull" value={row.pipeline.pull} /></td><td><StagePill stage="analysis" value={row.pipeline.analysis} /></td><td><StagePill stage="owner" value={row.pipeline.owner} /></td><td><StagePill stage="push" value={row.pipeline.push} /></td></tr>)}</tbody></table></div>;
+  return <div className="table-scroll"><table><thead><tr><th>需求</th><th>版本</th><th>拉取</th><th>AI 分析</th><th>负责人</th><th>Base 推送</th></tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td><div className="requirement-title"><span className="req-id">{requirementDisplayId(row)}</span><strong>{row.title}</strong></div></td><td><span className="version-label">v{row.sourceVersion}</span></td><td><StagePill stage="pull" value={row.pipeline.pull} /></td><td><StagePill stage="analysis" value={row.pipeline.analysis} /></td><td><StagePill stage="owner" value={row.pipeline.owner} /></td><td><StagePill stage="push" value={row.pipeline.push} /></td></tr>)}</tbody></table></div>;
 }
 
 function SecondaryContent({ page, tab, sources, loadState, deepLinkRequirementId, onNavigate, onRefresh }: { page: Page; tab: WorkbenchTab | null; sources: SourceConfig[]; loadState: LoadState; deepLinkRequirementId: string | null; onNavigate: (page: Page) => void; onRefresh: () => void }) {
@@ -397,6 +399,8 @@ function RulesPanel() {
   const [thresholds, setThresholds] = useState({ p0: 4, p1: 3, p2: 2 });
   const [scoringInput, setScoringInput] = useState("user:强=3\nuser:中=2\nuser:弱=1\nmarket:强=3\nmarket:中=2\nmarket:弱=1\nbusiness:强=3\nbusiness:中=2\nbusiness:弱=1\ntechnology:强=3\ntechnology:中=2\ntechnology:弱=1");
   const [evidenceInput, setEvidenceInput] = useState("");
+  // v2 是已确认的固定公式：生效期间 API 拒绝发布任何 v1 草稿，界面必须提前说明而不是让人点了才收到 409。
+  const activeV2 = rules.some((rule) => rule.status === "published" && rule.rules.formulaType === "umsc_weighted_v2");
 
   const load = useCallback(async () => {
     setLoadError(null);
@@ -424,6 +428,7 @@ function RulesPanel() {
 
   return <section className="panel requirements-panel">
       <div className="panel-heading"><div><h2>优先级规则</h2><p>规则版本经历史案例校准；发布前需求优先级保持为空。</p></div><button className="button button-secondary button-small" onClick={() => void load()} disabled={busy}><RefreshCw size={14} />刷新</button></div>
+      {activeV2 && <div className="notice-banner" role="status"><ShieldCheck size={16} /><span>当前生效的是已确认的 v2 评分公式（umsc_weighted_v2）。v1 四维求和规则不能再发布覆盖它，下方「创建草稿」已暂停。</span></div>}
       {loadError && <div className="alert-banner" role="alert"><CircleAlert size={18} /><div><strong>配置加载失败</strong><span>{loadError}</span></div></div>}
       {actionError && <div className="alert-banner" role="alert"><CircleAlert size={18} /><div><strong>操作未完成</strong><span>{actionError}</span></div><button className="button button-secondary button-small" onClick={() => setActionError(null)}>关闭</button></div>}
       {notice && <div className="notice-banner" role="status"><Check size={16} /><span>{notice}</span><button className="icon-button" aria-label="关闭提示" onClick={() => setNotice(null)}><X size={15} /></button></div>}
@@ -434,7 +439,7 @@ function RulesPanel() {
           <div className="rules-thresholds">
             {(["p0", "p1", "p2"] as const).map((key) => <label key={key} className="rules-threshold"><span>{key.toUpperCase()} 阈值</span><input type="number" min={0} max={4} step={1} value={thresholds[key]} aria-label={`${key.toUpperCase()} 阈值`} onChange={(event) => setThresholds((prev) => ({ ...prev, [key]: Number(event.target.value) }))} /></label>)}
           </div>
-          <button className="button button-primary button-small" onClick={() => void handleCreateRule()} disabled={busy}>创建草稿</button>
+          <button className="button button-primary button-small" onClick={() => void handleCreateRule()} disabled={busy || activeV2} title={activeV2 ? "v2 公式生效期间不能发布 v1 规则" : undefined}>创建草稿</button>
         </div>
         <div className="rules-form">
           <label className="field"><span>U/M/S/C 已批准评分映射（每行「维度:取值=分数」；未校准证据的规则不会用于计算）</span><textarea aria-label="评分映射" className="rules-textarea" rows={3} value={scoringInput} onChange={(event) => setScoringInput(event.target.value)} /></label>
@@ -443,7 +448,7 @@ function RulesPanel() {
           <label className="rules-threshold" style={{ flex: 1 }}><span>校准证据（每行一个 JSON 对象；为空的规则发布后不会用于优先级计算）</span><textarea aria-label="校准证据" className="rules-textarea" rows={2} placeholder='例如：{"cohort":"2026-Q3","cases":12}' value={evidenceInput} onChange={(event) => setEvidenceInput(event.target.value)} /></label>
         </div>
       </details>
-      {rules.length ? <div className="table-scroll"><table><thead><tr><th>版本</th><th>状态</th><th>阈值 (P0/P1/P2)</th><th>创建时间</th><th>发布时间</th><th>操作</th></tr></thead><tbody>{rules.map((rule) => <tr key={rule.id}><td className="mono-cell">v{rule.version}</td><td><PublishStatusChip status={rule.status} /></td><td className="mono-cell">{[rule.rules.thresholds?.p0, rule.rules.thresholds?.p1, rule.rules.thresholds?.p2].map((value) => value ?? "—").join(" / ")}</td><td>{new Date(rule.createdAt).toLocaleString("zh-CN")}</td><td>{rule.publishedAt ? new Date(rule.publishedAt).toLocaleString("zh-CN") : "—"}</td><td>{rule.status === "draft" && <button className="button button-secondary button-small" onClick={() => void withFeedback(async () => { await publishPriorityRule(rule.id); return `规则 v${rule.version} 已发布`; })} disabled={busy}>发布</button>}</td></tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadError ? "配置不可用" : "还没有规则版本"}</strong><span>{loadError ? "请检查 API 连接后重试。" : "在高级设置中创建阈值规则草稿并发布后，AI 建议才会生成 P0–P3 优先级。"}</span></div>}
+      {rules.length ? <div className="table-scroll"><table><thead><tr><th>版本</th><th>状态</th><th>阈值 (P0/P1/P2)</th><th>创建时间</th><th>发布时间</th><th>操作</th></tr></thead><tbody>{rules.map((rule) => <tr key={rule.id}><td className="mono-cell">v{rule.version}</td><td><PublishStatusChip status={rule.status} /></td><td className="mono-cell">{[rule.rules.thresholds?.p0, rule.rules.thresholds?.p1, rule.rules.thresholds?.p2].map((value) => value ?? "—").join(" / ")}</td><td>{new Date(rule.createdAt).toLocaleString("zh-CN")}</td><td>{rule.publishedAt ? new Date(rule.publishedAt).toLocaleString("zh-CN") : "—"}</td><td>{rule.status === "draft" && <button className="button button-secondary button-small" onClick={() => void withFeedback(async () => { await publishPriorityRule(rule.id); return `规则 v${rule.version} 已发布`; })} disabled={busy || (activeV2 && rule.rules.formulaType !== "umsc_weighted_v2")} title={activeV2 && rule.rules.formulaType !== "umsc_weighted_v2" ? "v2 公式生效期间不能发布 v1 规则" : undefined}>发布</button>}</td></tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadError ? "配置不可用" : "还没有规则版本"}</strong><span>{loadError ? "请检查 API 连接后重试。" : "在高级设置中创建阈值规则草稿并发布后，AI 建议才会生成 P0–P3 优先级。"}</span></div>}
   </section>;
 }
 

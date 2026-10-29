@@ -36,6 +36,7 @@ const SHARED = [
   "sync/hashes.ts",
   "sync/test-fixture.ts",
   "jobs/claim.ts",
+  "jobs/deferred.ts",
   "application/ports.ts",
   "audit/storage.ts",
   "contracts/rules.ts",

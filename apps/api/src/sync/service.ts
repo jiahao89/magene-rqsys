@@ -25,7 +25,24 @@ export function shouldProcessSyncDownstream(mode: SyncExecutionMode | undefined)
 export type SyncJobRunner = (job: SyncJobContext) => Promise<SyncResult>;
 export interface SyncResult {batchId:string;status:BatchState;totalCount:number;succeededCount:number;failedCount:number;
   /** V02-T15-AC04：接口取得数与重复源 ID 数——批次计数只报实际处理数，这里补充计数来源说明。 */
-  fetchedCount?:number;duplicateIdCount?:number;}
+  fetchedCount?:number;duplicateIdCount?:number;
+  /** 失败条目的错误码去重集合：worker 据此区分"重试有意义"和"重试也不会变"（见 NON_RETRYABLE_SYNC_ITEM_CODES）。 */
+  failedCodes?:string[];}
+
+/**
+ * 重试不可能改变结果的条目级错误：源记录缺 ID、字段无法解析。
+ * 这类失败重跑整批只会把全部条目再拉一遍，最后仍以 max_attempts 收场，把"数据问题"伪装成"偶发失败"。
+ * 由 SyncDataError 交给 worker 直接落终态，人工在批次明细里按条目重试。
+ */
+export const NON_RETRYABLE_SYNC_ITEM_CODES: ReadonlySet<string> = new Set(["source_item_invalid"]);
+
+/** 只有数据类失败时抛出：worker 视为终态，不重排、不重拉整批。 */
+export class SyncDataError extends Error {
+  constructor(readonly codes: string[]) {
+    super(`Sync completed with non-retryable item failures: ${codes.join(", ")}`);
+    this.name = "SyncDataError";
+  }
+}
 
 
 /** 标题比较键：仅用于“疑似重复”提示，不参与需求身份或去重。 */
@@ -95,10 +112,11 @@ export class SyncOrchestrator {
     // 单项重试：只处理指定需求（按源需求 ID 过滤）
     const onlyIds=input.onlyIds?new Set(input.onlyIds):null;
     if(onlyIds)all=all.filter((record)=>record.id!==undefined&&onlyIds.has(record.id));
-    let succeededCount=0,failedCount=0;
+    let succeededCount=0,failedCount=0;const failedCodes=new Set<string>();
     for(const record of all){const began=clock().toISOString();
       // 无 ID 的源记录也要留痕：此前被静默丢弃，批次计数与明细完全看不到"少了一条"。
       if(!record.id){
+        failedCodes.add("source_item_invalid");
         try{await this.persistence.writeSyncItem({batchId:input.batchId,requirementId:null,teambitionRequirementId:"",action:"unchanged",status:"failed",errorCode:"source_item_invalid",errorDetail:"Source record has no requirement id",startedAt:began,completedAt:clock().toISOString()});}catch{}
         failedCount++;continue;
       }
@@ -115,14 +133,14 @@ export class SyncOrchestrator {
       // 单条结果写库失败不能拖垮整批：记为该条失败并继续，避免整个 sync job 被重试 5 次。
       try{await this.persistence.writeSyncItem({batchId:input.batchId,requirementId,teambitionRequirementId:record.id,action,status,errorCode,errorDetail,startedAt:began,completedAt});}
       catch{status="failed";errorCode="sync_item_write_failed";errorDetail="Sync item result could not be persisted";}
-      if(status==="succeeded")succeededCount++;else failedCount++;
+      if(status==="succeeded")succeededCount++;else{failedCount++;failedCodes.add(errorCode??"sync_item_failed");}
     }
     // 全部需求先导入，再统一标注同标题疑似重复（可随标题变化重算；不删除任何行）。
     // 标注只是提示：失败不能把已成功的条目拖成整批失败重跑，但要写进批次摘要留下痕迹。
     let duplicateHintsFailed=false;
     try{await markDuplicateTitles(this.persistence,input.sourceConfigId);}
     catch{duplicateHintsFailed=true;}
-    const result:SyncResult={batchId:input.batchId,status:failedCount===0?"succeeded":succeededCount===0?"failed":"partial_failure",totalCount:all.length,succeededCount,failedCount,fetchedCount,duplicateIdCount};
+    const result:SyncResult={batchId:input.batchId,status:failedCount===0?"succeeded":succeededCount===0?"failed":"partial_failure",totalCount:all.length,succeededCount,failedCount,fetchedCount,duplicateIdCount,failedCodes:[...failedCodes]};
     const errorSummary=failedCount?`${failedCount} item(s) failed; inspect item results.`:duplicateHintsFailed?"All items synced, but duplicate-title hints could not be refreshed; manual retry is available.":null;
     await this.persistence.completeBatch(input.batchId,{...result,errorSummary,completedAt:clock().toISOString(),counts:{fetched:fetchedCount,duplicateIds:duplicateIdCount}});return result;
   }

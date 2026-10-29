@@ -12,6 +12,7 @@ import type { TeamPersonRecord } from "../domain/team-directory.js";
 import { AuditListQuerySchema, KanoEvidenceImportSchema, KanoRunRequestSchema, AudienceUpdateSchema, BatchListQuerySchema, RiceDraftUpdateSchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementIntakeEditSchema, RequirementIntakeSchema, RequirementListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
 import { createHash, randomUUID } from "node:crypto";
 import { ApplyAiScoringSchema, ManualScoringUpdateSchema, SCORING_FORMULA_TEXT, SCORING_THRESHOLDS, computeUmcScore } from "../analysis/scoring.js";
+import { maskPii } from "../analysis/contract.js";
 import { SourceConfigUpdateSchema, normalizeSourceSchedule, type ResolvedSourceConfigUpdate } from "../contracts/source.js";
 import { DictionaryCreateSchema, PriorityRuleCreateSchema, TeamModulesSaveSchema, TeamPersonCreateSchema, TeamPersonFeishuBindSchema, TeamPersonRenameSchema } from "../contracts/rules.js";
 import { DEFAULT_TEAM_MEMBERS } from "../domain/team-directory.js";
@@ -269,6 +270,7 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const query = Object.fromEntries(url.searchParams.entries()); if (query.limit !== undefined) query.limit = String(Number(query.limit));
     const parsed = BatchListQuerySchema.safeParse(query); if (!parsed.success) return jsonError("VALIDATION_FAILED");
     const batchCursor = decodeBatchCursor(parsed.data.cursor);
+    if (parsed.data.cursor !== undefined && batchCursor === undefined) return jsonError("VALIDATION_FAILED", "Invalid cursor.");
     const page = await repositories.batches.list({ limit: parsed.data.limit, ...(parsed.data.status === undefined ? {} : { status: parsed.data.status }), ...(parsed.data.since === undefined ? {} : { since: parsed.data.since }), ...(parsed.data.until === undefined ? {} : { until: parsed.data.until }), ...(batchCursor === undefined ? {} : { cursor: batchCursor }) }); return json({ items: page.items.map(batchDto), nextCursor: page.nextCursor });
   }
   const batchMatch = url.pathname.match(/^\/api\/batches\/([^/]+)$/);
@@ -509,6 +511,7 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const query = Object.fromEntries(url.searchParams.entries());
     const parsed = RequirementListQuerySchema.safeParse(query); if (!parsed.success) return jsonError("VALIDATION_FAILED");
     const cursor = decodeRequirementCursor(parsed.data.cursor);
+    if (parsed.data.cursor !== undefined && cursor === undefined) return jsonError("VALIDATION_FAILED", "Invalid cursor.");
     const page = await repositories.requirements.search({ ...(parsed.data.q === undefined ? {} : { q: parsed.data.q }), ...(parsed.data.executorName === undefined ? {} : { executorName: parsed.data.executorName }), ...(parsed.data.pullState === undefined ? {} : { pullState: parsed.data.pullState }), ...(parsed.data.analysisState === undefined ? {} : { analysisState: parsed.data.analysisState }), ...(parsed.data.ownerState === undefined ? {} : { ownerState: parsed.data.ownerState }), ...(parsed.data.pushState === undefined ? {} : { pushState: parsed.data.pushState }), ...(parsed.data.batchId === undefined ? {} : { batchId: parsed.data.batchId }), ...(parsed.data.since === undefined ? {} : { since: parsed.data.since }), ...(parsed.data.until === undefined ? {} : { until: parsed.data.until }), limit: parsed.data.limit, ...(cursor === undefined ? {} : { cursor }) });
     // 列表一次取回全部有效映射再按 TB 用户查名，避免逐行查询。
     // 空页时不能把空字符串传给 uuid 列：PostgreSQL 会以 22P02 拒绝，接口变成 500。
@@ -526,7 +529,7 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
     const versions = await repositories.requirements.listKanoEvidence?.() ?? [];
     // 读取可见全部状态；只有 approved 且未标记 PII 的版本可被 T14 运行引用（模型输入门禁）。
-    return json({ items: versions.map((v) => ({ id: v.id, version: v.version, title: v.title, sourceUrl: v.sourceUrl, sourceSection: v.sourceSection, summary: v.summary, evidenceFragments: v.evidenceFragments, coverageNotes: v.coverageNotes, knownAudiences: v.knownAudiences, knownScenes: v.knownScenes, interviewDate: v.interviewDate, status: v.status, piiFlagged: v.piiFlagged, createdAt: v.createdAt, approvedAt: v.approvedAt })) });
+    return json({ items: versions.map((v) => ({ id: v.id, version: v.version, title: v.title, sourceUrl: v.sourceUrl, sourceSection: v.sourceSection, summary: v.piiFlagged ? maskPii(v.summary, []) : v.summary, evidenceFragments: v.piiFlagged ? v.evidenceFragments.map((fragment) => ({ ...fragment, text: maskPii(fragment.text, []) })) : v.evidenceFragments, coverageNotes: v.coverageNotes, knownAudiences: v.knownAudiences, knownScenes: v.knownScenes, interviewDate: v.interviewDate, status: v.status, piiFlagged: v.piiFlagged, createdAt: v.createdAt, approvedAt: v.approvedAt })) });
   }
   if (url.pathname === "/api/kano/evidence" && method === "POST") {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
@@ -604,7 +607,11 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
         ...(parsed.data.notes !== undefined ? { notes: parsed.data.notes } : {}),
       });
       if (result.outcome === "version_conflict") return jsonError("CONFLICT", `草稿已被他人更新到版本 ${result.currentEditVersion}，请刷新后重试。`);
-      return json({ requirementId: requirement.id, editVersion: result.editVersion, status: "待配置" });
+      // 保存后按落库结果重算状态，避免响应写死“待配置”而紧接着的 GET 显示“已计算”。
+      const savedDraft = await repositories.requirements.getRiceDraft?.(requirement.id) ?? null;
+      const savedInputs = savedDraft ? { reach: savedDraft.reachInput, impact: savedDraft.impactInput, confidence: savedDraft.confidenceInput, effort: savedDraft.effortInput } : { reach: null, impact: null, confidence: null, effort: null };
+      const scored = computeRiceScore(savedInputs);
+      return json({ requirementId: requirement.id, editVersion: result.editVersion, status: scored.status === "computed" ? "已计算" : "待补充", score: scored.score, configVersion: RICE_CONFIG_VERSION });
     } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
   }
   const audienceMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/audience$/);
@@ -649,7 +656,7 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
       priority: computed.priority,
       scoreConfidence: sourceScore?.scoreConfidence ?? null,
       scoreConfidenceReason: sourceScore?.scoreConfidenceReason ?? null,
-      safetyFlag: parsed.data.safetyFlag,
+      safetyFlag: parsed.data.safetyFlag ?? sourceScore?.safetyFlag ?? false,
       basis: sourceScore?.basis ?? {},
       rationale: parsed.data.reason,
       actorId: auth.actor.id,
@@ -870,5 +877,6 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     if (auditFailure) return auditFailure;
     return json({ requirementId: req.id, status: "queued" }, 202);
   }
-  return jsonError("ROUTE_NOT_IMPLEMENTED");
+  // 未注册路径返回 404；ROUTE_NOT_IMPLEMENTED 保留给“契约有、实现未接”的端点（当前无）。
+  return jsonError("NOT_FOUND");
 }

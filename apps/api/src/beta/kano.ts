@@ -4,6 +4,7 @@
 // 报告永远标记「AI假设（待验证）」；模型超时/非法输出→安全失败，由用户手动重跑（不自动重试，不饿死主流程）。
 import { z } from "zod";
 import { AUDIENCE_LEVELS, maskPii } from "../analysis/contract.js";
+import { DEFAULT_BASE_URL, DEFAULT_MODEL, parseModelJson, parseTemperature } from "../analysis/provider.js";
 
 export const KANO_PROMPT_VERSION = "rq-kano-v1";
 
@@ -93,33 +94,25 @@ export class KanoProviderError extends Error {
   }
 }
 
-function parseKanoJson(content: string): unknown {
-  const trimmed = content.trim();
-  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-  return JSON.parse(fenced?.[1] ?? trimmed);
-}
-
 export interface KanoProvider {
   readonly model: string;
   run(prompt: string): Promise<unknown>;
 }
 
-/** 默认 DeepSeek JSON 模式调用（凭据/超时复用主分析同名环境变量；测试注入受控实现）。 */
-function kanoTemperature(raw: string | undefined): number | null {
-  const value = raw?.trim().toLowerCase();
-  if (!value) return 0;
-  if (value === "none" || value === "default") return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 2 ? parsed : 0;
-}
+/** Kano 单次调用比主分析长（资料更长、输出更大）。 */
+const DEFAULT_KANO_TIMEOUT_MS = 60_000;
 
+/** 默认 DeepSeek JSON 模式调用（凭据/超时复用主分析同名环境变量；测试注入受控实现）。 */
 export function createDeepSeekKanoProvider(options: { apiKey?: string; baseUrl?: string; model?: string; timeoutMs?: number; temperature?: number | null; fetch?: typeof fetch } = {}): KanoProvider {
   const env = process.env;
-  const apiKey = options.apiKey ?? env.AI_API_KEY;
-  const baseUrl = (options.baseUrl ?? env.AI_BASE_URL ?? "https://api.deepseek.com").replace(/\/+$/, "");
-  const model = options.model ?? env.AI_MODEL ?? "deepseek-chat";
-  const timeoutMs = options.timeoutMs ?? Number(env.AI_TIMEOUT_MS ?? 60_000);
-  const temperature = options.temperature === undefined ? kanoTemperature(env.AI_TEMPERATURE) : options.temperature;
+  const apiKey = options.apiKey || env.AI_API_KEY;
+  // 与主分析同一组配置：空字符串视为未设置（?? 会让空值穿透，导致请求打到空 URL/空模型）。
+  const baseUrl = (options.baseUrl || env.AI_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, "");
+  const model = options.model || env.AI_MODEL || DEFAULT_MODEL;
+  // AI_TIMEOUT_MS 为空字符串时 Number("") 等于 0，会让每次调用立刻被中断。
+  const configuredTimeout = Number(options.timeoutMs ?? env.AI_TIMEOUT_MS);
+  const timeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : DEFAULT_KANO_TIMEOUT_MS;
+  const temperature = options.temperature === undefined ? parseTemperature(env.AI_TEMPERATURE) : options.temperature;
   const fetcher = options.fetch ?? globalThis.fetch;
   return {
     model,
@@ -154,7 +147,7 @@ export function createDeepSeekKanoProvider(options: { apiKey?: string; baseUrl?:
       const content = parsed.choices?.[0]?.message?.content;
       if (!content?.trim()) throw new KanoProviderError("analysis_failure", "Kano provider returned empty content.");
       try {
-        return parseKanoJson(content);
+        return parseModelJson(content);
       } catch {
         throw new KanoProviderError("analysis_failure", "Kano provider returned non-JSON content.");
       }

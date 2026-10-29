@@ -28,6 +28,7 @@ import { runAnalysis } from "../analysis/service.js";
 import { createDeepSeekProvider, type AiProvider } from "../analysis/provider.js";
 import { createAnalysisAdvancer, createSourceMetadataAdvancer } from "../pipeline/advance.js";
 import { createBasePushService, type BasePushServiceDeps } from "../base/push-service.js";
+import { JobDeferredError } from "../jobs/deferred.js";
 import { basePushIdempotencyKey } from "../jobs/idempotency.js";
 import { assertFixtureWorkAllowed, isSyntheticFixtureRequirement } from "../sync/test-fixture.js";
 import { KANO_PROMPT_VERSION, buildKanoRequest, createDeepSeekKanoProvider, kanoPrompt, validateKanoReport, KanoProviderError } from "../beta/kano.js";
@@ -158,6 +159,9 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
       const rosterNames = [...new Set([...(source?.ownerNames ?? []), ...(await loadRosterNames())])];
       const dictionary = await loadPublishedDictionary();
       const priorityRule = await loadPriorityRule();
+      // 幂等前置检查：同一 sourceVersion 已有成功分析时不再重复调用模型（worker 重试/租约接管都会走到这里）。
+      const latestRun = await deps.repositories.analyses.latest(requirement.id);
+      if (latestRun?.status === "analyzed" && latestRun.sourceVersion === requirement.sourceVersion) return;
       const provider = createProvider();
       await deps.repositories.requirements.updateAnalysisState(requirement.id, "running");
       const run = await runAnalysis({
@@ -220,7 +224,9 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
           await failSafe("KANO_EVIDENCE_UNAVAILABLE", "选定资料版本不可用（未批准或含未脱敏内容）。");
           return;
         }
-        const markers = analysisPiiMarkers(requirement, await loadRosterNames());
+        // Kano 与主分析共用同一套掩码名单（目录 + TB 来源花名册），避免来源姓名漏码。
+        const kanoSource = requirement.sourceConfigId ? await deps.repositories.sources.get(requirement.sourceConfigId) : null;
+        const markers = analysisPiiMarkers(requirement, [...new Set([...(kanoSource?.ownerNames ?? []), ...(await loadRosterNames())])]);
         const provider = (deps.createKanoProvider ?? (() => createDeepSeekKanoProvider()))();
         const raw = await provider.run(kanoPrompt(buildKanoRequest(
           { title: requirement.title, description: requirement.description, audienceTags: requirement.audienceTags, audienceConfirmed: requirement.audienceConfirmed, piiMarkers: markers },
@@ -264,6 +270,8 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
         : basePushIdempotencyKey(requirementId, requirement.sourceVersion, latestAnalysis?.analysisVersion ?? 0);
       const outcome = await service.pushRequirement(requirementId, idempotencyKey);
       if (outcome.kind === "error") throw new Error("Base push failed; retry is available.");
+      // 负责人待映射：不能记成 succeeded，否则映射补齐后 owner-recheck 的同键入队命中已成功作业而无效。
+      if (outcome.kind === "conflict" && outcome.reason === "owner_pending_mapping") throw new JobDeferredError("owner_pending_mapping");
       // Base 行已写成功、仅本地记账失败：作业按成功处理，绝不重推外部（会重复写 Base）。
       if (outcome.kind === "pushed_unrecorded") {
         log(`base push wrote record ${outcome.baseRecordId} but bookkeeping failed: ${outcome.detail}`);

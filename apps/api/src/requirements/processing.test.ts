@@ -5,6 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { analysisPiiMarkers, createRequirementWorkflow, type RequirementWorkflowDeps, type TouchedRequirement } from "./processing.js";
 import { isIntakeComplete } from "../domain/workflow.js";
+import { JobDeferredError } from "../jobs/deferred.js";
 import type { RequirementRecord } from "../domain/persistence.js";
 import type { AiProvider, ProviderAnalysisInput } from "../analysis/provider.js";
 import type { ValidatedAnalysis } from "../analysis/contract.js";
@@ -156,6 +157,20 @@ test("handleBasePushJob without a configured transport fails fast instead of pre
   const h = harness();
   const workflow = createRequirementWorkflow(h.deps);
   await assert.rejects(() => workflow.handleBasePushJob({ payload: { requirementId: "req-1" } }), /not configured/);
+});
+
+test("handleBasePushJob defers (not succeeds) when the TB owner has no mapping, so a later same-key enqueue can reset it", async () => {
+  const h = harness();
+  const unmapped = { ...makeRequirement("req-1"), executorUserId: "tb-owner", executorName: "Owner" };
+  const repositories = {
+    ...h.deps.repositories,
+    requirements: { ...h.deps.repositories.requirements, async get() { return unmapped; }, async withRequirementLock(_id: string, run: () => Promise<unknown>) { return run(); } },
+  } as unknown as RequirementWorkflowDeps["repositories"];
+  const workflow = createRequirementWorkflow({ ...h.deps, repositories, base: { push: async () => { throw new Error("must not be called"); } } as never });
+  await assert.rejects(
+    () => workflow.handleBasePushJob({ payload: { requirementId: "req-1", sourceVersion: 1, analysisVersion: 0 } }),
+    (error: unknown) => error instanceof JobDeferredError && error.reason === "owner_pending_mapping",
+  );
 });
 
 test("handleBasePushJob drops jobs whose source version no longer matches", async () => {

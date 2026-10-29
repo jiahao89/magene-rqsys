@@ -348,7 +348,7 @@ test("a substantive change notifies the current owner with substantive_update", 
   assert.equal(h.baseInput?.substantiveChanged, true);
   assert.deepEqual(h.baseInput?.notification, {
     eventType: "需求内容变更",
-    eventId: "substantive_update:req-1:sv2",
+    eventId: "substantive_update:req-1:sv2:av1",
     recipientUserId: "ou-owner",
     // 负责人映射是 open_id：收件人类型必须跟随映射，否则 client 无法与 user_id 的 PM Leader 分开请求。
     recipientIdType: "open_id",
@@ -367,7 +367,7 @@ test("a substantive change without an owner falls back to the PM Leader", async 
   assert.equal(h.baseInput?.substantiveChanged, true);
   assert.deepEqual(h.baseInput?.notification, {
     eventType: "需求内容变更",
-    eventId: "substantive_update:req-1:sv2",
+    eventId: "substantive_update:req-1:sv2:av1",
     recipientUserId: PM_LEADER_USER_ID,
     recipientIdType: "user_id",
     ownerMergeUserId: null,
@@ -393,7 +393,7 @@ test("an owner appearing for the first time produces owner_assigned for the new 
   assert.equal(h.baseInput?.substantiveChanged, false);
   assert.deepEqual(h.baseInput?.notification, {
     eventType: "已分配负责人",
-    eventId: "owner_assigned:req-1:sv2:none:ou-owner",
+    eventId: "owner_assigned:req-1:sv2:av1:none:ou-owner",
     recipientUserId: "ou-owner",
     recipientIdType: "open_id",
     ownerMergeUserId: "ou-owner",
@@ -417,7 +417,7 @@ test("an owner A→B change produces owner_changed with the previous and new use
   assert.equal(result.kind, "pushed");
   assert.deepEqual(h.baseInput?.notification, {
     eventType: "负责人变更",
-    eventId: "owner_changed:req-1:sv2:ou-previous:ou-owner",
+    eventId: "owner_changed:req-1:sv2:av1:ou-previous:ou-owner",
     recipientUserId: "ou-owner",
     recipientIdType: "open_id",
     ownerMergeUserId: "ou-owner",
@@ -443,7 +443,7 @@ test("AI failure followed by success on the same source version produces ai_retr
   assert.equal(h.baseInput?.substantiveChanged, false);
   assert.deepEqual(h.baseInput?.notification, {
     eventType: "AI 重试成功",
-    eventId: "ai_retry_success:req-1:sv2",
+    eventId: "ai_retry_success:req-1:sv2:av2",
     recipientUserId: "ou-owner",
     recipientIdType: "open_id",
     ownerMergeUserId: "ou-owner",
@@ -464,7 +464,7 @@ test("AI retry success without an owner falls back to the PM Leader", async () =
   assert.equal(h.baseInput?.substantiveChanged, false);
   assert.deepEqual(h.baseInput?.notification, {
     eventType: "AI 重试成功",
-    eventId: "ai_retry_success:req-1:sv2",
+    eventId: "ai_retry_success:req-1:sv2:av2",
     recipientUserId: PM_LEADER_USER_ID,
     recipientIdType: "user_id",
     ownerMergeUserId: null,
@@ -681,7 +681,7 @@ test("a hand-picked owner on a requirement without a TB owner is written to Base
   assert.deepEqual(h.baseInput?.owner, { userId: "u-assignee", idType: "user_id" });
   assert.deepEqual(h.baseInput?.notification, {
     eventType: "已分配负责人",
-    eventId: "owner_assigned:req-1:sv2:none:u-assignee",
+    eventId: "owner_assigned:req-1:sv2:av1:none:u-assignee",
     recipientUserId: "u-assignee",
     recipientIdType: "user_id",
     ownerMergeUserId: "u-assignee",
@@ -701,7 +701,7 @@ test("assigning an owner after an empty-owner push notifies the newly assigned o
   const result = await h.service.pushRequirement("req-1", "push:req-1:v2:owner");
   assert.equal(result.kind, "pushed");
   assert.deepEqual(h.baseInput?.owner, { userId: "u-assignee", idType: "user_id" });
-  assert.equal(h.baseInput?.notification?.eventId, "owner_assigned:req-1:sv2:none:u-assignee");
+  assert.equal(h.baseInput?.notification?.eventId, "owner_assigned:req-1:sv2:av1:none:u-assignee");
   assert.equal(h.baseInput?.notification?.recipientUserId, "u-assignee");
 });
 
@@ -722,7 +722,7 @@ test("manual source snapshots without TB owner fields still notify on a later ha
   });
   const result = await h.service.pushRequirement("req-1", "push:req-1:v2:manual-owner");
   assert.equal(result.kind, "pushed");
-  assert.equal(h.baseInput?.notification?.eventId, "owner_assigned:req-1:sv2:none:u-assignee");
+  assert.equal(h.baseInput?.notification?.eventId, "owner_assigned:req-1:sv2:av1:none:u-assignee");
   assert.equal(h.baseInput?.notification?.recipientUserId, "u-assignee");
   assert.equal(h.baseInput?.notification?.recipientIdType, "user_id");
 });
@@ -750,7 +750,7 @@ test("a substantive change on a hand-assigned requirement notifies that owner ra
   });
   const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
   assert.equal(result.kind, "pushed");
-  assert.equal(h.baseInput?.notification?.eventId, "substantive_update:req-1:sv2");
+  assert.equal(h.baseInput?.notification?.eventId, "substantive_update:req-1:sv2:av1");
   assert.equal(h.baseInput?.notification?.recipientUserId, "u-assignee");
   assert.equal(h.baseInput?.notification?.recipientIdType, "user_id");
 });
@@ -765,7 +765,7 @@ test("reassigning a hand-picked owner produces owner_changed from the owner prev
   const result = await h.service.pushRequirement("req-1", "push:req-1:v2:owner");
   assert.equal(result.kind, "pushed");
   assert.deepEqual(h.baseInput?.owner, { userId: "u-next", idType: "user_id" });
-  assert.equal(h.baseInput?.notification?.eventId, "owner_changed:req-1:sv2:u-assignee:u-next");
+  assert.equal(h.baseInput?.notification?.eventId, "owner_changed:req-1:sv2:av1:u-assignee:u-next");
   assert.ok(h.calls.includes("manual-owner-pushed:u-next"));
 });
 
@@ -787,10 +787,20 @@ test("a hand-picked owner keeps precedence after Teambition later provides a map
   assert.ok(!h.calls.includes("manual-owner-cleared"));
 });
 
+test("an unmapped TB owner returns a conflict with the owner_pending_mapping reason and writes nothing to Base", async () => {
+  const req = requirement({ executorUserId: "tb-owner", executorName: "Owner" });
+  const h = makeHarness({ req, mapping: null });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.deepEqual(result, { kind: "conflict", reason: "owner_pending_mapping" });
+  assert.equal(h.calls.includes("base"), false);
+  assert.equal(h.auditEvents.find((event) => event.result === "denied")?.safeDetails.reason, "owner_pending_mapping");
+});
+
 test("V02-T03 a Base key conflict stops the push with a denied audit and a failed run", async () => {
   const h = makeHarness({ pushError: new BaseKeyConflictError("Base row for TB id tb-1 holds platform RQ-000099") });
   const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
   assert.equal(result.kind, "conflict");
+  assert.equal(result.kind === "conflict" ? result.reason : null, "base_key_conflict");
   assert.equal(h.savedFailure?.code, "BASE_KEY_CONFLICT");
   assert.ok(h.calls.includes("state:failed"));
   const denied = h.auditEvents.find((event) => event.result === "denied");

@@ -44,8 +44,11 @@ const LABELLED_PERSON_NAME = /((?:反馈人|联系人|提出人|申请人|用户
  * 检测文本中的疑似 PII 命中数（V02-T13）：导入 Kano 访谈快照时标记，
  * 命中>0 的版本拒绝批准，防止未脱敏材料进入模型输入。只计数不改写。
  */
+// 计数与掩码必须共用同一组模式：两者不一致会让“未命中 PII”的材料携带 @提及/平台用户 ID 进入模型。
+const PII_COUNT_PATTERNS = [EMAIL, PHONE, SECRET, ID_CARD, PLATFORM_USER_ID, MENTION, LABELLED_PERSON_NAME] as const;
+
 export function countPiiFindings(text: string): number {
-  const patterns = [EMAIL, PHONE, SECRET, ID_CARD, LABELLED_PERSON_NAME];
+  const patterns = PII_COUNT_PATTERNS;
   let count = 0;
   for (const pattern of patterns) {
     const matches = text.match(new RegExp(pattern.source, pattern.flags));

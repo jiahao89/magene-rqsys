@@ -63,7 +63,8 @@ export interface PriorityRuleVersion {
   id: string;
   version: number;
   status: PublishStatus;
-  rules: { thresholds?: { p0?: number; p1?: number; p2?: number } };
+  /** umsc_weighted_v2 为已确认的固定公式；缺省表示 v1 四维求和规则。 */
+  rules: { formulaType?: string; thresholds?: { p0?: number; p1?: number; p2?: number } };
   validationEvidence: unknown[];
   createdBy: string | null;
   createdAt: string;
@@ -437,6 +438,9 @@ export async function listMappings(fetcher: typeof fetch = fetch): Promise<Perso
   const result = await requestJson<{ items: PersonMapping[] }>("/api/mappings", fetcher);
   return result.items;
 }
+
+/** 审计面板默认取最近 N 条；与 API 的 AuditListQuerySchema 默认 limit 一致。 */
+export const AUDIT_PAGE_LIMIT = 50;
 
 export function listAudit(params: { entityId?: string; since?: string; until?: string; limit?: number; fetcher?: typeof fetch } = {}): Promise<AuditEvent[]> {
   const { fetcher = fetch, entityId, since, until, limit } = params;
