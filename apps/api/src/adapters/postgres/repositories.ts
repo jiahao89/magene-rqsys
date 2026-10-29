@@ -374,8 +374,30 @@ async getPipelineCounts(){
   };
 }
 async search(q:{q?:string;executorName?:string;pullState?:PullState;analysisState?:AnalysisState;ownerState?:OwnerState;pushState?:PushState;batchId?:string;since?:string;until?:string;limit:number;cursor?:RequirementSearchCursor}){const values:unknown[]=[q.q??null,q.executorName??null,q.pullState??null,q.analysisState??null,q.ownerState??null,q.pushState??null,q.batchId??null,q.since??null,q.until??null,q.cursor?.createdAt??null,q.cursor?.id??null,q.limit+1];const{rows}=await this.pool.query("SELECT * FROM requirements WHERE ($1::text IS NULL OR title ILIKE '%'||$1||'%') AND ($2::text IS NULL OR lower(btrim(executor_name))=lower(btrim($2))) AND ($3::text IS NULL OR pull_state=$3) AND ($4::text IS NULL OR analysis_state=$4) AND ($5::text IS NULL OR owner_state=$5) AND ($6::text IS NULL OR push_state=$6) AND ($7::uuid IS NULL OR latest_batch_id=$7) AND ($8::timestamptz IS NULL OR last_seen_at >= $8) AND ($9::timestamptz IS NULL OR last_seen_at <= $9) AND ($10::timestamptz IS NULL OR (date_trunc('milliseconds', created_at),id)<(date_trunc('milliseconds',$10::timestamptz),$11::uuid)) ORDER BY date_trunc('milliseconds', created_at) DESC,id DESC LIMIT $12",values);const more=rows.length>q.limit,page=rows.slice(0,q.limit);return{items:page.map(requirement),nextCursor:more?encodeRequirementCursor({createdAt:asDate(page.at(-1)!.created_at)!,id:String(page.at(-1)!.id)}):null};}
-async updateAnalysisState(requirementId:string,to:AnalysisState){const{rows}=await this.pool.query("SELECT analysis_state FROM requirements WHERE id=$1",[requirementId]);if(!rows[0])throw new Error(`Requirement not found: ${requirementId}`);assertTransition("analysis",String(rows[0].analysis_state) as AnalysisState,to);await this.pool.query("UPDATE requirements SET analysis_state=$2,updated_at=now() WHERE id=$1",[requirementId,to]);}
-async setOwner(requirementId:string,feishuUserId:string|null,state:OwnerState){const{rows}=await this.pool.query("SELECT owner_state FROM requirements WHERE id=$1",[requirementId]);if(!rows[0])throw new Error(`Requirement not found: ${requirementId}`);assertTransition("owner",String(rows[0].owner_state) as OwnerState,state);await this.pool.query("UPDATE requirements SET owner_state=$2,updated_at=now() WHERE id=$1",[requirementId,state]);}
+async updateAnalysisState(requirementId:string,to:AnalysisState){
+    // CAS：并发迁移只允许一个写入成功；重读后若仍合法则重试，否则按原 transition 规则抛错。
+    for(let attempt=0;attempt<3;attempt+=1){
+      const{rows}=await this.pool.query("SELECT analysis_state FROM requirements WHERE id=$1",[requirementId]);
+      if(!rows[0])throw new Error(`Requirement not found: ${requirementId}`);
+      const from=String(rows[0].analysis_state) as AnalysisState;
+      assertTransition("analysis",from,to);
+      const updated=await this.pool.query("UPDATE requirements SET analysis_state=$2,updated_at=now() WHERE id=$1 AND analysis_state=$3 RETURNING id",[requirementId,to,from]);
+      if(updated.rowCount)return;
+    }
+    throw new Error("Requirement analysis state changed concurrently; retry the operation.");
+  }
+async setOwner(requirementId:string,feishuUserId:string|null,state:OwnerState){
+    // CAS：负责人状态被并发修改时避免后写覆盖。
+    for(let attempt=0;attempt<3;attempt+=1){
+      const{rows}=await this.pool.query("SELECT owner_state FROM requirements WHERE id=$1",[requirementId]);
+      if(!rows[0])throw new Error(`Requirement not found: ${requirementId}`);
+      const from=String(rows[0].owner_state) as OwnerState;
+      assertTransition("owner",from,state);
+      const updated=await this.pool.query("UPDATE requirements SET owner_state=$2,updated_at=now() WHERE id=$1 AND owner_state=$3 RETURNING id",[requirementId,state,from]);
+      if(updated.rowCount)return;
+    }
+    throw new Error("Requirement owner state changed concurrently; retry the operation.");
+  }
 async assignManualOwner(requirementId:string,owner:Omit<RequirementManualOwner,"pushedFeishuUserId"|"assignmentVersion">){
   const c=await this.pool.connect();
   try{
@@ -394,7 +416,18 @@ async listDuplicates(requirementId:string){const{rows}=await this.pool.query("SE
 async listTitleCandidates(sourceConfigId:string){const{rows}=await this.pool.query("SELECT id,teambition_requirement_id,title,source_created_at,duplicate_of_requirement_id FROM requirements WHERE source_config_id=$1",[sourceConfigId]);return rows.map((r:any)=>({id:String(r.id),teambitionRequirementId:String(r.teambition_requirement_id),title:String(r.title),sourceCreatedAt:asDate(r.source_created_at),duplicateOfRequirementId:r.duplicate_of_requirement_id??null}));}
 async setDuplicateOf(requirementId:string,canonicalRequirementId:string|null){await this.pool.query("UPDATE requirements SET duplicate_of_requirement_id=$2,updated_at=now() WHERE id=$1 AND duplicate_of_requirement_id IS DISTINCT FROM $2",[requirementId,canonicalRequirementId]);}
 async setBaseRecord(requirementId:string,baseRecordId:string,pushedAt:string){await this.pool.query("UPDATE requirements SET base_record_id=$2,last_pushed_at=$3,updated_at=now() WHERE id=$1",[requirementId,baseRecordId,pushedAt]);}
-async setPushState(requirementId:string,state:PushState){const{rows}=await this.pool.query("SELECT push_state FROM requirements WHERE id=$1",[requirementId]);if(!rows[0])throw new Error(`Requirement not found: ${requirementId}`);assertTransition("push",String(rows[0].push_state) as PushState,state);await this.pool.query("UPDATE requirements SET push_state=$2,updated_at=now() WHERE id=$1",[requirementId,state]);}
+async setPushState(requirementId:string,state:PushState){
+    // CAS：推送状态迁移串行化，同一需求不会被两个 worker 同时推进。
+    for(let attempt=0;attempt<3;attempt+=1){
+      const{rows}=await this.pool.query("SELECT push_state FROM requirements WHERE id=$1",[requirementId]);
+      if(!rows[0])throw new Error(`Requirement not found: ${requirementId}`);
+      const from=String(rows[0].push_state) as PushState;
+      assertTransition("push",from,state);
+      const updated=await this.pool.query("UPDATE requirements SET push_state=$2,updated_at=now() WHERE id=$1 AND push_state=$3 RETURNING id",[requirementId,state,from]);
+      if(updated.rowCount)return;
+    }
+    throw new Error("Requirement push state changed concurrently; retry the operation.");
+  }
 // 同一需求的推送串行化：advisory lock 必须与事务在同一连接上取得，随 COMMIT/ROLLBACK 自动释放。
 // 事务保持打开期间，外层 fn 的普通查询仍由连接池执行；第二个调用会在取锁处等待第一个事务结束。
 async withRequirementLock<T>(requirementId:string,fn:()=>Promise<T>):Promise<T>{
