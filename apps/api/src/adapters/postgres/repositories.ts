@@ -402,10 +402,12 @@ async assignManualOwner(requirementId:string,owner:Omit<RequirementManualOwner,"
   const c=await this.pool.connect();
   try{
     await c.query("BEGIN");
-    const{rows}=await c.query("SELECT owner_state FROM requirements WHERE id=$1 FOR UPDATE",[requirementId]);
+    const{rows}=await c.query("SELECT owner_state,manual_owner_feishu_user_id,manual_owner_feishu_id_type FROM requirements WHERE id=$1 FOR UPDATE",[requirementId]);
     if(!rows[0])throw new Error(`Requirement not found: ${requirementId}`);
     assertTransition("owner",String(rows[0].owner_state) as OwnerState,"manually_mapped");
-    await c.query("UPDATE requirements SET owner_state='manually_mapped',manual_owner_feishu_user_id=$2,manual_owner_feishu_id_type=$3,manual_owner_name=$4,manual_owner_assigned_by=$5,manual_owner_assigned_at=$6,manual_owner_assignment_version=manual_owner_assignment_version+1,updated_at=now() WHERE id=$1",[requirementId,owner.feishuUserId,owner.feishuIdType,owner.name,owner.assignedBy,owner.assignedAt]);
+    // 重复分配同一负责人（同一 id 类型）是幂等操作：不递增 assignmentVersion，也不产生新的推送事件。
+    const unchanged=rows[0].manual_owner_feishu_user_id===owner.feishuUserId&&rows[0].manual_owner_feishu_id_type===owner.feishuIdType;
+    await c.query("UPDATE requirements SET owner_state='manually_mapped',manual_owner_feishu_user_id=$2,manual_owner_feishu_id_type=$3,manual_owner_name=$4,manual_owner_assigned_by=$5,manual_owner_assigned_at=$6,manual_owner_assignment_version=manual_owner_assignment_version+$7,updated_at=now() WHERE id=$1",[requirementId,owner.feishuUserId,owner.feishuIdType,owner.name,owner.assignedBy,owner.assignedAt,unchanged?0:1]);
     await c.query("COMMIT");
   }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}
 }
