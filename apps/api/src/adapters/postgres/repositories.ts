@@ -778,7 +778,7 @@ export class PostgresRequirementScoringRepository implements RequirementScoringR
     const c=await this.pool.connect();
     try{
       await c.query("BEGIN");
-      const locked=await c.query("SELECT id FROM requirements WHERE id=$1 FOR UPDATE",[input.requirementId]);
+      const locked=await c.query("SELECT id,source_version FROM requirements WHERE id=$1 FOR UPDATE",[input.requirementId]);
       if(!locked.rows[0])throw new Error("Scoring requirement was not found");
       const existing=await c.query("SELECT version FROM requirement_score_versions WHERE requirement_id=$1 AND status IN ('current','confirmed') ORDER BY version DESC LIMIT 1",[input.requirementId]);
       const status=existing.rows[0]?"ai_suggested":"current";
@@ -821,6 +821,9 @@ export class PostgresRequirementScoringRepository implements RequirementScoringR
       if(currentVersion!==input.expectedVersion){await c.query("ROLLBACK");return{outcome:"version_conflict" as const,currentVersion};}
       const ai=await c.query("SELECT * FROM requirement_score_versions WHERE requirement_id=$1 AND version=$2 AND status='ai_suggested' FOR UPDATE",[input.requirementId,input.aiVersion]);
       if(!ai.rows[0]){await c.query("ROLLBACK");return{outcome:"ai_not_found" as const};}
+      // 新鲜度校验：需求升版/重分析后，旧 AI 建议不再代表当前来源，不能直接采纳为当前评分。
+      const aiSourceVersion=Number(ai.rows[0].source_version),currentSourceVersion=Number(locked.rows[0].source_version);
+      if(Number.isFinite(aiSourceVersion)&&Number.isFinite(currentSourceVersion)&&aiSourceVersion!==currentSourceVersion){await c.query("ROLLBACK");return{outcome:"ai_not_found" as const};}
       if(current.rows[0])await c.query("UPDATE requirement_score_versions SET status='superseded' WHERE id=$1",[current.rows[0].id]);
       const source=scoreVersion(ai.rows[0]);const version=await this.nextVersion(c,input.requirementId);const id=randomUUID();
       const{rows}=await c.query("INSERT INTO requirement_score_versions(id,requirement_id,version,status,origin,source_version,analysis_version,rule_version_id,inputs,alpha,score,priority,score_confidence,score_confidence_reason,safety_flag,basis,rationale,actor_id,change_reason) VALUES($1,$2,$3,'confirmed','ai_applied',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *",[id,input.requirementId,version,source.sourceVersion,source.analysisVersion,source.ruleVersionId,JSON.stringify(source.inputs),source.alpha,source.score,source.priority,source.scoreConfidence,source.scoreConfidenceReason,source.safetyFlag,JSON.stringify(source.basis),source.rationale,input.actorId,input.reason]);
