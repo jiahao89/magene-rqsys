@@ -451,6 +451,55 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: Stale expectedVersion; the message carries the current version. }
         '503': { $ref: '#/components/responses/DependencyUnavailable' }
+  /api/requirements/{id}/duplicate-decision:
+    put:
+      summary: Confirm a duplicate/ignore resolution (P1)
+      description: >-
+        Records a human-confirmed duplicate or ignore decision keyed by the stable source identity
+        (project + TB requirement id), so re-syncs and re-imports keep the decision. Confirmed
+        resolutions suppress AI analysis, Base push and notifications for the requirement.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision, reason, expectedVersion]
+              properties:
+                decision: { type: string, enum: [duplicate, ignored, confirmed_unique] }
+                canonicalRequirementId: { type: string, format: uuid, nullable: true }
+                reason: { type: string, minLength: 1, maxLength: 500 }
+                expectedVersion: { type: integer, minimum: 0 }
+      responses:
+        '200': { description: Saved; the response carries processingState, decision and the new version. }
+        '400': { $ref: '#/components/responses/Validation' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Stale expectedVersion; the message carries the current decision version. }
+        '503': { $ref: '#/components/responses/DependencyUnavailable' }
+    delete:
+      summary: Revoke a duplicate/ignore resolution (P1)
+      description: Removes the confirmed resolution and restores normal processing (processingState=active).
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedVersion]
+              properties:
+                expectedVersion: { type: integer, minimum: 0 }
+      responses:
+        '200': { description: Revoked; processingState is active again. }
+        '400': { $ref: '#/components/responses/Validation' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Stale expectedVersion. }
+        '503': { $ref: '#/components/responses/DependencyUnavailable' }
   /api/requirements/{id}/scoring:
     put:
       summary: Save PM-edited scoring inputs and alpha (V02-S06)

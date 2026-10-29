@@ -256,6 +256,30 @@ export function clearOwner(id: string, fetcher: typeof fetch = fetch): Promise<{
   return deleteJson<{ requirementId: string; ownerState: RequirementOwnerState; status: string }>(`/api/requirements/${id}/owner`, fetcher);
 }
 
+export interface DuplicateDecisionInput {
+  decision: DuplicateDecision;
+  /** decision 为 duplicate 时必填：被选为重复项归属的主记录 id。 */
+  canonicalRequirementId?: string | null;
+  /** 判定理由，服务端要求非空。 */
+  reason: string;
+  /** 乐观并发 token：取 resolution.version，没有判定版本时为 0。 */
+  expectedVersion: number;
+}
+export interface DuplicateDecisionResult {
+  requirementId: string;
+  processingState: RequirementProcessingState;
+  version: number;
+}
+
+/**
+ * 提交重复判定（确认重复 / 确认非重复 / 忽略），并由服务端重算处理闸口状态。
+ * 撤销判定回 active 走同一端点：decision=confirmed_unique（P1 契约只定义了三个 decision 值）。
+ * 409 表示判定版本冲突；400 表示校验失败（如理由为空、主记录无效）。
+ */
+export function setDuplicateDecision(id: string, input: DuplicateDecisionInput, fetcher: typeof fetch = fetch): Promise<DuplicateDecisionResult> {
+  return putJson<DuplicateDecisionResult>(`/api/requirements/${id}/duplicate-decision`, input, fetcher);
+}
+
 export async function searchFeishuUsers(query: string, fetcher: typeof fetch = fetch): Promise<FeishuUserCandidate[]> {
   const params = new URLSearchParams({ q: query.trim() });
   const result = await requestJson<{ items: FeishuUserCandidate[] }>(`/api/feishu/users?${params.toString()}`, fetcher);
@@ -274,6 +298,23 @@ export interface AuditEvent {
 }
 
 export type RequirementOwnerState = "pending_mapping" | "auto_mapped" | "manually_mapped" | "not_required";
+
+/**
+ * 处理闸口状态：suppressed_* 表示人工判定为重复/忽略，需求不会进入 AI 分析、Base 推送与通知。
+ * 后端 P1 落地前旧响应可能缺少该字段，展示层按 active 处理。
+ */
+export type RequirementProcessingState = "active" | "suppressed_duplicate" | "suppressed_ignored";
+export type DuplicateDecision = "duplicate" | "ignored" | "confirmed_unique";
+export type DuplicateReviewState = "suspected" | "confirmed";
+export interface RequirementResolution {
+  decision: DuplicateDecision;
+  reviewState: DuplicateReviewState;
+  canonicalRequirementId?: string | null;
+  canonicalPlatformRequirementId?: string | null;
+  reason?: string | null;
+  /** 判定版本，作为 duplicate-decision 的乐观并发 token；后端未下发时按 0 处理。 */
+  version?: number | null;
+}
 
 /**
  * 列表 DTO 实际包含 `source`（Teambition allowlist 快照）；`ownerName`/`updatedAt`
@@ -295,6 +336,10 @@ export interface RequirementSummary {
   title: string;
   sourceVersion: number;
   pipeline: { pull: string; analysis: string; owner: RequirementOwnerState; push: string };
+  /** 处理闸口状态；缺省视为 active（兼容后端未上线时的旧响应）。 */
+  processingState?: RequirementProcessingState;
+  /** 人工/系统重复判定；未判定或旧响应为 null。 */
+  resolution?: RequirementResolution | null;
   source?: Record<string, unknown>;
   ownerName?: string | null;
   manualOwner?: { feishuUserId: string; feishuIdType: "open_id" | "user_id" | "union_id"; name: string | null; assignedAt: string } | null;
@@ -369,6 +414,10 @@ export interface RequirementDetail {
   description: string | null;
   sourceVersion: number;
   pipeline: { pull: string; analysis: string; owner: RequirementOwnerState; push: string };
+  /** 处理闸口状态；suppressed_* 不进入 AI 分析/Base 推送/通知。 */
+  processingState?: RequirementProcessingState;
+  /** 当前重复判定（含判定版本，用于乐观并发）。 */
+  resolution?: RequirementResolution | null;
   source: Record<string, unknown>;
   analysis: Record<string, unknown> | null;
   analyses: AnalysisVersionSummary[];
@@ -403,9 +452,9 @@ function buildSearch(query: Record<string, string | number | undefined>): string
   return suffix ? `?${suffix}` : "";
 }
 
-export async function listRequirements(params: { q?: string; executorName?: string; pullState?: string; ownerState?: string; analysisState?: string; pushState?: string; batchId?: string; since?: string; until?: string; limit?: number; cursor?: string; fetcher?: typeof fetch } = {}): Promise<{ items: RequirementSummary[]; nextCursor: string | null }> {
-  const { fetcher = fetch, q, executorName, pullState, ownerState, analysisState, pushState, batchId, since, until, limit, cursor } = params;
-  return requestJson<{ items: RequirementSummary[]; nextCursor: string | null }>(`/api/requirements${buildSearch({ q, executorName, pullState, ownerState, analysisState, pushState, batchId, since, until, limit, cursor })}`, fetcher);
+export async function listRequirements(params: { q?: string; executorName?: string; pullState?: string; ownerState?: string; analysisState?: string; pushState?: string; processingState?: "active" | "suppressed"; batchId?: string; since?: string; until?: string; limit?: number; cursor?: string; fetcher?: typeof fetch } = {}): Promise<{ items: RequirementSummary[]; nextCursor: string | null }> {
+  const { fetcher = fetch, q, executorName, pullState, ownerState, analysisState, pushState, processingState, batchId, since, until, limit, cursor } = params;
+  return requestJson<{ items: RequirementSummary[]; nextCursor: string | null }>(`/api/requirements${buildSearch({ q, executorName, pullState, ownerState, analysisState, pushState, processingState, batchId, since, until, limit, cursor })}`, fetcher);
 }
 
 export async function listBatches(params: { status?: string; since?: string; until?: string; limit?: number; cursor?: string; fetcher?: typeof fetch } = {}): Promise<{ items: BatchSummary[]; nextCursor: string | null }> {

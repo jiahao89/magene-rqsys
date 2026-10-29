@@ -40,6 +40,8 @@ export const RequirementListQuerySchema = z.object({
   analysisState: z.enum(["pending", "running", "analyzed", "failed_retryable"]).optional(),
   ownerState: z.enum(["pending_mapping", "auto_mapped", "manually_mapped", "not_required"]).optional(),
   pushState: z.enum(["pending", "running", "pushed", "failed"]).optional(),
+  // 重复决策派生的处理状态筛选：active / suppressed（含 duplicate 与 ignored）。
+  processingState: z.enum(["active", "suppressed"]).optional(),
   batchId: z.uuid().optional(),
   since: z.iso.datetime({ offset: true }).optional(),
   until: z.iso.datetime({ offset: true }).optional(),
@@ -132,4 +134,15 @@ export const KanoEvidenceImportSchema = z.strictObject({
 // V02-T14：手动触发 Kano 假设报告。资料版本必须是已批准且未标记 PII 的版本。
 export const KanoRunRequestSchema = z.strictObject({
   evidenceVersion: z.number().int().min(1),
+});
+
+// V02-T25：重复处理决策（P1）。人工确认是唯一写入口；suspected 只提示、不压制。
+export const DuplicateDecisionSchema = z.strictObject({
+  decision: z.enum(["duplicate", "ignored", "confirmed_unique"]),
+  canonicalRequirementId: z.uuid().nullish(),
+  reason: z.string().trim().min(1).max(500),
+  expectedVersion: z.number().int().min(0),
+});
+export const ClearDuplicateDecisionSchema = z.strictObject({
+  expectedVersion: z.number().int().min(0),
 });

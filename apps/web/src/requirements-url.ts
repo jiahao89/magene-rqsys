@@ -2,7 +2,7 @@
  * 需求池的 URL 查询参数契约（design.md 第 8–10 章）。
  *
  * 列表筛选、详情深链都写在同一组查询参数里，刷新与分享 URL 不丢上下文：
- * - 列表筛选：title / owner / pull / analysis / ownerState / push / batchId / from / to
+ * - 列表筛选：title / owner / pull / analysis / ownerState / push / processingState / batchId / from / to
  * - 详情深链：requirement（复用 deep-link.ts 的语义）
  *
  * 这里只做「字符串 → 状态 → 字符串」的纯映射，不读写 location，
@@ -16,9 +16,19 @@ export interface RequirementListFilters {
   analysis: string;
   ownerState: string;
   push: string;
+  /** 重复处理视图：""=全部，active=仅活跃，suppressed=已压制（重复/忽略）。 */
+  processingState: RequirementProcessingView;
   batchId: string;
   from: string;
   to: string;
+}
+
+/** 重复处理视图的合法取值；与服务端 processingState 查询参数取值一致。 */
+export type RequirementProcessingView = "" | "active" | "suppressed";
+
+/** URL 参数 → 重复处理视图；未知值回落到「全部」，避免深链把非法枚举发给服务端。 */
+export function parseRequirementProcessingView(value: string | null | undefined): RequirementProcessingView {
+  return value === "active" || value === "suppressed" ? value : "";
 }
 
 export const emptyRequirementListFilters: RequirementListFilters = {
@@ -28,6 +38,7 @@ export const emptyRequirementListFilters: RequirementListFilters = {
   analysis: "",
   ownerState: "",
   push: "",
+  processingState: "",
   batchId: "",
   from: "",
   to: "",
@@ -40,6 +51,7 @@ export const requirementFilterParams = [
   "analysis",
   "ownerState",
   "push",
+  "processingState",
   "batchId",
   "from",
   "to",
@@ -54,6 +66,7 @@ export function readRequirementListFilters(search: string): RequirementListFilte
     analysis: params.get("analysis")?.trim() ?? "",
     ownerState: params.get("ownerState")?.trim() ?? "",
     push: params.get("push")?.trim() ?? "",
+    processingState: parseRequirementProcessingView(params.get("processingState")),
     batchId: params.get("batchId")?.trim() ?? "",
     from: params.get("from")?.trim() ?? "",
     to: params.get("to")?.trim() ?? "",

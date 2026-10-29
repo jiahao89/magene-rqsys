@@ -150,6 +150,8 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
       if (typeof requirementId !== "string") throw new Error("Invalid analysis job payload");
       const requirement = await deps.repositories.requirements.get(requirementId);
       if (!requirement) throw new Error("Analysis requirement was not found");
+      // 重复/忽略已确认：不进入 AI 分析（作业可能早于决策入队，这里再拦一次）。
+      if ((requirement.processingState ?? "active") !== "active") return;
       assertFixtureWorkAllowed({ sourceId: requirement.sourceConfigId ?? "", fixture: isSyntheticFixtureRequirement(requirement.teambitionRequirementId) }, deps.fixtureEnvironment, new Date());
       const expectedSubstantiveHash = job.payload.substantiveHash;
       if (typeof expectedSubstantiveHash === "string" && expectedSubstantiveHash !== requirement.substantiveHash) return;
@@ -250,6 +252,8 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
       if (typeof requirementId !== "string") throw new Error("Invalid base_push job payload");
       const requirement = await deps.repositories.requirements.get(requirementId);
       if (!requirement) throw new Error("Base push requirement was not found");
+      // 重复/忽略已确认：不推送 Base、不生成通知。
+      if ((requirement.processingState ?? "active") !== "active") return;
       assertFixtureWorkAllowed({ sourceId: requirement.sourceConfigId ?? "", fixture: isSyntheticFixtureRequirement(requirement.teambitionRequirementId) }, deps.fixtureEnvironment, new Date());
       // TB 行推送使用来源项目 ID 作为 Base 项目字段；手工行无来源配置，
       // 平台键切换前的过渡空值由 V02-T03 以需求平台 ID 替代。

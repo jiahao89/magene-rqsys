@@ -25,6 +25,7 @@ export function createAnalysisAdvancer(deps: AdvanceDeps) {
   return async function advanceAfterAnalysisTerminal(requirementId: string, analysisStatus: "analyzed" | "failed_retryable", actorId: string | null, analysisVersion: number): Promise<AdvanceOutcome> {
     const req = await deps.requirements.get(requirementId);
     if (!req || !isIntakeComplete(req.pipeline.pull)) return "not_eligible";
+    if ((req.processingState ?? "active") !== "active") return "not_eligible";
     if (req.pipeline.push === "running" || (req.pipeline.push === "pushed" && analysisStatus !== "analyzed")) return "not_eligible";
 
     const hasTbOwner = Boolean(req.executorUserId || req.executorName);
@@ -80,6 +81,7 @@ export function createSourceMetadataAdvancer(deps: AdvanceDeps, options: { now?:
   ): Promise<AdvanceOutcome> {
     const req = await deps.requirements.get(requirementId);
     if (!req || !isIntakeComplete(req.pipeline.pull)) return "not_eligible";
+    if ((req.processingState ?? "active") !== "active") return "not_eligible";
 
     let ownerState = req.pipeline.owner;
     const ownerLookup = req.executorUserId

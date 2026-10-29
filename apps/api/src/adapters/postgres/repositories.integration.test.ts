@@ -543,3 +543,39 @@ test("V02-T10 seeded v1 rule remains historical; V02-S06 scoring v2 is the singl
     assert.equal(list.filter((v)=>v.status==="published").length,1);
   }finally{await cleanup(ctx);}
 });
+
+test("confirmed duplicate decisions suppress processing and survive requirement re-upsert", async () => {
+  const ctx = await setup();
+  try {
+    const source = await ctx.repos.sources.create(config);
+    const batch = await ctx.repos.batches.create({ sourceConfigId: source.id, triggerType: "manual", actorId: null, idempotencyKey: "resolution-batch-0001", startedAt: "2026-10-08T00:00:00Z" });
+    const canonical = await ctx.repos.requirements.upsertRequirement(source.id, "task-1", requirementWrite(source.id, batch.id));
+    const duplicate = await ctx.repos.requirements.upsertRequirement(source.id, "task-2", requirementWrite(source.id, batch.id, { teambitionRequirementId: "task-2", title: "Duplicate" }));
+    assert.equal((await ctx.repos.requirements.get(duplicate.id))?.processingState, "active");
+
+    const decided = await ctx.repos.requirements.decideResolution({
+      requirementId: duplicate.id, decision: "duplicate", canonicalRequirementId: canonical.id,
+      reason: "same request from two channels", actorId: "pm-lead", expectedVersion: 0, now: "2026-10-08T01:00:00Z",
+    });
+    assert.equal(decided.outcome, "saved");
+    assert.equal((await ctx.repos.requirements.get(duplicate.id))?.processingState, "suppressed_duplicate");
+    assert.equal((await ctx.repos.requirements.getResolution(duplicate.id))?.decision, "duplicate");
+
+    // 同步重推同一 TB 需求（upsert）：触发器按决策表重算，压制状态必须保留。
+    await ctx.repos.requirements.upsertRequirement(source.id, "task-2", requirementWrite(source.id, batch.id, { teambitionRequirementId: "task-2", title: "Duplicate", sourceHash: "c".repeat(64), substantiveHash: "d".repeat(64), sourceVersion: 2 }));
+    assert.equal((await ctx.repos.requirements.get(duplicate.id))?.processingState, "suppressed_duplicate");
+
+    // 乐观版本：旧版本号必须冲突，不得覆盖人工判断。
+    const stale = await ctx.repos.requirements.decideResolution({
+      requirementId: duplicate.id, decision: "ignored", canonicalRequirementId: null,
+      reason: "stale", actorId: "other", expectedVersion: 0, now: "2026-10-08T02:00:00Z",
+    });
+    assert.deepEqual(stale, { outcome: "version_conflict", version: 1 });
+
+    // 撤销后恢复 active，并允许后续正常处理。
+    assert.deepEqual(await ctx.repos.requirements.clearResolution({ requirementId: duplicate.id, expectedVersion: 1 }), { outcome: "cleared" });
+    assert.equal((await ctx.repos.requirements.get(duplicate.id))?.processingState, "active");
+    assert.equal(await ctx.repos.requirements.getResolution(duplicate.id), null);
+    assert.equal((await ctx.repos.requirements.get(canonical.id))?.processingState, "active");
+  } finally { await cleanup(ctx); }
+});

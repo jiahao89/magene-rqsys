@@ -9,7 +9,7 @@ import { RICE_CONFIG_VERSION, RICE_EFFORT_UNIT, RICE_IMPACT_LEVELS, RICE_REACH_U
 import type { AuditEventRepository, AnalysisRunRepository, PipelineJobRepository, SourceConfigRepository, SyncBatchRepository, SyncItemRepository, PersonMappingRepository, RequirementQueryRepository, BasePushRunRepository, ModuleDictionaryRepository, PriorityRuleRepository, SourceSnapshotRepository, TeamDirectoryRepository, RequirementScoringRepository } from "../application/repositories.js";
 import type { PersonMappingRecord, AnalysisRunRecord, ModuleDictionaryVersionRecord, PriorityRuleVersionRecord, RequirementRecord, SourceConfigRecord, SyncBatchRecord } from "../domain/persistence.js";
 import type { TeamPersonRecord } from "../domain/team-directory.js";
-import { AuditListQuerySchema, KanoEvidenceImportSchema, KanoRunRequestSchema, AudienceUpdateSchema, BatchListQuerySchema, RiceDraftUpdateSchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementIntakeEditSchema, RequirementIntakeSchema, RequirementListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
+import { AuditListQuerySchema, ClearDuplicateDecisionSchema, DuplicateDecisionSchema, KanoEvidenceImportSchema, KanoRunRequestSchema, AudienceUpdateSchema, BatchListQuerySchema, RiceDraftUpdateSchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementIntakeEditSchema, RequirementIntakeSchema, RequirementListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
 import { createHash, randomUUID } from "node:crypto";
 import { ApplyAiScoringSchema, ManualScoringUpdateSchema, SCORING_FORMULA_TEXT, SCORING_THRESHOLDS, computeUmcScore } from "../analysis/scoring.js";
 import { maskPii } from "../analysis/contract.js";
@@ -72,11 +72,26 @@ function batchDto(batch: SyncBatchRecord) {
 }
 // Teambition 自建站的任务地址规则（由一条真实地址确认：/task/<任务ID>）。
 const TEAMBITION_TASK_BASE_URL = process.env.RQSYS_TEAMBITION_TASK_BASE_URL ?? "https://teambition.magene.cn/task";
+function requirementResolutionDto(req: RequirementRecord) {
+  const state = req.processingState ?? "active";
+  if (state === "active") return null;
+  return {
+    decision: state === "suppressed_duplicate" ? "duplicate" as const : "ignored" as const,
+    reviewState: "confirmed" as const,
+    canonicalRequirementId: req.duplicateOfRequirementId ?? null,
+    canonicalPlatformRequirementId: null,
+    reason: null,
+  };
+}
+
 function requirementDto(req: RequirementRecord, analysis: Record<string, unknown> | null = null, analyses: unknown[] = [], ownerName: string | null = null) {
   // 展示字段：详情页 L1 需要标题/描述/负责人/更新时间；只加不改，避免破坏既有调用方。
   // ownerName 仅在详情接口注入（列表逐行查映射会 N+1），解析不到时为 null。
   return {
     id: req.id,
+    // 重复决策派生的处理状态；active 时链路行为与旧版完全一致。
+    processingState: req.processingState ?? "active",
+    resolution: requirementResolutionDto(req),
     sourceRequirementId: req.teambitionRequirementId,
     // V02-T02 加法：来源类型（teambition/web_manual）与业务渠道；TB 显示不变，手工预留已收录语义。
     sourceType: req.sourceType,
@@ -512,7 +527,8 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const parsed = RequirementListQuerySchema.safeParse(query); if (!parsed.success) return jsonError("VALIDATION_FAILED");
     const cursor = decodeRequirementCursor(parsed.data.cursor);
     if (parsed.data.cursor !== undefined && cursor === undefined) return jsonError("VALIDATION_FAILED", "Invalid cursor.");
-    const page = await repositories.requirements.search({ ...(parsed.data.q === undefined ? {} : { q: parsed.data.q }), ...(parsed.data.executorName === undefined ? {} : { executorName: parsed.data.executorName }), ...(parsed.data.pullState === undefined ? {} : { pullState: parsed.data.pullState }), ...(parsed.data.analysisState === undefined ? {} : { analysisState: parsed.data.analysisState }), ...(parsed.data.ownerState === undefined ? {} : { ownerState: parsed.data.ownerState }), ...(parsed.data.pushState === undefined ? {} : { pushState: parsed.data.pushState }), ...(parsed.data.batchId === undefined ? {} : { batchId: parsed.data.batchId }), ...(parsed.data.since === undefined ? {} : { since: parsed.data.since }), ...(parsed.data.until === undefined ? {} : { until: parsed.data.until }), limit: parsed.data.limit, ...(cursor === undefined ? {} : { cursor }) });
+    const page = await repositories.requirements.search({ ...(parsed.data.q === undefined ? {} : { q: parsed.data.q }), ...(parsed.data.executorName === undefined ? {} : { executorName: parsed.data.executorName }), ...(parsed.data.pullState === undefined ? {} : { pullState: parsed.data.pullState }), ...(parsed.data.analysisState === undefined ? {} : { analysisState: parsed.data.analysisState }), ...(parsed.data.ownerState === undefined ? {} : { ownerState: parsed.data.ownerState }), ...(parsed.data.pushState === undefined ? {} : { pushState: parsed.data.pushState }),
+      ...(parsed.data.processingState === undefined ? {} : { processingState: parsed.data.processingState }), ...(parsed.data.batchId === undefined ? {} : { batchId: parsed.data.batchId }), ...(parsed.data.since === undefined ? {} : { since: parsed.data.since }), ...(parsed.data.until === undefined ? {} : { until: parsed.data.until }), limit: parsed.data.limit, ...(cursor === undefined ? {} : { cursor }) });
     // 列表一次取回全部有效映射再按 TB 用户查名，避免逐行查询。
     // 空页时不能把空字符串传给 uuid 列：PostgreSQL 会以 22P02 拒绝，接口变成 500。
     const firstItem = page.items[0];
@@ -697,12 +713,14 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
       } catch { /* 姓名是展示增强，解析失败不影响详情返回 */ }
     }
     const duplicates = await repositories.requirements.listDuplicates(req.id);
+    const resolution = await repositories.requirements.getResolution?.(req.id) ?? null;
     const currentScore = repositories.scoring ? await repositories.scoring.current(req.id) : null;
     const aiScore = repositories.scoring ? await repositories.scoring.aiSuggestion(req.id) : null;
     const scoreHistory = repositories.scoring ? await repositories.scoring.list(req.id) : [];
     return json({
       ...requirementDto(req, latest && latest.status === "analyzed" ? latest.structuredResult : null, history.map(analysisVersionDto), ownerName),
       duplicates,
+      resolution: resolution ?? requirementResolutionDto(req),
       scoring: {
         current: currentScore,
         aiSuggestion: aiScore,
@@ -879,6 +897,46 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "base.push.retry_requested", entityType: "requirement", entityId: req.id, result: "succeeded", safeDetails: { sourceVersion: req.sourceVersion, analysisVersion }, occurredAt: now });
     if (auditFailure) return auditFailure;
     return json({ requirementId: req.id, status: "queued" }, 202);
+  }
+  // V02-T25：重复/忽略决策（人工确认）。PUT=确认；DELETE=撤销。
+  const duplicateDecisionMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/duplicate-decision$/);
+  if (duplicateDecisionMatch && (method === "PUT" || method === "DELETE")) {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.requirements?.decideResolution || !repositories.requirements.clearResolution) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const requirementId = pathUuid(duplicateDecisionMatch[1]!, dependencies); if (!requirementId) return jsonError("NOT_FOUND");
+    const req = await repositories.requirements.get(requirementId); if (!req) return jsonError("NOT_FOUND");
+    const nowIso = (dependencies.now?.() ?? new Date()).toISOString();
+    if (method === "DELETE") {
+      const parsed = ClearDuplicateDecisionSchema.safeParse(await readJson(request).catch(() => null));
+      if (!parsed.success) return jsonError("VALIDATION_FAILED");
+      const result = await repositories.requirements.clearResolution({ requirementId: req.id, expectedVersion: parsed.data.expectedVersion });
+      if (result.outcome === "version_conflict") return jsonError("CONFLICT", `决策版本冲突，当前版本 ${result.version}`);
+      if (result.outcome === "not_found") return jsonError("NOT_FOUND");
+      const auditFailure = await appendAudit(repositories, { id: randomUUID(), actorId: auth.actor.id, eventType: "duplicate.revoked", entityType: "requirement", result: "succeeded", entityId: req.id, safeDetails: { previous: req.processingState ?? "active" }, occurredAt: nowIso });
+      if (auditFailure) return auditFailure;
+      const updated = await repositories.requirements.get(req.id);
+      return json({ requirementId: req.id, processingState: updated?.processingState ?? "active", decision: null, version: 0 });
+    }
+    const parsed = DuplicateDecisionSchema.safeParse(await readJson(request));
+    if (!parsed.success) return jsonError("VALIDATION_FAILED");
+    if (parsed.data.decision === "duplicate" && !parsed.data.canonicalRequirementId) return jsonError("VALIDATION_FAILED");
+    if (parsed.data.canonicalRequirementId === req.id) return jsonError("VALIDATION_FAILED");
+    if (parsed.data.canonicalRequirementId) {
+      const canonical = await repositories.requirements.get(parsed.data.canonicalRequirementId);
+      if (!canonical || canonical.id === req.id) return jsonError("NOT_FOUND");
+    }
+    const result = await repositories.requirements.decideResolution({
+      requirementId: req.id, decision: parsed.data.decision,
+      canonicalRequirementId: parsed.data.canonicalRequirementId ?? null,
+      reason: parsed.data.reason, actorId: auth.actor.id,
+      expectedVersion: parsed.data.expectedVersion, now: nowIso,
+    });
+    if (result.outcome === "version_conflict") return jsonError("CONFLICT", `决策版本冲突，当前版本 ${result.version}`);
+    if (result.outcome === "not_found") return jsonError("NOT_FOUND");
+    const auditFailure = await appendAudit(repositories, { id: randomUUID(), actorId: auth.actor.id, eventType: parsed.data.decision === "duplicate" ? "duplicate.confirmed" : "duplicate.reviewed", entityType: "requirement", result: "succeeded", entityId: req.id, safeDetails: { decision: parsed.data.decision, version: result.version }, occurredAt: nowIso });
+    if (auditFailure) return auditFailure;
+    const updated = await repositories.requirements.get(req.id);
+    return json({ requirementId: req.id, processingState: updated?.processingState ?? "active", decision: parsed.data.decision, reviewState: "confirmed", version: result.version });
   }
   // 未注册路径返回 404；ROUTE_NOT_IMPLEMENTED 保留给“契约有、实现未接”的端点（当前无）。
   return jsonError("NOT_FOUND");

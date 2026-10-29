@@ -124,6 +124,8 @@ export interface RequirementRecord {
   lastPushedOwner?: PushedOwner | null;
   /** 同标题疑似重复时指向最早那条需求；重复项不进入默认需求池、不分析、不推送。 */
   duplicateOfRequirementId?: string | null;
+  /** 重复/忽略决策派生出的处理状态；缺省视为 active（决策表为空时行为与旧版一致）。 */
+  processingState?: "active" | "suppressed_duplicate" | "suppressed_ignored";
   firstSeenAt: string;
   lastSeenAt: string;
   createdAt: string;

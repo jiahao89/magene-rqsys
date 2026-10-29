@@ -10,7 +10,7 @@ import { checkScheduleHealth } from "./schedule";
 import { readRequirementDeepLink } from "./deep-link";
 import { emptyRequirementListFilters, readRequirementListFilters, requirementPoolUrl, type RequirementListFilters } from "./requirements-url";
 import { formatDateTime, requirementDisplayId, requirementOwnerView, requirementSourceFacts, requirementTime, sortRequirementsForAttention } from "./requirement-view";
-import { AUDIT_PAGE_LIMIT, ApiError, addTeamPerson, applyRequirementAiScore, bindTeamPersonFeishu, createSource, deleteTeamPerson, getBatch, getFunctionModules, getRequirement, listAudit, listBatches, listDictionaryVersions, listMappings, listRequirements, listTeamPeople, pushRequirement, renameTeamPerson, saveFunctionModules, retryAnalysis, retrySyncItem, saveRequirementScore, searchFeishuUsers, setOwner, unbindTeamPersonFeishu, updateSource, type AnalysisVersionSummary, type AuditEvent, type BatchDetail, type BatchSummary, type DictionaryVersion, type PersonMapping, type PublishStatus, type FeishuUserSelection, type FeishuUserCandidate, type FunctionModuleEntry, type RequirementDetail, type RequirementScoreVersion, type RequirementSummary, type ScoringInputs, type SourceConfig, type SourceConfigUpdate, type TeamPerson, clearOwner } from "./api";
+import { AUDIT_PAGE_LIMIT, ApiError, addTeamPerson, applyRequirementAiScore, bindTeamPersonFeishu, createSource, deleteTeamPerson, getBatch, getFunctionModules, getRequirement, listAudit, listBatches, listDictionaryVersions, listMappings, listRequirements, listTeamPeople, pushRequirement, renameTeamPerson, saveFunctionModules, retryAnalysis, retrySyncItem, saveRequirementScore, searchFeishuUsers, setDuplicateDecision, setOwner, unbindTeamPersonFeishu, updateSource, type AnalysisVersionSummary, type AuditEvent, type BatchDetail, type BatchSummary, type DictionaryVersion, type DuplicateDecision, type PersonMapping, type PublishStatus, type FeishuUserSelection, type FeishuUserCandidate, type FunctionModuleEntry, type RequirementDetail, type RequirementProcessingState, type RequirementResolution, type RequirementScoreVersion, type RequirementSummary, type ScoringInputs, type SourceConfig, type SourceConfigUpdate, type TeamPerson, clearOwner } from "./api";
 import type { WorkbenchTab } from "./workbench-routing";
 
 export type LoadState = "loading" | "ready" | "error";
@@ -599,6 +599,46 @@ function pipelineLabel(stage: PipelineStage, state: string): string {
   return pipelineLabels[stage][state] ?? stateLabel(state);
 }
 
+// ---------- P1 重复处理：处理闸口状态与判定展示 ----------
+
+/** 旧响应没有 processingState 时按 active 处理，避免把普通需求误显示成压制态。 */
+export function requirementProcessingState(requirement: Pick<RequirementSummary, "processingState">): RequirementProcessingState {
+  return requirement.processingState ?? "active";
+}
+
+export const processingStateLabels: Record<RequirementProcessingState, string> = {
+  active: "活跃",
+  suppressed_duplicate: "已压制（重复）",
+  suppressed_ignored: "已压制（忽略）",
+};
+
+/** 列表行角标：疑似重复提示 / 压制结果；普通活跃需求不加角标。 */
+export function processingBadge(requirement: Pick<RequirementSummary, "processingState" | "resolution">): { label: string; className: string; title: string } | null {
+  const state = requirementProcessingState(requirement);
+  const resolution: RequirementResolution | null = requirement.resolution ?? null;
+  const canonical = resolution?.canonicalPlatformRequirementId ?? resolution?.canonicalRequirementId ?? null;
+  if (state === "suppressed_duplicate") {
+    return { label: "已压制（重复）", className: "status-danger", title: `已压制：不再进入 AI 分析/Base 推送/通知${canonical ? `；主记录 ${canonical}` : ""}${resolution?.reason ? `；理由：${resolution.reason}` : ""}` };
+  }
+  if (state === "suppressed_ignored") {
+    return { label: "已压制（忽略）", className: "status-muted", title: `已压制：不再进入 AI 分析/Base 推送/通知${resolution?.reason ? `；理由：${resolution.reason}` : ""}` };
+  }
+  if (resolution?.reviewState === "suspected") {
+    return { label: "疑似重复", className: "status-warning", title: `系统提示标题相同，仅作疑似重复提示；${canonical ? `疑似主记录 ${canonical}；` : ""}尚未人工确认` };
+  }
+  if (resolution?.reviewState === "confirmed") {
+    return { label: "已确认非重复", className: "status-muted", title: `已人工确认为非重复${resolution.reason ? `；理由：${resolution.reason}` : ""}` };
+  }
+  return null;
+}
+
+/** 需求池顶部视图切换值（与 API processingState 查询参数同名）。 */
+const PROCESSING_VIEWS: Array<{ value: "" | "active" | "suppressed"; label: string }> = [
+  { value: "", label: "全部" },
+  { value: "active", label: "仅活跃" },
+  { value: "suppressed", label: "已压制重复" },
+];
+
 function pipelineChipColor(state: string): "success" | "warning" | "danger" | "default" | "accent" {
   if (state === "failed") return "danger";
   if (state === "failed_retryable" || state === "pending_mapping") return "warning";
@@ -654,6 +694,7 @@ function requirementListQuery(filter: RequirementListFilters) {
     analysisState: filter.analysis || undefined,
     ownerState: filter.ownerState || undefined,
     pushState: filter.push || undefined,
+    processingState: filter.processingState === "active" || filter.processingState === "suppressed" ? filter.processingState : undefined,
     batchId: filter.batchId || undefined,
     since: toIso(filter.from),
     until: toIso(filter.to),
@@ -673,6 +714,8 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
   const [analysisState, setAnalysisState] = useState(initialFilters.analysis);
   const [pullState, setPullState] = useState(initialFilters.pull);
   const [pushState, setPushState] = useState(initialFilters.push);
+  // 重复处理视图：""=全部 / active=仅活跃 / suppressed=已压制（重复或忽略）。
+  const [processingState, setProcessingState] = useState(initialFilters.processingState);
   const [batchId, setBatchId] = useState(initialFilters.batchId);
   const [since, setSince] = useState(initialFilters.from);
   const [until, setUntil] = useState(initialFilters.to);
@@ -689,7 +732,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const filters: RequirementListFilters = { title: query.trim(), owner: executorName, pull: pullState, analysis: analysisState, ownerState, push: pushState, batchId: batchId.trim(), from: since, to: until };
+  const filters: RequirementListFilters = { title: query.trim(), owner: executorName, pull: pullState, analysis: analysisState, ownerState, push: pushState, processingState, batchId: batchId.trim(), from: since, to: until };
   // 已生效筛选：列表行/详情 URL 与刷新必须以「点过筛选」的条件为准，
   // 不能把用户尚未应用的草稿输入写进 URL。
   const appliedFiltersRef = useRef(initialFilters);
@@ -804,11 +847,20 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
     void load(filters, null);
   };
 
+  // 重复处理视图切换：立即生效、重置游标并重新拉取，不要求用户再点「筛选」。
+  const applyProcessingView = (view: "" | "active" | "suppressed") => {
+    setProcessingState(view);
+    const next: RequirementListFilters = { ...filters, processingState: view };
+    setAppliedFilterCount(Object.values(next).filter(Boolean).length);
+    window.history.replaceState(null, "", requirementPoolUrl(window.location.pathname || "/", next, null, window.location.hash));
+    void load(next, null);
+  };
+
   // 清除筛选后立即回到无筛选的第一页，避免残留旧条件与旧游标。
   const clearFilters = () => {
     setAppliedFilterCount(0);
     const cleared = { ...emptyRequirementListFilters };
-    setQuery(""); setExecutorName(""); setPullState(""); setOwnerState(""); setAnalysisState(""); setPushState(""); setBatchId(""); setSince(""); setUntil("");
+    setQuery(""); setExecutorName(""); setPullState(""); setOwnerState(""); setAnalysisState(""); setPushState(""); setProcessingState(""); setBatchId(""); setSince(""); setUntil("");
     window.history.replaceState(null, "", requirementPoolUrl(window.location.pathname || "/", cleared, null, window.location.hash));
     void load(cleared, null);
   };
@@ -841,8 +893,17 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
   }
 
   return <section className="panel requirements-panel">
-    
-    
+    <div className="processing-view-switch" role="group" aria-label="重复处理视图">
+      <span className="processing-view-switch-label">重复处理</span>
+      {PROCESSING_VIEWS.map((view) => <button
+        key={view.value || "all"}
+        type="button"
+        className={processingState === view.value ? "is-active" : undefined}
+        aria-pressed={processingState === view.value}
+        onClick={() => applyProcessingView(view.value)}
+      >{view.label}</button>)}
+      <span className="processing-view-hint">已压制需求保留记录，但不会进入 AI 分析、Base 推送与通知。</span>
+    </div>
     <div className="qtoolbar">
       <div className="qtoolbar-main">
         <label className="qfield qfield-search">
@@ -1116,6 +1177,99 @@ export function ScoringPanel({ requirementId, scoring, dimensionInsights = [], c
   </section>;
 }
 
+// ---------- P1 重复处理：详情页人工判定区块 ----------
+type DuplicateDecisionMode = "duplicate" | "confirmed_unique" | "ignored" | "revoke";
+
+/**
+ * 重复判定区块：确认重复（选择主记录）/ 确认非重复 / 忽略，已压制时提供撤销。
+ * P1 契约只有 duplicate / ignored / confirmed_unique 三个 decision，
+ * 因此「撤销判定回 active」通过 confirmed_unique 提交（处理状态会回到 active）。
+ */
+function DuplicateDecisionSection({ detail, onSaved }: { detail: RequirementDetail; onSaved: () => void }) {
+  const state = requirementProcessingState(detail);
+  const resolution = detail.resolution ?? null;
+  const suppressed = state !== "active";
+  const version = resolution?.version ?? 0;
+  const [mode, setMode] = useState<DuplicateDecisionMode | null>(null);
+  const [canonicalId, setCanonicalId] = useState("");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [conflict, setConflict] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const candidates = (detail.duplicates ?? []).map((item) => ({ id: item.id, title: item.title, hint: item.teambitionRequirementId }));
+  const currentCanonicalId = resolution?.canonicalRequirementId ?? detail.duplicateOf ?? null;
+  const canonicalOptions = currentCanonicalId && !candidates.some((candidate) => candidate.id === currentCanonicalId)
+    ? [{ id: currentCanonicalId, title: "当前疑似主记录", hint: resolution?.canonicalPlatformRequirementId ?? currentCanonicalId }, ...candidates]
+    : candidates;
+
+  const openMode = (next: DuplicateDecisionMode) => {
+    setMode(next); setError(null); setConflict(false); setNotice(null);
+    setReason(next === "revoke" ? "撤销判定，恢复为活跃需求" : "");
+    setCanonicalId((previous) => previous || currentCanonicalId || candidates[0]?.id || "");
+  };
+
+  const submit = async () => {
+    if (!mode) return;
+    const decision: DuplicateDecision = mode === "duplicate" ? "duplicate" : mode === "ignored" ? "ignored" : "confirmed_unique";
+    const trimmed = reason.trim();
+    if (!trimmed) { setError("请填写判定理由。"); return; }
+    if (decision === "duplicate" && !canonicalId) { setError("请选择主记录后再确认重复。"); return; }
+    setBusy(true); setError(null); setConflict(false); setNotice(null);
+    try {
+      const result = await setDuplicateDecision(detail.id, {
+        decision,
+        ...(decision === "duplicate" ? { canonicalRequirementId: canonicalId } : {}),
+        reason: trimmed,
+        expectedVersion: version,
+      });
+      setMode(null);
+      setNotice(`${mode === "revoke" ? "已撤销判定，需求恢复为活跃" : `重复判定已保存（${processingStateLabels[result.processingState]}）`}，正在刷新详情。`);
+      onSaved();
+    } catch (cause) {
+      if (cause instanceof ApiError && cause.status === 409) {
+        setConflict(true);
+        setError("判定版本冲突：该需求已被其他操作更新。请刷新详情后重试。");
+      } else {
+        setError(cause instanceof ApiError ? errorText(cause) : "判定提交失败，请重试。");
+      }
+    } finally { setBusy(false); }
+  };
+
+  const heading = mode === "duplicate" ? "确认重复：选择主记录" : mode === "ignored" ? "忽略该需求" : mode === "revoke" ? "撤销判定" : "确认非重复";
+  const submitLabel = mode === "duplicate" ? "确认重复" : mode === "ignored" ? "确认忽略" : mode === "revoke" ? "撤销判定" : "确认非重复";
+  const stateChipClassName = state === "suppressed_duplicate" ? "status-danger" : state === "suppressed_ignored" ? "status-muted" : resolution?.reviewState === "suspected" ? "status-warning" : "status-live";
+  const stateChipLabel = state !== "active"
+    ? processingStateLabels[state]
+    : resolution?.reviewState === "suspected" ? "疑似重复（待确认）" : resolution?.reviewState === "confirmed" ? "已确认非重复" : "未作判定";
+
+  return <section className="req-section req-duplicate-section" aria-labelledby="req-duplicate-heading">
+    <div className="req-section-head"><h3 id="req-duplicate-heading">重复处理</h3><span className="req-source-note">人工判定 · 影响处理链路</span></div>
+    <div className="duplicate-current-state">
+      <span className={`status-chip ${stateChipClassName}`}><span />{stateChipLabel}</span>
+      {resolution?.reason && <span className="subtle-text">理由：{resolution.reason}</span>}
+      {(resolution?.canonicalPlatformRequirementId ?? resolution?.canonicalRequirementId) && <span className="subtle-text">主记录：<code>{resolution.canonicalPlatformRequirementId ?? resolution.canonicalRequirementId}</code></span>}
+      {typeof resolution?.version === "number" && <span className="subtle-text">判定版本 v{resolution.version}</span>}
+    </div>
+    <p className="detail-note">确认重复或忽略后该需求会被压制：不再进入 AI 分析、Base 推送与通知，记录保留、可随时撤销；撤销判定会把处理状态恢复为活跃。</p>
+    {error && <div className="alert-banner" role="alert"><div><strong>{conflict ? "判定未保存" : "操作未完成"}</strong><span>{error}</span></div>{conflict && <button className="button button-secondary button-small" onClick={onSaved}>刷新详情</button>}</div>}
+    {notice && <div className="notice-banner" role="status"><span>{notice}</span></div>}
+    {mode === null ? <div className="duplicate-actions">
+      <button className="button button-secondary button-small" onClick={() => openMode("duplicate")} disabled={busy || canonicalOptions.length === 0} title={canonicalOptions.length === 0 ? "没有可选的主记录候选（尚未发现同标题需求）" : "从同标题候选中选择主记录"}>确认重复（选择主记录）</button>
+      <button className="button button-secondary button-small" onClick={() => openMode("confirmed_unique")} disabled={busy}>确认非重复</button>
+      <button className="button button-secondary button-small" onClick={() => openMode("ignored")} disabled={busy}>忽略</button>
+      {suppressed && <button className="button button-primary button-small" onClick={() => openMode("revoke")} disabled={busy}>撤销判定（恢复活跃）</button>}
+    </div> : <div className="rules-form duplicate-form">
+      <strong style={{ flexBasis: "100%" }}>{heading}</strong>
+      {mode === "duplicate" && <label className="field"><span>主记录（同标题候选）</span><select aria-label="主记录候选" value={canonicalId} onChange={(event) => setCanonicalId(event.target.value)} disabled={busy}>{canonicalOptions.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.title}（{candidate.hint}）</option>)}</select></label>}
+      <label className="field"><span>判定理由 *</span><input aria-label="判定理由" value={reason} onChange={(event) => setReason(event.target.value)} disabled={busy} placeholder={mode === "ignored" ? "例如：已知重复诉求，无需再处理" : "例如：与主记录描述同一诉求"} /></label>
+      <button className="button button-primary button-small" onClick={() => void submit()} disabled={busy}>{busy ? "提交中…" : submitLabel}</button>
+      <button className="button button-secondary button-small" onClick={() => { setMode(null); setError(null); setConflict(false); }} disabled={busy}>取消</button>
+    </div>}
+  </section>;
+}
+
 function RequirementDetailPage({ detail, detailId, loading, error, notice, busy, autoOpenOwnerPicker, onCloseNotice, onBack, onRefresh, onAct, onSaved }: {
   detail: RequirementDetail | null;
   detailId: string;
@@ -1155,6 +1309,10 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
   const structured: AnalysisStructured = (detail.analysis ?? {}) as AnalysisStructured;
   const facts = requirementSourceFacts(detail);
   const owner = requirementOwnerView(detail);
+  // P1 重复处理：压制态需求不进入 AI 分析 / Base 推送 / 通知，相关操作入口必须一并收敛。
+  const processingState = requirementProcessingState(detail);
+  const suppressed = processingState !== "active";
+  const suppressedLabel = processingStateLabels[processingState];
   const evidence = analysisStrings(structured.evidence);
   const factItems = Array.isArray(structured.facts)
     ? (structured.facts as { text?: unknown }[]).map((fact) => analysisText(fact.text)).filter((text): text is string => text !== null)
@@ -1183,34 +1341,41 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
   ];
 
   // 操作可用性只取决于流水线状态；不可用时保留按钮并说明原因，避免「入口消失 = 不知道能做什么」。
-  const analysisRetryable = ["failed_retryable", "pending", "analyzed"].includes(detail.pipeline.analysis);
+  // 压制态（重复/忽略）不进入 AI 分析、Base 推送与通知：所有会入队的入口保持禁用，撤销判定后恢复。
+  const analysisRetryable = !suppressed && ["failed_retryable", "pending", "analyzed"].includes(detail.pipeline.analysis);
   const analysisActionLabel = detail.pipeline.analysis === "analyzed" ? "重新分析" : "重试 AI 分析";
-  const pushRetryable = detail.pipeline.push === "failed";
+  const pushRetryable = !suppressed && detail.pipeline.push === "failed";
   const ownerMapped = ["auto_mapped", "manually_mapped"].includes(detail.pipeline.owner);
   const ownerSaveLabel = detail.pipeline.owner === "pending_mapping" ? "保存负责人并入队推送" : ownerMapped ? "变更负责人并入队推送" : "分配负责人并入队推送";
-  const analysisDisabledReason = detail.pipeline.analysis === "running"
-    ? "AI 分析正在进行中，完成后可查看结果。"
-    : detail.pipeline.analysis === "analyzed"
-      ? "重新分析会基于当前已发布的词典/规则创建新版本。"
-      : detail.pipeline.analysis === "failed"
-        ? "该需求的分析失败不可自动重试，请检查源数据或联系管理员。"
-        : "当前状态不可重试 AI 分析。";
-  const pushDisabledReason = detail.pipeline.push === "pushed"
-    ? "Base 推送已完成，无需重试；PM 在飞书多维表格继续处理。"
-    : detail.pipeline.push === "running"
-      ? "Base 推送进行中，完成后刷新详情可看到最新状态。"
-      : detail.pipeline.push === "pending"
-        ? "Base 推送排队中，完成后刷新详情可看到最新状态。"
-        : "当前状态不可重试 Base 推送。";
+  const analysisDisabledReason = suppressed
+    ? "该需求已被压制，不会进入 AI 分析；如需分析请先在「重复处理」撤销判定。"
+    : detail.pipeline.analysis === "running"
+      ? "AI 分析正在进行中，完成后可查看结果。"
+      : detail.pipeline.analysis === "analyzed"
+        ? "重新分析会基于当前已发布的词典/规则创建新版本。"
+        : detail.pipeline.analysis === "failed"
+          ? "该需求的分析失败不可自动重试，请检查源数据或联系管理员。"
+          : "当前状态不可重试 AI 分析。";
+  const pushDisabledReason = suppressed
+    ? "该需求已被压制，不会进入 Base 推送；如需推送请先在「重复处理」撤销判定。"
+    : detail.pipeline.push === "pushed"
+      ? "Base 推送已完成，无需重试；PM 在飞书多维表格继续处理。"
+      : detail.pipeline.push === "running"
+        ? "Base 推送进行中，完成后刷新详情可看到最新状态。"
+        : detail.pipeline.push === "pending"
+          ? "Base 推送排队中，完成后刷新详情可看到最新状态。"
+          : "当前状态不可重试 Base 推送。";
   // 没有可重试项时也要给出一句明确的下一步说明，而不是留白。
   // 「可重跑」包含 already analyzed；指引不能把已完成的分析说成未完成。
   const analysisIncomplete = ["pending", "failed_retryable", "running"].includes(detail.pipeline.analysis);
-  const guidance = [
-    detail.pipeline.push === "pushed" ? "该需求已推送完成，PM 在飞书多维表格继续处理；如需换人可在此变更负责人。" : "",
-    pushRetryable ? (ownerMapped ? "Base 推送失败：可重试推送，也可变更负责人后重新排队。" : "Base 推送失败：请先分配负责人，再重试推送。") : "",
-    analysisIncomplete ? (detail.pipeline.analysis === "running" ? "AI 分析正在进行中；完成后刷新查看结果。" : "AI 分析未完成，可在此重试分析。") : "",
-    detail.pipeline.analysis === "failed" ? "AI 分析失败且不可自动重试；失败摘要见「查看依据与历史」中的分析版本记录。" : "",
-  ].filter(Boolean).join(" ") || "当前没有待重试的失败项；如需换人可在此变更负责人。";
+  const guidance = (suppressed
+    ? [`该需求已被压制（${suppressedLabel}）：不会进入 AI 分析、Base 推送与通知；如需恢复请在下方「重复处理」撤销判定。`]
+    : [
+      detail.pipeline.push === "pushed" ? "该需求已推送完成，PM 在飞书多维表格继续处理；如需换人可在此变更负责人。" : "",
+      pushRetryable ? (ownerMapped ? "Base 推送失败：可重试推送，也可变更负责人后重新排队。" : "Base 推送失败：请先分配负责人，再重试推送。") : "",
+      analysisIncomplete ? (detail.pipeline.analysis === "running" ? "AI 分析正在进行中；完成后刷新查看结果。" : "AI 分析未完成，可在此重试分析。") : "",
+      detail.pipeline.analysis === "failed" ? "AI 分析失败且不可自动重试；失败摘要见「查看依据与历史」中的分析版本记录。" : "",
+    ]).filter(Boolean).join(" ") || "当前没有待重试的失败项；如需换人可在此变更负责人。";
 
   const createdAt = formatDateTime(facts.createdAt);
   const updatedAt = formatDateTime(facts.updatedAt);
@@ -1267,12 +1432,12 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
           <h2 className="req-summary-title">{detail.title}</h2>
           <span className="req-summary-id">{detail.platformRequirementId ?? (detail.sourceRequirementId ? `REQ-${detail.sourceRequirementId.slice(0, 8)}` : "WEB")} · v{detail.sourceVersion}</span>
           {detail.duplicateOf && <div className="req-duplicate-notice" role="note">
-            该需求与另一条需求标题相同，仅作疑似重复提示；两条记录仍按各自的来源 ID 独立分析、分配和推送。<a href={`?requirement=${detail.duplicateOf}`}>查看另一条</a>
+            该需求与另一条需求标题相同，仅作疑似重复提示；两条记录仍按各自的来源 ID 独立保留，是否压制由人工判定决定。<a href={`?requirement=${detail.duplicateOf}`}>查看另一条</a>
           </div>}
           {detail.duplicates && detail.duplicates.length > 0 && <div className="req-duplicate-notice" role="note">
             发现 {detail.duplicates.length} 条同标题疑似重复需求：
             {detail.duplicates.map((duplicate, index) => <span key={duplicate.id}>{index > 0 ? "、" : ""}<a href={`?requirement=${duplicate.id}`}>{duplicate.title}</a></span>)}
-            这些记录均独立保留，会按各自来源 ID 正常处理；请人工核对是否确为重复。
+            这些记录均独立保留；可在下方「重复处理」确认重复或忽略，被压制记录不再进入 AI 分析、Base 推送与通知。
           </div>}
         </div>
         <div className="req-summary-score" aria-label="评分与优先级摘要">
@@ -1288,21 +1453,21 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
         <span className="req-owner-line">
           <span className="req-meta-label">负责人</span><OwnerBadge owner={owner} />
           {detail.manualOwner && <span className="req-owner-manual" title="只影响这一条需求，不会改动同 TB 执行人的其他需求">手动指定</span>}
-          {detail.manualOwner && <button className="req-owner-revert" disabled={busy} onClick={() => void onAct(async () => {
+          {detail.manualOwner && <button className="req-owner-revert" disabled={busy || suppressed} title={suppressed ? "已压制需求不会推送；请先撤销判定" : undefined} onClick={() => void onAct(async () => {
             const result = await clearOwner(detail.id);
             return `已恢复默认负责人（${pipelineLabel("owner", result.ownerState)}）${result.status === "queued" ? "，Base 推送已排队" : "；等待默认负责人映射"}`;
           }, detail.id)}>恢复默认负责人</button>}
         </span>
         <div className="req-stage-row" role="group" aria-label="处理状态">{stages.map(([stage, state]) => <StageBadge key={stage} stage={stage} state={state} />)}</div>
         <div className="req-summary-actions" role="group" aria-label="需求操作">
-          <HeroButton className="button button-primary button-small" aria-expanded={ownerPickerOpen} aria-controls={ownerEditorId} onPress={() => setOwnerPickerOpen((open) => !open)} isDisabled={busy}>分配 / 变更负责人</HeroButton>
+          <HeroButton className="button button-primary button-small" aria-expanded={ownerPickerOpen} aria-controls={ownerEditorId} onPress={() => setOwnerPickerOpen((open) => !open)} isDisabled={busy || suppressed}>{suppressed ? "分配 / 变更负责人（已压制）" : "分配 / 变更负责人"}</HeroButton>
           <button className="button button-secondary button-small" onClick={() => void onAct(async () => { await retryAnalysis(detail.id); return "AI 分析重试已入队"; }, detail.id)} disabled={busy || !analysisRetryable} title={analysisRetryable ? "重新提交 AI 分析" : analysisDisabledReason}>{analysisActionLabel}</button>
           <button className="button button-secondary button-small" onClick={() => void onAct(async () => { const result = await pushRequirement(detail.id); return result.status === "queued" ? "Base 推送重试已入队" : `推送状态：${result.status}`; }, detail.id)} disabled={busy || !pushRetryable} title={pushRetryable ? "重新提交 Base 推送" : pushDisabledReason}>重试 Base 推送</button>
           <HeroButton className="button button-secondary button-small" onPress={onRefresh} isDisabled={busy}><RefreshCw size={14} />刷新</HeroButton>
         </div>
       </div>
       <p className="detail-actionbar-hint">{guidance}</p>
-      {ownerPickerOpen && <div className="detail-owner-editor" id={ownerEditorId}>
+      {ownerPickerOpen && !suppressed && <div className="detail-owner-editor" id={ownerEditorId}>
         <p className="detail-actionbar-hint">只修改当前这一条需求的负责人，不会改动同 TB 执行人名下的其他需求或全局映射；保存后重新排队 Base 推送。{detail.manualOwner ? "点击「恢复默认负责人」可回到 TB 执行人映射。" : ""}</p>
         <FeishuUserPicker key={detail.id} disabled={busy} saveLabel={ownerSaveLabel} onMap={async (user) => {
           const ok = await onAct(async () => {
@@ -1315,6 +1480,14 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
     </header>
 
     <StateBanner loadError={error} notice={notice} onCloseNotice={onCloseNotice} />
+
+    {suppressed && <div className="alert-banner suppressed-detail-banner" role="alert">
+      <div>
+        <strong>该需求已被压制（{suppressedLabel}）</strong>
+        <span>被压制的需求不会进入 AI 分析、Base 推送与通知；记录仍保留。请在下方「重复处理」撤销判定后恢复为活跃。</span>
+      </div>
+      <a className="button button-secondary button-small" href="#req-duplicate-heading">前往撤销判定</a>
+    </div>}
 
     <section className="req-section" aria-labelledby="req-l1-heading">
       <div className="req-section-head"><h3 id="req-l1-heading">需求信息</h3><span className="req-source-note">{detail.sourceType === "web_manual" ? `来自 Web 收录${detail.sourceChannel ? ` · ${detail.sourceChannel}` : ""}` : "来自 Teambition"}</span></div>
@@ -1351,6 +1524,8 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
       ) : null}
       <ManualEditSection detail={detail} onSaved={() => onSaved(detail.id)} />
     </section>
+
+    <DuplicateDecisionSection detail={detail} onSaved={() => onSaved(detail.id)} />
 
     <ScoringPanel requirementId={detail.id} scoring={detail.scoring} dimensionInsights={dimensionInsights} onSaved={() => onSaved(detail.id)}>
       {aiAnalysisContent}
@@ -1408,15 +1583,18 @@ function RequirementsTable({ rows, loading, onOpen, onAssign }: { rows: Requirem
       const owner = requirementOwnerView(row);
       const time = requirementTime(row);
       const timeText = formatDateTime(time.value);
+      const state = requirementProcessingState(row);
+      const badge = processingBadge(row);
+      const suppressed = state !== "active";
       return <tr
         key={row.id}
-        className={`req-row${owner.unassigned ? " is-pending-owner" : ""}`}
+        className={`req-row${owner.unassigned ? " is-pending-owner" : ""}${suppressed ? " is-suppressed" : ""}`}
         tabIndex={0}
-        aria-label={`打开需求：${row.title}`}
+        aria-label={`${suppressed ? "打开已压制需求" : "打开需求"}：${row.title}`}
         onClick={(event) => { if (!isRowActionTarget(event.target)) onOpen(row); }}
         onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && !isRowActionTarget(event.target)) { event.preventDefault(); onOpen(row); } }}
       >
-        <td><span className="req-row-title" title={row.title}>{row.title}</span>{row.sourceType === "web_manual" ? <span className="source-badge" title={`Web 收录${row.sourceChannel ? ` · ${row.sourceChannel}` : ""}`}>手工</span> : null}</td>
+        <td><span className="req-row-title" title={row.title}>{row.title}</span>{row.sourceType === "web_manual" ? <span className="source-badge" title={`Web 收录${row.sourceChannel ? ` · ${row.sourceChannel}` : ""}`}>手工</span> : null}{badge ? <span className={`status-chip ${badge.className} processing-badge`} title={badge.title}>{badge.label}</span> : null}</td>
         <td>
           <button type="button" className="owner-cell-button" title={owner.unassigned ? "分配负责人" : "变更负责人"}
             onClick={(event) => { event.stopPropagation(); onAssign(row); }}>

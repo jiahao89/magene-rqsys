@@ -347,7 +347,18 @@ export interface RequirementSearchCursor {
   id: string;
 }
 
+import type { RequirementResolutionRecord } from "../domain/requirement-resolution.js";
+
 export interface RequirementQueryRepository {
+  // 重复/忽略决策（决策表与需求行生命周期解耦；确认后压制处理链路）。
+  getResolution?(requirementId: string): Promise<RequirementResolutionRecord | null>;
+  decideResolution?(input: {
+    requirementId: string; decision: "duplicate" | "ignored" | "confirmed_unique";
+    canonicalRequirementId: string | null; reason: string | null; actorId: string;
+    expectedVersion: number; now: string;
+  }): Promise<{ outcome: "saved"; version: number } | { outcome: "version_conflict"; version: number } | { outcome: "not_found" }>;
+  clearResolution?(input: { requirementId: string; expectedVersion: number }):
+    Promise<{ outcome: "cleared" } | { outcome: "version_conflict"; version: number } | { outcome: "not_found" }>;
 
 
 
