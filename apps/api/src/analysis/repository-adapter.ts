@@ -10,7 +10,7 @@ function fromRecord(record: AnalysisRunRecord): AnalysisRun {
     sourceVersion: record.sourceVersion,
     analysisVersion: record.analysisVersion,
     status: record.status,
-    provider: record.provider ?? "deepseek",
+    provider: record.provider ?? "unknown",
     model: record.model ?? "unknown",
     promptVersion: record.promptVersion ?? "unknown",
     moduleDictionaryVersion: record.moduleDictionaryVersion ?? 0,
@@ -34,6 +34,11 @@ export class AnalysisRepositoryAdapter implements AnalysisRepository {
       sourceVersion: input.sourceVersion,
       analysisVersion: input.analysisVersion,
       startedAt: input.startedAt,
+      provider: input.provider,
+      model: input.model,
+      promptVersion: input.promptVersion,
+      moduleDictionaryVersion: input.moduleDictionaryVersion,
+      priorityRuleVersionId: input.priorityRuleVersionId ?? null,
     });
     return { ...fromRecord(record), ...input, id: record.id, status: record.status, completedAt: record.completedAt, result: null, safeErrorCode: null, safeErrorSummary: null };
   }

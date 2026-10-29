@@ -72,3 +72,29 @@ test("analysis repository adapter appends then completes a separate durable anal
   assert.equal((await adapter.latest("r-1"))?.analysisVersion, 1);
   assert.equal((await adapter.listByRequirement("r-1")).length, 1);
 });
+
+test("append persists attribution up front instead of leaving it NULL until completion", async () => {
+  const stored: Parameters<AnalysisRunRepository["append"]>[0][] = [];
+  const storage = {
+    async append(input: Parameters<AnalysisRunRepository["append"]>[0]) { stored.push(input); return record({ id: "run-9", provider: input.provider ?? null, model: input.model ?? null }); },
+    async complete() { return null; },
+  } as unknown as AnalysisRunRepository;
+  const adapter = new AnalysisRepositoryAdapter(storage);
+  await adapter.append({ requirementId: "r-1", sourceVersion: 1, analysisVersion: 1, provider: "custom-claude", model: "claude-x", promptVersion: "p-9", moduleDictionaryVersion: 3, priorityRuleVersionId: null, startedAt: "2026-10-08T00:00:00.000Z" });
+  assert.equal(stored[0]?.provider, "custom-claude");
+  assert.equal(stored[0]?.model, "claude-x");
+  assert.equal(stored[0]?.promptVersion, "p-9");
+  assert.equal(stored[0]?.moduleDictionaryVersion, 3);
+});
+
+test("a run row with no recorded provider reads back as unknown rather than an invented model name", async () => {
+  // 读取路径不经过调用方入参覆盖：存储层为空时不能显示成 deepseek。
+  const adapter = new AnalysisRepositoryAdapter({
+    async latest() { return record({ provider: null, model: null }); },
+    async listByRequirement() { return [record({ provider: null, model: null })]; },
+  } as unknown as AnalysisRunRepository);
+  const stored = await adapter.listByRequirement("r-1");
+  assert.equal(stored[0]?.provider, "unknown");
+  assert.equal(stored[0]?.model, "unknown");
+  assert.equal((await adapter.latest("r-1"))?.provider, "unknown");
+});

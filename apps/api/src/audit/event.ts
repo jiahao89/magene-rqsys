@@ -95,6 +95,15 @@ const ALLOWED_DETAIL_KEYS: readonly string[] = [
   "durationMs",
   "reason",
   "confidence",
+  // 评分/人群/重复判定审计：此前被白名单清空，变更无法追溯
+  "fromVersion",
+  "toVersion",
+  "aiVersion",
+  "version",
+  "scoreVersion",
+  "score",
+  "priority",
+  "decision",
 ];
 
 // 判断 safeDetails 键是否命中禁止模式。

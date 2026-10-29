@@ -10,8 +10,8 @@ export class PostgresAnalysisRunRepository implements AnalysisRunRepository{
   constructor(private readonly pool:Pool){}
   // analysisVersion 由调用方按"需求最新版本+1"递增（DDL UNIQUE (requirement_id, analysis_version)），
   // 不按 source_version 分桶计算，避免源升版后版本号回绕冲突
-  async append(p:{requirementId:string;sourceVersion:number;analysisVersion:number;startedAt:string}){
-    const{rows}=await this.pool.query("INSERT INTO analysis_runs(id,requirement_id,source_version,analysis_version,status,started_at) VALUES($1,$2,$3,$4,'running',$5) RETURNING *",[randomUUID(),p.requirementId,p.sourceVersion,p.analysisVersion,p.startedAt]);
+  async append(p:{requirementId:string;sourceVersion:number;analysisVersion:number;startedAt:string;provider?:string;model?:string;promptVersion?:string;moduleDictionaryVersion?:number;priorityRuleVersionId?:string|null}){
+    const{rows}=await this.pool.query("INSERT INTO analysis_runs(id,requirement_id,source_version,analysis_version,status,started_at,provider,model,prompt_version,module_dictionary_version,priority_rule_version_id) VALUES($1,$2,$3,$4,'running',$5,$6,$7,$8,$9,$10) RETURNING *",[randomUUID(),p.requirementId,p.sourceVersion,p.analysisVersion,p.startedAt,p.provider??null,p.model??null,p.promptVersion??null,p.moduleDictionaryVersion??null,p.priorityRuleVersionId??null]);
     return from(rows[0]);
   }
   async complete(id:string,r:{status:"analyzed"|"failed_retryable";moduleSuggestion?:string;confidence?:"high"|"medium"|"low";confidenceReason?:string;priority?:PriorityLevel;structuredResult?:Record<string,unknown>;provider?:string;model?:string;promptVersion?:string;moduleDictionaryVersion?:number;priorityRuleVersionId?:string;safeErrorCode?:string;safeErrorSummary?:string;completedAt:string}){

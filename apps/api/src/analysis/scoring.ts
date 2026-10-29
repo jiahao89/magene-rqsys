@@ -28,7 +28,8 @@ export type ScoringInputs = z.infer<typeof ScoringInputsSchema>;
 
 export const BasisSchema = z.strictObject({
   reason: z.string().trim().min(1),
-  evidence: z.array(z.string().min(1)).max(20),
+  // 纯空白串压缩后为空，includes("") 恒为真，会让伪造的"证据"通过校验。
+  evidence: z.array(z.string().refine((value) => value.trim().length > 0, "evidence must not be blank")).max(20),
   assumption: z.boolean(),
 });
 
@@ -141,7 +142,8 @@ export function validateScoringEvidence(payload: ScoringPayload, sourceText: str
   for (const key of SCORING_BASIS_KEYS) {
     const basis = payload.basis[key]!;
     for (const evidence of basis.evidence) {
-      if (!source.includes(compact(evidence))) {
+      const quote = compact(evidence);
+      if (quote.length === 0 || !source.includes(quote)) {
         throw new ScoringValidationError(`scoring evidence does not occur in source text: ${key}`);
       }
     }

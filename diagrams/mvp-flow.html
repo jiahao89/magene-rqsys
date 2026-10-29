@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RQ-Sys MVP 需求同步流程</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Noto+Serif:ital@0;1&display=swap" rel="stylesheet">
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    :root{--paper:#f5f5f5;--ink:#2d3142;--muted:#4f5d75;--soft:#7a8399;--rule:rgba(45,49,66,.12);--accent:#eb6c36;--tint:rgba(235,108,54,.08);--sans:'Geist','PingFang SC','Noto Sans SC','Microsoft YaHei',sans-serif;--serif:'Instrument Serif','Noto Serif','Songti SC',serif;--mono:'Geist Mono',ui-monospace,monospace}
+    body{background:var(--paper);color:var(--ink);font-family:var(--sans);padding:40px 32px 48px}
+    main{max-width:1280px;margin:0 auto}
+    .eyebrow{font:500 11px var(--mono);letter-spacing:.16em;color:var(--muted);margin-bottom:8px}
+    h1{font:400 34px/1.15 var(--serif);letter-spacing:-.02em;margin-bottom:8px}
+    .subtitle{font-size:14px;color:var(--muted);margin-bottom:24px}
+    .diagram-container{width:100%;overflow-x:auto}
+    svg{display:block;width:100%;min-width:1280px}
+    .note{border-top:1px solid var(--rule);margin-top:16px;padding-top:12px;font-size:12px;line-height:1.6;color:var(--muted)}
+    @media print{.diagram-container{overflow-x:visible}svg{min-width:0}body{padding:20px}}
+  </style>
+</head>
+<body>
+<main>
+  <p class="eyebrow">RQ-SYS · REQUIREMENT PIPELINE</p>
+  <h1>一次同步如何走到 Base</h1>
+  <p class="subtitle">主流程 · 需求源事实、AI 建议、负责人匹配和 PM 处理彼此分开，失败按需求项恢复</p>
+  <div class="diagram-container">
+  <svg viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="mvp-flow-title mvp-flow-desc">
+    <title id="mvp-flow-title">RQ-Sys MVP 需求同步流程</title>
+    <desc id="mvp-flow-desc">从定时或手动触发开始，拉取并保存 Teambition 需求，识别实质变化，快照 PM 字段，运行非阻塞 AI 分析，匹配负责人并幂等推送到飞书多维表格。</desc>
+    <defs>
+      <marker id="flow-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><path d="M0 0L8 3L0 6Z" fill="#4f5d75"/></marker>
+      <marker id="flow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><path d="M0 0L8 3L0 6Z" fill="#eb6c36"/></marker>
+    </defs>
+    <rect width="1280" height="720" fill="#f5f5f5"/>
+    <!-- Connectors first -->
+    <path d="M640 92V128" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#flow-arrow)"/>
+    <path d="M640 192V220" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#flow-arrow)"/>
+    <path d="M640 300V348" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#flow-arrow)"/>
+    <path d="M552 260H456Q448 260 448 268V374Q448 382 440 382H432" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#flow-arrow)"/>
+    <path d="M304 300V348" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#flow-arrow)"/>
+    <path d="M640 424V460" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#flow-arrow)"/>
+    <path d="M640 532V568" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#flow-arrow)"/>
+    <!-- Branch labels -->
+    <rect x="650" y="308" width="92" height="20" rx="2" fill="#f5f5f5"/>
+    <text x="696" y="323" fill="#7a8399" font-size="12" font-family="'PingFang SC','Noto Sans SC','Microsoft YaHei',sans-serif">有实质变化</text>
+    <rect x="454" y="232" width="64" height="20" rx="2" fill="#f5f5f5"/>
+    <text x="486" y="247" fill="#7a8399" font-size="12" font-family="'PingFang SC','Noto Sans SC','Microsoft YaHei',sans-serif">无变化</text>
+    <!-- Nodes -->
+    <ellipse cx="640" cy="68" rx="140" ry="24" fill="#ffffff" stroke="#4f5d75" stroke-width="1.2"/>
+    <text x="640" y="73" text-anchor="middle" fill="#2d3142" font-size="15" font-weight="600" font-family="'PingFang SC','Noto Sans SC','Microsoft YaHei',sans-serif">每周触发 / 操作人手动同步</text>
+    <rect x="506" y="128" width="268" height="64" rx="6" fill="#ffffff" stroke="#4f5d75"/>
+    <text x="640" y="155" text-anchor="middle" fill="#2d3142" font-size="16" font-weight="600" font-family="'PingFang SC','Noto Sans SC','Microsoft YaHei',sans-serif">拉取并保存源快照</text>
+    <text x="640" y="177" text-anchor="middle" fill="#4f5d75" font-size="12" font-family="'PingFang SC','Noto Sans SC','Microsoft YaHei',sans-serif">全项目需求 · 白名单字段 · 项目ID+需求ID去重</text>
+    <polygon points="640,220 728,260 640,300 552,260" fill="#ffffff" stroke="#4f5d75" stroke-width="1.2"/>
+    <text x="640" y="256" text-anchor="middle" fill="#2d3142" font-size="14" font-weight="600" font-family="'PingFang SC','Noto Sans SC','Microsoft YaHei',sans-serif">实质内容变化？</text>
+    <text x="640" y="275" text-anchor="middle" fill="#7a8399" font-size="10" font-family="'PingFang SC','Noto Sans SC','Microsoft YaHei',sans-serif">标题 / 描述 / 范围 / 验收 / 附件引用</text>
+    <rect x="176" y="348" width="256" height="68" rx="6" fill="#ffffff" stroke="#4f5d75"/>
+    <text x="304" y="376" text-anchor="middle" fill="#2d3142" font-size="15" font-weight="600" font-family="'PingFang SC','Noto Sans SC','Microsoft YaHei',sans-serif">仅元数据变化或无变化</text>
+    <text x="304" y="398" text-anchor="middle" fill="#4f5d75" font-size="12" font-family="'PingFang SC','Noto Sans SC','Microsoft YaHei',sans-serif">不重置 PM 状态；无新结果不通知</text>
+    <ellipse cx="304" cy="458" rx="74" ry="22" fill="#ffffff" stroke="#4f5d75" stroke-width="1.2"/>
+    <text x="304" y="463" text-anchor="middle" fill="#2d3142" font-size="13" font-weight="600" font-family="'PingFang SC','Noto Sans SC','Microsoft YaHei',sans-serif">本次完成</text>
+    <path d="M304 416V436" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#flow-arrow)"/>
+    <rect x="506" y="348" width="268" height="76" rx="6" fill="#ffffff" stroke="#4f5d75"/>
+    <text x="640" y="377" text-anchor="middle" fill="#2d3142" font-size="15" font-weight="600" font-family="'PingFang SC','Noto Sans SC','Microsoft YaHei',sans-serif">先快照 Base 的 PM 字段</text>
+    <text x="640" y="400" text-anchor="middle" fill="#4f5d75" font-size="12" font-family="'PingFang SC','Noto Sans SC','Microsoft YaHei',sans-serif">再做 AI 分析；失败 / 超时不阻断推送</text>
+    <rect x="506" y="460" width="268" height="72" rx="6" fill="#ffffff" stroke="#4f5d75"/>
+    <text x="640" y="489" text-anchor="middle" fill="#2d3142" font-size="15" font-weight="600" font-family="'PingFang SC','Noto Sans SC','Microsoft YaHei',sans-serif">解析负责人并准备推送</text>
+    <text x="640" y="512" text-anchor="middle" fill="#4f5d75" font-size="12" font-family="'PingFang SC','Noto Sans SC','Microsoft YaHei',sans-serif">按 ID / 唯一姓名匹配；无人则留空</text>
+    <rect x="506" y="568" width="268" height="76" rx="6" fill="rgba(235,108,54,.08)" stroke="#eb6c36" stroke-width="1.4"/>
+    <text x="640" y="597" text-anchor="middle" fill="#2d3142" font-size="16" font-weight="600" font-family="'PingFang SC','Noto Sans SC','Microsoft YaHei',sans-serif">幂等写入飞书多维表格</text>
+    <text x="640" y="620" text-anchor="middle" fill="#4f5d75" font-size="12" font-family="'PingFang SC','Noto Sans SC','Microsoft YaHei',sans-serif">成功后自动化通知；失败可重试且不通知</text>
+    <!-- Exception annotation -->
+    <path d="M774 386H824" fill="none" stroke="#7a8399" stroke-width="1" stroke-dasharray="4 3"/>
+    <rect x="824" y="350" width="292" height="92" rx="6" fill="#ffffff" stroke="rgba(45,49,66,.18)"/>
+    <text x="844" y="376" fill="#4f5d75" font-size="12" font-weight="600" font-family="'PingFang SC','Noto Sans SC','Microsoft YaHei',sans-serif">恢复边界</text>
+    <text x="844" y="399" fill="#4f5d75" font-size="12" font-family="'PingFang SC','Noto Sans SC','Microsoft YaHei',sans-serif">PM 快照读取失败：该项失败 / 可重试，</text>
+    <text x="844" y="418" fill="#4f5d75" font-size="12" font-family="'PingFang SC','Noto Sans SC','Microsoft YaHei',sans-serif">保持 Base 原记录不变，批次继续处理其他项。</text>
+    <rect x="824" y="464" width="292" height="80" rx="6" fill="#ffffff" stroke="rgba(45,49,66,.18)"/>
+    <text x="844" y="490" fill="#4f5d75" font-size="12" font-weight="600" font-family="'PingFang SC','Noto Sans SC','Microsoft YaHei',sans-serif">负责人未匹配</text>
+    <text x="844" y="513" fill="#4f5d75" font-size="12" font-family="'PingFang SC','Noto Sans SC','Microsoft YaHei',sans-serif">在 Web 选择飞书用户并保存映射后继续；</text>
+    <text x="844" y="532" fill="#4f5d75" font-size="12" font-family="'PingFang SC','Noto Sans SC','Microsoft YaHei',sans-serif">TB 无负责人仍可推送空负责人。</text>
+    <!-- Legend strip -->
+    <line x1="40" y1="672" x2="1240" y2="672" stroke="rgba(45,49,66,.12)" stroke-width="1"/>
+    <text x="48" y="700" fill="#4f5d75" font-size="10" font-family="'Geist Mono',monospace" letter-spacing=".12em">LEGEND</text>
+    <ellipse cx="164" cy="696" rx="16" ry="8" fill="#ffffff" stroke="#4f5d75"/>
+    <text x="188" y="700" fill="#4f5d75" font-size="12" font-family="'PingFang SC','Noto Sans SC','Microsoft YaHei',sans-serif">开始 / 结束</text>
+    <rect x="286" y="688" width="36" height="16" rx="3" fill="#ffffff" stroke="#4f5d75"/>
+    <text x="334" y="700" fill="#4f5d75" font-size="12" font-family="'PingFang SC','Noto Sans SC','Microsoft YaHei',sans-serif">处理动作</text>
+    <polygon points="454,688 466,696 454,704 442,696" fill="#ffffff" stroke="#4f5d75"/>
+    <text x="478" y="700" fill="#4f5d75" font-size="12" font-family="'PingFang SC','Noto Sans SC','Microsoft YaHei',sans-serif">条件判断</text>
+    <text x="1232" y="700" text-anchor="end" fill="#7a8399" font-size="10" font-family="'PingFang SC','Noto Sans SC','Microsoft YaHei',sans-serif">PM 业务处理状态只在 Base 维护</text>
+  </svg>
+  </div>
+  <p class="note">流程边界：AI 建议不是 PM 结论；AI 首次失败、低置信度或优先级为空均不阻断可推送需求。实质源字段变化会先保留 Base PM 快照，成功更新后将 PM 状态重置为“待处理”。每周定时目前关闭；本图描述目标流程，不代表完整链路已通过目标环境验收。</p>
+</main>
+</body>
+</html>

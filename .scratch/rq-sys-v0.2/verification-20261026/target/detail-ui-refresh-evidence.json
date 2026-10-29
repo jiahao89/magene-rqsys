@@ -1,0 +1,237 @@
+{
+  "platformRequirementId": "RQ-000343",
+  "baseRecordId": "reczz28Sg0dql4Px",
+  "pipeline": {
+    "pull": "collected",
+    "analysis": "analyzed",
+    "owner": "not_required",
+    "push": "pushed"
+  },
+  "scoring": {
+    "current": {
+      "id": "a2132f95-4bed-4317-9da5-950c7f905c58",
+      "requirementId": "8ba5470d-b62a-4470-b8b6-1a1c26bafdfd",
+      "version": 1,
+      "status": "current",
+      "origin": "ai",
+      "sourceVersion": 1,
+      "analysisVersion": 1,
+      "ruleVersionId": "c6ba99e7-603f-4d0e-861c-99a2314dc2ad",
+      "inputs": {
+        "cost": {
+          "resource": 2,
+          "workload": 3,
+          "technicalRisk": 2
+        },
+        "user": {
+          "pain": 3,
+          "frequency": 3
+        },
+        "market": {
+          "competitor": 1,
+          "sellingPoint": 2
+        },
+        "strategy": {
+          "roadmap": 1,
+          "dependency": 2
+        }
+      },
+      "alpha": 0.8,
+      "score": 7.2,
+      "priority": "P3",
+      "scoreConfidence": "低",
+      "scoreConfidenceReason": "T1/D5 自标为请忽略/合成验收，且频次、竞品、规划和工程依据均缺失，多数评分为假设",
+      "safetyFlag": false,
+      "basis": {
+        "user.pain": {
+          "reason": "重规划提示偏晚直接影响导航体验，但源文本要求忽略，故按中等痛点估算",
+          "evidence": [
+            "现状问题：重规划提示偏晚。"
+          ],
+          "assumption": false
+        },
+        "cost.resource": {
+          "reason": "未提供人力与测试资源信息，按中等资源假设",
+          "evidence": [],
+          "assumption": true
+        },
+        "cost.workload": {
+          "reason": "未提供研发范围与 UI/算法改动量，按中等工作量假设",
+          "evidence": [],
+          "assumption": true
+        },
+        "user.frequency": {
+          "reason": "未提供偏航发生频次，按导航场景中等频次假设",
+          "evidence": [],
+          "assumption": true
+        },
+        "strategy.roadmap": {
+          "reason": "未引用任何版本规划或路线图，按低战略匹配假设",
+          "evidence": [],
+          "assumption": true
+        },
+        "market.competitor": {
+          "reason": "未核实竞品重规划提示能力，按低差异假设",
+          "evidence": [],
+          "assumption": true
+        },
+        "cost.technicalRisk": {
+          "reason": "未提供重规划时延与提示链路技术细节，按中等风险假设",
+          "evidence": [],
+          "assumption": true
+        },
+        "market.sellingPoint": {
+          "reason": "未提供市场卖点或购买驱动证据，按低卖点假设",
+          "evidence": [],
+          "assumption": true
+        },
+        "strategy.dependency": {
+          "reason": "未提供地图/路由/提示系统依赖信息，按中等依赖假设",
+          "evidence": [],
+          "assumption": true
+        }
+      },
+      "rationale": "有明确偏航重规划体验问题，但 T1/D5 标注请忽略/合成验收，市场、规划、频次和工程依据缺失，评分置信度受限。",
+      "actorId": null,
+      "changeReason": null,
+      "createdAt": "2026-10-28T03:08:05.563Z"
+    },
+    "aiSuggestion": null,
+    "history": [
+      {
+        "id": "a2132f95-4bed-4317-9da5-950c7f905c58",
+        "requirementId": "8ba5470d-b62a-4470-b8b6-1a1c26bafdfd",
+        "version": 1,
+        "status": "current",
+        "origin": "ai",
+        "sourceVersion": 1,
+        "analysisVersion": 1,
+        "ruleVersionId": "c6ba99e7-603f-4d0e-861c-99a2314dc2ad",
+        "inputs": {
+          "cost": {
+            "resource": 2,
+            "workload": 3,
+            "technicalRisk": 2
+          },
+          "user": {
+            "pain": 3,
+            "frequency": 3
+          },
+          "market": {
+            "competitor": 1,
+            "sellingPoint": 2
+          },
+          "strategy": {
+            "roadmap": 1,
+            "dependency": 2
+          }
+        },
+        "alpha": 0.8,
+        "score": 7.2,
+        "priority": "P3",
+        "scoreConfidence": "低",
+        "scoreConfidenceReason": "T1/D5 自标为请忽略/合成验收，且频次、竞品、规划和工程依据均缺失，多数评分为假设",
+        "safetyFlag": false,
+        "basis": {
+          "user.pain": {
+            "reason": "重规划提示偏晚直接影响导航体验，但源文本要求忽略，故按中等痛点估算",
+            "evidence": [
+              "现状问题：重规划提示偏晚。"
+            ],
+            "assumption": false
+          },
+          "cost.resource": {
+            "reason": "未提供人力与测试资源信息，按中等资源假设",
+            "evidence": [],
+            "assumption": true
+          },
+          "cost.workload": {
+            "reason": "未提供研发范围与 UI/算法改动量，按中等工作量假设",
+            "evidence": [],
+            "assumption": true
+          },
+          "user.frequency": {
+            "reason": "未提供偏航发生频次，按导航场景中等频次假设",
+            "evidence": [],
+            "assumption": true
+          },
+          "strategy.roadmap": {
+            "reason": "未引用任何版本规划或路线图，按低战略匹配假设",
+            "evidence": [],
+            "assumption": true
+          },
+          "market.competitor": {
+            "reason": "未核实竞品重规划提示能力，按低差异假设",
+            "evidence": [],
+            "assumption": true
+          },
+          "cost.technicalRisk": {
+            "reason": "未提供重规划时延与提示链路技术细节，按中等风险假设",
+            "evidence": [],
+            "assumption": true
+          },
+          "market.sellingPoint": {
+            "reason": "未提供市场卖点或购买驱动证据，按低卖点假设",
+            "evidence": [],
+            "assumption": true
+          },
+          "strategy.dependency": {
+            "reason": "未提供地图/路由/提示系统依赖信息，按中等依赖假设",
+            "evidence": [],
+            "assumption": true
+          }
+        },
+        "rationale": "有明确偏航重规划体验问题，但 T1/D5 标注请忽略/合成验收，市场、规划、频次和工程依据缺失，评分置信度受限。",
+        "actorId": null,
+        "changeReason": null,
+        "createdAt": "2026-10-28T03:08:05.563Z"
+      }
+    ],
+    "formula": {
+      "text": "U=pain×frequency; M=sellingPoint×competitor; S=roadmap×dependency; C=MAX(workload,technicalRisk,resource); score=round2(U×alpha×(1+0.6M+0.4S)/C)",
+      "thresholds": {
+        "p0": 45,
+        "p1": 25,
+        "p2": 10
+      }
+    }
+  },
+  "analysisAudience": [
+    {
+      "level": "L2",
+      "reason": "原文明确提到竞技骑行用户。",
+      "evidence": [
+        "用户：竞技骑行和爱好者用户。"
+      ]
+    },
+    {
+      "level": "L3",
+      "reason": "原文明确提到爱好者用户。",
+      "evidence": [
+        "用户：竞技骑行和爱好者用户。"
+      ]
+    }
+  ],
+  "audience": {
+    "tags": [],
+    "confirmed": false,
+    "version": 0
+  },
+  "summary": "当前综合评分\n7.20\nP3\nv1 · AI 建议 · 低置信度\n查看评分与依据",
+  "dimensions": [
+    "U · 用户价值 | 9 | 痛点 3 × 频次 3 |  | AI：中 |  | 理由：偏航重规划提示偏晚会影响导航体验，用户期望更快提示并说明路线变化；但源文本自标为验收且要求忽略，用户价值证据有限。 |  | 证据：场景：导航偏航后需要快速重规划。；现状问题：重规划提示偏晚。；期望结果：更快提示并说明路线变化。",
+    "M · 市场价值 | 2 | 卖点 2 × 竞品 1 |  | AI：无法判断 |  | 理由：未提供市场卖点、竞品重规划提示能力或商业价值依据，无法判断市场价值。 |  | 需要补充信息",
+    "S · 战略价值 | 2 | Roadmap 1 × 依赖 2 |  | AI：低 |  | 理由：T1/D5 明确标注请忽略/合成验收且完成后删除，若误作为正式业务需求投入存在资源浪费风险，需先确认立项。 |  | 证据：【UI验收-请忽略】详情评分整合-20261028；补充：本需求为详情UI合成验收，完成后删除。",
+    "C · 成本 | 3 | max(工作量 3，风险 2，资源 2) |  | AI：无法判断 |  | 理由：未提供重规划时延、提示链路、地图/路由依赖及改造范围，技术可行性无法判断。 |  | 需要补充信息"
+  ],
+  "headings": [
+    "需求信息",
+    "AI 评分与优先级",
+    "九项评分输入",
+    "AI 分析建议",
+    "适用人群",
+    "模块、类型与整体判断",
+    "处理与推送",
+    "分析版本历史"
+  ]
+}

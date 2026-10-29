@@ -132,17 +132,21 @@ export function createDeepSeekKanoProvider(options: { apiKey?: string; baseUrl?:
           signal: controller.signal,
         });
       } catch (error) {
+        clearTimeout(timer);
         if (error instanceof Error && error.name === "AbortError") throw new KanoProviderError("timeout", "Kano provider request timed out.");
         throw new KanoProviderError("network_error", "Kano provider is unavailable.");
-      } finally {
-        clearTimeout(timer);
       }
-      if (!response.ok) throw new KanoProviderError("analysis_failure", `Kano provider HTTP ${response.status}.`);
+      // 与主分析一致：计时器覆盖响应体读取，避免响应体中途挂住时无限等待。
       let parsed: { choices?: Array<{ message?: { content?: string } }> };
       try {
+        if (!response.ok) throw new KanoProviderError("analysis_failure", `Kano provider HTTP ${response.status}.`);
         parsed = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
-      } catch {
+      } catch (error) {
+        if (error instanceof KanoProviderError) throw error;
+        if (error instanceof Error && error.name === "AbortError") throw new KanoProviderError("timeout", "Kano provider request timed out.");
         throw new KanoProviderError("analysis_failure", "Kano provider returned an invalid response.");
+      } finally {
+        clearTimeout(timer);
       }
       const content = parsed.choices?.[0]?.message?.content;
       if (!content?.trim()) throw new KanoProviderError("analysis_failure", "Kano provider returned empty content.");

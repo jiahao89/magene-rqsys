@@ -101,6 +101,11 @@ export interface AnalysisRunRepository {
     sourceVersion: number;
     analysisVersion: number;
     startedAt: string;
+    provider?: string;
+    model?: string;
+    promptVersion?: string;
+    moduleDictionaryVersion?: number;
+    priorityRuleVersionId?: string | null;
   }): Promise<AnalysisRunRecord>;
   complete(
     id: string,
@@ -485,6 +490,13 @@ export interface RequirementQueryRepository {
   markManualOwnerPushed(requirementId: string, feishuUserId: string): Promise<void>;
   // 清除逐条人工负责人（恢复 TB 默认负责人/空负责人）。
   clearManualOwner(requirementId: string): Promise<void>;
+  /**
+   * 恢复默认负责人：同一事务内清除人工指定并把负责人状态迁到 state。
+   * 拆成 clearManualOwner + setOwner 两步时，中途失败会留下"manually_mapped 但没有人工负责人"的行，
+   * 重试又被"没有单独指定的负责人"挡住。manually_mapped 到 auto_mapped/not_required 没有直接迁移，
+   * 实现需在事务内经 pending_mapping 中转。
+   */
+  releaseManualOwner(requirementId: string, state: OwnerState): Promise<void>;
   // 记录最近一次成功推送写入 Base 的负责人，用于下一次"负责人变更"判断。
   markLastPushedOwner(requirementId: string, owner: { feishuUserId: string; feishuIdType: FeishuIdType } | null): Promise<void>;
   // 疑似重复：查询同标题链接（仅详情使用）。

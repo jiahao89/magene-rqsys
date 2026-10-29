@@ -1,0 +1,26 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": [
+    {
+      "analysis_state": "analyzed",
+      "base_record_id": "reczz28RsyiM1l4E",
+      "kano_runs": 1,
+      "manual_owner_assignment_version": 3,
+      "owner_state": "manually_mapped",
+      "platform_requirement_id": "RQ-000343",
+      "push_runs": 4,
+      "push_state": "pushed",
+      "rice_drafts": 1,
+      "source_version": 2
+    }
+  ],
+  "_notice": {
+    "update": {
+      "command": "lark-cli update",
+      "current": "1.0.97",
+      "latest": "1.0.98",
+      "message": "lark-cli 1.0.98 available, current 1.0.97, run: lark-cli update"
+    }
+  }
+}

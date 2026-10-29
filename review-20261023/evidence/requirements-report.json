@@ -1,0 +1,39 @@
+[
+  {
+    "file": "page.png",
+    "state": null,
+    "size": "1440x900",
+    "zoom": 1,
+    "animationWaitMs": 0,
+    "issues": [],
+    "lint": [
+      {
+        "rule": "eyebrow",
+        "label": "标题上方的眉标",
+        "count": 1,
+        "examples": [
+          "div.eyebrow「WORKSPACE」"
+        ]
+      },
+      {
+        "rule": "englishLabel",
+        "label": "中文界面里的英文大写标签",
+        "count": 2,
+        "examples": [
+          "span.brand-edition「WORKSPACE」",
+          "div.eyebrow「WORKSPACE」"
+        ]
+      },
+      {
+        "rule": "contrastLow",
+        "label": "文字对比度不达标（正文低于 4.5:1，大字低于 3:1）",
+        "count": 7,
+        "examples": [
+          "div.nav-group-label「工作台」（2.55:1）",
+          "div.nav-group-label「管理」（2.55:1）",
+          "div.nav-group-label「设置」（2.55:1）"
+        ]
+      }
+    ]
+  }
+]

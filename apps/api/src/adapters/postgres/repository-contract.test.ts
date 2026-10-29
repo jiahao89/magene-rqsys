@@ -7,6 +7,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PostgresRepositories } from "./repositories.js";
 import { decodeBatchCursor } from "../../application/batch-cursor.js";
+import { decodeRequirementCursor } from "../../application/requirement-cursor.js";
 
 // 两仓仓储行为契约测试（R-01）。
 //
@@ -269,6 +270,105 @@ for (const mode of MODES) {
       const secondPage = await ctx.repositories.batches.list({ limit: 1, cursor: decodeBatchCursor(firstPage.nextCursor)! });
       assert.equal(secondPage.items.length, 1);
       assert.notEqual(secondPage.items[0]?.id, firstPage.items[0]?.id);
+    } finally {
+      await cleanup(ctx);
+    }
+  });
+
+  test(`repository contract [${mode}]: requirement search applies filters and keyset pagination without skipping rows`, async () => {
+    const ctx = await setup(mode);
+    try {
+      const source = await ctx.repositories.sources.create(sourceConfig);
+      const batch = await ctx.repositories.batches.create({ sourceConfigId: source.id, triggerType: "manual", actorId: null, idempotencyKey: `contract-search-${randomUUID()}`, startedAt: "2026-10-28T00:00:00Z" });
+      // 同一批内创建 3 条：游标必须按 (created_at, id) 稳定推进，不能因时间相同而漏行。
+      for (const index of [1, 2, 3]) {
+        await ctx.repositories.requirements.upsertRequirement(source.id, `task-search-${index}`, requirementWrite(source.id, batch.id, { teambitionRequirementId: `task-search-${index}`, title: `查询需求 ${index}` }));
+      }
+      const filtered = await ctx.repositories.requirements.search({ q: "查询需求", limit: 10 });
+      assert.equal(filtered.items.length, 3);
+      const byState = await ctx.repositories.requirements.search({ pullState: "running", limit: 10 });
+      assert.equal(byState.items.length, 0, "过滤条件未命中时返回空集，而不是报错");
+      const seen = new Set<string>();
+      let cursor = undefined as ReturnType<typeof decodeRequirementCursor> | undefined;
+      for (let page = 0; page < 4; page += 1) {
+        const result = await ctx.repositories.requirements.search({ q: "查询需求", limit: 1, ...(cursor ? { cursor } : {}) });
+        for (const item of result.items) seen.add(item.id);
+        if (!result.nextCursor) break;
+        cursor = decodeRequirementCursor(result.nextCursor)!;
+      }
+      assert.equal(seen.size, 3, "分页遍历必须覆盖全部 3 条，不能漏行或重复");
+    } finally {
+      await cleanup(ctx);
+    }
+  });
+
+  test(`repository contract [${mode}]: duplicate hints are persisted without merging or deleting rows`, async () => {
+    const ctx = await setup(mode);
+    try {
+      const source = await ctx.repositories.sources.create(sourceConfig);
+      const batch = await ctx.repositories.batches.create({ sourceConfigId: source.id, triggerType: "manual", actorId: null, idempotencyKey: `contract-dup-${randomUUID()}`, startedAt: "2026-10-28T00:00:00Z" });
+      const first = await ctx.repositories.requirements.upsertRequirement(source.id, "task-dup-1", requirementWrite(source.id, batch.id, { teambitionRequirementId: "task-dup-1", title: "同标题需求" }));
+      const second = await ctx.repositories.requirements.upsertRequirement(source.id, "task-dup-2", requirementWrite(source.id, batch.id, { teambitionRequirementId: "task-dup-2", title: "同标题需求" }));
+      await ctx.repositories.requirements.setDuplicateOf(second.id, first.id);
+      const candidates = await ctx.repositories.requirements.listTitleCandidates(source.id);
+      assert.equal(candidates.length, 2, "重复标题只是提示：两条需求都必须保留");
+      assert.equal(candidates.find((row) => row.id === second.id)?.duplicateOfRequirementId, first.id);
+      await ctx.repositories.requirements.setDuplicateOf(second.id, null);
+      assert.equal((await ctx.repositories.requirements.get(second.id))?.duplicateOfRequirementId, null, "撤销提示也必须生效");
+    } finally {
+      await cleanup(ctx);
+    }
+  });
+
+  test(`repository contract [${mode}]: job claim uses a lease and only the current attempt can complete`, async () => {
+    const ctx = await setup(mode);
+    try {
+      const job = await ctx.repositories.jobs.enqueue({ jobType: "analysis", dedupeKey: `contract-job-${randomUUID()}`, payload: { requirementId: "x" }, availableAt: "2026-10-28T00:00:00Z" });
+      const claimed = await ctx.repositories.jobs.claimNext("worker-a", 60_000, "2026-10-28T00:00:01Z");
+      assert.equal(claimed?.id, job.id);
+      assert.equal(claimed?.status, "running");
+      assert.equal(claimed?.attemptCount, 1);
+      assert.equal(await ctx.repositories.jobs.claimNext("worker-b", 60_000, "2026-10-28T00:00:02Z"), null, "租约有效期内不能被第二个 worker 认领");
+      // fencing：旧 attempt 的结果必须被拒绝
+      assert.equal(await ctx.repositories.jobs.complete(job.id, { expectedAttempt: 0, status: "succeeded", now: "2026-10-28T00:00:03Z" }), null);
+      const completed = await ctx.repositories.jobs.complete(job.id, { expectedAttempt: 1, status: "succeeded", now: "2026-10-28T00:00:03Z" });
+      assert.equal(completed?.status, "succeeded");
+      // 租约过期且次数用尽后由回收器查询返回
+      const exhausted = await ctx.repositories.jobs.enqueue({ jobType: "base_push", dedupeKey: `contract-job-exhausted-${randomUUID()}`, payload: { requirementId: "x" }, availableAt: "2026-10-28T00:00:00Z", maxAttempts: 1 });
+      await ctx.repositories.jobs.claimNext("worker-a", 0, "2026-10-28T00:00:04Z");
+      const reclaimed = await ctx.repositories.jobs.listExhaustedRunning?.("2026-10-28T01:00:00Z", 10) ?? [];
+      assert.ok(reclaimed.some((row) => row.id === exhausted.id), "次数用尽且租约过期的作业必须能被回收器查到");
+    } finally {
+      await cleanup(ctx);
+    }
+  });
+
+  test(`repository contract [${mode}]: settling a failed sync job also closes its running batch atomically`, async () => {
+    const ctx = await setup(mode);
+    try {
+      const source = await ctx.repositories.sources.create(sourceConfig);
+      const batch = await ctx.repositories.batches.create({ sourceConfigId: source.id, triggerType: "manual", actorId: null, idempotencyKey: `contract-settle-${randomUUID()}`, startedAt: "2026-10-28T00:00:00Z" });
+      await ctx.repositories.jobs.enqueue({ jobType: "sync", dedupeKey: `sync:${batch.id}`, payload: { batchId: batch.id, sourceId: source.id, triggerType: "manual", actorId: null }, availableAt: "2026-10-28T00:00:00Z" });
+      const claimed = await ctx.repositories.jobs.claimNext("worker-a", 60_000, "2026-10-28T00:00:01Z");
+      assert.ok(claimed);
+      await ctx.repositories.jobs.complete(claimed!.id, { expectedAttempt: claimed!.attemptCount, status: "failed", errorCode: "worker_handler_failed", errorSummary: "boom", now: "2026-10-28T00:00:02Z", settleSyncBatch: true });
+      assert.equal((await ctx.repositories.batches.get(batch.id))?.status, "failed", "失败的 sync 作业必须把批次一并收敛，否则来源被并发守卫锁死");
+    } finally {
+      await cleanup(ctx);
+    }
+  });
+
+  test(`repository contract [${mode}]: publishing a dictionary retires the previously published version`, async () => {
+    const ctx = await setup(mode);
+    try {
+      const first = await ctx.repositories.dictionaries.create({ entries: ["需求澄清"], createdBy: "contract", now: "2026-10-28T00:00:00Z" });
+      await ctx.repositories.dictionaries.publish(first.version, "2026-10-28T00:00:01Z");
+      const second = await ctx.repositories.dictionaries.create({ entries: ["需求澄清", "缺陷修复"], createdBy: "contract", now: "2026-10-28T00:00:02Z" });
+      await ctx.repositories.dictionaries.publish(second.version, "2026-10-28T00:00:03Z");
+      const all = await ctx.repositories.dictionaries.list();
+      assert.equal(all.filter((row) => row.status === "published").length, 1, "任何时刻只能有一个 published 版本");
+      assert.equal((await ctx.repositories.dictionaries.get(first.version))?.status, "retired");
+      assert.deepEqual((await ctx.repositories.dictionaries.get(second.version))?.entries, ["需求澄清", "缺陷修复"]);
     } finally {
       await cleanup(ctx);
     }

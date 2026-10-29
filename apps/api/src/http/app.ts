@@ -1,6 +1,5 @@
 import type { Pool } from "pg";
 import { normalizeOwnerName } from "../owner/mapping.js";
-import { canTransition } from "../domain/transitions.js";
 import { analysisRunningJobKeys } from "../scheduler/analysis-recovery.js";
 import { SourceProjectResolutionError, type FeishuUserDirectory, type FeishuUserSelectionResolver, type IdentityProvider, type TeambitionSourceProjectResolver } from "../application/ports.js";
 import { isIntakeComplete, normalizeScheduleTime } from "../domain/workflow.js";
@@ -530,13 +529,16 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const page = await repositories.requirements.search({ ...(parsed.data.q === undefined ? {} : { q: parsed.data.q }), ...(parsed.data.executorName === undefined ? {} : { executorName: parsed.data.executorName }), ...(parsed.data.pullState === undefined ? {} : { pullState: parsed.data.pullState }), ...(parsed.data.analysisState === undefined ? {} : { analysisState: parsed.data.analysisState }), ...(parsed.data.ownerState === undefined ? {} : { ownerState: parsed.data.ownerState }), ...(parsed.data.pushState === undefined ? {} : { pushState: parsed.data.pushState }),
       ...(parsed.data.processingState === undefined ? {} : { processingState: parsed.data.processingState }), ...(parsed.data.batchId === undefined ? {} : { batchId: parsed.data.batchId }), ...(parsed.data.since === undefined ? {} : { since: parsed.data.since }), ...(parsed.data.until === undefined ? {} : { until: parsed.data.until }), limit: parsed.data.limit, ...(cursor === undefined ? {} : { cursor }) });
     // 列表一次取回全部有效映射再按 TB 用户查名，避免逐行查询。
-    // 空页时不能把空字符串传给 uuid 列：PostgreSQL 会以 22P02 拒绝，接口变成 500。
-    const firstItem = page.items[0];
+    // 空页时不能把空字符串传给 uuid 列：PostgreSQL 会以 22P02 拒绝，接口变成 500，
+    // 因此只对页内真实出现过的来源查询映射。
     // 手工需求 sourceConfigId 为空：不查 TB 人员映射（V02-T02 起可空）。
-    const mappings = repositories.people && firstItem?.sourceConfigId ? await repositories.people.listActive(firstItem.sourceConfigId) : [];
-    const nameByTbUser = new Map(mappings.filter((m) => m.teambitionUserId && m.teambitionDisplayName).map((m) => [m.teambitionUserId as string, m.teambitionDisplayName as string]));
+    // 同一页可能混有手工需求与多个来源的需求：按页内出现的每个来源分别取映射，
+    // 只用首行的 sourceConfigId 会让页首是手工需求时整页姓名都丢失。
+    const pageSourceIds = [...new Set(page.items.map((item) => item.sourceConfigId).filter((id): id is string => Boolean(id)))];
+    const mappings = repositories.people ? (await Promise.all(pageSourceIds.map((id) => repositories.people!.listActive(id)))).flat() : [];
+    const nameByTbUser = new Map(mappings.filter((m) => m.teambitionUserId && m.teambitionDisplayName).map((m) => [`${m.sourceConfigId}:${m.teambitionUserId}`, m.teambitionDisplayName as string]));
     return json({
-      items: page.items.map((item) => ({ ...requirementSearchDto(item), ownerName: manualOwnerName(item) ?? (item.executorUserId ? nameByTbUser.get(item.executorUserId) ?? null : null) })),
+      items: page.items.map((item) => ({ ...requirementSearchDto(item), ownerName: manualOwnerName(item) ?? (item.executorUserId && item.sourceConfigId ? nameByTbUser.get(`${item.sourceConfigId}:${item.executorUserId}`) ?? null : null) })),
       nextCursor: page.nextCursor,
     });
   }
@@ -832,23 +834,16 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const analysisVersion = latestAnalysis?.analysisVersion ?? 0;
     if (method === "DELETE") {
       // 恢复默认负责人：清除本条需求的人工指定，再按 TB 执行人映射重新解析。
-      if (!req.manualOwner) return jsonError("CONFLICT", "该需求没有单独指定的负责人。");
+      // 历史上两步写入（先清除、后迁状态）中途失败会留下 manually_mapped 却没有人工负责人的行，
+      // 这里不能再用 409 把它永远挡住：状态仍是 manually_mapped 时允许继续，借此自愈。
+      if (!req.manualOwner && req.pipeline.owner !== "manually_mapped") return jsonError("CONFLICT", "该需求没有单独指定的负责人。");
       const hasTbOwner = Boolean(req.executorUserId || req.executorName);
       const mapping = req.sourceConfigId && req.executorUserId
         ? await repositories.people.resolveActive(req.sourceConfigId, { tbUserId: req.executorUserId })
         : req.sourceConfigId && req.executorName ? await repositories.people.resolveActive(req.sourceConfigId, { normalizedName: normalizeOwnerName(req.executorName) }) : null;
       const targetState = mapping ? "auto_mapped" : hasTbOwner ? "pending_mapping" : "not_required";
       try {
-        await repositories.requirements.clearManualOwner(req.id);
-        // manually_mapped 没有到 not_required/auto_mapped 的直接迁移：先退回 pending_mapping 再落目标。
-        // 否则清除人工负责人后 setOwner 抛 InvalidTransitionError，需求永久卡在 manually_mapped
-        // （每次重试 409，后续推送记账也会持续失败）。
-        if (req.pipeline.owner !== targetState && !canTransition("owner", req.pipeline.owner, targetState)) {
-          await repositories.requirements.setOwner(req.id, null, "pending_mapping");
-        }
-        if (req.pipeline.owner !== targetState) {
-          await repositories.requirements.setOwner(req.id, mapping?.feishuUserId ?? null, targetState);
-        }
+        await repositories.requirements.releaseManualOwner(req.id, targetState);
       } catch (cause) {
         return (cause as Error)?.name === "InvalidTransitionError" ? jsonError("CONFLICT") : jsonError("DEPENDENCY_UNAVAILABLE");
       }

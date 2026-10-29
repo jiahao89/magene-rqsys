@@ -90,7 +90,7 @@ export const AUDIENCE_LEVEL_NAMES: Record<AudienceLevel, string> = {
   L4: "健身锻炼 Fitness", L5: "休闲娱乐 Recreation", L6: "通勤代步 Commuter",
 };
 
-const EvidenceList = z.array(z.string().min(1));
+const EvidenceList = z.array(z.string().refine((value) => value.trim().length > 0, "evidence must not be blank"));
 const RecommendationSchema = z.object({
   recommendation: z.string().min(1),
   rationale: z.string().min(1),

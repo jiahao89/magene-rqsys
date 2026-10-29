@@ -1,0 +1,89 @@
+{
+  "manifest_version": "v1",
+  "format": "ndjson",
+  "base_token": "GRnEboCIga7Omas8RwgcDmmgnib",
+  "table_id": "tbl6Gfi0KJ2a1llK",
+  "rev": 383,
+  "timezone": "Asia/Shanghai",
+  "query_context": {
+    "field_scope": "selected_fields",
+    "record_scope": "all_records"
+  },
+  "requested_limit": 2000,
+  "records_count": 315,
+  "page_count": 1,
+  "has_more": false,
+  "record_file": "/Users/jacko/Projects/RQ-Sys/.scratch/rq-sys-v0.2/verification-20261026/target/rq343-base-rows.ndjson",
+  "record_file_size_bytes": 108906,
+  "manifest_file": "/Users/jacko/Projects/RQ-Sys/.scratch/rq-sys-v0.2/verification-20261026/target/rq343-base-rows.manifest.json",
+  "columns": {
+    "record_id": {
+      "physical_type": "string",
+      "stats": {
+        "max_length": 16
+      },
+      "example": "recvxDsIbISvyC"
+    },
+    "执行人": {
+      "field_id": "fldHSG5muE",
+      "field_type": "user",
+      "physical_type": "array<struct<id string, name string>>",
+      "stats": {
+        "empty_count": 46,
+        "max_length": 1,
+        "avg_length": 0.8539682539682539
+      },
+      "example": [
+        {
+          "id": "ou_eb8d2f149cdbe50c2fb73afedd49184f",
+          "name": "贾浩"
+        }
+      ]
+    },
+    "推送状态": {
+      "field_id": "fldxYbHrWp",
+      "field_type": "select",
+      "physical_type": "array<string>",
+      "stats": {
+        "empty_count": 0,
+        "max_length": 1,
+        "avg_length": 1
+      },
+      "example": [
+        "已推送"
+      ]
+    },
+    "标题": {
+      "field_id": "fldBEyqgTm",
+      "field_type": "text",
+      "physical_type": "string|null",
+      "stats": {
+        "null_count": 0,
+        "max_length": 371
+      },
+      "example": "111"
+    },
+    "源版本": {
+      "field_id": "fldY6nMwzi",
+      "field_type": "number",
+      "physical_type": "number|null",
+      "stats": {
+        "null_count": 42,
+        "min": 1,
+        "max": 2,
+        "avg": 1.0036630036630036
+      },
+      "example": 1
+    },
+    "需求平台ID": {
+      "field_id": "fldIohMQ0W",
+      "field_type": "text",
+      "physical_type": "string|null",
+      "stats": {
+        "null_count": 0,
+        "max_length": 9
+      },
+      "example": "RQ-000001"
+    }
+  }
+}

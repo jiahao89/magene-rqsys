@@ -99,3 +99,10 @@ test("V02-S06 scoring: evidence must occur in source unless assumption is explic
   assert.throws(() => validateScoringEvidence({ ...validScoring, basis: { ...basis, "user.pain": { reason: "x", evidence: ["不存在的证据"], assumption: false } } }, source), /evidence does not occur/);
   assert.doesNotThrow(() => validateScoringEvidence({ ...validScoring, basis: { ...basis, "user.pain": { reason: "假设", evidence: [], assumption: true } } }, source));
 });
+
+test("blank-only evidence is rejected instead of trivially matching the source", () => {
+  // compact(" ") 变成空串，includes("") 恒为真：旧实现允许用空白串伪造"已引用原文"。
+  assert.throws(() => ScoringSchema.parse({ ...validScoring, basis: { ...basis, "user.pain": { reason: "x", evidence: ["   "], assumption: false } } }));
+  const parsed = ScoringSchema.parse({ ...validScoring, basis: { ...basis, "user.pain": { reason: "x", evidence: [" 用户描述循环选择太难受 "], assumption: false } } });
+  assert.doesNotThrow(() => validateScoringEvidence(parsed, "用户描述循环选择太难受"));
+});

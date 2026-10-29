@@ -1,0 +1,34 @@
+{
+  "capturedAt": "2026-10-28T04:01:32.263Z",
+  "release": "7701562751298669873 / 0835a2f",
+  "metrics": {
+    "total": 315,
+    "pullSynced": 315,
+    "analysisAnalyzed": 315,
+    "ownerResolved": 270,
+    "pushPushed": 270,
+    "failed": 0,
+    "pushFailed": 0,
+    "pushPending": 45,
+    "priority": {
+      "P0": 0,
+      "P1": 0,
+      "P2": 2,
+      "P3": 0,
+      "scored": 0,
+      "legacy": 2,
+      "unscored": 313
+    },
+    "priorityRule": {
+      "version": 2,
+      "thresholds": {
+        "p0": 45,
+        "p1": 25,
+        "p2": 10
+      },
+      "formulaText": "U=pain×frequency; M=sellingPoint×competitor; S=roadmap×dependency; C=MAX(workload,technicalRisk,resource); score=round2(U×alpha×(1+0.6M+0.4S)/C)"
+    }
+  },
+  "panel": "优先级分级\n\n按当前综合评分统计需求数量；未评分需求单列\n\n2 / 315 已分级\nP0\n≥ 45\n0\n条需求\nP1\n25–44.99\n0\n条需求\nP2\n10–24.99\n2\n条需求\nP3\n< 10\n0\n条需求\n待评分\n无评分/无历史优先级\n313\n条需求\n分级规则\n评分规则 v2 · 固定公式\nP0 综合分 ≥ 45\nP1 25–44.99\nP2 10–24.99\nP3 综合分 < 10\nU=pain×frequency; M=sellingPoint×competitor; S=roadmap×dependency; C=MAX(workload,technicalRisk,resource); score=round2(U×alpha×(1+0.6M+0.4S)/C)\n\n已分级 2 条，其中 2 条来自历史分析优先级（v1，不套用上方 v2 分数范围）；313 条待评分。当前评分版本优先于历史分析优先级。",
+  "rule": "分级规则\n评分规则 v2 · 固定公式\nP0 综合分 ≥ 45\nP1 25–44.99\nP2 10–24.99\nP3 综合分 < 10\nU=pain×frequency; M=sellingPoint×competitor; S=roadmap×dependency; C=MAX(workload,technicalRisk,resource); score=round2(U×alpha×(1+0.6M+0.4S)/C)\n\n已分级 2 条，其中 2 条来自历史分析优先级（v1，不套用上方 v2 分数范围）；313 条待评分。当前评分版本优先于历史分析优先级。"
+}

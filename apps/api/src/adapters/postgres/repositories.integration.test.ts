@@ -238,6 +238,26 @@ test("a no-TB-owner requirement keeps a per-requirement owner across syncs until
     assert.equal((await ctx.repos.requirements.get(row.id))?.manualOwner,null);
   }finally{await cleanup(ctx);}
 });
+test("releaseManualOwner clears the assignment and moves the state in one transaction, including the bridge from manually_mapped",async()=>{
+  const ctx=await setup();
+  try{
+    const source=await ctx.repos.sources.create(config);
+    const batch=await ctx.repos.batches.create({sourceConfigId:source.id,triggerType:"manual",actorId:null,idempotencyKey:"manual-owner-batch-3",startedAt:"2026-10-08T00:00:00Z"});
+    const row=await ctx.repos.requirements.upsertRequirement(source.id,"task-1",requirementWrite(source.id,batch.id));
+    await ctx.repos.requirements.assignManualOwner(row.id,{feishuUserId:"u-assignee",feishuIdType:"user_id",name:"毕梓浩",assignedBy:"operator",assignedAt:"2026-10-10T00:00:00.000Z"});
+    assert.equal((await ctx.repos.requirements.get(row.id))?.pipeline.owner,"manually_mapped");
+    // manually_mapped 没有到 not_required 的直接迁移：实现必须经 pending_mapping 中转后落到目标状态。
+    await ctx.repos.requirements.releaseManualOwner(row.id,"not_required");
+    const released=await ctx.repos.requirements.get(row.id);
+    assert.equal(released?.pipeline.owner,"not_required");
+    assert.equal(released?.manualOwner,null,"人工负责人的各列必须在同一事务里清空");
+    // 幂等：同一目标状态重放不报错
+    await ctx.repos.requirements.releaseManualOwner(row.id,"not_required");
+    // 非法迁移仍然拒绝，且不留下部分写入
+    await  assert.rejects(()=>ctx.repos.requirements.releaseManualOwner(row.id,"manually_mapped") as Promise<unknown>,/invalid transition/i);
+    assert.equal((await ctx.repos.requirements.get(row.id))?.pipeline.owner,"not_required");
+  }finally{await cleanup(ctx);}
+});
 test("assigning a per-requirement owner to a missing requirement fails without side effects",async()=>{
   const ctx=await setup();
   try{

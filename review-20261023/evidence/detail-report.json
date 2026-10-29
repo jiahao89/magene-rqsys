@@ -1,0 +1,66 @@
+[
+  {
+    "file": "page.png",
+    "state": null,
+    "size": "1440x900",
+    "zoom": 1,
+    "animationWaitMs": 0,
+    "issues": [],
+    "lint": [
+      {
+        "rule": "eyebrow",
+        "label": "标题上方的眉标",
+        "count": 1,
+        "examples": [
+          "div.eyebrow「WORKSPACE」"
+        ]
+      },
+      {
+        "rule": "englishLabel",
+        "label": "中文界面里的英文大写标签",
+        "count": 2,
+        "examples": [
+          "span.brand-edition「WORKSPACE」",
+          "div.eyebrow「WORKSPACE」"
+        ]
+      },
+      {
+        "rule": "contrastLow",
+        "label": "文字对比度不达标（正文低于 4.5:1，大字低于 3:1）",
+        "count": 6,
+        "examples": [
+          "div.nav-group-label「工作台」（2.55:1）",
+          "div.nav-group-label「管理」（2.55:1）",
+          "div.nav-group-label「设置」（2.55:1）"
+        ]
+      },
+      {
+        "rule": "tightLeading",
+        "label": "多行正文行高过紧",
+        "count": 1,
+        "examples": [
+          "h2.req-summary-title「【Beta反馈】【CC700 ProV1.905」（1.35）"
+        ]
+      },
+      {
+        "rule": "longMeasure",
+        "label": "正文行太长",
+        "count": 2,
+        "examples": [
+          "h2.req-summary-title「【Beta反馈】【CC700 ProV1.905」（每行约 52 字）",
+          "p.req-l1-title「【Beta反馈】【CC700 ProV1.905」（每行约 55 字）"
+        ]
+      },
+      {
+        "rule": "smallText",
+        "label": "正文小于 13px",
+        "count": 4,
+        "examples": [
+          "p.advice-rationale「理由：原文明确描述了自动计圈提示图标消失过快与对」（12px）",
+          "p.advice-rationale「理由：用户明确因图标消失过快、提示音难以理解而需」（12px）",
+          "p.advice-evidence「证据：自动计圈功能提示音响了之后屏幕上的提示图标」（12px）"
+        ]
+      }
+    ]
+  }
+]

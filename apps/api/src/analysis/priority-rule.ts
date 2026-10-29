@@ -74,8 +74,9 @@ export function buildPriorityRule(record: PriorityRuleVersionRecord): AnalysisPr
   if (!(p0 >= p1 && p1 >= p2)) return null;
   const userMap = maps.user!, marketMap = maps.market!, businessMap = maps.business!, technologyMap = maps.technology!;
   const dimensionScore = (map: ScoringMap, value: string): number | null => {
+    if (!Object.hasOwn(map, value)) return null;
     const score = map[value];
-    return score === undefined ? null : score;
+    return typeof score === "number" ? score : null;
   };
   return {
     id: record.id,

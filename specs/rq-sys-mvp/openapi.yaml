@@ -387,7 +387,7 @@ paths:
               properties:
                 expectedSourceVersion: { type: integer, minimum: 1 }
                 title: { type: string, minLength: 1, maxLength: 200 }
-                description: { type: string, minLength: 1, maxLength: 20000, nullable: true }
+                description: { type: string, minLength: 1, maxLength: 20000 }
                 sourceChannel: { type: string, enum: [销售, 售后, 电商, 运营/用研, 终端用户, 产品/研发/测试] }
                 productModel: { type: string, maxLength: 100, nullable: true }
                 requirementType: { type: string, nullable: true }

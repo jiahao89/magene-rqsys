@@ -1,0 +1,49 @@
+[
+  {
+    "file": "page.png",
+    "state": null,
+    "size": "1440x900",
+    "zoom": 1,
+    "animationWaitMs": 0,
+    "issues": [],
+    "lint": [
+      {
+        "rule": "eyebrow",
+        "label": "标题上方的眉标",
+        "count": 1,
+        "examples": [
+          "div.eyebrow「SYNC WORKBENCH」"
+        ]
+      },
+      {
+        "rule": "sideStripe",
+        "label": "彩色单侧边线",
+        "count": 3,
+        "examples": [
+          "button.todo-card.is-warn「283 待分配负责人 没有对应飞书账号，分配后会」（3px）",
+          "button.todo-card.is-danger「1 推送失败 可在需求详情页查看原因并重试」（3px）",
+          "button.todo-card.is-info「283 待推送 等待推送到多维表格」（3px）"
+        ]
+      },
+      {
+        "rule": "englishLabel",
+        "label": "中文界面里的英文大写标签",
+        "count": 2,
+        "examples": [
+          "span.brand-edition「WORKSPACE」",
+          "div.eyebrow「SYNC WORKBENCH」"
+        ]
+      },
+      {
+        "rule": "contrastLow",
+        "label": "文字对比度不达标（正文低于 4.5:1，大字低于 3:1）",
+        "count": 6,
+        "examples": [
+          "div.nav-group-label「工作台」（2.55:1）",
+          "div.nav-group-label「管理」（2.55:1）",
+          "div.nav-group-label「设置」（2.55:1）"
+        ]
+      }
+    ]
+  }
+]

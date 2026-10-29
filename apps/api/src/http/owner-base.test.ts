@@ -59,8 +59,7 @@ test("clearing a per-requirement owner restores the TB default mapping and queue
   };
   const base = await (repositories.requirements.get as () => Promise<RequirementRecord | null>)();
   repositories.requirements.get = async () => ({ ...base!, manualOwner: { feishuUserId: "u-assignee", feishuIdType: "user_id", name: "毕梓浩", assignedBy: "operator", assignedAt: "2026-10-09T00:00:00.000Z", pushedFeishuUserId: null, assignmentVersion: 1 } });
-  repositories.requirements.clearManualOwner = async () => { cleared = true; };
-  repositories.requirements.setOwner = async (_id: string, _owner: string | null, state: string) => { ownerState = state; };
+  repositories.requirements.releaseManualOwner = async (_id: string, state: string) => { cleared = true; ownerState = state; };
   const response = await handleApiRequest(new Request("http://localhost/api/requirements/req-1/owner", { method: "DELETE" }), h.dependencies);
   assert.equal(response.status, 200);
   assert.equal(cleared, true);
@@ -155,7 +154,7 @@ test("the requirement detail shows the per-requirement owner picked for a no-TB-
   assert.equal((await response.json() as { ownerName: string | null }).ownerName, "毕梓浩");
 });
 
-test("clearing a manual owner on a manually-mapped requirement bridges to auto_mapped through pending_mapping", async () => {
+test("clearing a manual owner releases it atomically and lands on auto_mapped", async () => {
   // manually_mapped 没有 → auto_mapped 的直接迁移：先退 pending_mapping 再落目标，
   // 否则真实仓储会抛 InvalidTransitionError，需求被永久卡在 manually_mapped（重试 409）。
   const h = deps();
@@ -163,24 +162,44 @@ test("clearing a manual owner on a manually-mapped requirement bridges to auto_m
   const repositories = h.dependencies.repositories as unknown as { requirements: Record<string, unknown> };
   const base = await (repositories.requirements.get as () => Promise<RequirementRecord | null>)();
   repositories.requirements.get = async () => ({ ...base!, pipeline: { ...base!.pipeline, owner: "manually_mapped" }, manualOwner: { feishuUserId: "u-assignee", feishuIdType: "user_id", name: "毕梓浩", assignedBy: "operator", assignedAt: "2026-10-09T00:00:00.000Z", pushedFeishuUserId: null, assignmentVersion: 1 } });
-  repositories.requirements.clearManualOwner = async () => { calls.push("cleared"); };
-  repositories.requirements.setOwner = async (_id: string, owner: string | null, state: string) => { calls.push(`owner:${owner ?? "none"}:${state}`); };
+  repositories.requirements.releaseManualOwner = async (_id: string, state: string) => { calls.push(`released:${state}`); };
   const response = await handleApiRequest(new Request("http://localhost/api/requirements/req-1/owner", { method: "DELETE" }), h.dependencies);
   assert.equal(response.status, 200);
-  assert.deepEqual(calls, ["cleared", "owner:none:pending_mapping", "owner:ou-user:auto_mapped"]);
+  assert.deepEqual(calls, ["released:auto_mapped"], "一次原子调用完成清除与状态迁移，不再拆成两步");
   assert.deepEqual(await response.json(), { requirementId: "req-1", ownerState: "auto_mapped", status: "queued" });
 });
 
-test("clearing a manual owner on a requirement without TB executor transitions through pending_mapping", async () => {
+test("a row stuck in manually_mapped without a manual owner can be released instead of being blocked by 409", async () => {
+  // 历史上"先清除、后迁状态"分两步写，中途失败会留下这种行；之前重试永远被 409 挡住。
+  const h = deps();
+  const calls: string[] = [];
+  const repositories = h.dependencies.repositories as unknown as { requirements: Record<string, unknown> };
+  const base = await (repositories.requirements.get as () => Promise<RequirementRecord | null>)();
+  repositories.requirements.get = async () => ({ ...base!, pipeline: { ...base!.pipeline, owner: "manually_mapped" }, manualOwner: null });
+  repositories.requirements.releaseManualOwner = async (_id: string, state: string) => { calls.push(`released:${state}`); };
+  const response = await handleApiRequest(new Request("http://localhost/api/requirements/req-1/owner", { method: "DELETE" }), h.dependencies);
+  assert.equal(response.status, 200);
+  assert.deepEqual(calls, ["released:auto_mapped"]);
+});
+
+test("DELETE owner still returns 409 when there is neither a manual owner nor a manually_mapped state", async () => {
+  const h = deps();
+  const repositories = h.dependencies.repositories as unknown as { requirements: Record<string, unknown> };
+  const base = await (repositories.requirements.get as () => Promise<RequirementRecord | null>)();
+  repositories.requirements.get = async () => ({ ...base!, manualOwner: null });
+  const response = await handleApiRequest(new Request("http://localhost/api/requirements/req-1/owner", { method: "DELETE" }), h.dependencies);
+  assert.equal(response.status, 409);
+});
+
+test("clearing a manual owner on a requirement without TB executor lands on not_required", async () => {
   const h = deps();
   const calls: string[] = [];
   const repositories = h.dependencies.repositories as unknown as { requirements: Record<string, unknown> };
   const base = await (repositories.requirements.get as () => Promise<RequirementRecord | null>)();
   repositories.requirements.get = async () => ({ ...base!, executorUserId: null, executorName: null, pipeline: { ...base!.pipeline, owner: "manually_mapped" }, manualOwner: { feishuUserId: "u-assignee", feishuIdType: "user_id", name: "毕梓浩", assignedBy: "operator", assignedAt: "2026-10-09T00:00:00.000Z", pushedFeishuUserId: null, assignmentVersion: 1 } });
-  repositories.requirements.clearManualOwner = async () => { calls.push("cleared"); };
-  repositories.requirements.setOwner = async (_id: string, _owner: string | null, state: string) => { calls.push(`owner:${state}`); };
+  repositories.requirements.releaseManualOwner = async (_id: string, state: string) => { calls.push(`released:${state}`); };
   const response = await handleApiRequest(new Request("http://localhost/api/requirements/req-1/owner", { method: "DELETE" }), h.dependencies);
   assert.equal(response.status, 200);
-  assert.deepEqual(calls, ["cleared", "owner:pending_mapping", "owner:not_required"]);
+  assert.deepEqual(calls, ["released:not_required"]);
   assert.deepEqual(await response.json(), { requirementId: "req-1", ownerState: "not_required", status: "queued" });
 });

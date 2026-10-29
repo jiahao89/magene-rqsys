@@ -1,0 +1,37 @@
+{
+  "capturedAt": "2026-10-28T10:12:53.056725+08:00",
+  "scheduledBatch": {
+    "id": "e9a41461-e78f-40a7-baf0-1b0aa78741c5",
+    "status": "succeeded",
+    "trigger_type": "scheduled",
+    "idempotency_key": "sched:99331edb-663b-4635-99f4-597e26304ab1:_batch_:2026-10-28T01:00:00.000Z",
+    "started_at": "2026-10-28T09:43:34.974+08:00",
+    "completed_at": "2026-10-28T09:44:17.622+08:00",
+    "total_count": 315,
+    "succeeded_count": 315,
+    "failed_count": 0,
+    "error_summary": null
+  },
+  "queueActive": 0,
+  "jobStatus": {
+    "succeeded": 641,
+    "failed": 4
+  },
+  "requirements": 315,
+  "baseRecords": 312,
+  "priorityRules": [
+    {
+      "id": "05499b5d-7933-4e7b-abe0-13841b260c93",
+      "version": 1,
+      "status": "retired",
+      "formulaType": null
+    },
+    {
+      "id": "c6ba99e7-603f-4d0e-861c-99a2314dc2ad",
+      "version": 2,
+      "status": "published",
+      "formulaType": "umsc_weighted_v2"
+    }
+  ],
+  "note": "scheduled trigger fired late at 09:43:34 for the 09:00 window; batch 315/315 succeeded, no active jobs."
+}

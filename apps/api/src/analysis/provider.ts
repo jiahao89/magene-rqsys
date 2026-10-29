@@ -259,17 +259,21 @@ export function createDeepSeekProvider(options: Partial<AiProviderConfig> & { fe
           signal: controller.signal,
         });
       } catch (error) {
+        clearTimeout(timer);
         if (error instanceof Error && error.name === "AbortError") throw new AiProviderError("timeout", "AI provider request timed out.");
         throw new AiProviderError("network_error", "AI provider is unavailable.");
-      } finally {
-        clearTimeout(timer);
       }
-      if (!response.ok) throw safeHttpError(response.status);
+      // 计时器要一直活到响应体读完：只在拿到响应头时清掉，中途挂住的响应体会无限等待。
       let envelope: z.infer<typeof EnvelopeSchema>;
       try {
+        if (!response.ok) throw safeHttpError(response.status);
         envelope = EnvelopeSchema.parse(await response.json());
-      } catch {
+      } catch (error) {
+        if (error instanceof AiProviderError) throw error;
+        if (error instanceof Error && error.name === "AbortError") throw new AiProviderError("timeout", "AI provider request timed out.");
         throw new AiProviderError("analysis_failure", "AI provider returned an invalid response.");
+      } finally {
+        clearTimeout(timer);
       }
       const content = envelope.choices[0]?.message.content;
       if (!content?.trim()) throw new AiProviderError("analysis_failure", "AI provider returned empty analysis content.");

@@ -9,7 +9,7 @@ import type {
   RequirementManualOwner, RequirementRecord, SourceConfigRecord, SourceSnapshotRecord, SyncBatchRecord, SyncItemAction,
   SyncItemRecord, SyncTrigger, AudienceLevel, RequirementScoreVersionRecord } from "../../domain/persistence.js";
 import { normalizeScheduleTime, type AnalysisState, type OwnerState, type PullState, type PushState } from "../../domain/workflow.js";
-import { assertTransition } from "../../domain/transitions.js";
+import { assertTransition, canTransition } from "../../domain/transitions.js";
 import type { ResolvedSourceConfigUpdate } from "../../contracts/source.js";
 import { DEFAULT_FUNCTION_MODULES, DEFAULT_TEAM_MEMBERS, mergeTeamBindings, type TeamMappingRow, type TeamPersonBindingInput, type TeamPersonRecord } from "../../domain/team-directory.js";
 import { normalizeOwnerName } from "../../owner/mapping.js";
@@ -156,12 +156,12 @@ export class PostgresRequirementRepository implements RequirementQueryRepository
 // V02-T07：手工编辑（仅 web_manual）。一个事务内完成：回执幂等判定 → 行锁版本比对 →
 // 实质/元数据分流（实质=标题/描述/产品/边界：新版本+快照+审计+分析任务+推送重置；
 // 元数据=渠道/链接/类型：仅更新投影并入队非实质推送）；无变化不新建版本。
-async updateManualRequirement(p:{requirementId:string;expectedSourceVersion:number;idempotencyKey:string;actorId:string;requestHash:string;title?:string;description?:string|null;sourceChannel?:string;productModel?:string|null;requirementType?:string|null;constraintNotes?:string|null;supplementUrl?:string|null;}){
+async updateManualRequirement(p:{requirementId:string;expectedSourceVersion:number;idempotencyKey:string;actorId:string;requestHash:string;title?:string;description?:string;sourceChannel?:string;productModel?:string|null;requirementType?:string|null;constraintNotes?:string|null;supplementUrl?:string|null;}){
   const c=await this.pool.connect();
   try{
     await c.query("BEGIN");
     // 行锁先行：并发同键编辑在行锁上串行，之后回执检查才能正确重放/冲突（与 create 同理）。
-    const row=(await c.query("SELECT id,source_type,source_version,title,description,source_channel,product_model,requirement_type,constraint_notes,supplement_url,source_hash,substantive_hash FROM requirements WHERE id=$1 FOR UPDATE",[p.requirementId])).rows[0];
+    const row=(await c.query("SELECT id,source_type,source_version,title,description,source_channel,product_model,requirement_type,constraint_notes,supplement_url,intake_module,source_hash,substantive_hash FROM requirements WHERE id=$1 FOR UPDATE",[p.requirementId])).rows[0];
     const receipt=await c.query("SELECT requirement_id,request_hash,outcome,substantive_changed,source_version FROM requirement_edit_receipts WHERE idempotency_key=$1",[p.idempotencyKey]);
     if(receipt.rows[0]){
       const hit=receipt.rows[0];
@@ -181,7 +181,7 @@ async updateManualRequirement(p:{requirementId:string;expectedSourceVersion:numb
     const nextType=p.requirementType!==undefined?p.requirementType:row.requirement_type===null?null:String(row.requirement_type);
     const nextNotes=p.constraintNotes!==undefined?p.constraintNotes:row.constraint_notes===null?null:String(row.constraint_notes);
     const nextUrl=p.supplementUrl!==undefined?p.supplementUrl:row.supplement_url===null?null:String(row.supplement_url);
-    const payload={sourceType:"web_manual",title:nextTitle,description:nextDescription,sourceChannel:nextChannel,productModel:nextProduct,requirementType:nextType,constraintNotes:nextNotes,supplementUrl:nextUrl};
+    const payload={sourceType:"web_manual",title:nextTitle,description:nextDescription,sourceChannel:nextChannel,productModel:nextProduct,requirementType:nextType,constraintNotes:nextNotes,supplementUrl:nextUrl,intakeModule:row.intake_module===null||row.intake_module===undefined?null:String(row.intake_module)};
     const nextSubstantive=substantiveHash({title:nextTitle,description:nextDescription,scope:null,acceptanceCriteria:null,attachmentRefs:[]});
     const metadataChanged=(nextChannel!==String(row.source_channel))||(nextUrl!==(row.supplement_url===null?null:String(row.supplement_url)))||(nextType!==(row.requirement_type===null?null:String(row.requirement_type)));
     const definitionChanged=(nextSubstantive!==String(row.substantive_hash))||(nextProduct!==(row.product_model===null?null:String(row.product_model)))||(nextNotes!==(row.constraint_notes===null?null:String(row.constraint_notes)));
@@ -413,6 +413,7 @@ async assignManualOwner(requirementId:string,owner:Omit<RequirementManualOwner,"
   }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}
 }
 async markManualOwnerPushed(requirementId:string,feishuUserId:string){await this.pool.query("UPDATE requirements SET manual_owner_pushed_feishu_user_id=$2,updated_at=now() WHERE id=$1 AND manual_owner_feishu_user_id=$2",[requirementId,feishuUserId]);}
+async releaseManualOwner(requirementId:string,state:OwnerState){const c=await this.pool.connect();try{await c.query("BEGIN");const{rows}=await c.query("SELECT owner_state FROM requirements WHERE id=$1 FOR UPDATE",[requirementId]);if(!rows[0])throw new Error(`Requirement not found: ${requirementId}`);const from=String(rows[0].owner_state) as OwnerState;if(from!==state&&!canTransition("owner",from,state)){assertTransition("owner",from,"pending_mapping");assertTransition("owner","pending_mapping",state);}await c.query("UPDATE requirements SET owner_state=$2,manual_owner_feishu_user_id=NULL,manual_owner_feishu_id_type=NULL,manual_owner_name=NULL,manual_owner_assigned_by=NULL,manual_owner_assigned_at=NULL,manual_owner_pushed_feishu_user_id=NULL,updated_at=now() WHERE id=$1",[requirementId,state]);await c.query("COMMIT");}catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}}
 async clearManualOwner(requirementId:string){await this.pool.query("UPDATE requirements SET manual_owner_feishu_user_id=NULL,manual_owner_feishu_id_type=NULL,manual_owner_name=NULL,manual_owner_assigned_by=NULL,manual_owner_assigned_at=NULL,manual_owner_pushed_feishu_user_id=NULL,updated_at=now() WHERE id=$1",[requirementId]);}
 async markLastPushedOwner(requirementId:string,owner:{feishuUserId:string;feishuIdType:"open_id"|"user_id"|"union_id"}|null){await this.pool.query("UPDATE requirements SET last_pushed_owner_feishu_user_id=$2,last_pushed_owner_feishu_id_type=$3,updated_at=now() WHERE id=$1",[requirementId,owner?.feishuUserId??null,owner?.feishuIdType??null]);}
 async getResolution(requirementId:string){
@@ -889,7 +890,7 @@ export class PostgresRequirementScoringRepository implements RequirementScoringR
     const c=await this.pool.connect();
     try{
       await c.query("BEGIN");
-      const locked=await c.query("SELECT id FROM requirements WHERE id=$1 FOR UPDATE",[input.requirementId]);
+      const locked=await c.query("SELECT id,source_version FROM requirements WHERE id=$1 FOR UPDATE",[input.requirementId]);
       if(!locked.rows[0])throw new Error("Scoring requirement was not found");
       const current=await c.query("SELECT id,version FROM requirement_score_versions WHERE requirement_id=$1 AND status IN ('current','confirmed') ORDER BY version DESC LIMIT 1 FOR UPDATE",[input.requirementId]);
       const currentVersion=current.rows[0]?Number(current.rows[0].version):0;
@@ -898,7 +899,7 @@ export class PostgresRequirementScoringRepository implements RequirementScoringR
       if(!ai.rows[0]){await c.query("ROLLBACK");return{outcome:"ai_not_found" as const};}
       // 新鲜度校验：需求升版/重分析后，旧 AI 建议不再代表当前来源，不能直接采纳为当前评分。
       const aiSourceVersion=Number(ai.rows[0].source_version),currentSourceVersion=Number(locked.rows[0].source_version);
-      if(Number.isFinite(aiSourceVersion)&&Number.isFinite(currentSourceVersion)&&aiSourceVersion!==currentSourceVersion){await c.query("ROLLBACK");return{outcome:"ai_not_found" as const};}
+      if(aiSourceVersion!==currentSourceVersion){await c.query("ROLLBACK");return{outcome:"ai_not_found" as const};}
       if(current.rows[0])await c.query("UPDATE requirement_score_versions SET status='superseded' WHERE id=$1",[current.rows[0].id]);
       const source=scoreVersion(ai.rows[0]);const version=await this.nextVersion(c,input.requirementId);const id=randomUUID();
       const{rows}=await c.query("INSERT INTO requirement_score_versions(id,requirement_id,version,status,origin,source_version,analysis_version,rule_version_id,inputs,alpha,score,priority,score_confidence,score_confidence_reason,safety_flag,basis,rationale,actor_id,change_reason) VALUES($1,$2,$3,'confirmed','ai_applied',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *",[id,input.requirementId,version,source.sourceVersion,source.analysisVersion,source.ruleVersionId,JSON.stringify(source.inputs),source.alpha,source.score,source.priority,source.scoreConfidence,source.scoreConfidenceReason,source.safetyFlag,JSON.stringify(source.basis),source.rationale,input.actorId,input.reason]);

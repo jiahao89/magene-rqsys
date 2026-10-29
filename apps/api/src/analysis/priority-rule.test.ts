@@ -118,3 +118,22 @@ test("runAnalysis：已发布且校准的规则驱动优先级；无规则或未
   const uncalibrated = await runAnalysis({ ...input, priorityRule: buildPriorityRule({ ...ruleRecord, validationEvidence: [] })! }, { repository: repository as never, provider: fakeProvider });
   assert.equal(uncalibrated.result?.priority ?? null, null);
 });
+
+test("a recommendation that collides with an Object prototype key is not scored", () => {
+  // 规则映射是普通对象：map["constructor"] 会命中原型属性，旧实现会拿到函数参与求和。
+  const record = {
+    id: "rule-1", version: 1, status: "published" as const, rules: {
+      formulaType: "legacy_v1",
+      scoring: {
+        user: { "强": 3 }, market: { "强": 3 }, business: { "强": 3 }, technology: { "强": 3 },
+      },
+      thresholds: { p0: 10, p1: 8, p2: 6 },
+    },
+    validationEvidence: [{ cohort: "x" }], createdBy: null, createdAt: "2026-01-01T00:00:00.000Z", publishedAt: "2026-01-01T00:00:00.000Z",
+  } as unknown as PriorityRuleVersionRecord;
+  const rule = buildPriorityRule(record);
+  assert.ok(rule?.compute);
+  assert.equal(rule.compute({ user: "constructor", market: "强", business: "强", technology: "强" }), null, "未批准的取值必须返回 null，而不是参与求和");
+  assert.equal(rule.compute({ user: "__proto__", market: "强", business: "强", technology: "强" }), null);
+  assert.equal(rule.compute({ user: "强", market: "强", business: "强", technology: "强" }), "P0");
+});

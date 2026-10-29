@@ -3,6 +3,15 @@ import test from "node:test";
 import { InMemoryAuditStorage } from "./storage.js";
 import { AuditEventSchema, createAuditEvent, redactSafeDetails } from "./event.js";
 
+test("评分与人群审计的细节键不会被白名单清空", () => {
+  // 此前 fromVersion/score/priority/aiVersion/version 不在白名单，评分变更的审计只剩空对象。
+  const scoring = redactSafeDetails({ fromVersion: 2, score: 31.5, priority: "P1", aiVersion: 3 });
+  assert.deepEqual(scoring, { fromVersion: 2, score: 31.5, priority: "P1", aiVersion: 3 });
+  assert.deepEqual(redactSafeDetails({ fromVersion: 1, toVersion: 3, version: 4, scoreVersion: 5, decision: "duplicate" }), { fromVersion: 1, toVersion: 3, version: 4, scoreVersion: 5, decision: "duplicate" });
+  // 白名单仍然拦住密钥/联系方式类键
+  assert.deepEqual(redactSafeDetails({ apiKey: "k", email: "a@b.c", score: 1 }), { score: 1 });
+});
+
 test("不变量5：审计事件捕获 actor/entity/result/timestamp（DDL 对齐形状）", () => {
   const event = createAuditEvent({
     actor: "worker:abc",

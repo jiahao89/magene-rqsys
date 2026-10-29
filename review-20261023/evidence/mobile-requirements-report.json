@@ -1,0 +1,51 @@
+[
+  {
+    "file": "page.png",
+    "state": null,
+    "size": "390x844",
+    "zoom": 1,
+    "animationWaitMs": 0,
+    "issues": [
+      "横向溢出：页面宽 2296px，视口 1560px"
+    ],
+    "lint": [
+      {
+        "rule": "eyebrow",
+        "label": "标题上方的眉标",
+        "count": 1,
+        "examples": [
+          "div.eyebrow「WORKSPACE」"
+        ]
+      },
+      {
+        "rule": "nestedCards",
+        "label": "卡片里套卡片",
+        "count": 2,
+        "examples": [
+          "div.qtoolbar「需求标题 负责人 全部 TB 负责人 毕梓浩 盛」（外层 section.panel.requirements-panel）",
+          "div.qmore-body「负责人状态全部负责人状态待匹配已匹配手动匹配无需」（外层 div.qtoolbar）"
+        ]
+      },
+      {
+        "rule": "smallText",
+        "label": "正文小于 13px",
+        "count": 4,
+        "examples": [
+          "p「按需求标题、TB负责人和处理状态检索需求；负责人」（12px）",
+          "span「同步状态 — 是否已从 Teambition 拉」（11.5px）",
+          "span「AI 分析状态 — 是否已生成模块与优先级建议（」（11.5px）"
+        ]
+      },
+      {
+        "rule": "contrastLow",
+        "label": "文字对比度不达标（正文低于 4.5:1，大字低于 3:1）",
+        "count": 4,
+        "examples": [
+          "span「同步状态 — 是否已从 Teambition 拉」（3.24:1）",
+          "span「AI 分析状态 — 是否已生成模块与优先级建议（」（3.24:1）",
+          "span「推送状态 — 是否已写入飞书多维表格（已推送/待」（3.24:1）"
+        ]
+      }
+    ]
+  }
+]

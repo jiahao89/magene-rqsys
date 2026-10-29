@@ -284,3 +284,22 @@ test("V02-T08 audience contract: defaults, controlled levels, source-bound evide
   const typed = validateAnalysisOutput({ ...validResult, typeSuggestion: "体验优化" }, options);
   assert.equal(typed.typeSuggestion, "体验优化");
 });
+
+test("a response body that stalls until the deadline fails as a timeout, not a hang", async () => {
+  // 旧实现拿到响应头就 clearTimeout：响应体永不结束时请求会一直挂着。
+  const aborting = new AbortController();
+  const fetchStub: FetchLike = async (_input, init) => {
+    init?.signal?.addEventListener("abort", () => aborting.abort());
+    const body = new ReadableStream({
+      start(controller) {
+        aborting.signal.addEventListener("abort", () => controller.error(Object.assign(new Error("aborted"), { name: "AbortError" })));
+      },
+    });
+    return new Response(body, { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const provider = createDeepSeekProvider({ apiKey: "k", timeoutMs: 50, fetch: fetchStub });
+  await assert.rejects(
+    () => provider.analyze({ title: "支持查询", description: "支持查询和筛选", context: "", piiMarkers: [], dictionary, priorityRule: null }),
+    (error: unknown) => error instanceof Error && /timed out/.test(error.message),
+  );
+});

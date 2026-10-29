@@ -49,20 +49,37 @@ for (const [prefix, allowed] of APPLIED_DUPLICATE_PREFIXES) {
   }
 }
 
-// 顺序提示：前缀缺口只告警，不阻断（缺号可能来自被合并/取消的迁移）。
+// 前缀缺口：未登记的缺号直接失败。
+//
+// 背景：0019 之后直接出现 0021，0020 从未存在过。缺口本身不影响执行顺序（按全名排序），
+// 但会让"下一个号码是多少"变成猜测，也让人怀疑有迁移丢失。历史缺口只能在下面登记一次；
+// 之后新增缺口一律阻断，逼着按顺序编号。
+const KNOWN_GAPS = new Map([
+  [19, 21], // 0019 → 0021：0020 从未存在（review 2026-10-29 确认），下一个空号是 0022
+]);
+
 const numbers = [...byPrefix.keys()].map(Number).sort((left, right) => left - right);
 const gaps = [];
 for (let index = 1; index < numbers.length; index += 1) {
-  if (numbers[index] !== numbers[index - 1] + 1) gaps.push(`${String(numbers[index - 1]).padStart(4, "0")} → ${String(numbers[index]).padStart(4, "0")}`);
+  const previous = numbers[index - 1];
+  const current = numbers[index];
+  if (current === previous + 1) continue;
+  gaps.push(`${String(previous).padStart(4, "0")} → ${String(current).padStart(4, "0")}`);
+  if (KNOWN_GAPS.get(previous) !== current) {
+    failures.push(`未登记的迁移前缀缺口 ${String(previous).padStart(4, "0")} → ${String(current).padStart(4, "0")}：请补齐缺号，或在 scripts/check-migrations.mjs 的 KNOWN_GAPS 里登记。`);
+  }
+}
+for (const [previous, expected] of KNOWN_GAPS) {
+  if (byPrefix.get(String(expected).padStart(4, "0")) === undefined) failures.push(`KNOWN_GAPS 登记的缺口 ${previous} → ${expected} 已不存在：请更新登记。`);
 }
 
 console.log("迁移文件名检查（database/migrations）");
-console.log(`  迁移文件：${files.length} 个；前缀：${numbers.length} 个；最大前缀 ${String(numbers.at(-1) ?? 0).padStart(4, "0")}`);
+console.log(`  迁移文件：${files.length} 个；前缀：${numbers.length} 个；最大前缀 ${String(numbers.at(-1) ?? 0).padStart(4, "0")}；下一个空号 ${String(Math.max(0, ...numbers) + 1).padStart(4, "0")}`);
 console.log(`  已白名单的重复前缀：${duplicates.filter(([prefix]) => APPLIED_DUPLICATE_PREFIXES.has(prefix)).map(([prefix, names]) => `${prefix}（${names.length} 个文件）`).join("、") || "无"}`);
 for (const [prefix, names] of duplicates.filter(([prefix]) => !APPLIED_DUPLICATE_PREFIXES.has(prefix))) {
   console.log(`  未白名单的重复前缀：${prefix} → ${names.join(", ")}`);
 }
-if (gaps.length) console.log(`  警告：前缀存在缺口（仅提示，不阻断）：${gaps.join("、")}`);
+if (gaps.length) console.log(`  已登记的前缀缺口：${gaps.join("、")}`);
 
 if (failures.length) {
   console.log(`\n未通过（${failures.length}）：`);

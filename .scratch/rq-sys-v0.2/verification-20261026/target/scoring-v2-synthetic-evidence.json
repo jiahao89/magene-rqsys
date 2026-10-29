@@ -1,0 +1,307 @@
+{
+  "capturedAt": "2026-10-28T02:11:01.620Z",
+  "platformRequirementId": "RQ-000343",
+  "pipeline": {
+    "pull": "collected",
+    "analysis": "analyzed",
+    "owner": "not_required",
+    "push": "pushed"
+  },
+  "formula": {
+    "text": "U=pain×frequency; M=sellingPoint×competitor; S=roadmap×dependency; C=MAX(workload,technicalRisk,resource); score=round2(U×alpha×(1+0.6M+0.4S)/C)",
+    "thresholds": {
+      "p0": 45,
+      "p1": 25,
+      "p2": 10
+    }
+  },
+  "current": {
+    "id": "fbd65b21-04cf-4b3c-b475-8d3f57155f6f",
+    "requirementId": "c40b2e34-1fbc-408e-ae74-59f2f1b30137",
+    "version": 11,
+    "status": "confirmed",
+    "origin": "manual",
+    "sourceVersion": 1,
+    "analysisVersion": 6,
+    "ruleVersionId": "c6ba99e7-603f-4d0e-861c-99a2314dc2ad",
+    "inputs": {
+      "cost": {
+        "resource": 2,
+        "workload": 3,
+        "technicalRisk": 2
+      },
+      "user": {
+        "pain": 4,
+        "frequency": 3
+      },
+      "market": {
+        "competitor": 1,
+        "sellingPoint": 1
+      },
+      "strategy": {
+        "roadmap": 1,
+        "dependency": 1
+      }
+    },
+    "alpha": 1,
+    "score": 8,
+    "priority": "P3",
+    "scoreConfidence": "低",
+    "scoreConfidenceReason": "痛点有描述但来源为合成验收，市场、频次、规划和工程信息均缺失，评分为假设估算。",
+    "safetyFlag": false,
+    "basis": {
+      "user.pain": {
+        "reason": "提示偏晚导致用户容易错过，痛点明确但影响程度未量化。",
+        "evidence": [
+          "现状问题：提示出现偏晚，用户容易错过。"
+        ],
+        "assumption": false
+      },
+      "cost.resource": {
+        "reason": "无资源投入信息，按小规模协作资源假设估算。",
+        "evidence": [],
+        "assumption": true
+      },
+      "cost.workload": {
+        "reason": "仅涉及提示时机与距离展示，按中等工作量假设估算。",
+        "evidence": [],
+        "assumption": true
+      },
+      "user.frequency": {
+        "reason": "没有提示触发频次数据，按中等频次假设估算。",
+        "evidence": [],
+        "assumption": true
+      },
+      "strategy.roadmap": {
+        "reason": "未提供实际版本规划，按未纳入路线图假设估算。",
+        "evidence": [],
+        "assumption": true
+      },
+      "market.competitor": {
+        "reason": "未核实竞品提示能力，按低差异化假设估算。",
+        "evidence": [],
+        "assumption": true
+      },
+      "cost.technicalRisk": {
+        "reason": "无工程方案，按中等偏低技术风险假设估算。",
+        "evidence": [],
+        "assumption": true
+      },
+      "market.sellingPoint": {
+        "reason": "无市场规模或卖点验证信息，按低卖点假设估算。",
+        "evidence": [],
+        "assumption": true
+      },
+      "strategy.dependency": {
+        "reason": "未说明对地图、导航或数据计算等系统的依赖，按低依赖假设估算。",
+        "evidence": [],
+        "assumption": true
+      }
+    },
+    "rationale": "UI验收：保留AI依据",
+    "actorId": "1868660374748201",
+    "changeReason": "UI验收：保留AI依据",
+    "createdAt": "2026-10-28T02:10:25.209Z"
+  },
+  "aiSuggestion": {
+    "id": "fb2ddcd5-c7c8-4b15-afbf-4df2e9657138",
+    "requirementId": "c40b2e34-1fbc-408e-ae74-59f2f1b30137",
+    "version": 9,
+    "status": "ai_suggested",
+    "origin": "ai",
+    "sourceVersion": 1,
+    "analysisVersion": 6,
+    "ruleVersionId": "c6ba99e7-603f-4d0e-861c-99a2314dc2ad",
+    "inputs": {
+      "cost": {
+        "resource": 2,
+        "workload": 3,
+        "technicalRisk": 2
+      },
+      "user": {
+        "pain": 3,
+        "frequency": 3
+      },
+      "market": {
+        "competitor": 1,
+        "sellingPoint": 1
+      },
+      "strategy": {
+        "roadmap": 1,
+        "dependency": 1
+      }
+    },
+    "alpha": 0.8,
+    "score": 4.8,
+    "priority": "P3",
+    "scoreConfidence": "低",
+    "scoreConfidenceReason": "痛点有描述但来源为合成验收，市场、频次、规划和工程信息均缺失，评分为假设估算。",
+    "safetyFlag": false,
+    "basis": {
+      "user.pain": {
+        "reason": "提示偏晚导致用户容易错过，痛点明确但影响程度未量化。",
+        "evidence": [
+          "现状问题：提示出现偏晚，用户容易错过。"
+        ],
+        "assumption": false
+      },
+      "cost.resource": {
+        "reason": "无资源投入信息，按小规模协作资源假设估算。",
+        "evidence": [],
+        "assumption": true
+      },
+      "cost.workload": {
+        "reason": "仅涉及提示时机与距离展示，按中等工作量假设估算。",
+        "evidence": [],
+        "assumption": true
+      },
+      "user.frequency": {
+        "reason": "没有提示触发频次数据，按中等频次假设估算。",
+        "evidence": [],
+        "assumption": true
+      },
+      "strategy.roadmap": {
+        "reason": "未提供实际版本规划，按未纳入路线图假设估算。",
+        "evidence": [],
+        "assumption": true
+      },
+      "market.competitor": {
+        "reason": "未核实竞品提示能力，按低差异化假设估算。",
+        "evidence": [],
+        "assumption": true
+      },
+      "cost.technicalRisk": {
+        "reason": "无工程方案，按中等偏低技术风险假设估算。",
+        "evidence": [],
+        "assumption": true
+      },
+      "market.sellingPoint": {
+        "reason": "无市场规模或卖点验证信息，按低卖点假设估算。",
+        "evidence": [],
+        "assumption": true
+      },
+      "strategy.dependency": {
+        "reason": "未说明对地图、导航或数据计算等系统的依赖，按低依赖假设估算。",
+        "evidence": [],
+        "assumption": true
+      }
+    },
+    "rationale": "用户痛点可识别且改进方向明确，但来源为合成验收，市场、频次、规划与工程依据不足，因此评分置信度低。",
+    "actorId": null,
+    "changeReason": null,
+    "createdAt": "2026-10-28T02:09:50.460Z"
+  },
+  "history": [
+    {
+      "version": 11,
+      "status": "confirmed",
+      "origin": "manual",
+      "ruleVersionId": "c6ba99e7-603f-4d0e-861c-99a2314dc2ad",
+      "score": 8,
+      "priority": "P3",
+      "actorId": "1868660374748201",
+      "changeReason": "UI验收：保留AI依据"
+    },
+    {
+      "version": 10,
+      "status": "superseded",
+      "origin": "ai_applied",
+      "ruleVersionId": "c6ba99e7-603f-4d0e-861c-99a2314dc2ad",
+      "score": 4.8,
+      "priority": "P3",
+      "actorId": "1868660374748201",
+      "changeReason": "采用AI建议"
+    },
+    {
+      "version": 9,
+      "status": "ai_suggested",
+      "origin": "ai",
+      "ruleVersionId": "c6ba99e7-603f-4d0e-861c-99a2314dc2ad",
+      "score": 4.8,
+      "priority": "P3",
+      "actorId": null,
+      "changeReason": null
+    },
+    {
+      "version": 8,
+      "status": "ai_suggested",
+      "origin": "ai",
+      "ruleVersionId": null,
+      "score": 9.6,
+      "priority": "P3",
+      "actorId": null,
+      "changeReason": null
+    },
+    {
+      "version": 7,
+      "status": "ai_suggested",
+      "origin": "ai",
+      "ruleVersionId": null,
+      "score": 13.92,
+      "priority": "P2",
+      "actorId": null,
+      "changeReason": null
+    },
+    {
+      "version": 6,
+      "status": "ai_suggested",
+      "origin": "ai",
+      "ruleVersionId": null,
+      "score": 3.2,
+      "priority": "P3",
+      "actorId": null,
+      "changeReason": null
+    },
+    {
+      "version": 5,
+      "status": "superseded",
+      "origin": "manual",
+      "ruleVersionId": "c6ba99e7-603f-4d0e-861c-99a2314dc2ad",
+      "score": 16.2,
+      "priority": "P2",
+      "actorId": "1868660374748201",
+      "changeReason": "UI验收：保存修复后"
+    },
+    {
+      "version": 4,
+      "status": "superseded",
+      "origin": "ai_applied",
+      "ruleVersionId": null,
+      "score": 10.8,
+      "priority": "P2",
+      "actorId": "1868660374748201",
+      "changeReason": "验收采用AI"
+    },
+    {
+      "version": 3,
+      "status": "ai_suggested",
+      "origin": "ai",
+      "ruleVersionId": null,
+      "score": 10.8,
+      "priority": "P2",
+      "actorId": null,
+      "changeReason": null
+    },
+    {
+      "version": 2,
+      "status": "superseded",
+      "origin": "manual",
+      "ruleVersionId": "c6ba99e7-603f-4d0e-861c-99a2314dc2ad",
+      "score": 12,
+      "priority": "P2",
+      "actorId": "1868660374748201",
+      "changeReason": "PM验收：痛点修正，α改为多渠道"
+    },
+    {
+      "version": 1,
+      "status": "superseded",
+      "origin": "ai",
+      "ruleVersionId": null,
+      "score": 7.2,
+      "priority": "P3",
+      "actorId": null,
+      "changeReason": null
+    }
+  ],
+  "uiText": "评分与优先级\nAI 直接评分 · PM 可修正\n综合分 8.00\nP3\n版本 v11 · 人工 · 置信度 低\n采用 AI 建议 v9\n编辑评分\n历史（11）\n\nU=pain×frequency; M=sellingPoint×competitor; S=roadmap×dependency; C=MAX(workload,technicalRisk,resource); score=round2(U×alpha×(1+0.6M+0.4S)/C)；综合分与 P 由服务端计算。\n\n评分置信度理由：痛点有描述但来源为合成验收，市场、频次、规划和工程信息均缺失，评分为假设估算。\n\n评分项\tAI建议\t当前值\t依据/假设\nU 痛点强度\t3\t4\t提示偏晚导致用户容易错过，痛点明确但影响程度未量化。\nU 发生频次\t3\t3\t没有提示触发频次数据，按中等频次假设估算。（假设）\nM 卖点强度\t1\t1\t无市场规模或卖点验证信息，按低卖点假设估算。（假设）\nM 竞品差异\t1\t1\t未核实竞品提示能力，按低差异化假设估算。（假设）\nS Roadmap 匹配\t1\t1\t未提供实际版本规划，按未纳入路线图假设估算。（假设）\nS 战略依赖/杠杆\t1\t1\t未说明对地图、导航或数据计算等系统的依赖，按低依赖假设估算。（假设）\nC 工作量\t3\t3\t仅涉及提示时机与距离展示，按中等工作量假设估算。（假设）\nC 技术风险\t2\t2\t无工程方案，按中等偏低技术风险假设估算。（假设）\nC 资源占用\t2\t2\t无资源投入信息，按小规模协作资源假设估算。（假设）\nα 修正系数\t0.8\t1\tUI验收：保留AI依据\nAI 分析与建议\nAI 生成 · 可被推翻\n模块建议\n爬坡\n类型建议\n体验优化\n适用人群建议\n待判断\n优先级建议\nP3\n置信度\n中\n\n理由：源文本明确提到爬坡提示，但带有验收测试且请忽略标记，并且缺少市场、规划和工程依据，因此置信度受限。\n\nU · 用户\n高\n\n理由：提示偏晚导致用户错过，提前提示并说明剩余距离可直接改善核心体验价值。\n\n证据：用户：需要更清晰的爬坡提示。；现状问题：提示出现偏晚，用户容易错过。；期望结果：提前提示并说明剩余距离。\n\nM · 市场\n无法判断\n\n理由：缺少竞品能力、市场规模和卖点验证信息，无法判断投入产出与差异化价值。\n\n需要补充信息\nS · 商业\n中\n\n理由：提示过晚会影响体验与安全感知，但来源为合成验收，实际业务影响范围与风险未证实。\n\n证据：现状问题：提示出现偏晚，用户容易错过。；补充：本需求为评分v2合成验收，完成后删除。\n\nC · 技术\n无法判断\n\n理由：未说明现有提示实现、剩余距离计算来源及与地图/导航等系统的依赖，技术方案无法评估。\n\n需要补充信息\n处理与推送\n系统状态\n四阶段状态\n已收录\n已分析\n无需负责人\n已推送\n负责人映射方式\n无需负责人\nBase 记录\nr"
+}

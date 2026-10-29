@@ -97,7 +97,8 @@ export const RequirementIntakeSchema = z.strictObject({
 export const RequirementIntakeEditSchema = z.strictObject({
   expectedSourceVersion: z.number().int().min(1),
   title: z.string().trim().min(1).max(200).optional(),
-  description: z.string().trim().min(1).max(20_000).nullish(),
+  // 描述在创建时必填，编辑不能把它清空；未传=保持不变。
+  description: z.string().trim().min(1).max(20_000).optional(),
   sourceChannel: z.enum(REQUIREMENT_INTAKE_CHANNELS).optional(),
   productModel: z.string().trim().max(100).nullish(),
   requirementType: z.enum(REQUIREMENT_INTAKE_TYPES).nullish(),
