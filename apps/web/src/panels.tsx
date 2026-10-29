@@ -6,6 +6,7 @@ import { AudienceEditor, BetaPanel, IntakeForm, ManualEditSection } from "./inta
 import { Accordion as HeroAccordion, AlertDialog as HeroAlertDialog, Button as HeroButton, Card as HeroCard, Chip as HeroChip, Input as HeroInput, TextArea as HeroTextArea } from "@heroui/react";
 import { ArrowLeft, RefreshCw, X } from "lucide-react";
 import { stateLabel } from "./state-labels";
+import { RequirementDetailSkeleton, SkeletonBlock, SkeletonTableRows } from "./skeleton";
 import { checkScheduleHealth } from "./schedule";
 import { readRequirementDeepLink } from "./deep-link";
 import { emptyRequirementListFilters, readRequirementListFilters, requirementPoolUrl, type RequirementListFilters } from "./requirements-url";
@@ -371,7 +372,7 @@ export function PeoplePanel() {
             {(person.feishuUserId || person.bindingConflict) && <DeleteConfirmation disabled={busy} triggerLabel="解除绑定" heading="解除飞书绑定" confirmLabel="确认解除" description={`解除「${person.name}」的飞书账号绑定？该人员名下需求的负责人映射将被清除，后续推送会停在待匹配负责人；已推送的 Base 记录不会被清除。`} onConfirm={() => void unbindFeishu(person.name)} />}{" "}
             <DeleteConfirmation disabled={busy} description={`删除人员“${person.name}”？相关功能模块将变为未分配，飞书账号绑定同时解除。`} onConfirm={() => void submit(() => deleteTeamPerson(person.name), "人员已删除，相关模块已解除分配。")} /></>}
       </td>
-    </tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadState === "loading" ? "正在载入组内人员…" : loadError ? "人员读取失败" : "暂无人员"}</strong><span>{loadState === "loading" ? "正在从 API 读取人员名单。" : loadError ? "检查 API 连接后刷新。" : "填写姓名并新增；数据源配置完成后可维护组内名单并绑定飞书账号。"}</span></div>}
+    </tr>)}</tbody></table></div> : loadState === "loading" ? <SkeletonTableRows rows={4} columns={3} /> : <div className="table-empty"><strong>{loadError ? "人员读取失败" : "暂无人员"}</strong><span>{loadError ? "检查 API 连接后刷新。" : "填写姓名并新增；数据源配置完成后可维护组内名单并绑定飞书账号。"}</span></div>}
   </section>;
 }
 
@@ -459,7 +460,7 @@ export function ModulesPanel() {
           <td>{item.name}</td>
           <td>{item.personName ?? "未分配"}</td>
           <td><HeroButton className="button button-secondary button-small" onPress={() => beginEdit(item)} isDisabled={busy}>编辑</HeroButton> <DeleteConfirmation disabled={busy || items.length === 1} description={`删除功能模块“${item.name}”？`} onConfirm={() => void save(items.filter((candidate) => candidate.name !== item.name))} /></td>
-        </tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadState === "loading" ? "正在载入功能模块…" : loadError ? "模块字典读取失败" : "暂无功能模块"}</strong><span>{loadState === "loading" ? "正在从 API 读取已发布词典。" : loadError ? "检查 API 连接后刷新。" : "新增模块后，AI 分析会使用最新的已发布字典。"}</span></div>}
+        </tr>)}</tbody></table></div> : loadState === "loading" ? <SkeletonTableRows rows={4} columns={3} /> : <div className="table-empty"><strong>{loadError ? "模块字典读取失败" : "暂无功能模块"}</strong><span>{loadError ? "检查 API 连接后刷新。" : "新增模块后，AI 分析会使用最新的已发布字典。"}</span></div>}
     <div className="subsection">
       <div className="panel-heading"><div><h3>词典版本历史</h3><p>每次保存生成一个新版本；仅最新发布版供 AI 分析使用。</p></div></div>
       {versionsError ? <div className="table-empty"><strong>版本历史读取失败</strong><span>{versionsError}</span></div> : versions.length ? <div className="table-scroll"><table><thead><tr><th>版本</th><th>状态</th><th>模块</th><th>创建时间</th><th>发布时间</th></tr></thead><tbody>{versions.map((d) => <tr key={d.version}><td className="mono-cell">v{d.version}</td><td><PublishStatusChip status={d.status} /></td><td>{d.entries.map((entry) => typeof entry === "string" ? entry : `${entry.name}（${entry.personName ?? "未分配"}）`).join("、")}</td><td>{timeLabel(d.createdAt)}</td><td>{d.publishedAt ? timeLabel(d.publishedAt) : "—"}</td></tr>)}</tbody></table></div> : <div className="table-empty"><strong>还没有词典版本</strong><span>保存一次模块字典后会生成首个已发布版本。</span></div>}
@@ -537,7 +538,7 @@ export function BatchesPanel({ onRefresh }: { onRefresh: () => void }) {
     {batches.length ? <>
       <div className="table-scroll"><table><thead><tr><th>批次 ID</th><th>状态</th><th>触发</th><th>需求总数</th><th>成功</th><th>失败</th><th>开始时间</th><th>明细</th></tr></thead><tbody>{batches.map((batch) => <tr key={batch.id}><td className="mono-cell">{batch.id}</td><td>{stateChip(batch.status)}</td><td>{triggerLabel(batch)}</td><td>{batch.totalCount}</td><td>{batch.succeededCount}</td><td className={batch.failedCount ? "text-danger" : ""}>{batch.failedCount}</td><td>{timeLabel(batch.startedAt)}</td><td><HeroButton className="button button-secondary button-small" onPress={() => void open(batch.id)}>查看</HeroButton></td></tr>)}</tbody></table></div>
       {cursor && <div className="rules-form"><HeroButton className="button button-secondary button-small" onPress={() => void load({ status: statusFilter, since, until }, cursor)} isDisabled={loadState === "loading"}>加载更多</HeroButton></div>}
-    </> : <div className="table-empty"><strong>{loadState === "loading" ? "正在载入批次" : "还没有同步批次"}</strong><span>{loadState === "loading" ? "正在从本地 API 读取。" : "启动手动同步后，真实批次记录会显示在这里。"}</span></div>}
+    </> : loadState === "loading" ? <SkeletonTableRows rows={5} columns={4} /> : <div className="table-empty"><strong>还没有同步批次</strong><span>启动手动同步后，真实批次记录会显示在这里。</span></div>}
   </section>;
 }
 
@@ -725,6 +726,8 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
   const [selected, setSelected] = useState<RequirementDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(Boolean(initialDetailId));
   const detailRequestVersion = useRef(0);
+  // 列表请求序号：筛选快速切换时丢弃过期响应，避免旧结果覆盖新筛选。
+  const listRequestVersion = useRef(0);
   // 列表滚动位置：进入详情时记下，返回列表后恢复（design.md 8.1）。
   const listScrollTop = useRef(0);
   const [detailError, setDetailError] = useState<string | null>(null);
@@ -738,19 +741,21 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
   const appliedFiltersRef = useRef(initialFilters);
   const activeFilterCount = Object.values(filters).filter(Boolean).length;
   // 已生效 = 上一次真正发给服务端的条件；草稿输入不算，否则还没点筛选就显示"已生效"。
-  // 已生效 = 上一次真正发给服务端的条件；草稿输入不算，否则还没点筛选就显示"已生效"。
   const [appliedFilterCount, setAppliedFilterCount] = useState(0);
   const dateFilterCount = [since, until].filter(Boolean).length;
 
   const load = useCallback(async (filter: RequirementListFilters, nextCursor: string | null) => {
     appliedFiltersRef.current = filter;
+    const version = ++listRequestVersion.current;
     setLoadState("loading"); setLoadError(null);
     try {
       const page = await listRequirements({ ...requirementListQuery(filter), limit: 25, ...(nextCursor ? { cursor: nextCursor } : {}) });
+      if (version !== listRequestVersion.current) return;
       setRows((prev) => nextCursor ? [...prev, ...page.items] : page.items);
       setCursor(page.nextCursor);
       setLoadState("ready");
     } catch (cause) {
+      if (version !== listRequestVersion.current) return;
       // 首屏/筛选请求失败时不能继续展示上一批结果：否则用户会把旧行当成新筛选的结果。
       if (!nextCursor) { setRows([]); setCursor(null); }
       setLoadError(errorText(cause)); setLoadState("error");
@@ -762,14 +767,16 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
     void listTeamPeople().then(setPeople).catch((cause: unknown) => setPeopleError(errorText(cause)));
   }, [load, initialFilters]);
 
-  const open = useCallback(async (id: string, options?: { push?: boolean; openOwnerPicker?: boolean }) => {
+  const open = useCallback(async (id: string, options?: { push?: boolean; openOwnerPicker?: boolean; silent?: boolean }) => {
     if (options?.push) {
       listScrollTop.current = window.scrollY || document.documentElement.scrollTop || 0;
       window.history.pushState(null, "", requirementPoolUrl(window.location.pathname || "/", appliedFiltersRef.current, id, window.location.hash));
     }
     document.documentElement.scrollTop = 0;
     document.body.scrollTop = 0;
-    setDetailId(id); setSelected(null); setDetailLoading(true); setDetailError(null); setNotice(null);
+    // 静默刷新（操作成功后）：保留当前详情内容，避免整块详情闪成骨架屏；只有首次打开才展示骨架。
+    const silent = Boolean(options?.silent);
+    setDetailId(id); if (!silent) { setSelected(null); setDetailLoading(true); } setDetailError(null); setNotice(null);
     setAutoOpenOwnerPicker(Boolean(options?.openOwnerPicker));
     const version = ++detailRequestVersion.current;
     try {
@@ -825,8 +832,9 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
     setBusy(true); setNotice(null);
     try {
       const message = await action();
+      // 先局部刷新详情（保留内容），再让总览数据在后台静默更新；不整页重载。
+      await open(detailKey, { silent: true });
       onRefresh();
-      await open(detailKey);
       setNotice(message);
       return true;
     } catch (cause) { setNotice(errorText(cause)); return false; }
@@ -866,9 +874,10 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
   };
 
   const refresh = () => {
-    onRefresh();
+    // 手动刷新：列表与详情各自静默更新（不整页重载）；总览数据由 onRefresh 在后台静默刷新。
     void load(appliedFiltersRef.current, null);
-    if (detailId) void open(detailId);
+    if (detailId) void open(detailId, { silent: true });
+    onRefresh();
   };
 
   const sortedRows = sortRequirementsForAttention(rows);
@@ -1296,11 +1305,12 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
         <div className="req-summary-backbar"><HeroButton className="button button-secondary button-small" onPress={onBack}><ArrowLeft size={14} />返回需求池</HeroButton></div>
         <div className="req-summary-hero">
           <div className="req-summary-copy">
-            <h2 className="req-summary-title">{loading ? "正在载入需求详情…" : "无法载入需求详情"}</h2>
+            <h2 className="req-summary-title">{loading ? <SkeletonBlock className="skeleton-title" /> : "无法载入需求详情"}</h2>
             <span className="req-summary-id">REQ {detailId.slice(0, 8)}</span>
           </div>
         </div>
       </header>
+      {loading && <RequirementDetailSkeleton />}
       <StateBanner loadError={error} notice={notice} onCloseNotice={onCloseNotice} />
       {!loading && <div className="rules-form"><HeroButton className="button button-secondary button-small" onPress={onRefresh}><RefreshCw size={14} />重试载入</HeroButton></div>}
     </div>;
@@ -1576,7 +1586,10 @@ function isRowActionTarget(target: EventTarget | null): boolean {
 }
 
 function RequirementsTable({ rows, loading, onOpen, onAssign }: { rows: RequirementSummary[]; loading: boolean; onOpen: (row: RequirementSummary) => void; onAssign: (row: RequirementSummary) => void }) {
-  if (!rows.length) return <div className="table-empty"><strong>{loading ? "正在载入需求…" : "没有匹配的需求"}</strong><span>{loading ? "正在从本地 API 读取需求状态。" : "数据仅在 API 返回后显示，不使用演示数据。"}</span></div>;
+  // 首屏加载骨架屏；静默刷新时保留已渲染的行，避免整块列表闪烁。
+  if (!rows.length) return loading
+    ? <SkeletonTableRows rows={6} columns={5} />
+    : <div className="table-empty"><strong>没有匹配的需求</strong><span>数据仅在 API 返回后显示，不使用演示数据。</span></div>;
   return <div className="table-scroll"><table className="req-list">
     <thead><tr><th>需求标题</th><th>负责人</th><th>处理状态</th><th>更新时间</th><th><span className="sr-only">操作</span></th></tr></thead>
     <tbody>{rows.map((row) => {
@@ -1668,7 +1681,7 @@ export function MappingsPanel({ onRefresh }: { onRefresh: () => void }) {
   return <section className="panel requirements-panel">
     <div className="panel-heading"><div><h2>负责人映射</h2><p>为待匹配负责人逐条选择飞书用户；只影响选中的这一条需求，不会改写同 TB 执行人的其他需求。</p></div><HeroButton className="button button-secondary button-small" onPress={() => { onRefresh(); void load(null); }}><RefreshCw size={14} />刷新</HeroButton></div>
     <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
-    {pending.length ? <div className="table-scroll"><table><thead><tr><th>需求</th><th>TB 负责人</th><th>操作</th></tr></thead><tbody>{pending.map((row) => <tr key={row.id}><td><div className="requirement-title"><span className="req-id">{requirementDisplayId(row)}</span><strong>{row.title}</strong></div></td><td>待匹配</td><td>{targetId === row.id ? <div className="mapping-editor"><FeishuUserPicker disabled={busy} onMap={submit} saveLabel="保存" /><HeroButton className="button button-secondary button-small" onPress={() => setTargetId(null)} isDisabled={busy}>取消</HeroButton></div> : <HeroButton className="button button-secondary button-small" onPress={() => setTargetId(row.id)}>选择飞书用户</HeroButton>}</td></tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadState === "loading" ? "正在载入待匹配需求…" : "没有待匹配的负责人"}</strong><span>{loadState === "loading" ? "正在从本地 API 读取。" : "未匹配需求会出现在这里，等待为每一条需求单独指定负责人。"}</span></div>}
+    {pending.length ? <div className="table-scroll"><table><thead><tr><th>需求</th><th>TB 负责人</th><th>操作</th></tr></thead><tbody>{pending.map((row) => <tr key={row.id}><td><div className="requirement-title"><span className="req-id">{requirementDisplayId(row)}</span><strong>{row.title}</strong></div></td><td>待匹配</td><td>{targetId === row.id ? <div className="mapping-editor"><FeishuUserPicker disabled={busy} onMap={submit} saveLabel="保存" /><HeroButton className="button button-secondary button-small" onPress={() => setTargetId(null)} isDisabled={busy}>取消</HeroButton></div> : <HeroButton className="button button-secondary button-small" onPress={() => setTargetId(row.id)}>选择飞书用户</HeroButton>}</td></tr>)}</tbody></table></div> : loadState === "loading" ? <SkeletonTableRows rows={4} columns={3} /> : <div className="table-empty"><strong>没有待匹配的负责人</strong><span>未匹配需求会出现在这里，等待为每一条需求单独指定负责人。</span></div>}
     {cursor && <div style={{ display: "flex", justifyContent: "center", padding: "10px 0" }}><button className="button button-secondary button-small" disabled={loadingMore || busy} onClick={() => void load(cursor)}>{loadingMore ? "加载中…" : "加载更多待匹配需求"}</button></div>}
     {mappings.length > 0 && <div className="table-scroll"><table><thead><tr><th>TB 用户 / 姓名</th><th>飞书用户</th><th>匹配方式</th><th>更新时间</th></tr></thead><tbody>{mappings.map((m) => <tr key={m.id}><td>{m.teambitionDisplayName ?? m.teambitionUserId ?? "（仅姓名匹配占位）"}</td><td className="mono-cell">{m.feishuUserId}</td><td>{matchMethodLabel[m.matchMethod] ?? m.matchMethod}</td><td>{timeLabel(m.updatedAt)}</td></tr>)}</tbody></table></div>}
   </section>;
@@ -1702,7 +1715,7 @@ export function AuditPanel() {
     </div></div>
     <StateBanner loadError={loadError} notice={null} onCloseNotice={() => undefined} />
     {events.length >= AUDIT_PAGE_LIMIT && <div className="list-summary-count">已加载最近 {AUDIT_PAGE_LIMIT} 条审计记录；更早的记录请缩小时间范围或按对象筛选。</div>}
-    {events.length ? <div className="table-scroll"><table><thead><tr><th>时间</th><th>操作者</th><th>动作</th><th>对象</th><th>结果</th><th>安全摘要</th></tr></thead><tbody>{events.map((event) => <tr key={event.id}><td>{timeLabel(event.occurredAt)}</td><td>{event.actorId ?? "系统"}</td><td className="mono-cell">{event.eventType}</td><td className="mono-cell">{event.entityType}:{event.entityId.slice(0, 8)}</td><td>{auditResultLabel(event.result)}</td><td>{Object.keys(event.safeDetails).length ? JSON.stringify(event.safeDetails) : "—"}</td></tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadState === "loading" ? "正在载入审计日志…" : "没有匹配的审计记录"}</strong><span>{loadState === "loading" ? "正在从本地 API 读取。" : "调整筛选条件或执行操作后再试。"}</span></div>}
+    {events.length ? <div className="table-scroll"><table><thead><tr><th>时间</th><th>操作者</th><th>动作</th><th>对象</th><th>结果</th><th>安全摘要</th></tr></thead><tbody>{events.map((event) => <tr key={event.id}><td>{timeLabel(event.occurredAt)}</td><td>{event.actorId ?? "系统"}</td><td className="mono-cell">{event.eventType}</td><td className="mono-cell">{event.entityType}:{event.entityId.slice(0, 8)}</td><td>{auditResultLabel(event.result)}</td><td>{Object.keys(event.safeDetails).length ? JSON.stringify(event.safeDetails) : "—"}</td></tr>)}</tbody></table></div> : loadState === "loading" ? <SkeletonTableRows rows={6} columns={6} /> : <div className="table-empty"><strong>没有匹配的审计记录</strong><span>调整筛选条件或执行操作后再试。</span></div>}
   </section>;
 }
 

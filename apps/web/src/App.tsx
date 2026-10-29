@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKe
 import { ArrowDownToLine, ArrowRight, Blocks, Check, CircleAlert, CircleHelp, Clock3, Database, FolderSync, Gauge, GitBranch, Layers3, ListChecks, LoaderCircle, Menu, Moon, Play, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Sun, Users, X } from "lucide-react";
 import { ApiError, createPriorityRuleDraft, getHealth, getOverviewMetrics, listPriorityRules, listSources, publishPriorityRule, runSync, type OverviewMetrics, type PriorityRuleVersion, type RequirementSummary, type SourceConfig, type SyncExecutionMode } from "./api";
 import { GuidePanel, ModulesPanel, PanelErrorBoundary, PublishStatusChip, RequirementsPanel, SourcesPanel, SyncRecordsPanel, TeamPanel } from "./panels";
+import { SkeletonBlock, SkeletonCards, SkeletonTableRows } from "./skeleton";
 import { readRequirementDeepLink } from "./deep-link";
 import { readWorkbenchPage, readWorkbenchRoute, workbenchUrl, type WorkbenchPage, type WorkbenchTab } from "./workbench-routing";
 import type { RequirementListFilters } from "./requirements-url";
@@ -224,6 +225,13 @@ function App() {
   }, []);
 
   useEffect(() => { void loadData(); }, [loadData]);
+  // 局部刷新：批次列表单独拉取。同步提交/运行中轮询只更新批次，需求与统计保持稳定，避免整页刷新。
+  const refreshBatches = useCallback(async () => {
+    try {
+      const page = await apiJson<{ items: Batch[] }>("/api/batches?limit=10");
+      setBatches(page.items);
+    } catch { /* 局部刷新失败保留旧数据，下一轮轮询或手动刷新恢复 */ }
+  }, []);
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     try { window.localStorage?.setItem("rq-sys-theme", theme); } catch { /* Storage can be disabled by the browser. */ }
@@ -236,7 +244,7 @@ function App() {
     try {
       const result = await runSync(source, mode);
       setNotice(mode === "source_only" ? `仅同步源数据批次 ${result.batchId} 已提交；不会触发 AI、负责人匹配、Base 推送或通知` : `批次 ${result.batchId} 已提交`);
-      await loadData();
+      await refreshBatches();
     } catch (cause) {
       setActionError(formatApiError(cause));
     } finally { setBusy(false); }
@@ -244,14 +252,21 @@ function App() {
 
   const shownRequirements = requirements.filter((item) => item.title.toLowerCase().includes(query.toLowerCase()) || (item.sourceRequirementId ?? "").toLowerCase().includes(query.toLowerCase()));
   const latestBatch = batches[0];
+  // 运行中 → 终态时才补一次全量刷新；轮询期间只用 refreshBatches 更新进度，页面其余内容不重载。
+  const previousBatchStatus = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const previous = previousBatchStatus.current;
+    previousBatchStatus.current = latestBatch?.status;
+    if (previous === "running" && latestBatch && latestBatch.status !== "running") void loadData();
+  }, [latestBatch?.status, loadData]);
   // 运行中的批次需要可见进度：只在前端做有界轮询，终态/页面隐藏时停止。
   useEffect(() => {
     if (latestBatch?.status !== "running") return;
     const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible") void loadData();
+      if (document.visibilityState === "visible") void refreshBatches();
     }, 5000);
     return () => window.clearInterval(timer);
-  }, [latestBatch?.status, loadData]);
+  }, [latestBatch?.status, refreshBatches]);
   const counts = { pull: metrics?.pullSynced ?? 0, analysis: metrics?.analysisAnalyzed ?? 0, owner: metrics?.ownerResolved ?? 0, push: metrics?.pushPushed ?? 0, failed: metrics?.failed ?? 0, pushFailed: metrics?.pushFailed ?? 0, pushPending: metrics?.pushPending ?? 0 };
   const total = metrics?.total ?? 0;
   const priority = metrics?.priority ?? null;
@@ -304,7 +319,7 @@ function App() {
               <div className="todo-grid">
                 {todoItems.map((item) => (
                   <button key={item.key} className={`todo-card is-${item.tone}`} disabled={item.value === null} onClick={() => setPage("Requirements", item.filters)}>
-                    <span className="todo-value">{item.value ?? "—"}</span>
+                    <span className="todo-value">{item.value === null ? (health === "loading" ? <SkeletonBlock className="skeleton-num" /> : "—") : item.value}</span>
                     <span className="todo-label">{item.label}</span>
                     <span className="todo-hint">{item.hint}</span>
                   </button>
@@ -319,12 +334,12 @@ function App() {
               <div className="priority-grade-grid" role="group" aria-label="优先级分级统计">
                 {priorityCards.map((card) => <div className={`priority-grade-card is-${card.tone}`} key={card.key}>
                   <div className="priority-grade-head"><span className={`priority-pill priority-${card.tone}`}>{card.key}</span><small>{card.range}</small></div>
-                  <strong>{priority ? card.value : "—"}</strong>
+                  <strong>{priority ? card.value : health === "loading" ? <SkeletonBlock className="skeleton-num" /> : "—"}</strong>
                   <span>条需求</span>
                 </div>)}
                 <div className="priority-grade-card is-unscored">
                   <div className="priority-grade-head"><span className="priority-pill priority-unscored">待评分</span><small>无评分/无历史优先级</small></div>
-                  <strong>{priority ? priority.unscored : "—"}</strong>
+                  <strong>{priority ? priority.unscored : health === "loading" ? <SkeletonBlock className="skeleton-num" /> : "—"}</strong>
                   <span>条需求</span>
                 </div>
               </div>
@@ -348,7 +363,7 @@ function App() {
               { name: "推送 Base", detail: "创建或更新多维表格记录", value: counts.push, color: "green", icon: Check },
             ].map(({ name, detail, value, color, icon: Icon }, index) => <div className="pipeline-row" key={name}><div className={`pipeline-icon ${color}`}><Icon size={16} /></div><div className="pipeline-copy"><strong>{name}</strong><span>{detail}</span></div><div className="pipeline-progress"><div className="progress-track"><span style={{ width: `${metrics && total ? Math.round(value / total * 100) : 0}%` }} /></div><small>{metrics ? `${value} / ${total}` : "全量统计暂不可用"}</small></div>{index < 3 && <span className="pipeline-connector" />}</div>)}</div><div className="pipeline-foot"><span className="pipeline-health"><span />{metrics ? "状态来自全量需求聚合 API" : "等待全量统计 API"}</span><span className="pipeline-note">AI 失败不会阻止推送</span></div></section>
 
-              <section className="panel latest-panel"><div className="panel-heading"><div><h2>最近同步</h2><p>最新批次执行情况</p></div><button className="link-button" onClick={() => setPage("SyncRecords")}>全部批次 <ArrowRight size={14} /></button></div>{latestBatch ? <div className="latest-content"><div className="batch-status-line"><span className={`batch-status-icon ${latestBatch.status === "failed" ? "danger" : latestBatch.status === "running" ? "live" : "success"}`}>{latestBatch.status === "running" ? <LoaderCircle size={16} className="spin" /> : latestBatch.status === "failed" ? <CircleAlert size={16} /> : <Check size={16} />}</span><div><strong>{latestBatch.status === "running" ? "同步进行中" : latestBatch.status === "partial_failure" ? "部分完成" : latestBatch.status === "failed" ? "同步失败" : "同步完成"}</strong><span>批次 {latestBatch.id}</span></div><span className="batch-status-tag">{stateLabel(latestBatch.status)}</span></div><div className="latest-counts"><div><strong>{latestBatch.totalCount}</strong><span>总需求</span></div><div><strong>{latestBatch.succeededCount}</strong><span>已完成</span></div><div><strong className={latestBatch.failedCount ? "text-danger" : ""}>{latestBatch.failedCount}</strong><span>失败</span></div></div><div className="latest-timestamp"><Clock3 size={14} />{latestBatch.startedAt ? new Date(latestBatch.startedAt).toLocaleString("zh-CN") : "等待批次时间"}<button className="link-button" onClick={() => setPage("SyncRecords")}>查看详情</button></div></div> : <div className="empty-state compact"><span className="empty-icon"><Clock3 size={20} /></span><strong>{health === "loading" ? "正在加载批次" : "还没有同步批次"}</strong><span>{health === "ready" ? "手动启动同步后，批次进度会显示在这里。" : "连接 API 后可查看实际批次记录。"}</span></div>}</section></div>
+              <section className="panel latest-panel"><div className="panel-heading"><div><h2>最近同步</h2><p>最新批次执行情况</p></div><button className="link-button" onClick={() => setPage("SyncRecords")}>全部批次 <ArrowRight size={14} /></button></div>{latestBatch ? <div className="latest-content"><div className="batch-status-line"><span className={`batch-status-icon ${latestBatch.status === "failed" ? "danger" : latestBatch.status === "running" ? "live" : "success"}`}>{latestBatch.status === "running" ? <LoaderCircle size={16} className="spin" /> : latestBatch.status === "failed" ? <CircleAlert size={16} /> : <Check size={16} />}</span><div><strong>{latestBatch.status === "running" ? "同步进行中" : latestBatch.status === "partial_failure" ? "部分完成" : latestBatch.status === "failed" ? "同步失败" : "同步完成"}</strong><span>批次 {latestBatch.id}</span></div><span className="batch-status-tag">{stateLabel(latestBatch.status)}</span></div><div className="latest-counts"><div><strong>{latestBatch.totalCount}</strong><span>总需求</span></div><div><strong>{latestBatch.succeededCount}</strong><span>已完成</span></div><div><strong className={latestBatch.failedCount ? "text-danger" : ""}>{latestBatch.failedCount}</strong><span>失败</span></div></div><div className="latest-timestamp"><Clock3 size={14} />{latestBatch.startedAt ? new Date(latestBatch.startedAt).toLocaleString("zh-CN") : "等待批次时间"}<button className="link-button" onClick={() => setPage("SyncRecords")}>查看详情</button></div></div> : health === "loading" ? <div role="status" aria-busy="true" aria-label="正在加载批次"><SkeletonCards count={1} /></div> : <div className="empty-state compact"><span className="empty-icon"><Clock3 size={20} /></span><strong>还没有同步批次</strong><span>{health === "ready" ? "手动启动同步后，批次进度会显示在这里。" : "连接 API 后可查看实际批次记录。"}</span></div>}</section></div>
 
             <SchedulerHealthPanel schedule={sources[0]?.schedule} now={loadedAt} loadState={health} onConfigure={() => setPage("Sources")} />
 
@@ -365,7 +380,10 @@ function App() {
 }
 
 function RequirementsTable({ rows, loading }: { rows: Requirement[]; loading: boolean }) {
-  if (!rows.length) return <div className="table-empty"><span className="empty-icon"><ListChecks size={19} /></span><strong>{loading ? "正在载入需求…" : "没有匹配的需求"}</strong><span>{loading ? "正在从本地 API 读取需求状态。" : "数据仅在 API 返回后显示，不使用演示数据。"}</span></div>;
+  // 首屏加载显示骨架屏；已有数据时的静默刷新保留旧行，避免整块表格闪烁。
+  if (!rows.length) return loading
+    ? <SkeletonTableRows rows={5} columns={6} />
+    : <div className="table-empty"><span className="empty-icon"><ListChecks size={19} /></span><strong>没有匹配的需求</strong><span>数据仅在 API 返回后显示，不使用演示数据。</span></div>;
   return <div className="table-scroll"><table><thead><tr><th>需求</th><th>版本</th><th>拉取</th><th>AI 分析</th><th>负责人</th><th>Base 推送</th></tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td><div className="requirement-title"><span className="req-id">{requirementDisplayId(row)}</span><strong>{row.title}</strong></div></td><td><span className="version-label">v{row.sourceVersion}</span></td><td><StagePill stage="pull" value={row.pipeline.pull} /></td><td><StagePill stage="analysis" value={row.pipeline.analysis} /></td><td><StagePill stage="owner" value={row.pipeline.owner} /></td><td><StagePill stage="push" value={row.pipeline.push} /></td></tr>)}</tbody></table></div>;
 }
 
