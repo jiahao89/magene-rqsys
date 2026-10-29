@@ -122,7 +122,7 @@ export interface PmSnapshotWriter {
 export interface OmittedField {
   field: string;
   value: string;
-  reason: "not_in_base_select_options" | "category_omitted_by_policy" | "field_not_in_base";
+  reason: "not_in_base_select_options" | "category_omitted_by_policy" | "field_not_in_base" | "notification_write_failed";
 }
 
 export interface BasePushResult {
@@ -335,7 +335,12 @@ export class FeishuBasePushAdapter {
     try {
       return await this.client.update(record.recordId, notificationDelta, { userIdType: notification.recipientIdType });
     } catch (error) {
-      if (!isFieldNotFound(error)) throw error;
+      if (!isFieldNotFound(error)) {
+        // 业务行已写成功：通知字段写失败不能让整条推送回退为失败，否则重试会重复写业务字段。
+        // 记录为省略原因，由推送运行记录与审计显式暴露；通知侧由 Base 自动化/补发兜底。
+        omittedFields.push({ field: "notification", value: "notification fields were not written", reason: "notification_write_failed" });
+        return record;
+      }
       for (const [field, value] of Object.entries(notificationDelta)) {
         omittedFields.push({ field, value: omittedNotificationValue(value), reason: "field_not_in_base" });
       }

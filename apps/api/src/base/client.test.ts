@@ -533,16 +533,17 @@ test("propagates a second-request failure that is not FieldNameNotFound", async 
     async readPmFields() { return {}; },
   };
   const adapter = new FeishuBasePushAdapter(client, notificationFields);
-  // 通知字段写入失败且不是「字段不存在」时，必须按失败抛出；
-  // 上层已有 pushed_unrecorded / 安全失败路径处理，不能在这里静默吞掉。
-  await assert.rejects(() => adapter.push({
+  // 业务行已写成功：通知字段写入失败只记为省略原因，不让整条推送回退为失败（否则重试会重复写业务字段）。
+  const result = await adapter.push({
     projectId: "p", requirementId: "r", requirementDbId: REQUIREMENT_DB_ID, title: "Title",
     owner: null, sourceVersion: 1, substantiveChanged: false, idempotencyKey: "p:r:v1",
     notification: {
       eventId: "first_push:r:sv1", eventType: "first_push",
       recipientUserId: PM_LEADER_USER_ID, recipientIdType: "user_id", ownerMergeUserId: null,
     },
-  }), /1254061/);
+  });
+  assert.equal(result.recordId, "record-new");
+  assert.ok(result.omittedFields.some((item) => item.reason === "notification_write_failed"));
 });
 
 const t03FieldMap = { requirementId: "TB需求ID", platformRequirementId: "需求平台ID", owner: "执行人", source: { title: "标题" }, ai: {}, pm: ["PM状态"] };
