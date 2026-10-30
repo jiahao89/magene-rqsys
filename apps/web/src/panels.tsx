@@ -1535,7 +1535,8 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
       <ManualEditSection detail={detail} onSaved={() => onSaved(detail.id)} />
     </section>
 
-    <DuplicateDecisionSection detail={detail} onSaved={() => onSaved(detail.id)} />
+    {/* 决策按 (来源配置, TB 需求ID) 保存，手工需求没有这个身份、后端会 404：只在明确是手工来源时隐藏。 */}
+    {detail.sourceType === "web_manual" ? null : <DuplicateDecisionSection detail={detail} onSaved={() => onSaved(detail.id)} />}
 
     <ScoringPanel requirementId={detail.id} scoring={detail.scoring} dimensionInsights={dimensionInsights} onSaved={() => onSaved(detail.id)}>
       {aiAnalysisContent}

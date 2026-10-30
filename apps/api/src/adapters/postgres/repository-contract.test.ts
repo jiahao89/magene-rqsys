@@ -313,6 +313,12 @@ for (const mode of MODES) {
       const candidates = await ctx.repositories.requirements.listTitleCandidates(source.id);
       assert.equal(candidates.length, 2, "重复标题只是提示：两条需求都必须保留");
       assert.equal(candidates.find((row) => row.id === second.id)?.duplicateOfRequirementId, first.id);
+      // 决策表按稳定身份保存，读取时要带出主记录的平台编号，界面才不用显示裸 UUID。
+      await ctx.repositories.requirements.decideResolution({ requirementId: second.id, decision: "duplicate", canonicalRequirementId: first.id, reason: "同标题同需求", actorId: "contract", expectedVersion: 0, now: "2026-10-28T00:00:01Z" });
+      const resolution = await ctx.repositories.requirements.getResolution?.(second.id);
+      assert.equal(resolution?.canonicalRequirementId, first.id);
+      assert.equal(resolution?.canonicalPlatformRequirementId, (await ctx.repositories.requirements.get(first.id))?.platformRequirementId);
+      assert.equal((await ctx.repositories.requirements.get(second.id))?.processingState, "suppressed_duplicate");
       await ctx.repositories.requirements.setDuplicateOf(second.id, null);
       assert.equal((await ctx.repositories.requirements.get(second.id))?.duplicateOfRequirementId, null, "撤销提示也必须生效");
     } finally {

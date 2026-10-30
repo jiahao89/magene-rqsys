@@ -9,6 +9,8 @@ export interface RequirementResolutionRecord {
   decision: ResolutionDecision;
   reviewState: ResolutionReviewState;
   canonicalRequirementId: string | null;
+  /** 主记录的平台编号（RQ-000001）；主记录未找到或未关联时为 null。 */
+  canonicalPlatformRequirementId: string | null;
   canonicalTbRequirementId: string | null;
   reason: string | null;
   version: number;

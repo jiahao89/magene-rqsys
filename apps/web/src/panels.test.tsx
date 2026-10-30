@@ -328,6 +328,8 @@ describe("RequirementsPanel (ticket 17)", () => {
     expect(screen.getByText("适用人群")).toBeInTheDocument();
     expect(screen.getByText("处理与推送")).toBeInTheDocument();
     expect(screen.getByText("系统状态")).toBeInTheDocument();
+    // TB 需求有稳定来源身份，重复判定区块应当可见。
+    expect(screen.getByRole("heading", { name: "重复处理" })).toBeInTheDocument();
     expect(screen.getByText("查看依据与历史")).toBeInTheDocument();
     // TB 原始字段同时使用「TB」小徽标与分区来源标注。
     expect(screen.getAllByText("TB").length).toBeGreaterThanOrEqual(8);
@@ -397,6 +399,8 @@ describe("RequirementsPanel (ticket 17)", () => {
     // 手工来源字段不再使用 TB 徽标，改用手工徽标。
     expect(screen.queryAllByText("TB")).toHaveLength(0);
     expect(screen.getAllByText("手工").length).toBeGreaterThanOrEqual(8);
+    // 重复判定按 (来源配置, TB 需求ID) 保存，手工需求没有这个身份、后端会 404：不渲染该区块。
+    expect(screen.queryByRole("heading", { name: "重复处理" })).not.toBeInTheDocument();
   });
 
   it("puts requirements waiting for human handling first, then sorts each group by update time", async () => {
