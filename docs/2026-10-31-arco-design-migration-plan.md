@@ -1,7 +1,7 @@
 # Arco Design 前端架构迁移开发计划
 
 > **日期**：2026-10-31
-> **状态**：P0 已完成（本地 + 妙搭云端验证，见 §4.0）；P1 进行中
+> **状态**：P0 完成（云端已验证）；P1/P2 第一轮完成（canonical 组件与外壳 Arco 化）；P4 进行中（client 基础 + 按钮已上线）
 > **分支策略**：工作分支 `feature/arco-design`；每个增量提交同时推送该分支与 `main`
 > **部署策略**：妙搭部署继续使用 `main` 版本（妙搭仓 `sprint/default` 从 main 同步），`feature/arco-design` 不直接发布
 
@@ -102,6 +102,19 @@
 - 更新 README/ADR/PRD 相关说明；执行发布与回滚演练。
 
 **合计**：约 **17–27 人日**（不含外部评审/等待）。
+
+### 4.5 已交付范围（2026-10-31 第一轮）
+
+| 范围 | 状态 | 证据 |
+|---|---|---|
+| 根仓 `apps/web` 组件层 | ✅ HeroUI 移除，Button/Card/Chip/Input/Modal/Collapse 由 Arco 渲染 | commit `0199ad8`；Web 95/95、build 通过 |
+| 根仓外壳与设计 token | ✅ 顶栏/操作按钮/搜索框 Arco 化；布局类映射 Arco token | commit `c9dd30c`、`ef6aa0f` |
+| 妙搭 client 基础 | ✅ Arco 依赖/CSS/React19 适配器/主题同步/token 桥接 | commit `bbeaef3`；生产 release `7702736124905508102` |
+| 妙搭 client 操作按钮 | ✅ 65 个原生按钮改为 Arco Button（保留自定义布局类） | commit `dfe731c`；生产 release `7702737675280059640`，线上已验证主页/需求池/团队页正常 |
+| 根仓面板表格/下拉 | ⏳ 原生 `<table>`/`<select>` 仍为自定义实现（已套 Arco token）；未一一替换为 Arco Table/Select | 见下方剩余事项 |
+| 妙搭 client 表格/下拉/输入 | ⏳ 同上；输入框仍为原生 input（已套 token） | — |
+
+**剩余事项（下一轮）**：面板级 Arco Table/Select 替换（需同步调整测试与交互）、详情页表单控件、复杂 Beta 面板；完成后再做一次目标环境全量回归与最终发布。
 
 ## 5. 分支与发布策略
 
