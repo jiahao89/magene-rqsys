@@ -234,6 +234,8 @@ function App() {
   }, []);
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
+    // Arco 暗色主题由 body[arco-theme="dark"] 驱动，与工作台自定义主题变量保持同步。
+    document.body.setAttribute("arco-theme", theme === "dark" ? "dark" : "light");
     try { window.localStorage?.setItem("rq-sys-theme", theme); } catch { /* Storage can be disabled by the browser. */ }
   }, [theme]);
 

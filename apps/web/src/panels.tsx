@@ -3,7 +3,8 @@
 // 需求池/批次/审计面板自治加载，支持服务端筛选与游标分页。
 import { Fragment, useCallback, useEffect, useId, useRef, useState, Component, type KeyboardEvent, type ReactNode } from "react";
 import { AudienceEditor, BetaPanel, IntakeForm, ManualEditSection } from "./intake-form";
-import { Accordion as HeroAccordion, AlertDialog as HeroAlertDialog, Button as HeroButton, Card as HeroCard, Chip as HeroChip, Input as HeroInput, TextArea as HeroTextArea } from "@heroui/react";
+import { Button as HeroButton, Card as HeroCard, Chip as HeroChip, Input as HeroInput } from "./arco";
+import { Collapse, Modal } from "@arco-design/web-react";
 import { ArrowLeft, RefreshCw, X } from "lucide-react";
 import { stateLabel } from "./state-labels";
 import { RequirementDetailSkeleton, SkeletonBlock, SkeletonTableRows } from "./skeleton";
@@ -47,21 +48,13 @@ function StateBanner({ loadError, notice, onCloseNotice }: { loadError: string |
 }
 
 function DeleteConfirmation({ description, disabled, onConfirm, triggerLabel = "删除", heading = "确认删除", confirmLabel = "确认删除" }: { description: string; disabled: boolean; onConfirm: () => void; triggerLabel?: string; heading?: string; confirmLabel?: string }) {
-  return <HeroAlertDialog.Root>
-    <HeroAlertDialog.Trigger className="button button-secondary button-small" aria-disabled={disabled} tabIndex={disabled ? -1 : 0} style={disabled ? { pointerEvents: "none", opacity: 0.6 } : undefined}>{triggerLabel}</HeroAlertDialog.Trigger>
-    <HeroAlertDialog.Backdrop>
-      <HeroAlertDialog.Container>
-        <HeroAlertDialog.Dialog>
-          <HeroAlertDialog.Header><HeroAlertDialog.Heading>{heading}</HeroAlertDialog.Heading></HeroAlertDialog.Header>
-          <HeroAlertDialog.Body><p>{description}</p></HeroAlertDialog.Body>
-          <HeroAlertDialog.Footer>
-            <HeroButton slot="close" variant="secondary">取消</HeroButton>
-            <HeroButton slot="close" variant="danger" onPress={onConfirm}>{confirmLabel}</HeroButton>
-          </HeroAlertDialog.Footer>
-        </HeroAlertDialog.Dialog>
-      </HeroAlertDialog.Container>
-    </HeroAlertDialog.Backdrop>
-  </HeroAlertDialog.Root>;
+  const [arcoOpen, setArcoOpen] = useState(false);
+  return <>
+    <button className="button button-secondary button-small" aria-disabled={disabled} tabIndex={disabled ? -1 : 0} style={disabled ? { pointerEvents: "none", opacity: 0.6 } : undefined} onClick={() => { if (!disabled) setArcoOpen(true); }}>{triggerLabel}</button>
+    <Modal visible={arcoOpen} title={heading} okText={confirmLabel} cancelText="取消" okButtonProps={{ status: "danger" }} onOk={() => { setArcoOpen(false); onConfirm(); }} onCancel={() => setArcoOpen(false)}>
+      <p>{description}</p>
+    </Modal>
+  </>;
 }
 
 function timeLabel(value: string | null | undefined): string {
@@ -1555,11 +1548,9 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
     </section>
 
     <section className="req-section req-audit-section">
-      <HeroAccordion className="req-audit">
-        <HeroAccordion.Item id="requirement-audit">
-          <HeroAccordion.Heading><HeroAccordion.Trigger className="req-audit-trigger">查看依据与历史<HeroAccordion.Indicator /></HeroAccordion.Trigger></HeroAccordion.Heading>
-          <HeroAccordion.Panel><HeroAccordion.Body>
-            <dl className="evidence-grid">
+      <Collapse className="req-audit" defaultActiveKey={[]}>
+        <Collapse.Item name="requirement-audit" header="查看依据与历史">
+          <dl className="evidence-grid">
               <div className="evidence-card"><dt>原文证据</dt><dd><TextList items={evidence} /></dd></div>
               <div className="evidence-card"><dt>事实（来自源文本）</dt><dd><TextList items={factItems} /></dd></div>
               <div className="evidence-card"><dt>AI 推断（非事实）</dt><dd><TextList items={inferenceItems} prefix="【AI 推断】" /></dd></div>
@@ -1575,9 +1566,8 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
             {analysisVersions.length
               ? <div className="table-scroll"><table><thead><tr><th>分析版本</th><th>状态</th><th>模块</th><th>优先级</th><th>开始时间</th><th>失败摘要</th></tr></thead><tbody>{analysisVersions.map((version: AnalysisVersionSummary) => <tr key={version.analysisVersion}><td className="mono-cell">v{version.analysisVersion}</td><td><StageBadge stage="analysis" state={version.status} /></td><td>{version.moduleSuggestion ?? "—"}</td><td>{version.priority ?? "空"}</td><td>{timeLabel(version.startedAt)}</td><td>{version.safeErrorSummary ?? "—"}</td></tr>)}</tbody></table></div>
               : <p className="req-empty-value">尚无分析版本历史</p>}
-          </HeroAccordion.Body></HeroAccordion.Panel>
-        </HeroAccordion.Item>
-      </HeroAccordion>
+        </Collapse.Item>
+      </Collapse>
     </section>
   </div>;
 }

@@ -1,7 +1,5 @@
 @import "tailwindcss";
-@import "@heroui/styles";
-/* 注意：妙搭 app 仓（client/src/rqsys/styles.css）必须删除上面这行 —— 它的 package.json
-   没有 @heroui/react 依赖，云端工作区无法解析，会导致发布构建失败（历史上已发生两次）。 */
+/* Arco 样式在 apps/web/src/main.tsx 中全局引入；本文件只保留工作台布局与自定义变量。 */
 
 @theme inline {
   --color-background: var(--rq-background);
