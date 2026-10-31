@@ -4,7 +4,7 @@
 import { Fragment, useCallback, useEffect, useId, useRef, useState, Component, type KeyboardEvent, type ReactNode } from "react";
 import { AudienceEditor, BetaPanel, IntakeForm, ManualEditSection } from "./intake-form";
 import { Button as HeroButton, Card as HeroCard, Chip as HeroChip, Input as HeroInput } from "./arco";
-import { Collapse, Modal } from "@arco-design/web-react";
+import { Collapse, Modal, Select as ArcoSelect } from "@arco-design/web-react";
 import { ArrowLeft, RefreshCw, X } from "lucide-react";
 import { stateLabel } from "./state-labels";
 import { RequirementDetailSkeleton, SkeletonBlock, SkeletonTableRows } from "./skeleton";
@@ -125,11 +125,11 @@ function FeishuUserPicker({ disabled, onMap, saveLabel = "保存负责人并入�
     {loadError
       ? <span className="feishu-user-error" role="alert">{loadError}</span>
       : <div className="feishu-user-search">
-          <select aria-label="选择负责人" value={selectedId} disabled={disabled || loading || saving}
-            onChange={(event) => setSelectedId(event.target.value)}>
-            <option value="">{loading ? "正在读取人员…" : people.length ? "请选择负责人" : "名单为空，请先在「组内人员」绑定飞书账号"}</option>
-            {people.map((person) => <option key={person.feishuUserId} value={person.feishuUserId}>{person.name}</option>)}
-          </select>
+          <ArcoSelect aria-label="选择负责人" value={selectedId} disabled={disabled || loading || saving}
+            onChange={(value: string) => setSelectedId(value)} style={{ minWidth: 200 }}
+            placeholder={loading ? "正在读取人员…" : people.length ? "请选择负责人" : "名单为空，请先在「组内人员」绑定飞书账号"}
+            options={people.map((person) => ({ label: person.name, value: person.feishuUserId }))}
+          />
           <button className="button button-primary button-small" onClick={() => void save()} disabled={disabled || !selected || saving}>
             {saving ? "保存中…" : saveLabel}
           </button>
@@ -442,11 +442,11 @@ export function ModulesPanel() {
     <div className="panel-heading"><div><h2>功能模块</h2><p>AI 仅从已发布的模块名称中选择；无法匹配时输出“无法识别”。每次保存生成一个新字典版本，且至少保留一个模块。</p></div><HeroButton className="button button-secondary button-small" onPress={() => void load()} isDisabled={busy}><RefreshCw size={14} />刷新</HeroButton></div>
     <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
     {formError && <div className="field-error" role="alert">{formError}</div>}
-    <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}><label className="field" style={{ flex: 1 }}><span>功能模块</span><HeroInput aria-label="功能模块名称" value={name} onChange={(event) => setName(event.target.value)} /></label><label className="field"><span>人员</span><select aria-label="模块责任人员" value={personName} onChange={(event) => setPersonName(event.target.value)}><option value="">未分配</option>{people.filter((person) => person.name).map((person) => <option key={person.name} value={person.name}>{person.name}</option>)}</select></label><HeroButton className="button button-primary button-small" onPress={submit} isDisabled={busy}>新增模块</HeroButton></div>
+    <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}><label className="field" style={{ flex: 1 }}><span>功能模块</span><HeroInput aria-label="功能模块名称" value={name} onChange={(event) => setName(event.target.value)} /></label><label className="field"><span>人员</span><ArcoSelect aria-label="模块责任人员" value={personName} onChange={(value: string) => setPersonName(value)} style={{ minWidth: 150 }} options={[{ label: "未分配", value: "" }, ...people.filter((person) => person.name).map((person) => ({ label: person.name!, value: person.name! }))]} /></label><HeroButton className="button button-primary button-small" onPress={submit} isDisabled={busy}>新增模块</HeroButton></div>
     {items.length ? <div className="table-scroll" tabIndex={0} role="region" aria-label="功能模块列表"><table><thead><tr><th>功能模块</th><th>人员</th><th>操作</th></tr></thead><tbody>{items.map((item) => editing === item.name
       ? <tr key={item.name} className="module-row is-editing">
           <td><input className="inline-input" aria-label="编辑功能模块名称" value={editName} onChange={(event) => setEditName(event.target.value)} autoFocus /></td>
-          <td><select className="inline-input" aria-label="编辑模块责任人员" value={editPerson} onChange={(event) => setEditPerson(event.target.value)}><option value="">未分配</option>{people.filter((person) => person.name).map((person) => <option key={person.name} value={person.name}>{person.name}</option>)}</select></td>
+          <td><ArcoSelect className="inline-input" aria-label="编辑模块责任人员" value={editPerson} onChange={(value: string) => setEditPerson(value)} style={{ minWidth: 150 }} options={[{ label: "未分配", value: "" }, ...people.filter((person) => person.name).map((person) => ({ label: person.name!, value: person.name! }))]} /></td>
           <td><HeroButton className="button button-primary button-small" onPress={submitEdit} isDisabled={busy}>保存</HeroButton> <HeroButton className="button button-secondary button-small" onPress={() => { setEditing(null); setEditName(""); setEditPerson(""); }} isDisabled={busy}>取消</HeroButton></td>
         </tr>
       : <tr key={item.name} className="module-row">
@@ -514,9 +514,7 @@ export function BatchesPanel({ onRefresh }: { onRefresh: () => void }) {
 
   return <section className="panel requirements-panel">
     <div className="panel-heading"><div><h2>同步批次历史</h2><p>触发者、批次时间与逐条结果由 API 提供；点击批次查看明细。</p></div><div style={{ display: "flex", gap: 8 }}>
-      <select aria-label="批次状态筛选" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-        <option value="">全部状态</option><option value="running">进行中</option><option value="succeeded">已完成</option><option value="partial_failure">部分失败</option><option value="failed">失败</option>
-      </select>
+      <ArcoSelect aria-label="批次状态筛选" value={statusFilter} onChange={(value: string) => setStatusFilter(value)} style={{ minWidth: 120 }} options={[{ label: "全部状态", value: "" }, { label: "进行中", value: "running" }, { label: "已完成", value: "succeeded" }, { label: "部分失败", value: "partial_failure" }, { label: "失败", value: "failed" }]} />
       <label className="field"><span>开始时间</span><HeroInput type="datetime-local" aria-label="批次开始时间" value={since} onChange={(e) => setSince(e.target.value)} /></label>
       <label className="field"><span>结束时间</span><HeroInput type="datetime-local" aria-label="批次结束时间" value={until} onChange={(e) => setUntil(e.target.value)} /></label>
       <HeroButton className="button button-secondary button-small" onPress={() => void load({ status: statusFilter, since, until }, null)}>筛选</HeroButton>
@@ -914,26 +912,26 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
         </label>
         <label className="qfield">
           <span className="sr-only">负责人</span>
-          <select aria-label="TB负责人筛选" value={executorName} onChange={(e) => setExecutorName(e.target.value)}><option value="">全部 TB 负责人</option>{people.filter((person) => person.name).map((person) => <option key={person.name} value={person.name}>{person.name}</option>)}</select>
+          <ArcoSelect aria-label="TB负责人筛选" value={executorName} onChange={(value: string) => setExecutorName(value)} style={{ minWidth: 150 }} options={[{ label: "全部 TB 负责人", value: "" }, ...people.filter((person) => person.name).map((person) => ({ label: person.name!, value: person.name! }))]} />
         </label>
         <label className="qfield">
           <span className="sr-only">同步状态</span>
-          <select aria-label="同步状态筛选" value={pullState} onChange={(e) => setPullState(e.target.value)}>{pullStateOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+          <ArcoSelect aria-label="同步状态筛选" value={pullState} onChange={(value: string) => setPullState(value)} style={{ minWidth: 130 }} options={pullStateOptions.map(([value, label]) => ({ label, value }))} />
         </label>
         <details className="qmore">
           <summary>更多筛选{activeFilterCount - (query.trim() ? 1 : 0) - (executorName ? 1 : 0) - (pullState ? 1 : 0) > 0 ? `（${activeFilterCount - (query.trim() ? 1 : 0) - (executorName ? 1 : 0) - (pullState ? 1 : 0)}）` : ""}</summary>
           <div className="qmore-body">
             <label className="qfield">
               <span className="sr-only">负责人状态</span>
-              <select aria-label="负责人筛选" value={ownerState} onChange={(e) => setOwnerState(e.target.value)}>{ownerStateOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+              <ArcoSelect aria-label="负责人筛选" value={ownerState} onChange={(value: string) => setOwnerState(value)} style={{ minWidth: 150 }} options={ownerStateOptions.map(([value, label]) => ({ label, value }))} />
             </label>
             <label className="qfield">
               <span className="sr-only">分析状态</span>
-              <select aria-label="分析状态筛选" value={analysisState} onChange={(e) => setAnalysisState(e.target.value)}>{analysisStateOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+              <ArcoSelect aria-label="分析状态筛选" value={analysisState} onChange={(value: string) => setAnalysisState(value)} style={{ minWidth: 130 }} options={analysisStateOptions.map(([value, label]) => ({ label, value }))} />
             </label>
             <label className="qfield">
               <span className="sr-only">推送状态</span>
-              <select aria-label="推送状态筛选" value={pushState} onChange={(e) => setPushState(e.target.value)}>{pushStateOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+              <ArcoSelect aria-label="推送状态筛选" value={pushState} onChange={(value: string) => setPushState(value)} style={{ minWidth: 130 }} options={pushStateOptions.map(([value, label]) => ({ label, value }))} />
             </label>
             <label className="qfield">
               <span className="sr-only">批次 ID</span>
@@ -1264,7 +1262,7 @@ function DuplicateDecisionSection({ detail, onSaved }: { detail: RequirementDeta
       {suppressed && <button className="button button-primary button-small" onClick={() => openMode("revoke")} disabled={busy}>撤销判定（恢复活跃）</button>}
     </div> : <div className="rules-form duplicate-form">
       <strong style={{ flexBasis: "100%" }}>{heading}</strong>
-      {mode === "duplicate" && <label className="field"><span>主记录（同标题候选）</span><select aria-label="主记录候选" value={canonicalId} onChange={(event) => setCanonicalId(event.target.value)} disabled={busy}>{canonicalOptions.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.title}（{candidate.hint}）</option>)}</select></label>}
+      {mode === "duplicate" && <label className="field"><span>主记录（同标题候选）</span><ArcoSelect aria-label="主记录候选" value={canonicalId} onChange={(value: string) => setCanonicalId(value)} disabled={busy} style={{ minWidth: 260 }} placeholder="选择主记录" options={canonicalOptions.map((candidate) => ({ label: `${candidate.title}（${candidate.hint}）`, value: candidate.id }))} /></label>}
       <label className="field"><span>判定理由 *</span><input aria-label="判定理由" value={reason} onChange={(event) => setReason(event.target.value)} disabled={busy} placeholder={mode === "ignored" ? "例如：已知重复诉求，无需再处理" : "例如：与主记录描述同一诉求"} /></label>
       <button className="button button-primary button-small" onClick={() => void submit()} disabled={busy}>{busy ? "提交中…" : submitLabel}</button>
       <button className="button button-secondary button-small" onClick={() => { setMode(null); setError(null); setConflict(false); }} disabled={busy}>取消</button>

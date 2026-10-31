@@ -5,6 +5,35 @@ import { BatchesPanel, MappingsPanel, ModulesPanel, PeoplePanel, RequirementsPan
 import { AudienceEditor } from "./intake-form";
 import type { SourceConfig, TeamPerson } from "./api";
 
+/** 原生 select 已替换为 Arco Select：等待控件可用后点开下拉并按选项文字选择。 */
+async function chooseArcoOption(label: string, optionText: string | RegExp) {
+  const anchor = screen.getByLabelText(label);
+  const root = (anchor.closest(".arco-select") ?? anchor) as HTMLElement;
+  const view = (root.querySelector(".arco-select-view") ?? root) as HTMLElement;
+  const matches = (el: Element) => {
+    const text = (el.textContent ?? "").trim();
+    return typeof optionText === "string" ? text === optionText : optionText.test(text);
+  };
+  const findOptions = () => [...document.querySelectorAll(".arco-select-option")].filter((el) => matches(el));
+  let options: Element[] = [];
+  // 人员/选项异步加载期间控件可能是 disabled，点击会被忽略：短轮询重试直到下拉打开。
+  for (let attempt = 0; attempt < 30 && options.length === 0; attempt += 1) {
+    fireEvent.click(view);
+    fireEvent.mouseDown(view);
+    await waitFor(() => undefined).catch(() => undefined);
+    options = findOptions();
+    if (!options.length) await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  if (!options.length) throw new Error(`Arco Select 选项未出现：${label}`);
+  fireEvent.click(options[0]!);
+}
+
+/** 读取 Arco Select 当前展示的文本（用于筛选值断言）。 */
+function arcoSelectText(label: string): string {
+  const anchor = screen.getByLabelText(label);
+  return (anchor.closest(".arco-select") ?? anchor).textContent ?? "";
+}
+
 const fetchMock = vi.fn<typeof fetch>();
 beforeEach(() => {
   cleanup();
@@ -249,9 +278,9 @@ describe("MappingsPanel (ticket 17)", () => {
     render(<MappingsPanel onRefresh={() => undefined} />);
     fireEvent.click(await screen.findByRole("button", { name: "选择飞书用户" }));
     // 名单来自已在「负责人映射」里维护的人员，不再搜索飞书通讯录
-    const picker = await screen.findByLabelText("选择负责人");
+    await screen.findByLabelText("选择负责人");
     expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
-    fireEvent.change(picker, { target: { value: "ou-user" } });
+    await chooseArcoOption("选择负责人", "Ada");
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
 
     expect(await screen.findByText(/已指定为这条需求的负责人（manually_mapped），Base 推送已入队/)).toBeInTheDocument();
@@ -459,8 +488,8 @@ describe("RequirementsPanel (ticket 17)", () => {
     await screen.findByText("需要报表");
 
     fireEvent.change(screen.getByLabelText("搜索需求标题"), { target: { value: "报表" } });
-    fireEvent.change(screen.getByLabelText("TB负责人筛选"), { target: { value: "毕梓浩" } });
-    fireEvent.change(screen.getByLabelText("同步状态筛选"), { target: { value: "synced" } });
+    await chooseArcoOption("TB负责人筛选", "毕梓浩");
+    await chooseArcoOption("同步状态筛选", "已同步");
     fireEvent.click(screen.getByRole("button", { name: "筛选" }));
 
     await waitFor(() => expect(new URLSearchParams(window.location.search).get("title")).toBe("报表"));
@@ -472,8 +501,8 @@ describe("RequirementsPanel (ticket 17)", () => {
     view.unmount();
     render(<RequirementsPanel onRefresh={() => undefined} />);
     expect(((await screen.findByLabelText("搜索需求标题")) as HTMLInputElement).value).toBe("报表");
-    expect((screen.getByLabelText("TB负责人筛选") as HTMLSelectElement).value).toBe("毕梓浩");
-    expect((screen.getByLabelText("同步状态筛选") as HTMLSelectElement).value).toBe("synced");
+    expect(arcoSelectText("TB负责人筛选")).toContain("毕梓浩");
+    expect(arcoSelectText("同步状态筛选")).toContain("已同步");
 
     // 从筛选后的列表进入详情：URL 同时带筛选与 requirement，可刷新/分享直达。
     await openFirstRow();
@@ -680,7 +709,7 @@ describe("RequirementsPanel (ticket 17)", () => {
     expect(status.getByTitle("负责人：已手动匹配（manually_mapped）")).toBeInTheDocument();
     expect(status.getByTitle("推送：推送失败（failed）")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "分配 / 变更负责人" }));
-    fireEvent.change(await screen.findByLabelText("选择负责人"), { target: { value: "ou-alex-new" } });
+    await chooseArcoOption("选择负责人", "Alex Chen");
     fireEvent.click(screen.getByRole("button", { name: "变更负责人并入队推送" }));
 
     expect(await screen.findByText(/推送已排队/)).toBeInTheDocument();
@@ -720,7 +749,7 @@ describe("RequirementsPanel (ticket 17)", () => {
     render(<RequirementsPanel onRefresh={() => undefined} />);
     await screen.findByText("需要报表");
     fireEvent.change(screen.getByLabelText("搜索需求标题"), { target: { value: "报表" } });
-    fireEvent.change(screen.getByLabelText("TB负责人筛选"), { target: { value: "毕梓浩" } });
+    await chooseArcoOption("TB负责人筛选", "毕梓浩");
     fireEvent.click(screen.getByRole("button", { name: "筛选" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/requirements?q=%E6%8A%A5%E8%A1%A8&executorName=%E6%AF%95%E6%A2%93%E6%B5%A9&limit=25", expect.anything()));
@@ -744,14 +773,14 @@ describe("RequirementsPanel (ticket 17)", () => {
     expect(within(moreFilters as HTMLElement).getByLabelText("推送状态筛选")).toBeInTheDocument();
     expect(within(moreFilters as HTMLElement).getByLabelText("批次 ID 筛选")).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("TB负责人筛选"), { target: { value: "毕梓浩" } });
+    await chooseArcoOption("TB负责人筛选", "毕梓浩");
     // 草稿未提交时不显示"已生效"，点「筛选」后才出现
     expect(screen.queryByText(/个筛选已生效/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "筛选" }));
     expect(await screen.findByText("1 个筛选已生效")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
     expect(screen.queryByText(/个筛选已生效/)).not.toBeInTheDocument();
-    expect((screen.getByLabelText("TB负责人筛选") as HTMLSelectElement).value).toBe("");
+    expect(arcoSelectText("TB负责人筛选")).not.toContain("毕梓浩");
   });
 });
 
@@ -866,7 +895,7 @@ describe("团队字典维护", () => {
     render(<ModulesPanel />);
     expect(await screen.findByText("地图")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("功能模块名称"), { target: { value: "语音提醒" } });
-    fireEvent.change(screen.getByLabelText("模块责任人员"), { target: { value: "贾浩" } });
+    await chooseArcoOption("模块责任人员", "贾浩");
     fireEvent.click(screen.getByRole("button", { name: "新增模块" }));
     expect(await screen.findByText("已发布模块字典 v3，后续 AI 分析将使用新版本。")).toBeInTheDocument();
 
@@ -875,7 +904,7 @@ describe("团队字典维护", () => {
     // 行内编辑：该行的名称与负责人单元格变成输入控件，保存也在行内
     fireEvent.click(within(mapRow).getByRole("button", { name: "编辑" }));
     fireEvent.change(screen.getByLabelText("编辑功能模块名称"), { target: { value: "导航" } });
-    fireEvent.change(screen.getByLabelText("编辑模块责任人员"), { target: { value: "贾浩" } });
+    await chooseArcoOption("编辑模块责任人员", "贾浩");
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     expect(await screen.findByText("导航")).toBeInTheDocument();
 
