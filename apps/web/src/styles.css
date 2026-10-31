@@ -1363,3 +1363,42 @@ html[data-theme="dark"] .audience-save-button { color: var(--rq-surface); backgr
 html[data-theme="dark"] .summary-score-empty strong { color: var(--rq-text-strong); }
 html[data-theme="dark"] .summary-score-empty span { color: var(--rq-text-soft); }
 .req-stage-row .chip__label, .req-row-stages .chip__label { font-size: var(--rq-font-caption); }
+
+/* ==================== Arco 设计语言桥接 ====================
+ * 自定义布局类复用 Arco token 与视觉规范，避免 Arco 组件与旧样式两套视觉。
+ * 仅映射中性色/圆角/主色；暗色主题仍由工作台自定义变量控制（Arco dark 由 body[arco-theme] 驱动）。
+ */
+:root {
+  --rq-accent: rgb(var(--primary-6));
+  --rq-accent-text: rgb(var(--primary-6));
+  --rq-accent-soft: rgba(var(--primary-6), 0.12);
+  --rq-border: var(--color-border-2);
+  --rq-input-border: var(--color-border-2);
+  --rq-card-border: var(--color-border-2);
+  --rq-surface: var(--color-bg-2);
+  --rq-surface-hover: var(--color-fill-2);
+  --rq-surface-inset: var(--color-fill-1);
+  --rq-surface-subtle: var(--color-fill-1);
+  --rq-foreground: var(--color-text-1);
+  --rq-text-strong: var(--color-text-1);
+  --rq-text-muted: var(--color-text-3);
+  --rq-text-tertiary: var(--color-text-3);
+  --rq-radius-md: var(--border-radius-large);
+  --rq-radius-sm: var(--border-radius-medium);
+  --rq-radius-field: var(--border-radius-medium);
+  --rq-radius-xs: var(--border-radius-small);
+}
+
+.button { border-radius: var(--border-radius-medium); font-size: var(--font-size-body-3, 14px); font-weight: 400; }
+.button-primary { border-color: rgb(var(--primary-6)); background: rgb(var(--primary-6)); box-shadow: none; }
+.button-primary:hover:not(:disabled) { border-color: rgb(var(--primary-5)); background: rgb(var(--primary-5)); }
+.button-primary:active:not(:disabled) { border-color: rgb(var(--primary-7)); background: rgb(var(--primary-7)); }
+.button-secondary { border-color: var(--color-border-2); background: var(--color-bg-2); color: var(--color-text-1); }
+.button-secondary:hover:not(:disabled) { border-color: var(--color-border-2); background: var(--color-fill-2); }
+.metric-card, .panel { border-radius: var(--border-radius-large); }
+.field input, .field select, .rules-threshold input, .field textarea { border-radius: var(--border-radius-medium); border-color: var(--color-border-2); background: var(--color-bg-2); }
+.field input:focus, .field select:focus, .field textarea:focus, .search-box:focus-within { outline: 2px solid rgba(var(--primary-6), 0.35); outline-offset: 1px; border-color: rgb(var(--primary-6)); }
+.table-scroll thead th { color: var(--color-text-2); background: var(--color-fill-1); border-color: var(--color-border-2); font-weight: 500; }
+.table-scroll tbody td { border-color: var(--color-border-2); }
+.table-scroll tbody tr:hover { background: var(--color-fill-1); }
+.status-chip, .stage-pill { border-radius: var(--border-radius-small); }
