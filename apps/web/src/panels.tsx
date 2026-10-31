@@ -1,10 +1,10 @@
 // 工单 16/17 工作台面板：数据全部来自本地 API，不使用演示数据；
 // 权限拒绝、空数据、加载中、局部失败和 API 不可用都显示可恢复状态。
 // 需求池/批次/审计面板自治加载，支持服务端筛选与游标分页。
-import { Fragment, useCallback, useEffect, useId, useRef, useState, Component, type KeyboardEvent, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useId, useRef, useState, Component, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { AudienceEditor, BetaPanel, IntakeForm, ManualEditSection } from "./intake-form";
 import { Button as HeroButton, Card as HeroCard, Chip as HeroChip, Input as HeroInput } from "./arco";
-import { Collapse, Modal, Select as ArcoSelect } from "@arco-design/web-react";
+import { Collapse, Modal, Select as ArcoSelect, Table as ArcoTable } from "@arco-design/web-react";
 import { ArrowLeft, RefreshCw, X } from "lucide-react";
 import { stateLabel } from "./state-labels";
 import { RequirementDetailSkeleton, SkeletonBlock, SkeletonTableRows } from "./skeleton";
@@ -226,7 +226,13 @@ export function SourcesPanel({ sources, loadState, onRefresh }: { sources: Sourc
     {loadState === "ready" && <ConnectionSelfCheck existing={existing} draft={draft} />}
     {loadState === "error" && <div className="table-empty"><strong>无法读取来源配置</strong><span>请检查 API 连接后重试。</span></div>}
     {!existing && loadState === "ready" && <div className="table-empty"><strong>尚未配置数据源</strong><span>填写项目名称并创建后，可手动同步；周计划启用后按设定执行。</span></div>}
-    {existing && <div className="table-scroll"><table><thead><tr><th>项目</th><th>定时同步</th></tr></thead><tbody><tr><td>{existing.projectName}</td><td>{scheduleLabel(existing.schedule)}</td></tr></tbody></table></div>}
+    {existing && <ArcoTable<{ project: string; schedule: string }>
+      rowKey="project"
+      data={[{ project: existing.projectName, schedule: scheduleLabel(existing.schedule) }]}
+      pagination={false}
+      border={false}
+      columns={[{ title: "项目", dataIndex: "project" }, { title: "定时同步", dataIndex: "schedule" }]}
+    />}
   </section>;
 }
 
@@ -345,27 +351,30 @@ export function PeoplePanel() {
     <div className="panel-heading"><div><h2>组内人员</h2><p>用于按 TB 负责人筛选需求、维护功能模块责任人；绑定飞书账号后，该人员才会出现在需求的负责人下拉中。</p></div><HeroButton className="button button-secondary button-small" onPress={() => void load()} isDisabled={busy}><RefreshCw size={14} />刷新</HeroButton></div>
     <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
     <div className="rules-form" style={{ alignItems: "flex-end" }}><label className="field" style={{ flex: 1 }}><span>人员姓名</span><HeroInput aria-label="新增人员姓名" value={draft} onChange={(event) => setDraft(event.target.value)} /></label><HeroButton className="button button-primary button-small" onPress={() => void submit(() => addTeamPerson(draft), "人员已添加。")} isDisabled={busy || !draft.trim()}>新增人员</HeroButton></div>
-    {people.length ? <div className="table-scroll"><table><thead><tr><th>人员</th><th>飞书账号</th><th>操作</th></tr></thead><tbody>{people.map((person) => <tr key={person.name}>
-      <td>{editing === person.name ? <HeroInput aria-label="编辑人员姓名" value={editDraft} onChange={(event) => setEditDraft(event.target.value)} /> : person.name}</td>
-      <td>{bindingName === person.name
-        ? <FeishuAccountBinder personName={person.name} disabled={busy} onSave={(selection) => bindFeishu(person.name, selection)} onCancel={() => setBindingName(null)} />
-        : <div className="person-binding">
-            {person.feishuUserId
-              ? <><span className="status-chip status-live"><span />已绑定</span><code className="mono-cell" title={person.feishuUserId}>{shortFeishuId(person.feishuUserId)}</code></>
-              : person.bindingConflict
-                ? <span className="status-chip status-danger"><span />同名多账号</span>
-                : <span className="subtle-text">未绑定</span>}
-            {person.bindingConflict
-              ? <span className="feishu-user-hint">同一姓名对应多个飞书账号，请先在「团队管理 → 负责人映射」核对，或解除绑定后重新绑定。</span>
-              : <HeroButton className="button button-secondary button-small" onPress={() => { setBindingName(person.name); setEditing(null); }} isDisabled={busy || editing === person.name}>{person.feishuUserId ? "重新绑定" : "绑定飞书账号"}</HeroButton>}
-          </div>}</td>
-      <td>{editing === person.name
-        ? <><HeroButton className="button button-primary button-small" onPress={() => void submit(() => renameTeamPerson(person.name, editDraft), "人员及模块责任关系已更新。")} isDisabled={busy || !editDraft.trim()}>保存</HeroButton> <HeroButton className="button button-secondary button-small" onPress={() => setEditing(null)} isDisabled={busy}>取消</HeroButton></>
-        : <><HeroButton className="button button-secondary button-small" onPress={() => { setEditing(person.name); setEditDraft(person.name); setBindingName(null); }} isDisabled={busy}>编辑</HeroButton>{" "}
-            {(person.feishuUserId || person.bindingConflict) && <DeleteConfirmation disabled={busy} triggerLabel="解除绑定" heading="解除飞书绑定" confirmLabel="确认解除" description={`解除「${person.name}」的飞书账号绑定？该人员名下需求的负责人映射将被清除，后续推送会停在待匹配负责人；已推送的 Base 记录不会被清除。`} onConfirm={() => void unbindFeishu(person.name)} />}{" "}
-            <DeleteConfirmation disabled={busy} description={`删除人员“${person.name}”？相关功能模块将变为未分配，飞书账号绑定同时解除。`} onConfirm={() => void submit(() => deleteTeamPerson(person.name), "人员已删除，相关模块已解除分配。")} /></>}
-      </td>
-    </tr>)}</tbody></table></div> : loadState === "loading" ? <SkeletonTableRows rows={4} columns={3} /> : <div className="table-empty"><strong>{loadError ? "人员读取失败" : "暂无人员"}</strong><span>{loadError ? "检查 API 连接后刷新。" : "填写姓名并新增；数据源配置完成后可维护组内名单并绑定飞书账号。"}</span></div>}
+    {people.length ? <ArcoTable<TeamPerson>
+      rowKey="name"
+      data={people}
+      pagination={false}
+      border={false}
+      columns={[
+        { title: "人员", dataIndex: "name", width: 200, render: (_value, person) => editing === person.name ? <HeroInput aria-label="编辑人员姓名" value={editDraft} onChange={(event) => setEditDraft(event.target.value)} /> : person.name },
+        { title: "飞书账号", dataIndex: "feishuUserId", render: (_value, person) => bindingName === person.name
+            ? <FeishuAccountBinder personName={person.name} disabled={busy} onSave={(selection) => bindFeishu(person.name, selection)} onCancel={() => setBindingName(null)} />
+            : <div className="person-binding">
+                {person.feishuUserId
+                  ? <><span className="status-chip status-live"><span />已绑定</span><code className="mono-cell" title={person.feishuUserId}>{shortFeishuId(person.feishuUserId)}</code></>
+                  : person.bindingConflict
+                    ? <span className="status-chip status-danger"><span />同名多账号</span>
+                    : <span className="subtle-text">未绑定</span>}
+                {person.bindingConflict
+                  ? <span className="feishu-user-hint">同一姓名对应多个飞书账号，请先在「团队管理 → 负责人映射」核对，或解除绑定后重新绑定。</span>
+                  : <HeroButton className="button button-secondary button-small" onPress={() => { setBindingName(person.name); setEditing(null); }} isDisabled={busy || editing === person.name}>{person.feishuUserId ? "重新绑定" : "绑定飞书账号"}</HeroButton>}
+              </div> },
+        { title: "操作", width: 280, render: (_value, person) => editing === person.name
+            ? <div className="row-actions"><HeroButton className="button button-primary button-small" onPress={() => void submit(() => renameTeamPerson(person.name, editDraft), "人员及模块责任关系已更新。")} isDisabled={busy || !editDraft.trim()}>保存</HeroButton><HeroButton className="button button-secondary button-small" onPress={() => setEditing(null)} isDisabled={busy}>取消</HeroButton></div>
+            : <div className="row-actions"><HeroButton className="button button-secondary button-small" onPress={() => { setEditing(person.name); setEditDraft(person.name); setBindingName(null); }} isDisabled={busy}>编辑</HeroButton>{(person.feishuUserId || person.bindingConflict) && <DeleteConfirmation disabled={busy} triggerLabel="解除绑定" heading="解除飞书绑定" confirmLabel="确认解除" description={`解除「${person.name}」的飞书账号绑定？该人员名下需求的负责人映射将被清除，后续推送会停在待匹配负责人；已推送的 Base 记录不会被清除。`} onConfirm={() => void unbindFeishu(person.name)} />}<DeleteConfirmation disabled={busy} description={`删除人员“${person.name}”？相关功能模块将变为未分配，飞书账号绑定同时解除。`} onConfirm={() => void submit(() => deleteTeamPerson(person.name), "人员已删除，相关模块已解除分配。")} /></div> },
+      ]}
+    /> : loadState === "loading" ? <SkeletonTableRows rows={4} columns={3} /> : <div className="table-empty"><strong>{loadError ? "人员读取失败" : "暂无人员"}</strong><span>{loadError ? "检查 API 连接后刷新。" : "填写姓名并新增；数据源配置完成后可维护组内名单并绑定飞书账号。"}</span></div>}
   </section>;
 }
 
@@ -443,20 +452,35 @@ export function ModulesPanel() {
     <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
     {formError && <div className="field-error" role="alert">{formError}</div>}
     <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}><label className="field" style={{ flex: 1 }}><span>功能模块</span><HeroInput aria-label="功能模块名称" value={name} onChange={(event) => setName(event.target.value)} /></label><label className="field"><span>人员</span><ArcoSelect aria-label="模块责任人员" value={personName} onChange={(value: string) => setPersonName(value)} style={{ minWidth: 150 }} options={[{ label: "未分配", value: "" }, ...people.filter((person) => person.name).map((person) => ({ label: person.name!, value: person.name! }))]} /></label><HeroButton className="button button-primary button-small" onPress={submit} isDisabled={busy}>新增模块</HeroButton></div>
-    {items.length ? <div className="table-scroll" tabIndex={0} role="region" aria-label="功能模块列表"><table><thead><tr><th>功能模块</th><th>人员</th><th>操作</th></tr></thead><tbody>{items.map((item) => editing === item.name
-      ? <tr key={item.name} className="module-row is-editing">
-          <td><input className="inline-input" aria-label="编辑功能模块名称" value={editName} onChange={(event) => setEditName(event.target.value)} autoFocus /></td>
-          <td><ArcoSelect className="inline-input" aria-label="编辑模块责任人员" value={editPerson} onChange={(value: string) => setEditPerson(value)} style={{ minWidth: 150 }} options={[{ label: "未分配", value: "" }, ...people.filter((person) => person.name).map((person) => ({ label: person.name!, value: person.name! }))]} /></td>
-          <td><HeroButton className="button button-primary button-small" onPress={submitEdit} isDisabled={busy}>保存</HeroButton> <HeroButton className="button button-secondary button-small" onPress={() => { setEditing(null); setEditName(""); setEditPerson(""); }} isDisabled={busy}>取消</HeroButton></td>
-        </tr>
-      : <tr key={item.name} className="module-row">
-          <td>{item.name}</td>
-          <td>{item.personName ?? "未分配"}</td>
-          <td><HeroButton className="button button-secondary button-small" onPress={() => beginEdit(item)} isDisabled={busy}>编辑</HeroButton> <DeleteConfirmation disabled={busy || items.length === 1} description={`删除功能模块“${item.name}”？`} onConfirm={() => void save(items.filter((candidate) => candidate.name !== item.name))} /></td>
-        </tr>)}</tbody></table></div> : loadState === "loading" ? <SkeletonTableRows rows={4} columns={3} /> : <div className="table-empty"><strong>{loadError ? "模块字典读取失败" : "暂无功能模块"}</strong><span>{loadError ? "检查 API 连接后刷新。" : "新增模块后，AI 分析会使用最新的已发布字典。"}</span></div>}
+    {items.length ? <div tabIndex={0} role="region" aria-label="功能模块列表"><ArcoTable<FunctionModuleEntry>
+      rowKey="name"
+      data={items}
+      pagination={false}
+      border={false}
+      rowClassName={(item: FunctionModuleEntry) => editing === item.name ? "module-row is-editing" : "module-row"}
+      columns={[
+        { title: "功能模块", dataIndex: "name", render: (_value, item) => editing === item.name ? <input className="inline-input" aria-label="编辑功能模块名称" value={editName} onChange={(event) => setEditName(event.target.value)} autoFocus /> : item.name },
+        { title: "人员", dataIndex: "personName", width: 220, render: (_value, item) => editing === item.name ? <ArcoSelect className="inline-input" aria-label="编辑模块责任人员" value={editPerson} onChange={(value: string) => setEditPerson(value)} style={{ minWidth: 150 }} options={[{ label: "未分配", value: "" }, ...people.filter((person) => person.name).map((person) => ({ label: person.name!, value: person.name! }))]} /> : (item.personName ?? "未分配") },
+        { title: "操作", width: 200, render: (_value, item) => editing === item.name
+            ? <div className="row-actions"><HeroButton className="button button-primary button-small" onPress={submitEdit} isDisabled={busy}>保存</HeroButton><HeroButton className="button button-secondary button-small" onPress={() => { setEditing(null); setEditName(""); setEditPerson(""); }} isDisabled={busy}>取消</HeroButton></div>
+            : <div className="row-actions"><HeroButton className="button button-secondary button-small" onPress={() => beginEdit(item)} isDisabled={busy}>编辑</HeroButton><DeleteConfirmation disabled={busy || items.length === 1} description={`删除功能模块“${item.name}”？`} onConfirm={() => void save(items.filter((candidate) => candidate.name !== item.name))} /></div> },
+      ]}
+    /></div> : loadState === "loading" ? <SkeletonTableRows rows={4} columns={3} /> : <div className="table-empty"><strong>{loadError ? "模块字典读取失败" : "暂无功能模块"}</strong><span>{loadError ? "检查 API 连接后刷新。" : "新增模块后，AI 分析会使用最新的已发布字典。"}</span></div>}
     <div className="subsection">
       <div className="panel-heading"><div><h3>词典版本历史</h3><p>每次保存生成一个新版本；仅最新发布版供 AI 分析使用。</p></div></div>
-      {versionsError ? <div className="table-empty"><strong>版本历史读取失败</strong><span>{versionsError}</span></div> : versions.length ? <div className="table-scroll"><table><thead><tr><th>版本</th><th>状态</th><th>模块</th><th>创建时间</th><th>发布时间</th></tr></thead><tbody>{versions.map((d) => <tr key={d.version}><td className="mono-cell">v{d.version}</td><td><PublishStatusChip status={d.status} /></td><td>{d.entries.map((entry) => typeof entry === "string" ? entry : `${entry.name}（${entry.personName ?? "未分配"}）`).join("、")}</td><td>{timeLabel(d.createdAt)}</td><td>{d.publishedAt ? timeLabel(d.publishedAt) : "—"}</td></tr>)}</tbody></table></div> : <div className="table-empty"><strong>还没有词典版本</strong><span>保存一次模块字典后会生成首个已发布版本。</span></div>}
+      {versionsError ? <div className="table-empty"><strong>版本历史读取失败</strong><span>{versionsError}</span></div> : versions.length ? <ArcoTable<DictionaryVersion>
+        rowKey="version"
+        data={versions}
+        pagination={false}
+        border={false}
+        columns={[
+          { title: "版本", dataIndex: "version", width: 90, render: (_value, d) => <span className="mono-cell">v{d.version}</span> },
+          { title: "状态", dataIndex: "status", width: 110, render: (_value, d) => <PublishStatusChip status={d.status} /> },
+          { title: "模块", dataIndex: "entries", render: (_value, d) => d.entries.map((entry) => typeof entry === "string" ? entry : `${entry.name}（${entry.personName ?? "未分配"}）`).join("、") },
+          { title: "创建时间", dataIndex: "createdAt", width: 180, render: (_value, d) => timeLabel(d.createdAt) },
+          { title: "发布时间", dataIndex: "publishedAt", width: 180, render: (_value, d) => d.publishedAt ? timeLabel(d.publishedAt) : "—" },
+        ]}
+      /> : <div className="table-empty"><strong>还没有词典版本</strong><span>保存一次模块字典后会生成首个已发布版本。</span></div>}
     </div>
   </section>;
 }
@@ -524,10 +548,37 @@ export function BatchesPanel({ onRefresh }: { onRefresh: () => void }) {
     {openBatch && <div className="config-source" style={{ flexDirection: "column", alignItems: "stretch" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><strong>批次 {openBatch.id}</strong><HeroButton className="button button-secondary button-small" onPress={() => setOpenBatch(null)}>收起</HeroButton></div>
       <span>{stateChip(openBatch.status)} · 总数 {openBatch.totalCount} · 成功 {openBatch.succeededCount} · 失败 {openBatch.failedCount} · {openBatch.errorSummary ?? ""}</span>
-      <div className="table-scroll"><table><thead><tr><th>源需求 ID</th><th>动作</th><th>状态</th><th>错误</th><th>操作</th></tr></thead><tbody>{openBatch.items.map((item) => <tr key={item.id}><td className="mono-cell">{item.teambitionRequirementId}</td><td>{item.action}</td><td><span className={`status-chip ${item.status === "failed" ? "status-danger" : "status-muted"}`}><span />{item.status === "failed" ? "失败" : "成功"}</span></td><td>{item.errorCode ?? "—"}</td><td>{item.status === "failed" && <HeroButton className="button button-secondary button-small" onPress={() => void retryItem(item)} isDisabled={busy}>重试</HeroButton>}</td></tr>)}</tbody></table></div>
+      <ArcoTable<BatchDetail["items"][number]>
+        rowKey="id"
+        data={openBatch.items}
+        pagination={false}
+        border={false}
+        columns={[
+          { title: "源需求 ID", dataIndex: "teambitionRequirementId", render: (_value, item) => <span className="mono-cell">{item.teambitionRequirementId}</span> },
+          { title: "动作", dataIndex: "action" },
+          { title: "状态", dataIndex: "status", render: (_value, item) => <span className={`status-chip ${item.status === "failed" ? "status-danger" : "status-muted"}`}><span />{item.status === "failed" ? "失败" : "成功"}</span> },
+          { title: "错误", dataIndex: "errorCode", render: (_value, item) => item.errorCode ?? "—" },
+          { title: "操作", render: (_value, item) => item.status === "failed" && <HeroButton className="button button-secondary button-small" onPress={() => void retryItem(item)} isDisabled={busy}>重试</HeroButton> },
+        ]}
+      />
     </div>}
     {batches.length ? <>
-      <div className="table-scroll"><table><thead><tr><th>批次 ID</th><th>状态</th><th>触发</th><th>需求总数</th><th>成功</th><th>失败</th><th>开始时间</th><th>明细</th></tr></thead><tbody>{batches.map((batch) => <tr key={batch.id}><td className="mono-cell">{batch.id}</td><td>{stateChip(batch.status)}</td><td>{triggerLabel(batch)}</td><td>{batch.totalCount}</td><td>{batch.succeededCount}</td><td className={batch.failedCount ? "text-danger" : ""}>{batch.failedCount}</td><td>{timeLabel(batch.startedAt)}</td><td><HeroButton className="button button-secondary button-small" onPress={() => void open(batch.id)}>查看</HeroButton></td></tr>)}</tbody></table></div>
+      <ArcoTable<BatchSummary>
+        rowKey="id"
+        data={batches}
+        pagination={false}
+        border={false}
+        columns={[
+          { title: "批次 ID", dataIndex: "id", render: (_value, batch) => <span className="mono-cell">{batch.id}</span> },
+          { title: "状态", dataIndex: "status", render: (_value, batch) => stateChip(batch.status) },
+          { title: "触发", dataIndex: "triggerType", render: (_value, batch) => triggerLabel(batch) },
+          { title: "需求总数", dataIndex: "totalCount" },
+          { title: "成功", dataIndex: "succeededCount" },
+          { title: "失败", dataIndex: "failedCount", render: (_value, batch) => <span className={batch.failedCount ? "text-danger" : ""}>{batch.failedCount}</span> },
+          { title: "开始时间", dataIndex: "startedAt", render: (_value, batch) => timeLabel(batch.startedAt) },
+          { title: "明细", render: (_value, batch) => <HeroButton className="button button-secondary button-small" onPress={() => void open(batch.id)}>查看</HeroButton> },
+        ]}
+      />
       {cursor && <div className="rules-form"><HeroButton className="button button-secondary button-small" onPress={() => void load({ status: statusFilter, since, until }, cursor)} isDisabled={loadState === "loading"}>加载更多</HeroButton></div>}
     </> : loadState === "loading" ? <SkeletonTableRows rows={5} columns={4} /> : <div className="table-empty"><strong>还没有同步批次</strong><span>启动手动同步后，真实批次记录会显示在这里。</span></div>}
   </section>;
@@ -1162,9 +1213,19 @@ export function ScoringPanel({ requirementId, scoring, dimensionInsights = [], c
         <label className="field"><span>修改理由（必填）</span><input aria-label="评分修改理由" value={reason} onChange={(event) => setReason(event.target.value)} /></label>
         <button className="button button-primary button-small" onClick={() => void save()} disabled={busy || reason.trim().length === 0}>{busy ? "保存中…" : "保存评分"}</button>
       </div>}
-      {historyOpen && <div className="table-scroll"><table><thead><tr><th>版本</th><th>来源</th><th>分数/P</th><th>时间</th><th>理由</th></tr></thead><tbody>
-        {(scoring?.history ?? []).map((version) => <tr key={version.id}><td>v{version.version} · {version.status}</td><td>{scoreOriginLabel(version.origin)}</td><td>{version.score.toFixed(2)} / {version.priority}</td><td>{formatDateTime(version.createdAt)}</td><td>{version.changeReason ?? "—"}</td></tr>)}
-      </tbody></table></div>}
+      {historyOpen && <ArcoTable<RequirementScoreVersion>
+        rowKey="id"
+        data={scoring?.history ?? []}
+        pagination={false}
+        border={false}
+        columns={[
+          { title: "版本", dataIndex: "version", width: 130, render: (_value, version) => <>v{version.version} · {version.status}</> },
+          { title: "来源", dataIndex: "origin", width: 120, render: (_value, version) => scoreOriginLabel(version.origin) },
+          { title: "分数/P", dataIndex: "score", width: 130, render: (_value, version) => <>{version.score.toFixed(2)} / {version.priority}</> },
+          { title: "时间", dataIndex: "createdAt", width: 180, render: (_value, version) => formatDateTime(version.createdAt) },
+          { title: "理由", dataIndex: "changeReason", render: (_value, version) => version.changeReason ?? "—" },
+        ]}
+      />}
       {children && <div className="score-analysis-detail">
         <div className="score-analysis-head"><h4>AI 分析建议</h4><span>模块、类型、人群与整体置信度；详细证据在下方历史/依据中可查。</span></div>
         {children}
@@ -1562,7 +1623,20 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
             </div>
             <h4 className="req-audit-title">分析版本历史</h4>
             {analysisVersions.length
-              ? <div className="table-scroll"><table><thead><tr><th>分析版本</th><th>状态</th><th>模块</th><th>优先级</th><th>开始时间</th><th>失败摘要</th></tr></thead><tbody>{analysisVersions.map((version: AnalysisVersionSummary) => <tr key={version.analysisVersion}><td className="mono-cell">v{version.analysisVersion}</td><td><StageBadge stage="analysis" state={version.status} /></td><td>{version.moduleSuggestion ?? "—"}</td><td>{version.priority ?? "空"}</td><td>{timeLabel(version.startedAt)}</td><td>{version.safeErrorSummary ?? "—"}</td></tr>)}</tbody></table></div>
+              ? <ArcoTable<AnalysisVersionSummary>
+                rowKey="analysisVersion"
+                data={analysisVersions}
+                pagination={false}
+                border={false}
+                columns={[
+                  { title: "分析版本", dataIndex: "analysisVersion", width: 100, render: (_value, version) => <span className="mono-cell">v{version.analysisVersion}</span> },
+                  { title: "状态", dataIndex: "status", width: 120, render: (_value, version) => <StageBadge stage="analysis" state={version.status} /> },
+                  { title: "模块", dataIndex: "moduleSuggestion", render: (_value, version) => version.moduleSuggestion ?? "—" },
+                  { title: "优先级", dataIndex: "priority", width: 100, render: (_value, version) => version.priority ?? "空" },
+                  { title: "开始时间", dataIndex: "startedAt", width: 180, render: (_value, version) => timeLabel(version.startedAt) },
+                  { title: "失败摘要", dataIndex: "safeErrorSummary", render: (_value, version) => version.safeErrorSummary ?? "—" },
+                ]}
+              />
               : <p className="req-empty-value">尚无分析版本历史</p>}
         </Collapse.Item>
       </Collapse>
@@ -1579,37 +1653,84 @@ function RequirementsTable({ rows, loading, onOpen, onAssign }: { rows: Requirem
   if (!rows.length) return loading
     ? <SkeletonTableRows rows={6} columns={5} />
     : <div className="table-empty"><strong>没有匹配的需求</strong><span>数据仅在 API 返回后显示，不使用演示数据。</span></div>;
-  return <div className="table-scroll"><table className="req-list">
-    <thead><tr><th>需求标题</th><th>负责人</th><th>处理状态</th><th>更新时间</th><th><span className="sr-only">操作</span></th></tr></thead>
-    <tbody>{rows.map((row) => {
-      const owner = requirementOwnerView(row);
-      const time = requirementTime(row);
-      const timeText = formatDateTime(time.value);
-      const state = requirementProcessingState(row);
-      const badge = processingBadge(row);
-      const suppressed = state !== "active";
-      return <tr
-        key={row.id}
-        className={`req-row${owner.unassigned ? " is-pending-owner" : ""}${suppressed ? " is-suppressed" : ""}`}
-        tabIndex={0}
-        aria-label={`${suppressed ? "打开已压制需求" : "打开需求"}：${row.title}`}
-        onClick={(event) => { if (!isRowActionTarget(event.target)) onOpen(row); }}
-        onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && !isRowActionTarget(event.target)) { event.preventDefault(); onOpen(row); } }}
-      >
-        <td><span className="req-row-title" title={row.title}>{row.title}</span>{row.sourceType === "web_manual" ? <span className="source-badge" title={`Web 收录${row.sourceChannel ? ` · ${row.sourceChannel}` : ""}`}>手工</span> : null}{badge ? <span className={`status-chip ${badge.className} processing-badge`} title={badge.title}>{badge.label}</span> : null}</td>
-        <td>
-          <button type="button" className="owner-cell-button" title={owner.unassigned ? "分配负责人" : "变更负责人"}
-            onClick={(event) => { event.stopPropagation(); onAssign(row); }}>
-            <OwnerBadge owner={owner} />
-            <span className="owner-cell-edit">{owner.unassigned ? "分配" : "变更"}</span>
-          </button>
-        </td>
-        <td><div className="req-row-stages">{[["pull", row.pipeline.pull], ["analysis", row.pipeline.analysis], ["owner", row.pipeline.owner], ["push", row.pipeline.push]].map(([stage, state]) => <StageBadge key={stage} stage={stage as PipelineStage} state={state} />)}</div></td>
-        <td className="req-row-time" title={timeText ? (time.fallbackToCreated ? "接口未返回更新时间，显示 Teambition 创建时间" : time.value ?? undefined) : "接口未返回更新时间"}>{timeText ?? <span className="req-empty-value">—</span>}</td>
-        <td className="req-row-action">{owner.unassigned && <HeroButton className="button button-secondary button-small" onPress={() => onAssign(row)}>分配</HeroButton>}</td>
-      </tr>;
-    })}</tbody>
-  </table></div>;
+  const columns = [
+    {
+      title: "需求标题",
+      dataIndex: "title",
+      render: (_value: unknown, row: RequirementSummary) => {
+        const badge = processingBadge(row);
+        const suppressed = requirementProcessingState(row) !== "active";
+        return <div className="req-row-title-cell">
+          <span className="req-row-title" title={row.title}>{row.title}</span>
+          {row.sourceType === "web_manual" ? <span className="source-badge" title={`Web 收录${row.sourceChannel ? ` · ${row.sourceChannel}` : ""}`}>手工</span> : null}
+          {badge ? <span className={`status-chip ${badge.className} processing-badge`} title={badge.title}>{badge.label}</span> : null}
+          {suppressed ? <span className="sr-only">（已压制：不进入 AI 分析/Base 推送/通知）</span> : null}
+        </div>;
+      },
+    },
+    {
+      title: "负责人",
+      dataIndex: "executorName",
+      width: 170,
+      render: (_value: unknown, row: RequirementSummary) => {
+        const owner = requirementOwnerView(row);
+        return <button type="button" className="owner-cell-button" title={owner.unassigned ? "分配负责人" : "变更负责人"}
+          onClick={(event) => { event.stopPropagation(); onAssign(row); }}>
+          <OwnerBadge owner={owner} />
+          <span className="owner-cell-edit">{owner.unassigned ? "分配" : "变更"}</span>
+        </button>;
+      },
+    },
+    {
+      title: "处理状态",
+      dataIndex: "pipeline",
+      width: 300,
+      render: (_value: unknown, row: RequirementSummary) => <div className="req-row-stages">
+        {([["pull", row.pipeline.pull], ["analysis", row.pipeline.analysis], ["owner", row.pipeline.owner], ["push", row.pipeline.push]] as const).map(([stage, state]) => <StageBadge key={stage} stage={stage as PipelineStage} state={state} />)}
+      </div>,
+    },
+    {
+      title: "更新时间",
+      dataIndex: "updatedAt",
+      width: 180,
+      render: (_value: unknown, row: RequirementSummary) => {
+        const time = requirementTime(row);
+        const timeText = formatDateTime(time.value);
+        return <span className="req-row-time" title={timeText ? (time.fallbackToCreated ? "接口未返回更新时间，显示 Teambition 创建时间" : time.value ?? undefined) : "接口未返回更新时间"}>{timeText ?? <span className="req-empty-value">—</span>}</span>;
+      },
+    },
+    {
+      title: "操作",
+      dataIndex: "id",
+      width: 120,
+      render: (_value: unknown, row: RequirementSummary) => {
+        const owner = requirementOwnerView(row);
+        return <div className="req-row-action">{owner.unassigned ? <HeroButton className="button button-secondary button-small" onPress={() => onAssign(row)}>分配</HeroButton> : null}</div>;
+      },
+    },
+  ];
+  return <div className="table-scroll req-list-scroll">
+    <ArcoTable<RequirementSummary>
+      className="req-list"
+      rowKey="id"
+      columns={columns}
+      data={rows}
+      pagination={false}
+      border={false}
+      onRow={(row) => ({
+        style: { cursor: "pointer" },
+        tabIndex: 0,
+        "aria-label": `${requirementProcessingState(row) !== "active" ? "打开已压制需求" : "打开需求"}：${row.title}`,
+        onClick: (event: MouseEvent<HTMLElement>) => { if (!isRowActionTarget(event.target)) onOpen(row); },
+        onKeyDown: (event: KeyboardEvent<HTMLElement>) => { if ((event.key === "Enter" || event.key === " ") && !isRowActionTarget(event.target)) { event.preventDefault(); onOpen(row); } },
+      })}
+      rowClassName={(row: RequirementSummary) => {
+        const owner = requirementOwnerView(row);
+        const suppressed = requirementProcessingState(row) !== "active";
+        return `req-row${owner.unassigned ? " is-pending-owner" : ""}${suppressed ? " is-suppressed" : ""}`;
+      }}
+    />
+  </div>;
 }
 
 // 审计结果列独立渲染（result 枚举 succeeded/failed/denied），不复用流水线阶段标签
@@ -1670,9 +1791,32 @@ export function MappingsPanel({ onRefresh }: { onRefresh: () => void }) {
   return <section className="panel requirements-panel">
     <div className="panel-heading"><div><h2>负责人映射</h2><p>为待匹配负责人逐条选择飞书用户；只影响选中的这一条需求，不会改写同 TB 执行人的其他需求。</p></div><HeroButton className="button button-secondary button-small" onPress={() => { onRefresh(); void load(null); }}><RefreshCw size={14} />刷新</HeroButton></div>
     <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
-    {pending.length ? <div className="table-scroll"><table><thead><tr><th>需求</th><th>TB 负责人</th><th>操作</th></tr></thead><tbody>{pending.map((row) => <tr key={row.id}><td><div className="requirement-title"><span className="req-id">{requirementDisplayId(row)}</span><strong>{row.title}</strong></div></td><td>待匹配</td><td>{targetId === row.id ? <div className="mapping-editor"><FeishuUserPicker disabled={busy} onMap={submit} saveLabel="保存" /><HeroButton className="button button-secondary button-small" onPress={() => setTargetId(null)} isDisabled={busy}>取消</HeroButton></div> : <HeroButton className="button button-secondary button-small" onPress={() => setTargetId(row.id)}>选择飞书用户</HeroButton>}</td></tr>)}</tbody></table></div> : loadState === "loading" ? <SkeletonTableRows rows={4} columns={3} /> : <div className="table-empty"><strong>没有待匹配的负责人</strong><span>未匹配需求会出现在这里，等待为每一条需求单独指定负责人。</span></div>}
+    {pending.length ? <ArcoTable<RequirementSummary>
+      rowKey="id"
+      data={pending}
+      pagination={false}
+      border={false}
+      columns={[
+        { title: "需求", dataIndex: "title", render: (_value, row) => <div className="requirement-title"><span className="req-id">{requirementDisplayId(row)}</span><strong>{row.title}</strong></div> },
+        { title: "TB 负责人", dataIndex: "executorName", width: 140, render: () => "待匹配" },
+        { title: "操作", dataIndex: "id", width: 320, render: (_value, row) => targetId === row.id
+            ? <div className="mapping-editor"><FeishuUserPicker disabled={busy} onMap={submit} saveLabel="保存" /><HeroButton className="button button-secondary button-small" onPress={() => setTargetId(null)} isDisabled={busy}>取消</HeroButton></div>
+            : <HeroButton className="button button-secondary button-small" onPress={() => setTargetId(row.id)}>选择飞书用户</HeroButton> },
+      ]}
+    /> : loadState === "loading" ? <SkeletonTableRows rows={4} columns={3} /> : <div className="table-empty"><strong>没有待匹配的负责人</strong><span>未匹配需求会出现在这里，等待为每一条需求单独指定负责人。</span></div>}
     {cursor && <div style={{ display: "flex", justifyContent: "center", padding: "10px 0" }}><button className="button button-secondary button-small" disabled={loadingMore || busy} onClick={() => void load(cursor)}>{loadingMore ? "加载中…" : "加载更多待匹配需求"}</button></div>}
-    {mappings.length > 0 && <div className="table-scroll"><table><thead><tr><th>TB 用户 / 姓名</th><th>飞书用户</th><th>匹配方式</th><th>更新时间</th></tr></thead><tbody>{mappings.map((m) => <tr key={m.id}><td>{m.teambitionDisplayName ?? m.teambitionUserId ?? "（仅姓名匹配占位）"}</td><td className="mono-cell">{m.feishuUserId}</td><td>{matchMethodLabel[m.matchMethod] ?? m.matchMethod}</td><td>{timeLabel(m.updatedAt)}</td></tr>)}</tbody></table></div>}
+    {mappings.length > 0 && <ArcoTable<PersonMapping>
+      rowKey="id"
+      data={mappings}
+      pagination={false}
+      border={false}
+      columns={[
+        { title: "TB 用户 / 姓名", dataIndex: "teambitionDisplayName", render: (_value, mapping) => mapping.teambitionDisplayName ?? mapping.teambitionUserId ?? "（仅姓名匹配占位）" },
+        { title: "飞书用户", dataIndex: "feishuUserId", render: (_value, mapping) => <span className="mono-cell">{mapping.feishuUserId}</span> },
+        { title: "匹配方式", dataIndex: "matchMethod", width: 140, render: (_value, mapping) => matchMethodLabel[mapping.matchMethod] ?? mapping.matchMethod },
+        { title: "更新时间", dataIndex: "updatedAt", width: 190, render: (_value, mapping) => timeLabel(mapping.updatedAt) },
+      ]}
+    />}
   </section>;
 }
 
@@ -1704,7 +1848,20 @@ export function AuditPanel() {
     </div></div>
     <StateBanner loadError={loadError} notice={null} onCloseNotice={() => undefined} />
     {events.length >= AUDIT_PAGE_LIMIT && <div className="list-summary-count">已加载最近 {AUDIT_PAGE_LIMIT} 条审计记录；更早的记录请缩小时间范围或按对象筛选。</div>}
-    {events.length ? <div className="table-scroll"><table><thead><tr><th>时间</th><th>操作者</th><th>动作</th><th>对象</th><th>结果</th><th>安全摘要</th></tr></thead><tbody>{events.map((event) => <tr key={event.id}><td>{timeLabel(event.occurredAt)}</td><td>{event.actorId ?? "系统"}</td><td className="mono-cell">{event.eventType}</td><td className="mono-cell">{event.entityType}:{event.entityId.slice(0, 8)}</td><td>{auditResultLabel(event.result)}</td><td>{Object.keys(event.safeDetails).length ? JSON.stringify(event.safeDetails) : "—"}</td></tr>)}</tbody></table></div> : loadState === "loading" ? <SkeletonTableRows rows={6} columns={6} /> : <div className="table-empty"><strong>没有匹配的审计记录</strong><span>调整筛选条件或执行操作后再试。</span></div>}
+    {events.length ? <ArcoTable<AuditEvent>
+      rowKey="id"
+      data={events}
+      pagination={false}
+      border={false}
+      columns={[
+        { title: "时间", dataIndex: "occurredAt", width: 180, render: (_value, event) => timeLabel(event.occurredAt) },
+        { title: "操作者", dataIndex: "actorId", width: 140, render: (_value, event) => event.actorId ?? "系统" },
+        { title: "动作", dataIndex: "eventType", width: 220, render: (_value, event) => <span className="mono-cell">{event.eventType}</span> },
+        { title: "对象", dataIndex: "entityId", width: 230, render: (_value, event) => <span className="mono-cell">{event.entityType}:{event.entityId.slice(0, 8)}</span> },
+        { title: "结果", dataIndex: "result", width: 110, render: (_value, event) => auditResultLabel(event.result) },
+        { title: "安全摘要", dataIndex: "safeDetails", render: (_value, event) => Object.keys(event.safeDetails).length ? JSON.stringify(event.safeDetails) : "—" },
+      ]}
+    /> : loadState === "loading" ? <SkeletonTableRows rows={6} columns={6} /> : <div className="table-empty"><strong>没有匹配的审计记录</strong><span>调整筛选条件或执行操作后再试。</span></div>}
   </section>;
 }
 
@@ -1815,10 +1972,18 @@ export function GuidePanel() {
 
     <div className="guide-section">
       <h3>二、五个阶段各自在做什么</h3>
-      <div className="guide-table"><table>
-        <thead><tr><th>阶段</th><th>数据归属</th><th>做什么</th><th>谁触发</th></tr></thead>
-        <tbody>{stages.map((s) => <tr key={s.name}><td><strong>{s.name}</strong></td><td>{s.from}</td><td>{s.desc}</td><td>{s.who}</td></tr>)}</tbody>
-      </table></div>
+      <ArcoTable<{ name: string; from: string; desc: string; who: string }>
+        rowKey="name"
+        data={stages}
+        pagination={false}
+        border={false}
+        columns={[
+          { title: "阶段", dataIndex: "name", width: 120, render: (_value, stage) => <strong>{stage.name}</strong> },
+          { title: "数据归属", dataIndex: "from", width: 160 },
+          { title: "做什么", dataIndex: "desc" },
+          { title: "谁触发", dataIndex: "who", width: 160 },
+        ]}
+      />
       <p className="guide-note">四个状态互相独立，各自推进：分析失败不影响推送，负责人空缺也不阻断推送。判断一条需求卡在哪，看它停在哪一列变红或变琥珀。</p>
     </div>
 
@@ -1846,14 +2011,17 @@ export function GuidePanel() {
 
     <div className="guide-section">
       <h3>五、什么时候会收到通知</h3>
-      <div className="guide-table"><table>
-        <thead><tr><th>事件</th><th>是否通知</th><th>为什么</th></tr></thead>
-        <tbody>{notices.map(([event, yes, why]) => <tr key={event}>
-          <td>{event}</td>
-          <td><span className={`badge ${yes === "不发" ? "status-neutral" : "status-success"}`}>{yes}</span></td>
-          <td>{why}</td>
-        </tr>)}</tbody>
-      </table></div>
+      <ArcoTable<string[]>
+        rowKey={(row: string[]) => row[0] ?? ""}
+        data={notices}
+        pagination={false}
+        border={false}
+        columns={[
+          { title: "事件", render: (_value, row) => row[0] },
+          { title: "是否通知", width: 120, render: (_value, row) => <span className={`badge ${row[1] === "不发" ? "status-neutral" : "status-success"}`}>{row[1]}</span> },
+          { title: "为什么", render: (_value, row) => row[2] },
+        ]}
+      />
       <p className="guide-note">同一事件重复推送不会重复通知：事件 ID 是确定性的，Base 只有看到变化才会发消息。</p>
     </div>
 

@@ -3,7 +3,7 @@ import { ArrowDownToLine, ArrowRight, Blocks, Check, CircleAlert, CircleHelp, Cl
 import { ApiError, createPriorityRuleDraft, getHealth, getOverviewMetrics, listPriorityRules, listSources, publishPriorityRule, runSync, type OverviewMetrics, type PriorityRuleVersion, type RequirementSummary, type SourceConfig, type SyncExecutionMode } from "./api";
 import { GuidePanel, ModulesPanel, PanelErrorBoundary, PublishStatusChip, RequirementsPanel, SourcesPanel, SyncRecordsPanel, TeamPanel } from "./panels";
 import { SkeletonBlock, SkeletonCards, SkeletonTableRows } from "./skeleton";
-import { Button as ArcoButton, Input as ArcoInput } from "@arco-design/web-react";
+import { Button as ArcoButton, Input as ArcoInput, Table as ArcoTable } from "@arco-design/web-react";
 import { readRequirementDeepLink } from "./deep-link";
 import { readWorkbenchPage, readWorkbenchRoute, workbenchUrl, type WorkbenchPage, type WorkbenchTab } from "./workbench-routing";
 import type { RequirementListFilters } from "./requirements-url";
@@ -387,7 +387,20 @@ function RequirementsTable({ rows, loading }: { rows: Requirement[]; loading: bo
   if (!rows.length) return loading
     ? <SkeletonTableRows rows={5} columns={6} />
     : <div className="table-empty"><span className="empty-icon"><ListChecks size={19} /></span><strong>没有匹配的需求</strong><span>数据仅在 API 返回后显示，不使用演示数据。</span></div>;
-  return <div className="table-scroll"><table><thead><tr><th>需求</th><th>版本</th><th>拉取</th><th>AI 分析</th><th>负责人</th><th>Base 推送</th></tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td><div className="requirement-title"><span className="req-id">{requirementDisplayId(row)}</span><strong>{row.title}</strong></div></td><td><span className="version-label">v{row.sourceVersion}</span></td><td><StagePill stage="pull" value={row.pipeline.pull} /></td><td><StagePill stage="analysis" value={row.pipeline.analysis} /></td><td><StagePill stage="owner" value={row.pipeline.owner} /></td><td><StagePill stage="push" value={row.pipeline.push} /></td></tr>)}</tbody></table></div>;
+  return <ArcoTable<Requirement>
+    rowKey="id"
+    data={rows}
+    pagination={false}
+    border={false}
+    columns={[
+      { title: "需求", dataIndex: "title", render: (_value, row) => <div className="requirement-title"><span className="req-id">{requirementDisplayId(row)}</span><strong>{row.title}</strong></div> },
+      { title: "版本", dataIndex: "sourceVersion", width: 90, render: (_value, row) => <span className="version-label">v{row.sourceVersion}</span> },
+      { title: "拉取", dataIndex: "pipeline", render: (_value, row) => <StagePill stage="pull" value={row.pipeline.pull} /> },
+      { title: "AI 分析", dataIndex: "pipeline", render: (_value, row) => <StagePill stage="analysis" value={row.pipeline.analysis} /> },
+      { title: "负责人", dataIndex: "pipeline", render: (_value, row) => <StagePill stage="owner" value={row.pipeline.owner} /> },
+      { title: "Base 推送", dataIndex: "pipeline", render: (_value, row) => <StagePill stage="push" value={row.pipeline.push} /> },
+    ]}
+  />;
 }
 
 function SecondaryContent({ page, tab, sources, loadState, deepLinkRequirementId, onNavigate, onRefresh }: { page: Page; tab: WorkbenchTab | null; sources: SourceConfig[]; loadState: LoadState; deepLinkRequirementId: string | null; onNavigate: (page: Page) => void; onRefresh: () => void }) {
@@ -469,7 +482,20 @@ function RulesPanel() {
           <label className="rules-threshold" style={{ flex: 1 }}><span>校准证据（每行一个 JSON 对象；为空的规则发布后不会用于优先级计算）</span><textarea aria-label="校准证据" className="rules-textarea" rows={2} placeholder='例如：{"cohort":"2026-Q3","cases":12}' value={evidenceInput} onChange={(event) => setEvidenceInput(event.target.value)} /></label>
         </div>
       </details>
-      {rules.length ? <div className="table-scroll"><table><thead><tr><th>版本</th><th>状态</th><th>阈值 (P0/P1/P2)</th><th>创建时间</th><th>发布时间</th><th>操作</th></tr></thead><tbody>{rules.map((rule) => <tr key={rule.id}><td className="mono-cell">v{rule.version}</td><td><PublishStatusChip status={rule.status} /></td><td className="mono-cell">{[rule.rules.thresholds?.p0, rule.rules.thresholds?.p1, rule.rules.thresholds?.p2].map((value) => value ?? "—").join(" / ")}</td><td>{new Date(rule.createdAt).toLocaleString("zh-CN")}</td><td>{rule.publishedAt ? new Date(rule.publishedAt).toLocaleString("zh-CN") : "—"}</td><td>{rule.status === "draft" && <button className="button button-secondary button-small" onClick={() => void withFeedback(async () => { await publishPriorityRule(rule.id); return `规则 v${rule.version} 已发布`; })} disabled={busy || (activeV2 && rule.rules.formulaType !== "umsc_weighted_v2")} title={activeV2 && rule.rules.formulaType !== "umsc_weighted_v2" ? "v2 公式生效期间不能发布 v1 规则" : undefined}>发布</button>}</td></tr>)}</tbody></table></div> : <div className="table-empty"><strong>{loadError ? "配置不可用" : "还没有规则版本"}</strong><span>{loadError ? "请检查 API 连接后重试。" : "在高级设置中创建阈值规则草稿并发布后，AI 建议才会生成 P0–P3 优先级。"}</span></div>}
+      {rules.length ? <ArcoTable<PriorityRuleVersion>
+        rowKey="id"
+        data={rules}
+        pagination={false}
+        border={false}
+        columns={[
+          { title: "版本", dataIndex: "version", width: 90, render: (_value, rule) => <span className="mono-cell">v{rule.version}</span> },
+          { title: "状态", dataIndex: "status", width: 110, render: (_value, rule) => <PublishStatusChip status={rule.status} /> },
+          { title: "阈值 (P0/P1/P2)", dataIndex: "rules", width: 170, render: (_value, rule) => <span className="mono-cell">{[rule.rules.thresholds?.p0, rule.rules.thresholds?.p1, rule.rules.thresholds?.p2].map((value) => value ?? "—").join(" / ")}</span> },
+          { title: "创建时间", dataIndex: "createdAt", width: 180, render: (_value, rule) => new Date(rule.createdAt).toLocaleString("zh-CN") },
+          { title: "发布时间", dataIndex: "publishedAt", width: 180, render: (_value, rule) => rule.publishedAt ? new Date(rule.publishedAt).toLocaleString("zh-CN") : "—" },
+          { title: "操作", dataIndex: "id", width: 110, render: (_value, rule) => rule.status === "draft" && <button className="button button-secondary button-small" onClick={() => void withFeedback(async () => { await publishPriorityRule(rule.id); return `规则 v${rule.version} 已发布`; })} disabled={busy || (activeV2 && rule.rules.formulaType !== "umsc_weighted_v2")} title={activeV2 && rule.rules.formulaType !== "umsc_weighted_v2" ? "v2 公式生效期间不能发布 v1 规则" : undefined}>发布</button> },
+        ]}
+      /> : <div className="table-empty"><strong>{loadError ? "配置不可用" : "还没有规则版本"}</strong><span>{loadError ? "请检查 API 连接后重试。" : "在高级设置中创建阈值规则草稿并发布后，AI 建议才会生成 P0–P3 优先级。"}</span></div>}
   </section>;
 }
 
