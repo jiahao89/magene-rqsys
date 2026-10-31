@@ -111,8 +111,8 @@
 | 根仓外壳与设计 token | ✅ 顶栏/操作按钮/搜索框 Arco 化；布局类映射 Arco token | commit `c9dd30c`、`ef6aa0f` |
 | 妙搭 client 基础 | ✅ Arco 依赖/CSS/React19 适配器/主题同步/token 桥接 | commit `bbeaef3`；生产 release `7702736124905508102` |
 | 妙搭 client 操作按钮 | ✅ 65 个原生按钮改为 Arco Button（保留自定义布局类） | commit `dfe731c`；生产 release `7702737675280059640`，线上已验证主页/需求池/团队页正常 |
-| 妙搭 client 表格/下拉 | ✅ 需求池、同步记录（批次/明细 + 状态筛选）、团队、功能模块、词典历史已改为 Arco Table/Select；生产验证通过 | `2eaff79`，release `7702748378892274964` |
-| 妙搭 client 剩余表格 | ⏳ 审计记录、负责人映射、评分输入/历史、帮助页静态表格仍为原生实现（已套 Arco token） | — |
+| 妙搭 client 表格/下拉 | ✅ 全部列表页（需求池、同步记录、团队、映射、功能模块、审计、分析版本、评分历史、帮助页）已改为 Arco Table/Select；生产多页验证通过 | `2eaff79`、`a23c673`，release `7702748378892274964`、`7702750651457850659` |
+| 妙搭 client 唯一保留原生表格 | 九项评分输入网格（分组可编辑表格，保留原生 input 语义，已套 Arco token） | 有意保留 |
 | 根仓面板表格/下拉 | ⏳ 原生 `<table>`/`<select>` 仍为自定义实现（已套 Arco token）；需同步调整 Web 测试交互 | — |
 | 输入框/表单控件 | ⏳ 两侧仍以原生 input 为主（已套 Arco token） | — |
 
