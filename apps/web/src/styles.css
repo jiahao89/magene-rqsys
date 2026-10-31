@@ -1402,3 +1402,55 @@ html[data-theme="dark"] .summary-score-empty span { color: var(--rq-text-soft); 
 .table-scroll tbody td { border-color: var(--color-border-2); }
 .table-scroll tbody tr:hover { background: var(--color-fill-1); }
 .status-chip, .stage-pill { border-radius: var(--border-radius-small); }
+
+/* ==================== Arco 组件布局与设计语言对齐 ====================
+ * Tailwind preflight 的 svg display:block 会破坏 Arco 行内图标按钮布局；
+ * 同时把自定义布局变量映射到 Arco token，使工作台整体呈现 Arco 设计语言。
+ */
+.arco-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.arco-btn > svg,
+.arco-btn .arco-icon,
+.arco-select svg,
+.arco-input svg,
+.arco-tag svg,
+.arco-table svg,
+.arco-modal svg { display: inline-block; vertical-align: middle; flex: none; }
+.arco-btn > span { display: inline-block; }
+
+body[arco-theme] {
+  --rq-background: var(--color-bg-1);
+  --rq-surface: var(--color-bg-2);
+  --rq-surface-subtle: var(--color-fill-1);
+  --rq-surface-inset: var(--color-fill-1);
+  --rq-surface-hover: var(--color-fill-2);
+  --rq-hover: var(--color-fill-2);
+  --rq-border: var(--color-border-2);
+  --rq-divider: var(--color-border-2);
+  --rq-card-border: var(--color-border-2);
+  --rq-foreground: var(--color-text-1);
+  --rq-text-strong: var(--color-text-1);
+  --rq-text-muted: var(--color-text-2);
+  --rq-text-tertiary: var(--color-text-3);
+  --rq-placeholder: var(--color-text-3);
+  --rq-accent-text: rgb(var(--primary-6));
+  --rq-accent-soft: rgba(var(--primary-6), 0.12);
+  --rq-link: rgb(var(--primary-6));
+  --rq-danger: rgb(var(--danger-6));
+  --rq-radius-xs: var(--border-radius-small);
+  --rq-radius-sm: var(--border-radius-medium);
+  --rq-radius-md: var(--border-radius-large);
+  --rq-radius-field: var(--border-radius-medium);
+  --rq-font-body: 14px;
+  --rq-font-caption: 12px;
+  color: var(--color-text-1);
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Noto Sans", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  background: var(--color-bg-1);
+}
+body[arco-theme] .sidebar { background: var(--color-bg-2); border-right-color: var(--color-border-2); }
+body[arco-theme] .topbar { background: var(--color-bg-2); border-bottom-color: var(--color-border-2); }
+body[arco-theme] .metric-card,
+body[arco-theme] .panel { border-radius: var(--border-radius-large); box-shadow: none; }
+body[arco-theme] h1,
+body[arco-theme] h2,
+body[arco-theme] h3,
+body[arco-theme] h4 { color: var(--color-text-1); font-weight: 500; }

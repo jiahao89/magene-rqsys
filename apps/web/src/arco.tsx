@@ -20,9 +20,17 @@ export function Button(props: {
   "aria-expanded"?: boolean;
   "aria-controls"?: string;
 }) {
-  const { variant = "default", onPress, isDisabled, slot: _slot, type = "button", ...rest } = props;
-  const arcoType = variant === "primary" ? "primary" : variant === "secondary" ? "secondary" : "default";
-  return <ArcoButton type={arcoType} status={variant === "danger" ? "danger" : undefined} disabled={isDisabled} onClick={onPress} htmlType={type} {...rest} />;
+  const { variant = "default", onPress, isDisabled, slot: _slot, type = "button", className, ...rest } = props;
+  // 旧工作台把视觉样式写在 button/button-* 类上；Arco 按钮应使用自身视觉，只保留布局类。
+  const legacy = new Set(["button", "button-primary", "button-secondary", "button-small", "button-danger"]);
+  const classes = (className ?? "").split(/\s+/).filter(Boolean);
+  const kept = classes.filter((token) => !legacy.has(token));
+  const primary = variant === "primary" || classes.includes("button-primary");
+  const secondary = variant === "secondary" || classes.includes("button-secondary");
+  const danger = variant === "danger" || classes.includes("button-danger");
+  const small = classes.includes("button-small");
+  const arcoType = primary ? "primary" : secondary ? "secondary" : "default";
+  return <ArcoButton type={arcoType} status={danger ? "danger" : undefined} size={small ? "small" : undefined} disabled={isDisabled} onClick={onPress} htmlType={type} className={kept.join(" ") || undefined} {...rest} />;
 }
 
 const CHIP_COLOR: Record<string, string> = { success: "green", warning: "orange", danger: "red", accent: "arcoblue", default: "gray" };
