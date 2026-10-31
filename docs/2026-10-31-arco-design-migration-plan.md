@@ -1,7 +1,7 @@
 # Arco Design 前端架构迁移开发计划
 
 > **日期**：2026-10-31
-> **状态**：P0 本地可行性已验证（见 §4.1），待评审后进入 P1
+> **状态**：P0 已完成（本地 + 妙搭云端验证，见 §4.0）；P1 进行中
 > **分支策略**：工作分支 `feature/arco-design`；每个增量提交同时推送该分支与 `main`
 > **部署策略**：妙搭部署继续使用 `main` 版本（妙搭仓 `sprint/default` 从 main 同步），`feature/arco-design` 不直接发布
 
@@ -47,9 +47,9 @@
 | SSR（React 19） | 成功渲染 13.6 KB HTML；仅测试代码自身的 Breadcrumb key 警告，无 React 19 致命错误 |
 | 客户端挂载（jsdom，React 19） | 成功挂载，Arco class/Table 正常渲染，无报错 |
 | **React 19 适配器** | **必需**：Arco 内部 `Message/Notification/Modal.confirm` 等命令式 API 走 `_util/react-dom.render`，React 19 已移除 `ReactDOM.render`；不引入 `@arco-design/web-react/es/_util/react-19-adapter` 会抛 `TypeError: ...render is not a function`，引入后正常 |
-| 妙搭云端构建 | **未验证**（不在本地可证明范围）：需按 R1 的非生产验证路径确认 |
+| 妙搭云端构建 | **已验证**：独立临时应用 `app_17h45brz8hb`（frontend）安装 Arco 2.66.18 后构建成功，release `7702724680834567437` finished（commit `7ec0d11`）；线上页面 Arco 样式/组件正常，Message/Modal/dark 切换均可用，未触碰生产应用 |
 
-**P0 结论**：本地技术路线可行；P1 起必须在入口统一引入 React 19 适配器，并把 bundle 分析（路由级拆分/按需 CSS）纳入每阶段验收。
+**P0 结论**：技术路线可行，云端构建可安装并构建 Arco；P1 起必须在入口统一引入 React 19 适配器，并把 bundle 分析（路由级拆分/按需 CSS）纳入每阶段验收。ADR-002 已记录该决定。
 
 
 ### P0 可行性验证（0.5–1 人日）

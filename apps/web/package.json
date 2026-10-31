@@ -10,6 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@arco-design/web-react": "^2.66.18",
     "@heroui/react": "3.2.6",
     "@tailwindcss/vite": "4.3.3",
     "@vitejs/plugin-react": "5.1.4",
