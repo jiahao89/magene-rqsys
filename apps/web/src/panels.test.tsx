@@ -14,18 +14,14 @@ async function chooseArcoOption(label: string, optionText: string | RegExp) {
     const text = (el.textContent ?? "").trim();
     return typeof optionText === "string" ? text === optionText : optionText.test(text);
   };
-  const findOptions = () => [...document.querySelectorAll(".arco-select-option")].filter((el) => matches(el));
-  let options: Element[] = [];
-  // 人员/选项异步加载期间控件可能是 disabled，点击会被忽略：短轮询重试直到下拉打开。
-  for (let attempt = 0; attempt < 30 && options.length === 0; attempt += 1) {
+  const findOptions = () => [...document.querySelectorAll(".arco-select-option")].filter(matches);
+  // 选项异步加载期间控件可能处于 disabled，点击会被忽略：每次轮询都重新点击，直到下拉打开且选项出现。
+  await waitFor(() => {
     fireEvent.click(view);
     fireEvent.mouseDown(view);
-    await waitFor(() => undefined).catch(() => undefined);
-    options = findOptions();
-    if (!options.length) await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  if (!options.length) throw new Error(`Arco Select 选项未出现：${label}`);
-  fireEvent.click(options[0]!);
+    expect(findOptions().length, `Arco Select 选项未出现：${label} / ${String(optionText)}`).toBeGreaterThan(0);
+  }, { timeout: 3000, interval: 100 });
+  fireEvent.click(findOptions()[0]!);
 }
 
 /** 读取 Arco Select 当前展示的文本（用于筛选值断言）。 */
@@ -780,7 +776,7 @@ describe("RequirementsPanel (ticket 17)", () => {
     expect(await screen.findByText("1 个筛选已生效")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
     expect(screen.queryByText(/个筛选已生效/)).not.toBeInTheDocument();
-    expect(arcoSelectText("TB负责人筛选")).not.toContain("毕梓浩");
+    expect(arcoSelectText("TB负责人筛选").trim()).toBe("全部 TB 负责人");
   });
 });
 
@@ -824,14 +820,16 @@ describe("团队字典维护", () => {
     const renamedRow = screen.getByText("新成员改名").closest("tr");
     if (!renamedRow) throw new Error("Renamed member row was not rendered");
     fireEvent.click(within(renamedRow).getByRole("button", { name: "删除" }));
-    const personDialog = await screen.findByRole("dialog");
+    const personDialog = await screen.findByRole("alertdialog");
+    expect(personDialog).toHaveAccessibleName("确认删除");
+    expect(personDialog).toHaveAccessibleDescription(/删除|解除/);
     fireEvent.click(within(personDialog).getByRole("button", { name: "取消" }));
     // Arco Modal 有退出动画，DOM 会在下一帧移除，等待关闭完成再断言。
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await waitFor(() => { expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(); expect(screen.queryByRole("dialog")).not.toBeInTheDocument(); });
     expect(screen.getByText("新成员改名")).toBeInTheDocument();
 
     fireEvent.click(within(renamedRow).getByRole("button", { name: "删除" }));
-    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "确认删除" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "确认删除" }));
     expect(await screen.findByText("人员已删除，相关模块已解除分配。")).toBeInTheDocument();
   });
 
@@ -870,7 +868,7 @@ describe("团队字典维护", () => {
     expect(within(boundRow).getByRole("button", { name: "重新绑定" })).toBeInTheDocument();
 
     fireEvent.click(within(boundRow).getByRole("button", { name: "解除绑定" }));
-    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "确认解除" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "确认解除" }));
     expect(await screen.findByText("已解除「贾浩」的飞书账号绑定。")).toBeInTheDocument();
     const unboundRow = screen.getByText("贾浩").closest("tr");
     if (!unboundRow) throw new Error("Unbound person row was not rendered");
@@ -911,14 +909,14 @@ describe("团队字典维护", () => {
     const voiceRow = screen.getByText("语音提醒").closest("tr");
     if (!voiceRow) throw new Error("Created module row was not rendered");
     fireEvent.click(within(voiceRow).getByRole("button", { name: "删除" }));
-    const moduleDialog = await screen.findByRole("dialog");
+    const moduleDialog = await screen.findByRole("alertdialog");
     fireEvent.click(within(moduleDialog).getByRole("button", { name: "取消" }));
     // Arco Modal 有退出动画，DOM 会在下一帧移除，等待关闭完成再断言。
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await waitFor(() => { expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(); expect(screen.queryByRole("dialog")).not.toBeInTheDocument(); });
     expect(screen.getByText("语音提醒")).toBeInTheDocument();
 
     fireEvent.click(within(voiceRow).getByRole("button", { name: "删除" }));
-    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "确认删除" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "确认删除" }));
     expect(await screen.findByText("已发布模块字典 v5，后续 AI 分析将使用新版本。")).toBeInTheDocument();
     expect(screen.queryByText("语音提醒")).not.toBeInTheDocument();
   });

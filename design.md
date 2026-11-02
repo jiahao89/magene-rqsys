@@ -430,6 +430,7 @@ HeroUI Pro 模板是可运行的完整应用骨架，适合参考信息架构、
 | 主题 | `body[arco-theme]` 与 `html[data-theme]` 同步切换 | 同左（目前无切换入口，暗色样式暂不生效） |
 
 约束：
+- 样式按组件引入：新增 Arco 组件时，把它的 `style/css.js` 加到 `arco-styles.ts`（两端各一份），不要退回整份 `arco.css`。
 - 入口必须引入 React 19 适配器：`import "@arco-design/web-react/es/_util/react-19-adapter";`，否则 `Message` / `Modal.confirm` 等命令式 API 会抛错。
 - 新增页面直接使用 Arco 组件；不再新增 HeroUI 或被替换的 Radix 原语。
 - `Table` 同一张表内每列必须有唯一 `key`（或唯一 `dataIndex`）：多列读同一个字段时（如总览表的四个阶段列都读 `pipeline`）要显式写 `key`，否则 React 会报重复 key。
@@ -446,7 +447,7 @@ HeroUI Pro 模板是可运行的完整应用骨架，适合参考信息架构、
 | 折叠区 | `Collapse` | 移动端保持可点击区域 ≥ 44px |
 | 表单控件 | `Select` / `Input` / `Input.TextArea` | `Select` 选项在 portal 中渲染，测试需到 `document` 查找 |
 | 列表 / 数据表 | `Table`，`pagination={false}` | 列表分页沿用游标「加载更多」 |
-| 删除确认 | `Modal` | 默认 `role="dialog"`，不是 `alertdialog` |
+| 删除确认 | 统一用 `ConfirmModal`（`confirm-modal.tsx`） | 内部包装 `Modal`，打开后把 role 改为 `alertdialog` 并关联正文；不要直接用 `Modal` 做破坏性确认 |
 | 空态 / 加载 | 自定义 + `Skeleton` / `Spin` | |
 
 ## 10.3 交互规范

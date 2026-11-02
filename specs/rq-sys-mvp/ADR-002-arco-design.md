@@ -29,8 +29,8 @@
 
 ## 已知限制
 
-- **样式产物**：两端都引入完整的 `arco.css`，与上文"按需引入"的决定不一致。根仓 CSS 约 665 KB（gzip 82 KB），妙搭约 874 KB（gzip 110 KB）。按组件引入 `es/<Component>/style/css` 是后续优化项，尚未实施。
-- **无障碍**：Arco `Modal` 固定 `role="dialog"`，不是 `alertdialog`；删除确认的屏幕阅读器播报语义比迁移前弱。
+- **样式产物**：两端已改为按组件引入（`apps/web/src/arco-styles.ts`、`rq-sys-miaoda/client/src/rqsys/arco-styles.ts`），不再引入整份 `arco.css`。根仓 CSS 665 KB → 316 KB（gzip 82 → 44 KB）；妙搭 874 KB → 528 KB（gzip 110 → 72 KB，余下大头是模板自带的 Tailwind/shadcn 样式）。用浏览器对 582 个 Arco 元素的计算样式做前后比对（亮/暗两套主题、7 个页面加下拉展开、详情、弹窗），差异为 0。**新增任何 Arco 组件时，必须同步把它的 `style/css.js` 加进对应的 `arco-styles.ts`**，否则该组件会没有样式。
+- **无障碍**：Arco `Modal` 固定 `role="dialog"`。删除确认统一经 `confirm-modal.tsx`，在 `afterOpen` 里把该弹窗的 role 改为 `alertdialog` 并用 `aria-describedby` 关联正文，已有测试锁住角色、名称和描述。其他地方如需破坏性确认，也必须走这个组件，不要直接用 `Modal`。
 - **React 19**：Arco 内部克隆弹层时会触发 `Accessing element.ref was removed in React 19` 控制台警告，来自库本身，不影响功能。
 - **同列多字段**：`Table` 里多列读同一个 `dataIndex` 时必须显式写 `key`，否则 React 报重复 key（总览表的四个阶段列就是这种情况）。
 

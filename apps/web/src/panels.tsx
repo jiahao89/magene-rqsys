@@ -4,7 +4,8 @@
 import { Fragment, useCallback, useEffect, useId, useRef, useState, Component, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { AudienceEditor, BetaPanel, IntakeForm, ManualEditSection } from "./intake-form";
 import { Button as HeroButton, Card as HeroCard, Chip as HeroChip, Input as HeroInput } from "./arco";
-import { Collapse, Modal, Select as ArcoSelect, Table as ArcoTable } from "@arco-design/web-react";
+import { Collapse, Select as ArcoSelect, Table as ArcoTable } from "@arco-design/web-react";
+import { ConfirmModal } from "./confirm-modal";
 import { ArrowLeft, RefreshCw, X } from "lucide-react";
 import { stateLabel } from "./state-labels";
 import { RequirementDetailSkeleton, SkeletonBlock, SkeletonTableRows } from "./skeleton";
@@ -51,9 +52,7 @@ function DeleteConfirmation({ description, disabled, onConfirm, triggerLabel = "
   const [arcoOpen, setArcoOpen] = useState(false);
   return <>
     <button className="button button-secondary button-small" aria-disabled={disabled} tabIndex={disabled ? -1 : 0} style={disabled ? { pointerEvents: "none", opacity: 0.6 } : undefined} onClick={() => { if (!disabled) setArcoOpen(true); }}>{triggerLabel}</button>
-    <Modal visible={arcoOpen} title={heading} okText={confirmLabel} cancelText="取消" okButtonProps={{ status: "danger" }} onOk={() => { setArcoOpen(false); onConfirm(); }} onCancel={() => setArcoOpen(false)}>
-      <p>{description}</p>
-    </Modal>
+    <ConfirmModal visible={arcoOpen} title={heading} description={description} okText={confirmLabel} onOk={() => { setArcoOpen(false); onConfirm(); }} onCancel={() => setArcoOpen(false)} />
   </>;
 }
 
