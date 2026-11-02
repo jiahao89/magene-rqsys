@@ -65,6 +65,13 @@ jobs:
       - name: Build
         run: npm run build
 
+      # check:contract 的 db 边界直接读取 public schema：空库会以"必需表存在"FAIL 退出。
+      # CI 的 postgres service 是空库（npm test 只在临时 schema 上跑迁移并回滚），
+      # 所以这里先按仓库迁移把 CI 库建到与生产同构，再跑契约读取。
+      # 使用 db:migrate:ci：只读环境变量 DATABASE_URL（上方 job env 已设置），不依赖本地 .env。
+      - name: Apply migrations to the CI database
+        run: npm --workspace @rq-sys/api run db:migrate:ci
+
       # 默认只读：缺凭据的边界记为 SKIP，只有 FAIL 才让流水线失败。
       - name: External contract matrix (read-only)
         run: npm run check:contract

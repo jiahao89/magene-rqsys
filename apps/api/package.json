@@ -8,6 +8,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "node dist/server.js",
     "db:migrate": "node --env-file=../../.env --import=tsx src/db/migrate.ts",
+    "db:migrate:ci": "node --import=tsx src/db/migrate.ts",
     "test": "node --import=tsx --test 'src/**/*.test.ts'"
   },
   "dependencies": {
