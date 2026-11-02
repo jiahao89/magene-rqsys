@@ -276,6 +276,21 @@ describe("RQ-Sys local workbench", () => {
     expect(window.location.hash).toBe("#sync-records");
   });
 
+  it("keeps the advanced sync item disabled and inert while the API is unavailable", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/health") return new Response("{}", { status: 500 });
+      return Response.json({ items: [] });
+    });
+    render(<App />);
+    const advanced = screen.getByRole("button", { name: "高级操作" });
+    fireEvent.click(advanced);
+    const item = await screen.findByRole("menuitem", { name: "仅同步源数据" });
+    expect(item.className).toMatch(/disabled/);
+    fireEvent.click(item);
+    expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining("/api/sync"), expect.anything());
+  });
+
   it("keeps one help entry and hides low-frequency actions behind advanced disclosures", async () => {
     fetchMock.mockImplementation(async () => Response.json({ items: [] }));
     render(<App />);

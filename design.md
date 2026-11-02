@@ -435,6 +435,7 @@ HeroUI Pro 模板是可运行的完整应用骨架，适合参考信息架构、
 - 新增页面直接使用 Arco 组件；不再新增 HeroUI 或被替换的 Radix 原语。
 - `Table` 同一张表内每列必须有唯一 `key`（或唯一 `dataIndex`）：多列读同一个字段时（如总览表的四个阶段列都读 `pipeline`）要显式写 `key`，否则 React 会报重复 key。
 - 业务按钮沿用 `button button-primary|secondary` 类时，这些类只负责布局骨架；圆角、字号、配色统一由 `styles.css` 末尾的 Arco token 规则给出，不要在前面再写第二份。
+- 「高级操作」等下拉使用受控 `AdvancedActions` 包装：`aria-haspopup="menu"` / `aria-expanded`、打开后焦点进入菜单、Esc 关闭并把焦点还给触发按钮（Arco Dropdown 默认都不提供）。不要直接用裸 `Dropdown` 承载键盘用户必须可达的操作。
 - 两端在**行为与信息层级上必须一致**，像素级允许差异。
 
 ## 10.2 组件对应
