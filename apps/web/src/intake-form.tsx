@@ -2,6 +2,7 @@
 // 只必填标题/描述/渠道；四段提示是 placeholder 引导，不是四个必填项（PRD 3.2）。
 // 幂等键在同一次提交意图内复用（失败重试不换键），成功或重新展开表单后重置。
 import { useEffect, useRef, useState } from "react";
+import { Button as ArcoButton } from "@arco-design/web-react";
 import { ApiError, AUDIENCE_LEVELS, AUDIENCE_LEVEL_NAMES, REQUIREMENT_INTAKE_CHANNELS, REQUIREMENT_INTAKE_TYPES, createRequirement, getFunctionModules, getRiceDraft, listKanoEvidence, listKanoRuns, saveRiceDraft, setAudienceTags, triggerKanoRun, updateRequirement, type KanoEvidenceVersionDto, type KanoRunDto, type RiceDraft } from "./api";
 
 export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) => void }) {
@@ -26,7 +27,7 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
   const moduleCandidate = modules.find((item) => item.name === intakeModule)?.personName ?? null;
 
   if (!open) {
-    return <div className="toolbar-actions"><button className="button button-primary button-small" onClick={() => { setOpen(true); setError(null); }}>新建需求</button></div>;
+    return <div className="toolbar-actions"><ArcoButton type="primary" size="small" htmlType="button" onClick={() => { setOpen(true); setError(null); }}>新建需求</ArcoButton></div>;
   }
 
   const reset = () => {
@@ -99,8 +100,8 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
       <textarea aria-label="新建需求描述" rows={4} placeholder={"建议按四段描述（缺段不阻断提交，AI 会标出缺失项）：\n用户/场景：谁在什么场景下…\n现状问题：当前遇到…\n期望结果：希望…\n补充：约束、链接等（可留空）"} value={description} onChange={(event) => setDescription(event.target.value)} disabled={busy} />
     </label>
     <div className="field" style={{ flexBasis: "100%", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-      <button className="button button-primary button-small" onClick={() => void submit()} disabled={busy}>提交并进入分析</button>
-      <button className="button button-secondary button-small" onClick={() => { setOpen(false); reset(); }} disabled={busy}>取消</button>
+      <ArcoButton type="primary" size="small" htmlType="button" onClick={() => void submit()} disabled={busy}>提交并进入分析</ArcoButton>
+      <ArcoButton size="small" htmlType="button" onClick={() => { setOpen(false); reset(); }} disabled={busy}>取消</ArcoButton>
       {busy && <span className="status-hint" role="status">正在提交…</span>}
     </div>
     {error && <div className="field-error" role="alert" style={{ flexBasis: "100%" }}>{error}</div>}
@@ -143,7 +144,7 @@ export function ManualEditSection({ detail, onSaved }: { detail: ManualEditSourc
     setError(null); setNotice(null); idempotencyKey.current = crypto.randomUUID();
   }, [open, detail]);
   if (detail.sourceType !== "web_manual") return null;
-  if (!open) return <button className="button button-secondary button-small" onClick={() => setOpen(true)}>编辑需求</button>;
+  if (!open) return <ArcoButton size="small" htmlType="button" onClick={() => setOpen(true)}>编辑需求</ArcoButton>;
   const submit = async () => {
     if (!title.trim() || !description.trim() || !channel) { setError("标题、需求描述与来源渠道不能为空。"); return; }
     setBusy(true); setError(null); setNotice(null);
@@ -183,8 +184,8 @@ export function ManualEditSection({ detail, onSaved }: { detail: ManualEditSourc
     <label className="field" style={{ flexBasis: "100%" }}><span>边界/限制</span><textarea aria-label="编辑边界或限制" rows={2} value={constraintNotes} onChange={(event) => setConstraintNotes(event.target.value)} disabled={busy} /></label>
     <label className="field" style={{ flexBasis: "100%" }}><span>来源链接</span><input aria-label="编辑来源链接" type="url" value={supplementUrl} onChange={(event) => setSupplementUrl(event.target.value)} disabled={busy} /></label>
     <div className="field" style={{ flexBasis: "100%", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-      <button className="button button-primary button-small" onClick={() => void submit()} disabled={busy}>保存（基于 v{detail.sourceVersion}）</button>
-      <button className="button button-secondary button-small" onClick={() => setOpen(false)} disabled={busy}>取消</button>
+      <ArcoButton type="primary" size="small" htmlType="button" onClick={() => void submit()} disabled={busy}>保存（基于 v{detail.sourceVersion}）</ArcoButton>
+      <ArcoButton size="small" htmlType="button" onClick={() => setOpen(false)} disabled={busy}>取消</ArcoButton>
       {busy && <span className="status-hint" role="status">正在保存…</span>}
       {notice && <span className="status-hint" role="status">{notice}</span>}
     </div>
@@ -281,7 +282,7 @@ export function BetaPanel({ requirementId }: { requirementId: string }) {
       setError(null); setNotice(null);
     }).catch(() => { setError("草稿读取失败，请重试。"); });
   }, [open, requirementId]);
-  if (!open) return <button className="button button-secondary button-small" onClick={() => setOpen(true)}>Beta 分析</button>;
+  if (!open) return <ArcoButton size="small" htmlType="button" onClick={() => setOpen(true)}>Beta 分析</ArcoButton>;
   const save = async () => {
     if (!draft) return;
     setBusy(true); setError(null); setNotice(null);
@@ -308,8 +309,8 @@ export function BetaPanel({ requirementId }: { requirementId: string }) {
     <label className="field"><span>Effort（草稿）</span><input aria-label="RICE Effort 草稿" value={effort} onChange={(event) => setEffort(event.target.value)} disabled={busy} /></label>
     <label className="field" style={{ flexBasis: "100%" }}><span>依据说明</span><textarea aria-label="RICE 依据说明" rows={2} value={notes} onChange={(event) => setNotes(event.target.value)} disabled={busy} /></label>
     <div className="field" style={{ flexBasis: "100%", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-      <button className="button button-primary button-small" onClick={() => void save()} disabled={busy || !draft}>保存草稿</button>
-      <button className="button button-secondary button-small" onClick={() => setOpen(false)} disabled={busy}>收起</button>
+      <ArcoButton type="primary" size="small" htmlType="button" onClick={() => void save()} disabled={busy || !draft}>保存草稿</ArcoButton>
+      <ArcoButton size="small" htmlType="button" onClick={() => setOpen(false)} disabled={busy}>收起</ArcoButton>
       {draft && <span className="status-hint" role="status">状态：{draft.status} · 依据源版本 v{draft.sourceVersion} · 草稿版本 v{draft.editVersion}</span>}
       {notice && <span className="status-hint" role="status">{notice}</span>}
     </div>
@@ -323,7 +324,7 @@ export function BetaPanel({ requirementId }: { requirementId: string }) {
           <option value="">选择资料版本</option>
           {evidence.map((item) => <option key={item.id} value={String(item.version)}>v{item.version} · {item.title}</option>)}
         </select>
-        <button className="button button-primary button-small" disabled={kanoBusy || !selectedEvidence} onClick={() => void (async () => {
+        <ArcoButton type="primary" size="small" htmlType="button" disabled={kanoBusy || !selectedEvidence} onClick={() => void (async () => {
           setKanoBusy(true); setKanoError(null);
           try {
             await triggerKanoRun(requirementId, Number(selectedEvidence));
@@ -331,7 +332,7 @@ export function BetaPanel({ requirementId }: { requirementId: string }) {
           } catch (cause) {
             setKanoError(cause instanceof ApiError ? cause.message : "触发失败，请重试。");
           } finally { setKanoBusy(false); }
-        })()}>生成 Kano 假设报告（手动）</button>
+        })()}>生成 Kano 假设报告（手动）</ArcoButton>
         {kanoBusy && <span className="status-hint" role="status">已提交，运行中…</span>}
         {kanoError && <span className="field-error" role="alert">{kanoError}</span>}
       </div>

@@ -474,10 +474,11 @@ export function ModulesPanel() {
         data={versions}
         pagination={false}
         border={false}
+        scroll={{ x: 900 }}
         columns={[
           { title: "版本", dataIndex: "version", width: 90, render: (_value, d) => <span className="mono-cell">v{d.version}</span> },
           { title: "状态", dataIndex: "status", width: 110, render: (_value, d) => <PublishStatusChip status={d.status} /> },
-          { title: "模块", dataIndex: "entries", render: (_value, d) => d.entries.map((entry) => typeof entry === "string" ? entry : `${entry.name}（${entry.personName ?? "未分配"}）`).join("、") },
+          { title: "模块", dataIndex: "entries", width: 300, render: (_value, d) => d.entries.map((entry) => typeof entry === "string" ? entry : `${entry.name}（${entry.personName ?? "未分配"}）`).join("、") },
           { title: "创建时间", dataIndex: "createdAt", width: 180, render: (_value, d) => timeLabel(d.createdAt) },
           { title: "发布时间", dataIndex: "publishedAt", width: 180, render: (_value, d) => d.publishedAt ? timeLabel(d.publishedAt) : "—" },
         ]}
@@ -1714,6 +1715,7 @@ function RequirementsTable({ rows, loading, onOpen, onAssign }: { rows: Requirem
     <ArcoTable<RequirementSummary>
       className="req-list"
       rowKey="id"
+      scroll={{ x: 1100 }}
       columns={columns}
       data={rows}
       pagination={false}
