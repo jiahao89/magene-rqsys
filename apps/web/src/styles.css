@@ -1452,3 +1452,12 @@ body[arco-theme] h1,
 body[arco-theme] h2,
 body[arco-theme] h3,
 body[arco-theme] h4 { color: var(--color-text-1); font-weight: 500; }
+
+/* 旧 .button 布局选择器的 ArcoButton 等价规则（按钮已全部 Arco 化）。 */
+.alert-banner .arco-btn { margin-left: auto; }
+@media (max-width: 560px) {
+  .heading-actions .arco-btn { flex: 1 1 0; }
+  .req-summary-actions .arco-btn { flex: 1 1 auto; }
+  .toolbar-actions { border-top: 0; padding-top: 0; justify-content: stretch; }
+  .toolbar-actions .arco-btn { flex: 1 1 0; }
+}
