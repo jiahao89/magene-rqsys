@@ -1,4 +1,7 @@
-# HeroUI Web Design System
+# RQ-Sys Web Design System
+
+> **实现基线已切换为 Arco Design（ADR-002，2026-10-31）。** 本文第 1–9、11–14 节的设计原则、语义色角色、间距、状态与无障碍规则仍然适用；其中的 HeroUI 组件目录与 Pro 模板（第 7–9 节）只作为信息架构与交互的**参考资料**，不再是组件选型依据。组件选型与实现约束以第 10 节为准。
+> 第 3.2 节的 OKLCH 数值来自 HeroUI 默认主题，已不是运行时取值：运行时颜色由 Arco token（`--primary-*`、`--color-*`）经 `styles.css` 的 `body[arco-theme]` 桥接提供。
 
 > 参考 HeroUI v3 与 HeroUI Pro React Web 官方文档整理，作为本项目 Web UI 的设计与实现基线。该文件不是 HeroUI Pro 源码或 Figma 变量的逐项导出；颜色与主题变量以官方当前默认主题为准，尺寸层级和组件使用规则中标为“建议”的部分是为了项目统一而补充的约定。
 
@@ -417,30 +420,34 @@ HeroUI Pro 模板是可运行的完整应用骨架，适合参考信息架构、
 
 # 10. 组件映射与实现约束
 
-## 10.1 两处客户端的能力差异（必须遵守）
+## 10.1 两处客户端
 
 | | `apps/web` | `rq-sys-miaoda/client`（线上） |
 |---|---|---|
-| HeroUI React 组件 | ✅ 已安装 `@heroui/react` 3.2.6 | ❌ **未安装，且曾因引入 `@heroui/styles` 导致构建失败** |
-| Tailwind | ✅ | ❌ 纯 CSS |
+| UI 组件库 | Arco Design（`@arco-design/web-react`） | Arco Design，与根仓同版本 |
+| Tailwind | ✅ 仅用于布局与工具类 | ✅ 仅用于布局与工具类 |
+| 不得引入 | HeroUI（已移除） | HeroUI（曾因 `@heroui/styles` 导致云端构建失败） |
+| 主题 | `body[arco-theme]` 与 `html[data-theme]` 同步切换 | 同左（目前无切换入口，暗色样式暂不生效） |
 
-因此：
-- `apps/web` 直接使用 HeroUI 组件（Button/Card/Tabs/Table/Badge/Select 等）。
-- 妙搭客户端**不得新增 HeroUI 依赖**，用现有 `--rq-*` CSS 变量实现**等效视觉与交互**：同样的间距阶梯、字号阶梯、圆角、语义色、状态徽标形态、按钮层级（primary/secondary/ghost）。
-- 两者在**行为与信息层级上必须一致**，像素级允许差异。
+约束：
+- 入口必须引入 React 19 适配器：`import "@arco-design/web-react/es/_util/react-19-adapter";`，否则 `Message` / `Modal.confirm` 等命令式 API 会抛错。
+- 新增页面直接使用 Arco 组件；不再新增 HeroUI 或被替换的 Radix 原语。
+- `Table` 同一张表内每列必须有唯一 `key`（或唯一 `dataIndex`）：多列读同一个字段时（如总览表的四个阶段列都读 `pipeline`）要显式写 `key`，否则 React 会报重复 key。
+- 业务按钮沿用 `button button-primary|secondary` 类时，这些类只负责布局骨架；圆角、字号、配色统一由 `styles.css` 末尾的 Arco token 规则给出，不要在前面再写第二份。
+- 两端在**行为与信息层级上必须一致**，像素级允许差异。
 
 ## 10.2 组件对应
 
-| 用途 | HeroUI（apps/web） | 妙搭客户端（等效 CSS） |
+| 用途 | Arco 组件 | 备注 |
 |---|---|---|
-| 主/次/幽灵按钮 | `Button` color=primary/default/variant=light | `.button` / `.button-secondary` / `.button-ghost` |
-| 状态徽标 | `Chip` color=success/warning/danger/default | `.badge` + `.status-*` |
-| 信息卡 | `Card` + `CardBody` | `.info-card` |
-| 建议网格 | 布局用 grid，单元用 `Card` 或 `Alert` | `.advice-grid` + `.advice-card` |
-| 折叠区 | `Accordion` | `<details>` + `.fold` |
-| 表单控件 | `Select` / `Input` | 原生控件 + `.field` 样式 |
-| 列表行 | `Table` 或自定义行 | `.req-row` |
-| 空态 | 自定义 + `Skeleton` | `.empty-state` |
+| 主/次按钮 | `Button` type=primary / secondary | 危险操作 `status="danger"` |
+| 状态徽标 | `Tag`（颜色 green/orange/red/gray） | 业务状态胶囊仍用 `.status-chip` |
+| 信息卡 | `Card` | |
+| 折叠区 | `Collapse` | 移动端保持可点击区域 ≥ 44px |
+| 表单控件 | `Select` / `Input` / `Input.TextArea` | `Select` 选项在 portal 中渲染，测试需到 `document` 查找 |
+| 列表 / 数据表 | `Table`，`pagination={false}` | 列表分页沿用游标「加载更多」 |
+| 删除确认 | `Modal` | 默认 `role="dialog"`，不是 `alertdialog` |
+| 空态 / 加载 | 自定义 + `Skeleton` / `Spin` | |
 
 ## 10.3 交互规范
 

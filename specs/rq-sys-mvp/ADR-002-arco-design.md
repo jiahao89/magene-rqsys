@@ -19,12 +19,20 @@
 5. Arco 依赖按需引入并做路由级拆分；全量样式只在必要处引入，逐步替换为组件级样式。
 6. 妙搭 client 继续禁止引入 HeroUI；迁移完成后两侧均只依赖 Arco + Tailwind。
 
-## 实施结果（2026-10-31）
+## 实施结果（2026-10-31，2026-11-01 校正）
 
-- `apps/web`：HeroUI 已移除；Button/Card/Chip/Input/Modal/Collapse/Table/Select 全部由 Arco 渲染，布局类通过 Arco token 桥接；Web 测试 95/95 仍通过。
-- `rq-sys-miaoda/client`：Arco 依赖、React 19 适配器、主题同步与 token 桥接已上线；全部列表/下拉/按钮/帮助页表格改为 Arco 组件，唯一保留的原生表格为九项评分输入网格（分组可编辑，保留 input 语义）。
-- 妙搭生产发布：release `7702750651457850659`（commit `a23c673`）完成，目标环境多页验证通过。
-- 仍保留的工程动作：后续新增页面必须直接使用 Arco 组件，不再引入 HeroUI/Radix 组件。
+- `apps/web`：HeroUI 已移除；Button/Card/Chip/Input/Modal/Collapse/Table/Select 全部由 Arco 渲染，布局类通过 Arco token 桥接。
+- `rq-sys-miaoda/client`：Arco 依赖、React 19 适配器、主题同步与 token 桥接已上线；列表、下拉、按钮、帮助页表格、总览表与规则表均由 Arco 渲染；删除确认由 Radix `AlertDialog` 改为 Arco `Modal`，`rqsys` 目录下不再引用 Radix/shadcn 组件。
+- 仍保留的原生 `<table>`：两端的"九项评分输入网格"（分组、可编辑，需要保留 input 语义）。
+- 妙搭生产发布：release `7702750651457850659`（commit `a23c673`）完成，目标环境多页验证通过。本次校正涉及的总览表、规则表、删除确认改动**尚未发布到目标环境**，只有本地验证。
+- 后续新增页面必须直接使用 Arco 组件，不再引入 HeroUI/Radix 组件。
+
+## 已知限制
+
+- **样式产物**：两端都引入完整的 `arco.css`，与上文"按需引入"的决定不一致。根仓 CSS 约 665 KB（gzip 82 KB），妙搭约 874 KB（gzip 110 KB）。按组件引入 `es/<Component>/style/css` 是后续优化项，尚未实施。
+- **无障碍**：Arco `Modal` 固定 `role="dialog"`，不是 `alertdialog`；删除确认的屏幕阅读器播报语义比迁移前弱。
+- **React 19**：Arco 内部克隆弹层时会触发 `Accessing element.ref was removed in React 19` 控制台警告，来自库本身，不影响功能。
+- **同列多字段**：`Table` 里多列读同一个 `dataIndex` 时必须显式写 `key`，否则 React 报重复 key（总览表的四个阶段列就是这种情况）。
 
 ## 后果
 

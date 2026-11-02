@@ -89,13 +89,11 @@ h1,h2,p { margin: 0; }
 .page-heading h1 { color: #202a3a; font-size: 26px; font-weight: 670; letter-spacing: -.65px; line-height: 1.25; }
 .page-heading p { margin-top: 6px; color: var(--rq-text-soft); font-size: var(--rq-font-caption); }
 .heading-actions { display: flex; gap: 8px; }
-.button { display: inline-flex; min-height: 34px; align-items: center; justify-content: center; gap: 7px; padding: 0 12px; border: 1px solid transparent; border-radius: var(--rq-radius-sm); font-size: var(--rq-font-caption); font-weight: 570; white-space: nowrap; cursor: pointer; transition: background .15s, border-color .15s, transform .12s; }
+/* 布局骨架在这里；圆角、字号、字重和配色由文件末尾的 Arco token 规则统一给出，避免同一属性两处定义。 */
+.button { display: inline-flex; min-height: 34px; align-items: center; justify-content: center; gap: 7px; padding: 0 12px; border: 1px solid transparent; white-space: nowrap; cursor: pointer; transition: background .15s, border-color .15s, transform .12s; }
 .button:active:not(:disabled) { transform: translateY(1px); }
 .button:disabled { cursor: not-allowed; opacity: .55; }
-.button-primary { border-color: #2c61d2; color: white; background: #326add; box-shadow: 0 1px 2px #2359d02a; }
-.button-primary:hover:not(:disabled) { background: #265dcf; }
-.button-secondary { border-color: var(--rq-input-border); color: #495466; background: var(--rq-surface); }
-.button-secondary:hover:not(:disabled) { border-color: #ccd2dc; background: var(--rq-surface-hover); }
+.button-primary { color: white; }
 .button-small { min-height: 29px; padding: 0 9px; font-size: var(--rq-font-caption); }
 .source-banner { display: flex; min-height: 62px; align-items: center; gap: 20px; padding: 10px 15px; border: 1px solid var(--rq-card-border); border-radius: var(--rq-radius-md); background: var(--rq-surface); box-shadow: 0 1px 2px #18274405; }
 .source-leading { display: flex; min-width: 230px; flex: 1; align-items: center; gap: 10px; }

@@ -16,7 +16,7 @@
 - `specs/rq-sys-mvp/openapi.yaml`: API contract source of truth.
 - `specs/rq-sys-mvp/DB-AND-API-DESIGN.md`: data ownership and endpoint rationale.
 - `specs/rq-sys-mvp/TEAMBITION-LIVE-POC.md`: read-only Teambition schema evidence and unresolved mapping items.
-- `design.md`: product design system. D-08 is resolved (HeroUI v3 + Tailwind, see `specs/rq-sys-mvp/ADR-001-ui-component-library.md`). That baseline applies to `apps/web` (the canonical workbench); the Miaoda runtime client (`rq-sys-miaoda/client`) is built with Tailwind + Radix primitives and must not gain HeroUI — mirror behaviour and DTOs, not the component library.
+- `design.md`: product design system. The implementation baseline is Arco Design (see `specs/rq-sys-mvp/ADR-002-arco-design.md`, which supersedes ADR-001 for the component library). Both `apps/web` and `rq-sys-miaoda/client` use `@arco-design/web-react` + Tailwind for layout only; neither may add HeroUI. Mirror behaviour and DTOs between the two, and keep the two stylesheets in step.
 
 ## MVP invariants
 

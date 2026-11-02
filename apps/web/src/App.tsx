@@ -395,10 +395,10 @@ function RequirementsTable({ rows, loading }: { rows: Requirement[]; loading: bo
     columns={[
       { title: "需求", dataIndex: "title", render: (_value, row) => <div className="requirement-title"><span className="req-id">{requirementDisplayId(row)}</span><strong>{row.title}</strong></div> },
       { title: "版本", dataIndex: "sourceVersion", width: 90, render: (_value, row) => <span className="version-label">v{row.sourceVersion}</span> },
-      { title: "拉取", dataIndex: "pipeline", render: (_value, row) => <StagePill stage="pull" value={row.pipeline.pull} /> },
-      { title: "AI 分析", dataIndex: "pipeline", render: (_value, row) => <StagePill stage="analysis" value={row.pipeline.analysis} /> },
-      { title: "负责人", dataIndex: "pipeline", render: (_value, row) => <StagePill stage="owner" value={row.pipeline.owner} /> },
-      { title: "Base 推送", dataIndex: "pipeline", render: (_value, row) => <StagePill stage="push" value={row.pipeline.push} /> },
+      { title: "拉取", key: "pipeline-pull", dataIndex: "pipeline", render: (_value, row) => <StagePill stage="pull" value={row.pipeline.pull} /> },
+      { title: "AI 分析", key: "pipeline-analysis", dataIndex: "pipeline", render: (_value, row) => <StagePill stage="analysis" value={row.pipeline.analysis} /> },
+      { title: "负责人", key: "pipeline-owner", dataIndex: "pipeline", render: (_value, row) => <StagePill stage="owner" value={row.pipeline.owner} /> },
+      { title: "Base 推送", key: "pipeline-push", dataIndex: "pipeline", render: (_value, row) => <StagePill stage="push" value={row.pipeline.push} /> },
     ]}
   />;
 }
