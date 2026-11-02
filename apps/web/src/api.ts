@@ -111,6 +111,15 @@ async function deleteJson<T>(path: string, fetcher: typeof fetch): Promise<T> {
   return parseJsonResponse<T>(await fetcher(path, { method: "DELETE", headers: { accept: "application/json" } }));
 }
 
+async function deleteJsonWithBody<T>(path: string, body: unknown, fetcher: typeof fetch): Promise<T> {
+  const response = await fetcher(path, {
+    method: "DELETE",
+    headers: { accept: "application/json", "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return parseJsonResponse<T>(response);
+}
+
 export function getHealth(fetcher: typeof fetch = fetch): Promise<HealthResponse> {
   return requestJson<HealthResponse>("/api/health", fetcher);
 }
@@ -273,11 +282,17 @@ export interface DuplicateDecisionResult {
 
 /**
  * 提交重复判定（确认重复 / 确认非重复 / 忽略），并由服务端重算处理闸口状态。
- * 撤销判定回 active 走同一端点：decision=confirmed_unique（P1 契约只定义了三个 decision 值）。
+ * 撤销判定走 {@link revokeDuplicateDecision}（DELETE），不要复用本端点：
+ * 用 confirmed_unique 冒充撤销会留下一条"已确认非重复"判定。
  * 409 表示判定版本冲突；400 表示校验失败（如理由为空、主记录无效）。
  */
 export function setDuplicateDecision(id: string, input: DuplicateDecisionInput, fetcher: typeof fetch = fetch): Promise<DuplicateDecisionResult> {
   return putJson<DuplicateDecisionResult>(`/api/requirements/${id}/duplicate-decision`, input, fetcher);
+}
+
+/** 撤销重复判定，需求恢复 active；body 携带乐观并发 token（P1 契约）。 */
+export function revokeDuplicateDecision(id: string, expectedVersion: number, fetcher: typeof fetch = fetch): Promise<DuplicateDecisionResult> {
+  return deleteJsonWithBody<DuplicateDecisionResult>(`/api/requirements/${id}/duplicate-decision`, { expectedVersion }, fetcher);
 }
 
 export async function searchFeishuUsers(query: string, fetcher: typeof fetch = fetch): Promise<FeishuUserCandidate[]> {

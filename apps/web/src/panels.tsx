@@ -13,7 +13,7 @@ import { checkScheduleHealth } from "./schedule";
 import { readRequirementDeepLink } from "./deep-link";
 import { emptyRequirementListFilters, readRequirementListFilters, requirementPoolUrl, type RequirementListFilters } from "./requirements-url";
 import { formatDateTime, requirementDisplayId, requirementOwnerView, requirementSourceFacts, requirementTime, sortRequirementsForAttention } from "./requirement-view";
-import { AUDIT_PAGE_LIMIT, ApiError, addTeamPerson, applyRequirementAiScore, bindTeamPersonFeishu, createSource, deleteTeamPerson, getBatch, getFunctionModules, getRequirement, listAudit, listBatches, listDictionaryVersions, listMappings, listRequirements, listTeamPeople, pushRequirement, renameTeamPerson, saveFunctionModules, retryAnalysis, retrySyncItem, saveRequirementScore, searchFeishuUsers, setDuplicateDecision, setOwner, unbindTeamPersonFeishu, updateSource, type AnalysisVersionSummary, type AuditEvent, type BatchDetail, type BatchSummary, type DictionaryVersion, type DuplicateDecision, type PersonMapping, type PublishStatus, type FeishuUserSelection, type FeishuUserCandidate, type FunctionModuleEntry, type RequirementDetail, type RequirementProcessingState, type RequirementResolution, type RequirementScoreVersion, type RequirementSummary, type ScoringInputs, type SourceConfig, type SourceConfigUpdate, type TeamPerson, clearOwner } from "./api";
+import { AUDIT_PAGE_LIMIT, ApiError, addTeamPerson, applyRequirementAiScore, bindTeamPersonFeishu, createSource, deleteTeamPerson, getBatch, getFunctionModules, getRequirement, listAudit, listBatches, listDictionaryVersions, listMappings, listRequirements, listTeamPeople, pushRequirement, renameTeamPerson, revokeDuplicateDecision, saveFunctionModules, retryAnalysis, retrySyncItem, saveRequirementScore, searchFeishuUsers, setDuplicateDecision, setOwner, unbindTeamPersonFeishu, updateSource, type AnalysisVersionSummary, type AuditEvent, type BatchDetail, type BatchSummary, type DictionaryVersion, type DuplicateDecision, type PersonMapping, type PublishStatus, type FeishuUserSelection, type FeishuUserCandidate, type FunctionModuleEntry, type RequirementDetail, type RequirementProcessingState, type RequirementResolution, type RequirementScoreVersion, type RequirementSummary, type ScoringInputs, type SourceConfig, type SourceConfigUpdate, type TeamPerson, clearOwner } from "./api";
 import type { WorkbenchTab } from "./workbench-routing";
 
 export type LoadState = "loading" | "ready" | "error";
@@ -502,8 +502,12 @@ export function BatchesPanel({ onRefresh }: { onRefresh: () => void }) {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const retryKeys = useRef(new Map<string, string>());
+  // 已生效筛选：加载更多必须沿用「点过筛选」的条件，而不是用户正在编辑的下拉值，
+  // 否则会拿旧游标配新条件，翻页结果错位（与需求池的 appliedFiltersRef 同一规则）。
+  const appliedFiltersRef = useRef({ status: "", since: "", until: "" });
 
   const load = useCallback(async (filter: { status: string; since: string; until: string }, nextCursor: string | null) => {
+    appliedFiltersRef.current = filter;
     setLoadState("loading"); setLoadError(null);
     try {
       const page = await listBatches({ status: filter.status || undefined, since: filter.since ? new Date(filter.since).toISOString() : undefined, until: filter.until ? new Date(filter.until).toISOString() : undefined, limit: 10, ...(nextCursor ? { cursor: nextCursor } : {}) });
@@ -581,7 +585,7 @@ export function BatchesPanel({ onRefresh }: { onRefresh: () => void }) {
           { title: "明细", render: (_value, batch) => <HeroButton className="button button-secondary button-small" onPress={() => void open(batch.id)}>查看</HeroButton> },
         ]}
       />
-      {cursor && <div className="rules-form"><HeroButton className="button button-secondary button-small" onPress={() => void load({ status: statusFilter, since, until }, cursor)} isDisabled={loadState === "loading"}>加载更多</HeroButton></div>}
+      {cursor && <div className="rules-form"><HeroButton className="button button-secondary button-small" onPress={() => void load(appliedFiltersRef.current, cursor)} isDisabled={loadState === "loading"}>加载更多</HeroButton></div>}
     </> : loadState === "loading" ? <SkeletonTableRows rows={5} columns={4} /> : <div className="table-empty"><strong>还没有同步批次</strong><span>启动手动同步后，真实批次记录会显示在这里。</span></div>}
   </section>;
 }
@@ -940,7 +944,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
         onBack={closeDetail}
         onRefresh={refresh}
         onAct={runAction}
-        onSaved={(id) => void open(id)}
+        onSaved={(id) => void open(id, { silent: true })}
       />
     </section>;
   }
@@ -1245,8 +1249,8 @@ type DuplicateDecisionMode = "duplicate" | "confirmed_unique" | "ignored" | "rev
 
 /**
  * 重复判定区块：确认重复（选择主记录）/ 确认非重复 / 忽略，已压制时提供撤销。
- * P1 契约只有 duplicate / ignored / confirmed_unique 三个 decision，
- * 因此「撤销判定回 active」通过 confirmed_unique 提交（处理状态会回到 active）。
+ * 撤销与确认走不同端点：撤销用 DELETE 清除判定（审计 duplicate.revoked），
+ * 不能复用 confirmed_unique，否则会留下一条"已确认非重复"记录。
  */
 function DuplicateDecisionSection({ detail, onSaved }: { detail: RequirementDetail; onSaved: () => void }) {
   const state = requirementProcessingState(detail);
@@ -1275,20 +1279,23 @@ function DuplicateDecisionSection({ detail, onSaved }: { detail: RequirementDeta
 
   const submit = async () => {
     if (!mode) return;
-    const decision: DuplicateDecision = mode === "duplicate" ? "duplicate" : mode === "ignored" ? "ignored" : "confirmed_unique";
+    // null 表示撤销：走 DELETE 清除判定，而不是用 confirmed_unique 落一条新判定。
+    const decision: DuplicateDecision | null = mode === "revoke" ? null : mode === "duplicate" ? "duplicate" : mode === "ignored" ? "ignored" : "confirmed_unique";
     const trimmed = reason.trim();
     if (!trimmed) { setError("请填写判定理由。"); return; }
     if (decision === "duplicate" && !canonicalId) { setError("请选择主记录后再确认重复。"); return; }
     setBusy(true); setError(null); setConflict(false); setNotice(null);
     try {
-      const result = await setDuplicateDecision(detail.id, {
-        decision,
-        ...(decision === "duplicate" ? { canonicalRequirementId: canonicalId } : {}),
-        reason: trimmed,
-        expectedVersion: version,
-      });
+      const result = decision === null
+        ? await revokeDuplicateDecision(detail.id, version)
+        : await setDuplicateDecision(detail.id, {
+            decision,
+            ...(decision === "duplicate" ? { canonicalRequirementId: canonicalId } : {}),
+            reason: trimmed,
+            expectedVersion: version,
+          });
       setMode(null);
-      setNotice(`${mode === "revoke" ? "已撤销判定，需求恢复为活跃" : `重复判定已保存（${processingStateLabels[result.processingState]}）`}，正在刷新详情。`);
+      setNotice(`${decision === null ? "已撤销判定，需求恢复为活跃" : `重复判定已保存（${processingStateLabels[result.processingState]}）`}，正在刷新详情。`);
       onSaved();
     } catch (cause) {
       if (cause instanceof ApiError && cause.status === 409) {

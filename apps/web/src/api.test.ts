@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, getHealth, getOverviewMetrics, listBatches, listRequirements, listSources, retrySyncItem, runSync, searchFeishuUsers, type SourceConfig } from "./api";
+import { ApiError, getHealth, getOverviewMetrics, listBatches, listRequirements, listSources, retrySyncItem, revokeDuplicateDecision, runSync, searchFeishuUsers, type SourceConfig } from "./api";
 
 const source: SourceConfig = {
   id: "source-1", projectName: "Product",
@@ -60,6 +60,18 @@ describe("workbench API client", () => {
     expect(fetcher).toHaveBeenCalledWith("/api/items/item-1/retry", expect.objectContaining({
       method: "POST",
       headers: { accept: "application/json", "content-type": "application/json", "Idempotency-Key": "retry-key-123" },
+    }));
+  });
+
+  it("revokes a duplicate decision with DELETE and the optimistic version instead of writing a new decision", async () => {
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ requirementId: "req-1", processingState: "active", decision: null, version: 0 }));
+    await expect(revokeDuplicateDecision("req-1", 3, fetcher)).resolves.toEqual({
+      requirementId: "req-1", processingState: "active", decision: null, version: 0,
+    });
+    expect(fetcher).toHaveBeenCalledWith("/api/requirements/req-1/duplicate-decision", expect.objectContaining({
+      method: "DELETE",
+      headers: { accept: "application/json", "content-type": "application/json" },
+      body: JSON.stringify({ expectedVersion: 3 }),
     }));
   });
 

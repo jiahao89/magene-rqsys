@@ -251,6 +251,26 @@ describe("BatchesPanel (ticket 16)", () => {
 
     expect(await screen.findByText("失败项已重新入队：批次 batch-2")).toBeInTheDocument();
   });
+
+  it("loads the next page with the applied filters instead of the unsaved dropdown value", async () => {
+    const urls: string[] = [];
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      urls.push(path);
+      if (path.includes("cursor=c2")) return jsonOk({ items: [{ ...batch, id: "batch-2" }], nextCursor: null });
+      return jsonOk({ items: [batch], nextCursor: "c2" });
+    });
+    render(<BatchesPanel onRefresh={() => undefined} />);
+    await screen.findByText("手动 · operator");
+
+    // 只改下拉、不点「筛选」：用户尚未应用的筛选条件不应进入「加载更多」请求。
+    await chooseArcoOption("批次状态筛选", "失败");
+    fireEvent.click(screen.getByRole("button", { name: "加载更多" }));
+
+    await waitFor(() => expect(urls.some((url) => url.includes("cursor=c2"))).toBe(true));
+    const cursorUrl = urls.find((url) => url.includes("cursor=c2"))!;
+    expect(cursorUrl).not.toContain("status=");
+  });
 });
 
 describe("MappingsPanel (ticket 17)", () => {
@@ -527,6 +547,44 @@ describe("RequirementsPanel (ticket 17)", () => {
     expect(screen.getByRole("link", { name: "重复的需求" })).toHaveAttribute("href", "?requirement=req-2");
     expect(screen.getByText("手动指定")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "恢复默认负责人" })).toBeInTheDocument();
+  });
+
+  it("revokes a processed duplicate with DELETE so no stale confirmed decision remains", async () => {
+    const suppressed = detail({
+      processingState: "suppressed_duplicate",
+      resolution: { decision: "duplicate", reviewState: "confirmed", canonicalRequirementId: "req-2", canonicalPlatformRequirementId: "RQ-000002", reason: "同一诉求", version: 3 },
+    });
+    let deleteRequest: { method?: string; body?: unknown } | null = null;
+    let detailCalls = 0;
+    let releaseRefresh: (() => void) | null = null;
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/people") return jsonOk({ items: [] });
+      if (path === "/api/requirements/req-1/duplicate-decision") {
+        deleteRequest = { method: init?.method, body: JSON.parse(String(init?.body)) };
+        return jsonOk({ requirementId: "req-1", processingState: "active", decision: null, version: 0 });
+      }
+      if (path === "/api/requirements/req-1") {
+        detailCalls += 1;
+        if (detailCalls === 1) return jsonOk(suppressed);
+        // 撤销后的刷新先挂起，用来断言详情不会被替换成骨架屏。
+        return new Promise<Response>((resolve) => { releaseRefresh = () => resolve(jsonOk(detail())); });
+      }
+      return jsonOk({ items: [row], nextCursor: null });
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await openFirstRow();
+
+    fireEvent.click(screen.getByRole("button", { name: "撤销判定（恢复活跃）" }));
+    fireEvent.click(screen.getByRole("button", { name: "撤销判定" }));
+
+    await waitFor(() => expect(deleteRequest).toEqual({ method: "DELETE", body: { expectedVersion: 3 } }));
+    expect(await screen.findByText(/已撤销判定，需求恢复为活跃/)).toBeInTheDocument();
+    // 静默刷新：详情标题仍在，不会被骨架屏替换。
+    expect(screen.getByRole("heading", { name: "需要报表" })).toBeInTheDocument();
+    await waitFor(() => expect(releaseRefresh).not.toBeNull());
+    await act(async () => { releaseRefresh!(); });
+    await waitFor(() => expect(screen.queryByRole("button", { name: "撤销判定（恢复活跃）" })).not.toBeInTheDocument());
   });
 
   it("opens the detail page with the owner picker from a pending-owner row action", async () => {

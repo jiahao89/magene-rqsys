@@ -173,8 +173,8 @@ function App() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
-  // 计划预测基于「本次数据读取完成的时刻」，避免渲染期间读取挂钟导致结果不稳定。
-  const [loadedAt, setLoadedAt] = useState(() => new Date());
+  // 调度倒计时基于本地时钟持续走：页面停留期间「下次同步还有 X」不能冻结在数据读取时刻。
+  const [now, setNow] = useState(() => new Date());
 
   const setPage = useCallback((nextPage: Page, requirementFilters?: Partial<RequirementListFilters>) => {
     setPageState(nextPage);
@@ -253,7 +253,6 @@ function App() {
     try {
       await getHealth();
       setHealth("ready");
-      setLoadedAt(new Date());
       const sourceRows = await listSources();
       // 各端点独立容错：个别端点未实现（501）时不拖垮整页
       const [batchPage, requirementPage, metricsResult] = await Promise.allSettled([
@@ -275,6 +274,11 @@ function App() {
   }, []);
 
   useEffect(() => { void loadData(); }, [loadData]);
+  // 30s 足够让「下次计划同步」倒计时保持准确，也不会造成每帧重渲染。
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
   // 局部刷新：批次列表单独拉取。同步提交/运行中轮询只更新批次，需求与统计保持稳定，避免整页刷新。
   const refreshBatches = useCallback(async () => {
     try {
@@ -417,7 +421,7 @@ function App() {
 
               <section className="panel latest-panel"><div className="panel-heading"><div><h2>最近同步</h2><p>最新批次执行情况</p></div><button className="link-button" onClick={() => setPage("SyncRecords")}>全部批次 <ArrowRight size={14} /></button></div>{latestBatch ? <div className="latest-content"><div className="batch-status-line"><span className={`batch-status-icon ${latestBatch.status === "failed" ? "danger" : latestBatch.status === "running" ? "live" : "success"}`}>{latestBatch.status === "running" ? <LoaderCircle size={16} className="spin" /> : latestBatch.status === "failed" ? <CircleAlert size={16} /> : <Check size={16} />}</span><div><strong>{latestBatch.status === "running" ? "同步进行中" : latestBatch.status === "partial_failure" ? "部分完成" : latestBatch.status === "failed" ? "同步失败" : "同步完成"}</strong><span>批次 {latestBatch.id}</span></div><span className="batch-status-tag">{stateLabel(latestBatch.status)}</span></div><div className="latest-counts"><div><strong>{latestBatch.totalCount}</strong><span>总需求</span></div><div><strong>{latestBatch.succeededCount}</strong><span>已完成</span></div><div><strong className={latestBatch.failedCount ? "text-danger" : ""}>{latestBatch.failedCount}</strong><span>失败</span></div></div><div className="latest-timestamp"><Clock3 size={14} />{latestBatch.startedAt ? new Date(latestBatch.startedAt).toLocaleString("zh-CN") : "等待批次时间"}<button className="link-button" onClick={() => setPage("SyncRecords")}>查看详情</button></div></div> : health === "loading" ? <div role="status" aria-busy="true" aria-label="正在加载批次"><SkeletonCards count={1} /></div> : <div className="empty-state compact"><span className="empty-icon"><Clock3 size={20} /></span><strong>还没有同步批次</strong><span>{health === "ready" ? "手动启动同步后，批次进度会显示在这里。" : "连接 API 后可查看实际批次记录。"}</span></div>}</section></div>
 
-            <SchedulerHealthPanel schedule={sources[0]?.schedule} now={loadedAt} loadState={health} onConfigure={() => setPage("Sources")} />
+            <SchedulerHealthPanel schedule={sources[0]?.schedule} now={now} loadState={health} onConfigure={() => setPage("Sources")} />
 
             <section className="panel requirements-panel"><div className="panel-heading requirements-heading"><div><h2>最近处理的需求</h2><p>每个阶段状态分别展示，分析失败不会隐藏已推送结果</p></div><div className="table-actions"><label className="search-box"><Search size={15} /><ArcoInput aria-label="搜索需求" placeholder="在当前已加载需求内搜索…" value={query} onChange={(value: string) => setQuery(value)} /></label><ArcoButton htmlType="button" size="small" onClick={() => setPage("Requirements")}>查看全部</ArcoButton></div></div><RequirementsTable rows={shownRequirements.slice(0, 5)} loading={health === "loading"} /></section>
             <footer className="page-footer"><span>RQ-Sys MVP</span><span><ShieldCheck size={14} />状态由 API 返回；不展示飞书 PM 处理状态</span></footer>
