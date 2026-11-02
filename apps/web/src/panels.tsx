@@ -50,9 +50,11 @@ function StateBanner({ loadError, notice, onCloseNotice }: { loadError: string |
 
 function DeleteConfirmation({ description, disabled, onConfirm, triggerLabel = "删除", heading = "确认删除", confirmLabel = "确认删除" }: { description: string; disabled: boolean; onConfirm: () => void; triggerLabel?: string; heading?: string; confirmLabel?: string }) {
   const [arcoOpen, setArcoOpen] = useState(false);
+  // 弹窗关闭后把焦点还给触发按钮：Arco 的 focus-lock 只在弹窗内循环，关闭后默认回到 body。
+  const triggerRef = useRef<HTMLButtonElement>(null);
   return <>
-    <button className="button button-secondary button-small" aria-disabled={disabled} tabIndex={disabled ? -1 : 0} style={disabled ? { pointerEvents: "none", opacity: 0.6 } : undefined} onClick={() => { if (!disabled) setArcoOpen(true); }}>{triggerLabel}</button>
-    <ConfirmModal visible={arcoOpen} title={heading} description={description} okText={confirmLabel} onOk={() => { setArcoOpen(false); onConfirm(); }} onCancel={() => setArcoOpen(false)} />
+    <button ref={triggerRef} className="button button-secondary button-small" aria-disabled={disabled} tabIndex={disabled ? -1 : 0} style={disabled ? { pointerEvents: "none", opacity: 0.6 } : undefined} onClick={() => { if (!disabled) setArcoOpen(true); }}>{triggerLabel}</button>
+    <ConfirmModal visible={arcoOpen} title={heading} description={description} okText={confirmLabel} onOk={() => { setArcoOpen(false); onConfirm(); }} onCancel={() => setArcoOpen(false)} afterClose={() => triggerRef.current?.focus()} />
   </>;
 }
 

@@ -6,7 +6,7 @@ import { useId, type ReactNode } from "react";
  * 这里在弹窗打开后把 role 改成 `alertdialog`，并用 aria-describedby 关联正文。
  * 只改这一个弹窗节点：按弹窗根元素的 id 精确定位，避免误改页面上别的 Modal。
  */
-export function ConfirmModal({ visible, title, description, okText, cancelText = "取消", onOk, onCancel }: {
+export function ConfirmModal({ visible, title, description, okText, cancelText = "取消", onOk, onCancel, afterClose }: {
   visible: boolean;
   title: string;
   description: ReactNode;
@@ -14,6 +14,7 @@ export function ConfirmModal({ visible, title, description, okText, cancelText =
   cancelText?: string;
   onOk: () => void;
   onCancel: () => void;
+  afterClose?: () => void;
 }) {
   const bodyId = useId();
   const markAlert = () => {
@@ -24,7 +25,7 @@ export function ConfirmModal({ visible, title, description, okText, cancelText =
     dialog.setAttribute("aria-describedby", bodyId);
   };
   return (
-    <Modal visible={visible} title={title} okText={okText} cancelText={cancelText} okButtonProps={{ status: "danger" }} onOk={onOk} onCancel={onCancel} afterOpen={markAlert}>
+    <Modal visible={visible} title={title} okText={okText} cancelText={cancelText} okButtonProps={{ status: "danger" }} onOk={onOk} onCancel={onCancel} afterOpen={markAlert} afterClose={afterClose}>
       <p id={bodyId}>{description}</p>
     </Modal>
   );
