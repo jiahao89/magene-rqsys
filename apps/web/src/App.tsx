@@ -102,6 +102,55 @@ export function SchedulerHealthPanel({ schedule, now, loadState, onConfigure }: 
   </section>;
 }
 
+/**
+ * 「高级操作」下拉：Arco Dropdown 自身不加 aria-haspopup/aria-expanded，也不把焦点移入弹出菜单、
+ * 默认不响应 Esc（Trigger.escToClose=false）。这里做受控包装补齐无障碍行为。
+ */
+function AdvancedActions({ busy, health, onRunSourceOnly }: { busy: boolean; health: string; onRunSourceOnly: () => void }) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const wasOpen = useRef(false);
+  // 打开后把焦点移入第一个可用菜单项；关闭后把焦点还给触发按钮。
+  useEffect(() => {
+    if (open) {
+      wasOpen.current = true;
+      const timer = window.setTimeout(() => {
+        document.querySelector<HTMLElement>(".arco-dropdown-menu-item:not(.arco-dropdown-menu-item-disabled)")?.focus();
+      }, 0);
+      return () => window.clearTimeout(timer);
+    }
+    if (wasOpen.current) {
+      wasOpen.current = false;
+      triggerRef.current?.focus();
+    }
+  }, [open]);
+  // Arco Trigger 的 escToClose 默认关闭；这里显式处理 Esc，同时阻止事件继续冒泡。
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        setOpen(false);
+      }
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
+  }, [open]);
+  return <ArcoDropdown
+    position="br"
+    trigger="click"
+    popupVisible={open}
+    onVisibleChange={setOpen}
+    triggerProps={{ escToClose: true }}
+    droplist={<ArcoMenu onClickMenuItem={(key: string) => { setOpen(false); if (key === "source-only") onRunSourceOnly(); }}>
+      <ArcoMenu.Item key="source-only" disabled={busy || health !== "ready"}><span title="只导入 Teambition 源数据；不触发 AI、负责人匹配、Base 推送或通知">仅同步源数据</span></ArcoMenu.Item>
+    </ArcoMenu>}
+  >
+    <ArcoButton ref={triggerRef} aria-haspopup="menu" aria-expanded={open}>高级操作</ArcoButton>
+  </ArcoDropdown>;
+}
+
 function App() {
   // 通知按钮深链只在启动时读取一次：`?requirement=<requirements.id>`。
   // 缺失/无效时保持默认总览页；命中时直接进入需求池并打开该需求详情。
@@ -312,7 +361,7 @@ function App() {
           {actionError && <div className="alert-banner" role="alert"><CircleAlert size={18} /><div><strong>操作未完成</strong><span>{actionError}</span></div><button className="icon-button" aria-label="关闭提示" onClick={() => setActionError(null)}><X size={15} /></button></div>}
           {notice && <div className="notice-banner" role="status"><Check size={16} /><span>{notice}</span><button className="icon-button" aria-label="关闭提示" onClick={() => setNotice(null)}><X size={15} /></button></div>}
           {page === "Overview" && <>
-            <section className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" />SYNC WORKBENCH</div><h1>工作流总览</h1><p>查看需求同步进度、分析状态与推送健康度。</p></div><div className="heading-actions"><ArcoButton type="secondary" onClick={() => void loadData()} disabled={health === "loading"}><RefreshCw size={15} className={health === "loading" ? "spin" : ""} />刷新</ArcoButton><ArcoDropdown position="br" trigger="click" droplist={<ArcoMenu onClickMenuItem={(key: string) => { if (key === "source-only") void handleRunSync("source_only"); }}><ArcoMenu.Item key="source-only" disabled={busy || health !== "ready"}><span title="只导入 Teambition 源数据；不触发 AI、负责人匹配、Base 推送或通知">仅同步源数据</span></ArcoMenu.Item></ArcoMenu>}><ArcoButton>高级操作</ArcoButton></ArcoDropdown><ArcoButton type="primary" onClick={() => void handleRunSync()} disabled={busy || health !== "ready"}><Play size={15} fill="currentColor" />{busy ? "提交中…" : "立即同步"}</ArcoButton></div></section>
+            <section className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" />SYNC WORKBENCH</div><h1>工作流总览</h1><p>查看需求同步进度、分析状态与推送健康度。</p></div><div className="heading-actions"><ArcoButton type="secondary" onClick={() => void loadData()} disabled={health === "loading"}><RefreshCw size={15} className={health === "loading" ? "spin" : ""} />刷新</ArcoButton><AdvancedActions busy={busy} health={health} onRunSourceOnly={() => void handleRunSync("source_only")} /><ArcoButton type="primary" onClick={() => void handleRunSync()} disabled={busy || health !== "ready"}><Play size={15} fill="currentColor" />{busy ? "提交中…" : "立即同步"}</ArcoButton></div></section>
             <section className="source-banner"><div className="source-leading"><span className="source-icon"><GitBranch size={17} /></span><div><span className="micro-label">当前同步来源</span><strong>{sources[0]?.projectName ?? (health === "loading" ? "正在加载配置…" : health === "error" ? "无法读取来源配置" : "尚未配置数据源")}</strong></div></div><div className="source-meta"><span className={`status-chip ${sources[0]?.enabled ? "status-live" : "status-muted"}`}><span />{sources[0]?.enabled ? "同步已启用" : "未启用"}</span><span className="source-meta-divider" /><span className="subtle-text">Teambition 项目</span></div><button className="text-link" onClick={() => setPage("Sources")}>管理来源 <ArrowRight size={14} /></button></section>
 
             <section className="section-block"><div className="section-heading"><div><h2>同步健康度</h2><p>四个处理阶段独立统计 · 不互相阻塞</p></div><button className="link-button" onClick={() => setPage("Requirements")}>查看需求池 <ArrowRight size={14} /></button></div>
@@ -374,7 +423,7 @@ function App() {
             <footer className="page-footer"><span>RQ-Sys MVP</span><span><ShieldCheck size={14} />状态由 API 返回；不展示飞书 PM 处理状态</span></footer>
           </>}
 
-          {page !== "Overview" && <section className="secondary-page"><div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" />WORKSPACE</div><h1>{pageTitles[page]}</h1><p>{pageDescription(page)}</p></div>{page === "SyncRecords" && <div className="heading-actions"><ArcoDropdown position="br" trigger="click" droplist={<ArcoMenu onClickMenuItem={(key: string) => { if (key === "source-only") void handleRunSync("source_only"); }}><ArcoMenu.Item key="source-only" disabled={busy || health !== "ready"}><span title="只导入 Teambition 源数据；不触发 AI、负责人匹配、Base 推送或通知">仅同步源数据</span></ArcoMenu.Item></ArcoMenu>}><ArcoButton>高级操作</ArcoButton></ArcoDropdown><ArcoButton type="primary" onClick={() => void handleRunSync()} disabled={busy || health !== "ready"}><Play size={15} fill="currentColor" />{busy ? "提交中…" : "立即同步"}</ArcoButton></div>}</div><SecondaryContent page={page} tab={tab} sources={sources} loadState={health} deepLinkRequirementId={deepLinkRequirementId} onNavigate={setPage} onRefresh={() => void loadData()} /></section>}
+          {page !== "Overview" && <section className="secondary-page"><div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" />WORKSPACE</div><h1>{pageTitles[page]}</h1><p>{pageDescription(page)}</p></div>{page === "SyncRecords" && <div className="heading-actions"><AdvancedActions busy={busy} health={health} onRunSourceOnly={() => void handleRunSync("source_only")} /><ArcoButton type="primary" onClick={() => void handleRunSync()} disabled={busy || health !== "ready"}><Play size={15} fill="currentColor" />{busy ? "提交中…" : "立即同步"}</ArcoButton></div>}</div><SecondaryContent page={page} tab={tab} sources={sources} loadState={health} deepLinkRequirementId={deepLinkRequirementId} onNavigate={setPage} onRefresh={() => void loadData()} /></section>}
           </PanelErrorBoundary>
         </div>
       </main>

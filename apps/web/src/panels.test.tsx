@@ -819,18 +819,23 @@ describe("团队字典维护", () => {
 
     const renamedRow = screen.getByText("新成员改名").closest("tr");
     if (!renamedRow) throw new Error("Renamed member row was not rendered");
-    fireEvent.click(within(renamedRow).getByRole("button", { name: "删除" }));
+    const deleteTrigger = within(renamedRow).getByRole("button", { name: "删除" });
+    fireEvent.click(deleteTrigger);
     const personDialog = await screen.findByRole("alertdialog");
     expect(personDialog).toHaveAccessibleName("确认删除");
     expect(personDialog).toHaveAccessibleDescription(/删除|解除/);
     fireEvent.click(within(personDialog).getByRole("button", { name: "取消" }));
     // Arco Modal 有退出动画，DOM 会在下一帧移除，等待关闭完成再断言。
     await waitFor(() => { expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(); expect(screen.queryByRole("dialog")).not.toBeInTheDocument(); });
+    // 取消后焦点回到触发按钮。
+    await waitFor(() => expect(deleteTrigger).toHaveFocus());
     expect(screen.getByText("新成员改名")).toBeInTheDocument();
 
-    fireEvent.click(within(renamedRow).getByRole("button", { name: "删除" }));
+    fireEvent.click(deleteTrigger);
     fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "确认删除" }));
     expect(await screen.findByText("人员已删除，相关模块已解除分配。")).toBeInTheDocument();
+    // 确认删除后触发按钮随行移除，焦点不能被留在已关闭的对话框里。
+    expect(document.activeElement?.closest('[role="alertdialog"]')).toBeNull();
   });
 
   it("binds a roster person to a Feishu account and unbinds it from the people table", async () => {

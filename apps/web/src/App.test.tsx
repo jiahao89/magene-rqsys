@@ -285,9 +285,22 @@ describe("RQ-Sys local workbench", () => {
     expect(screen.getByRole("link", { name: "帮助" })).toHaveAttribute("title", "使用指南");
     // 仅同步源数据属于低频高级操作，收在「高级操作」下拉里，默认不可见。
     const advanced = screen.getByRole("button", { name: "高级操作" });
+    expect(advanced).toHaveAttribute("aria-haspopup", "menu");
+    expect(advanced).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText("仅同步源数据")).not.toBeInTheDocument();
     fireEvent.click(advanced);
-    expect(await screen.findByText("仅同步源数据")).toBeInTheDocument();
+    const advancedItem = await screen.findByRole("menuitem", { name: "仅同步源数据" });
+    await waitFor(() => expect(advanced).toHaveAttribute("aria-expanded", "true"));
+    // 打开后焦点进入菜单，Esc 关闭并把焦点还给触发按钮。
+    await waitFor(() => expect(advancedItem).toHaveFocus());
+    fireEvent.keyDown(document, { key: "Escape", code: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("menuitem", { name: "仅同步源数据" })).not.toBeInTheDocument());
+    await waitFor(() => expect(advanced).toHaveFocus());
+    // 选择菜单项后菜单关闭、焦点归还触发按钮。
+    fireEvent.click(advanced);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "仅同步源数据" }));
+    await waitFor(() => expect(screen.queryByRole("menuitem", { name: "仅同步源数据" })).not.toBeInTheDocument());
+    await waitFor(() => expect(advanced).toHaveFocus());
     // 无功能的工作区下拉、固定头像和原型工作区文案都已移除。
     expect(document.querySelector(".workspace-switch")).toBeNull();
     expect(document.querySelector(".top-avatar")).toBeNull();
