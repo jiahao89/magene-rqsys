@@ -274,8 +274,9 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
         : basePushIdempotencyKey(requirementId, requirement.sourceVersion, latestAnalysis?.analysisVersion ?? 0);
       const outcome = await service.pushRequirement(requirementId, idempotencyKey);
       if (outcome.kind === "error") {
-        // 飞书 4xx/字段/权限类错误是永久错误：抛可分类错误，交给 worker 判终态，不再重试 5 次。
-        if (outcome.errorCode && /^FEISHU_/.test(outcome.errorCode)) {
+        // 只有确定不可重试的失败（字段/权限/4xx/响应无法判定）才判终态；
+        // 网络、429、5xx 等瞬时故障必须交回重试策略，否则一次抖动会把需求永久标记为推送失败。
+        if (!outcome.retryable) {
           const permanent = new Error("Base push failed permanently; fix the Base configuration or data and retry manually.");
           permanent.name = "BasePushPermanentError";
           throw permanent;

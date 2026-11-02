@@ -8,20 +8,9 @@
 // 只读取结构化字段（code / statusCode），不解析 message 文本。
 
 import { AiProviderError } from "../analysis/provider.js";
-import { FeishuApiError } from "../base/transport.js";
+import { FEISHU_PERMANENT_CODES, FeishuApiError } from "../base/transport.js";
 import { TeambitionApiError } from "../adapters/teambition/client.js";
 import type { ErrorClass } from "../retry/policy.js";
-
-/** 飞书 bitable 字段/权限类错误：重试不会改变结果，必须人工修正配置。 */
-const FEISHU_PERMANENT_CODES = new Set([
-  1254045, // FieldNameNotFound
-  1254061, // NumberFieldConvFail
-  1254062, // SelectFieldConvFail
-  1254063, // DateFieldConvFail
-  1254066, // UserFieldConvFail
-  1254303, // 权限不足
-  91403,   // Forbidden
-]);
 
 export function classifyJobError(error: unknown): ErrorClass {
   if (error instanceof AiProviderError) {

@@ -68,6 +68,34 @@ export class FeishuApiError extends Error {
   }
 }
 
+/** 飞书 bitable 字段/权限类错误：重试不会改变结果，必须人工修正配置。 */
+export const FEISHU_PERMANENT_CODES = new Set([
+  1254045, // FieldNameNotFound
+  1254061, // NumberFieldConvFail
+  1254062, // SelectFieldConvFail
+  1254063, // DateFieldConvFail
+  1254066, // UserFieldConvFail
+  1254303, // 权限不足
+  91403,   // Forbidden
+]);
+
+/**
+ * 判断一次 Base 失败能否安全地交给作业重试。
+ * 只有「请求确定没有生效」的瞬时故障才可重试：网络错误、429、5xx、非永久业务码。
+ * 响应内容无效/语义模糊（写入可能已生效）以及 401/403/其它 4xx 不可重试，
+ * 避免重复写 Base，也避免把配置错误伪装成偶发失败。
+ */
+export function isRetryableFeishuFailure(error: FeishuApiError): boolean {
+  if (error.kind === "api" && error.apiCode !== undefined) return !FEISHU_PERMANENT_CODES.has(error.apiCode);
+  if (error.kind === "invalid_response" || error.kind === "ambiguous_response") return false;
+  const status = error.httpStatus;
+  if (status === 401 || status === 403) return false;
+  if (status === 429) return true;
+  if (status !== undefined && status >= 500) return true;
+  if (status !== undefined) return false;
+  return true;
+}
+
 async function feishuHttpFailure(response: Response, action: FeishuAction): Promise<FeishuApiError> {
   let code: number | undefined;
   try {

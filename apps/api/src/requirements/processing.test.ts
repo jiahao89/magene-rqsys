@@ -4,6 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { analysisPiiMarkers, createRequirementWorkflow, type RequirementWorkflowDeps, type TouchedRequirement } from "./processing.js";
+import { FeishuApiError } from "../base/transport.js";
 import { isIntakeComplete } from "../domain/workflow.js";
 import { JobDeferredError } from "../jobs/deferred.js";
 import type { RequirementRecord } from "../domain/persistence.js";
@@ -178,6 +179,36 @@ test("handleBasePushJob drops jobs whose source version no longer matches", asyn
   const workflow = createRequirementWorkflow({ ...h.deps, base: { push: async () => { throw new Error("must not be called"); } } as never });
   await workflow.handleBasePushJob({ payload: { requirementId: "req-1", sourceVersion: 99 } });
   // 未触碰外部 Base、未抛错：版本守卫直接返回。
+});
+
+test("handleBasePushJob only terminalizes non-retryable Base failures", async () => {
+  // 回归：此前任何 FEISHU_* 错误都被当作永久失败，429/5xx/网络抖动也会终态。
+  const failingWorkflow = (error: Error) => {
+    const h = harness();
+    const repositories = {
+      ...h.deps.repositories,
+      basePushes: {
+        async findByIdempotencyKey() { return null; },
+        async latestSuccessful() { return null; },
+        async latest() { return null; },
+        async append(input: Record<string, unknown>) { return { ...input, id: "push-run-1", status: "running", pushVersion: 1, baseRecordId: null, safeErrorCode: null, safeErrorSummary: null, completedAt: null }; },
+        async updateResult() { return null; },
+      },
+      sourceSnapshots: { async getAtVersion() { return null; } },
+    } as unknown as RequirementWorkflowDeps["repositories"];
+    return createRequirementWorkflow({ ...h.deps, repositories, base: { push: async () => { throw error; } } as never });
+  };
+  const job = { payload: { requirementId: "req-1", sourceVersion: 1, analysisVersion: 0 } };
+  for (const transient of [new FeishuApiError("http", "record update", 503), new TypeError("fetch failed")]) {
+    await assert.rejects(
+      () => failingWorkflow(transient).handleBasePushJob(job),
+      (error: unknown) => !(error instanceof Error && error.name === "BasePushPermanentError") && /retry is available/.test(String((error as Error)?.message)),
+    );
+  }
+  await assert.rejects(
+    () => failingWorkflow(new FeishuApiError("api", "record create", undefined, 1254061)).handleBasePushJob(job),
+    (error: unknown) => error instanceof Error && error.name === "BasePushPermanentError",
+  );
 });
 
 test("V02-T14 handleKanoRunJob completes a run via a controlled provider and isolates the main pipeline", async () => {

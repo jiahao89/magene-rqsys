@@ -204,6 +204,38 @@ test("classifies Feishu failures from structured fields rather than Error.messag
   assert.equal(h.savedFailure?.summary, "Feishu record update failed (code 1254043); retry is available.");
 });
 
+test("marks transient Base failures retryable and permanent ones terminal", async () => {
+  // 回归：此前 push-service 把所有 FeishuApiError 都编码成 FEISHU_*，作业层据此一律判永久失败，
+  // 于是 429/5xx/网络抖动都会变成"永久失败"，只能人工重推。
+  const cases: { name: string; error: Error; retryable: boolean }[] = [
+    { name: "HTTP 500", error: new FeishuApiError("http", "record update", 500), retryable: true },
+    { name: "HTTP 503", error: new FeishuApiError("http", "record create", 503), retryable: true },
+    { name: "HTTP 429 限流", error: new FeishuApiError("http", "record update", 429), retryable: true },
+    { name: "网络 TypeError", error: new TypeError("fetch failed"), retryable: true },
+    { name: "非永久业务码", error: new FeishuApiError("api", "record update", undefined, 1254043), retryable: true },
+    { name: "字段类型永久错误", error: new FeishuApiError("api", "record create", undefined, 1254061), retryable: false },
+    { name: "权限不足", error: new FeishuApiError("api", "record create", undefined, 1254303), retryable: false },
+    { name: "401 认证失败", error: new FeishuApiError("http", "token request", 401), retryable: false },
+    { name: "响应语义模糊", error: new FeishuApiError("ambiguous_response", "records filter"), retryable: false },
+  ];
+  for (const item of cases) {
+    const h = makeHarness({ pushError: item.error });
+    const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+    assert.equal(result.kind, "error", item.name);
+    assert.equal(result.kind === "error" ? result.retryable : null, item.retryable, item.name);
+  }
+});
+
+test("a permanent Base failure keeps a non-retry summary and a retryable one still advertises retry", async () => {
+  const permanent = makeHarness({ pushError: new FeishuApiError("api", "record create", undefined, 1254061) });
+  await permanent.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(permanent.savedFailure?.code, "FEISHU_RECORD_CREATE_CODE_1254061");
+  assert.equal(permanent.savedFailure?.summary, "Feishu record create failed (code 1254061).");
+  const transient = makeHarness({ pushError: new FeishuApiError("http", "record update", 503) });
+  await transient.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.match(transient.savedFailure?.summary ?? "", /retry is available/);
+});
+
 test("a bookkeeping failure after a successful Base write is not reported as a push failure", async () => {
   // 回归：Base 行写成功后本地落库失败，早期实现把整次推送记成 failed 并让 worker 重试。
   // Base 行已经存在，重试会在 findByRequirementKey 尚未可见时制造重复行，

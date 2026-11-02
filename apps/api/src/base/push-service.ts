@@ -16,7 +16,7 @@ import { randomUUID } from "node:crypto";
 import type { RequirementQueryRepository, PersonMappingRepository, BasePushRunRepository, AuditEventRepository, AnalysisRunRepository, SourceSnapshotRepository } from "../application/repositories.js";
 import type { AnalysisRunRecord, FeishuIdType, PersonMappingRecord, RequirementRecord, SourceSnapshotRecord } from "../domain/persistence.js";
 import type { FeishuBasePushAdapter, OmittedField } from "./client.js";
-import { BaseKeyConflictError, FeishuApiError } from "./transport.js";
+import { BaseKeyConflictError, FeishuApiError, isRetryableFeishuFailure } from "./transport.js";
 import { normalizeOwnerName } from "../owner/mapping.js";
 import { isIntakeComplete } from "../domain/workflow.js";
 
@@ -85,11 +85,13 @@ export type PushOutcome =
   // reason 区分冲突来源：owner_pending_mapping 是"等映射补齐后应再推"，作业层据此记为可重置的终态，
   // 不能当作已成功（否则 owner-recheck 的同键入队永远命中 succeeded 作业而失效）。
   | { kind: "conflict"; reason: PushConflictReason }
-  | { kind: "error"; errorCode?: string }; // 推送失败（safe error 已记录，可重试）
+  // 推送失败（safe error 已记录）。retryable 表示「交给作业重试是否安全」：
+  // 网络/429/5xx 等瞬时故障为 true；字段/权限/4xx 等永久错误为 false，作业层据此判终态。
+  | { kind: "error"; errorCode?: string; retryable: boolean };
 
 export type PushConflictReason = "intake_incomplete" | "owner_pending_mapping" | "push_in_progress" | "base_key_conflict";
 
-function safeBaseFailure(error: unknown): { code: string; summary: string } {
+function safeBaseFailure(error: unknown): { code: string; summary: string; retryable: boolean } {
   if (error instanceof FeishuApiError) {
     const action = error.action.replace(/\s+/g, "_").toUpperCase();
     const detail = error.apiCode !== undefined
@@ -99,15 +101,17 @@ function safeBaseFailure(error: unknown): { code: string; summary: string } {
         : error.kind.toUpperCase();
     const reason = [error.httpStatus !== undefined ? `HTTP ${error.httpStatus}` : null, error.apiCode !== undefined ? `code ${error.apiCode}` : null]
       .filter(Boolean).join(", ") || error.kind.replaceAll("_", " ");
-    return { code: `FEISHU_${action}_${detail}`, summary: `Feishu ${error.action} failed (${reason}); retry is available.` };
+    const retryable = isRetryableFeishuFailure(error);
+    return { code: `FEISHU_${action}_${detail}`, summary: `Feishu ${error.action} failed (${reason})${retryable ? "; retry is available." : "."}`, retryable };
   }
   if (error instanceof SyntaxError) {
-    return { code: "FEISHU_INVALID_RESPONSE", summary: "Feishu returned an invalid record response; retry is available." };
+    // 响应体无法解析时无法判断写入是否已生效，保持不可重试，避免重复写 Base。
+    return { code: "FEISHU_INVALID_RESPONSE", summary: "Feishu returned an invalid record response.", retryable: false };
   }
   if (error instanceof TypeError) {
-    return { code: "FEISHU_NETWORK_ERROR", summary: "Feishu API connection failed; retry is available." };
+    return { code: "FEISHU_NETWORK_ERROR", summary: "Feishu API connection failed; retry is available.", retryable: true };
   }
-  return { code: "BASE_PUSH_FAILED", summary: "Base update failed; retry is available." };
+  return { code: "BASE_PUSH_FAILED", summary: "Base update failed; retry is available.", retryable: true };
 }
 
 /**
@@ -434,7 +438,7 @@ export function createBasePushService(deps: BasePushServiceDeps) {
       await deps.basePushes.updateResult(run.id, { status: "failed", safeErrorCode: failure.code, safeErrorSummary: failure.summary, completedAt: now().toISOString() });
       await deps.requirements.setPushState(req.id, "failed");
       await deps.audit.append({ id: randomUUID(), actorId: deps.actorId, eventType: "base.push", entityType: "requirement", entityId: req.id, result: "failed", safeDetails: { sourceVersion: req.sourceVersion, errorClass: "base_push_failed" }, occurredAt: now().toISOString() });
-      return { kind: "error", errorCode: failure.code };
+      return { kind: "error", errorCode: failure.code, retryable: failure.retryable };
     }
     // 外部写入已成功，以下只是本地记账。记账失败不能回退成"推送失败"：
     // Base 行已经存在，重推会在 findByRequirementKey 尚未可见时制造重复行，
