@@ -4,7 +4,7 @@
 import { Fragment, useCallback, useEffect, useId, useRef, useState, Component, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { AudienceEditor, BetaPanel, IntakeForm, ManualEditSection } from "./intake-form";
 import { Button as HeroButton, Card as HeroCard, Chip as HeroChip, Input as HeroInput } from "./arco";
-import { Collapse, Select as ArcoSelect, Table as ArcoTable } from "@arco-design/web-react";
+import { Button as ArcoButton, Collapse, Select as ArcoSelect, Table as ArcoTable } from "@arco-design/web-react";
 import { ConfirmModal } from "./confirm-modal";
 import { ArrowLeft, RefreshCw, X } from "lucide-react";
 import { stateLabel } from "./state-labels";
@@ -53,7 +53,7 @@ function DeleteConfirmation({ description, disabled, onConfirm, triggerLabel = "
   // 弹窗关闭后把焦点还给触发按钮：Arco 的 focus-lock 只在弹窗内循环，关闭后默认回到 body。
   const triggerRef = useRef<HTMLButtonElement>(null);
   return <>
-    <button ref={triggerRef} className="button button-secondary button-small" aria-disabled={disabled} tabIndex={disabled ? -1 : 0} style={disabled ? { pointerEvents: "none", opacity: 0.6 } : undefined} onClick={() => { if (!disabled) setArcoOpen(true); }}>{triggerLabel}</button>
+    <ArcoButton htmlType="button" size="small" ref={triggerRef} aria-disabled={disabled} tabIndex={disabled ? -1 : 0} style={disabled ? { pointerEvents: "none", opacity: 0.6 } : undefined} onClick={() => { if (!disabled) setArcoOpen(true); }}>{triggerLabel}</ArcoButton>
     <ConfirmModal visible={arcoOpen} title={heading} description={description} okText={confirmLabel} onOk={() => { setArcoOpen(false); onConfirm(); }} onCancel={() => setArcoOpen(false)} afterClose={() => triggerRef.current?.focus()} />
   </>;
 }
@@ -131,9 +131,9 @@ function FeishuUserPicker({ disabled, onMap, saveLabel = "保存负责人并入�
             placeholder={loading ? "正在读取人员…" : people.length ? "请选择负责人" : "名单为空，请先在「组内人员」绑定飞书账号"}
             options={people.map((person) => ({ label: person.name, value: person.feishuUserId }))}
           />
-          <button className="button button-primary button-small" onClick={() => void save()} disabled={disabled || !selected || saving}>
+          <ArcoButton type="primary" htmlType="button" size="small" onClick={() => void save()} disabled={disabled || !selected || saving}>
             {saving ? "保存中…" : saveLabel}
-          </button>
+          </ArcoButton>
         </div>}
   </div>;
 }
@@ -1005,8 +1005,8 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
       <div className="toolbar-actions">
         {appliedFilterCount > 0 && <span className="toolbar-active-count" role="status">{appliedFilterCount} 个筛选已生效</span>}
         {activeFilterCount > 0 && <button className="link-button" onClick={clearFilters}>清除筛选</button>}
-        <button className="button button-secondary button-small" onClick={refresh}><RefreshCw size={14} />刷新</button>
-        <button className="button button-primary button-small" onClick={applyFilters}>筛选</button>
+        <ArcoButton htmlType="button" size="small" onClick={refresh}><RefreshCw size={14} />刷新</ArcoButton>
+        <ArcoButton type="primary" htmlType="button" size="small" onClick={applyFilters}>筛选</ArcoButton>
       </div>
     </div>
     <p className="status-hint">
@@ -1160,7 +1160,7 @@ export function ScoringPanel({ requirementId, scoring, dimensionInsights = [], c
       <span className="req-source-note">AI 评分 · 服务端算 P</span>
     </div>
     <StateBanner loadError={error} notice={notice} onCloseNotice={() => setNotice(null)} />
-    {!display ? <div className="req-empty-state score-empty-state"><strong>暂无评分</strong><span>AI 分析完成后会生成九项评分；旧分析没有合法评分时也可以手动填写。</span><button className="button button-secondary button-small" onClick={() => setEditing(true)} disabled={busy}>手动填写评分</button></div> : <>
+    {!display ? <div className="req-empty-state score-empty-state"><strong>暂无评分</strong><span>AI 分析完成后会生成九项评分；旧分析没有合法评分时也可以手动填写。</span><ArcoButton htmlType="button" size="small" onClick={() => setEditing(true)} disabled={busy}>手动填写评分</ArcoButton></div> : <>
       <div className="score-overview">
         <div className="score-overview-main">
           <span className="score-kicker">{current ? "当前综合评分" : "AI 建议综合评分"}</span>
@@ -1174,9 +1174,9 @@ export function ScoringPanel({ requirementId, scoring, dimensionInsights = [], c
           <span className="score-formula-result">综合分由服务端按此公式计算，P 按 45 / 25 / 10 阈值判定。</span>
         </div>
         <div className="score-overview-actions">
-          {ai && ai.id !== current?.id && !aiAlreadyApplied && <button className="button button-primary button-small" onClick={() => void applyAi()} disabled={busy}>采用 AI 建议 v{ai.version}</button>}
-          <button className="button button-secondary button-small" onClick={() => setEditing((value) => !value)} disabled={busy}>{editing ? "取消编辑" : "编辑评分"}</button>
-          <button className="button button-secondary button-small" onClick={() => setHistoryOpen((value) => !value)}>{historyOpen ? "收起历史" : `历史（${scoring?.history.length ?? 0}）`}</button>
+          {ai && ai.id !== current?.id && !aiAlreadyApplied && <ArcoButton type="primary" htmlType="button" size="small" onClick={() => void applyAi()} disabled={busy}>采用 AI 建议 v{ai.version}</ArcoButton>}
+          <ArcoButton htmlType="button" size="small" onClick={() => setEditing((value) => !value)} disabled={busy}>{editing ? "取消编辑" : "编辑评分"}</ArcoButton>
+          <ArcoButton htmlType="button" size="small" onClick={() => setHistoryOpen((value) => !value)}>{historyOpen ? "收起历史" : `历史（${scoring?.history.length ?? 0}）`}</ArcoButton>
         </div>
       </div>
       {display.scoreConfidenceReason && <p className="status-hint score-confidence-note">评分置信度理由：{display.scoreConfidenceReason}</p>}
@@ -1213,7 +1213,7 @@ export function ScoringPanel({ requirementId, scoring, dimensionInsights = [], c
       {editing && <div className="rules-form score-edit-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
         <label className="rules-threshold"><span>涉及安全</span><input type="checkbox" checked={safetyFlag} onChange={(event) => setSafetyFlag(event.target.checked)} /></label>
         <label className="field"><span>修改理由（必填）</span><input aria-label="评分修改理由" value={reason} onChange={(event) => setReason(event.target.value)} /></label>
-        <button className="button button-primary button-small" onClick={() => void save()} disabled={busy || reason.trim().length === 0}>{busy ? "保存中…" : "保存评分"}</button>
+        <ArcoButton type="primary" htmlType="button" size="small" onClick={() => void save()} disabled={busy || reason.trim().length === 0}>{busy ? "保存中…" : "保存评分"}</ArcoButton>
       </div>}
       {historyOpen && <ArcoTable<RequirementScoreVersion>
         rowKey="id"
@@ -1316,19 +1316,19 @@ function DuplicateDecisionSection({ detail, onSaved }: { detail: RequirementDeta
       {typeof resolution?.version === "number" && <span className="subtle-text">判定版本 v{resolution.version}</span>}
     </div>
     <p className="detail-note">确认重复或忽略后该需求会被压制：不再进入 AI 分析、Base 推送与通知，记录保留、可随时撤销；撤销判定会把处理状态恢复为活跃。</p>
-    {error && <div className="alert-banner" role="alert"><div><strong>{conflict ? "判定未保存" : "操作未完成"}</strong><span>{error}</span></div>{conflict && <button className="button button-secondary button-small" onClick={onSaved}>刷新详情</button>}</div>}
+    {error && <div className="alert-banner" role="alert"><div><strong>{conflict ? "判定未保存" : "操作未完成"}</strong><span>{error}</span></div>{conflict && <ArcoButton htmlType="button" size="small" onClick={onSaved}>刷新详情</ArcoButton>}</div>}
     {notice && <div className="notice-banner" role="status"><span>{notice}</span></div>}
     {mode === null ? <div className="duplicate-actions">
-      <button className="button button-secondary button-small" onClick={() => openMode("duplicate")} disabled={busy || canonicalOptions.length === 0} title={canonicalOptions.length === 0 ? "没有可选的主记录候选（尚未发现同标题需求）" : "从同标题候选中选择主记录"}>确认重复（选择主记录）</button>
-      <button className="button button-secondary button-small" onClick={() => openMode("confirmed_unique")} disabled={busy}>确认非重复</button>
-      <button className="button button-secondary button-small" onClick={() => openMode("ignored")} disabled={busy}>忽略</button>
-      {suppressed && <button className="button button-primary button-small" onClick={() => openMode("revoke")} disabled={busy}>撤销判定（恢复活跃）</button>}
+      <ArcoButton htmlType="button" size="small" onClick={() => openMode("duplicate")} disabled={busy || canonicalOptions.length === 0} title={canonicalOptions.length === 0 ? "没有可选的主记录候选（尚未发现同标题需求）" : "从同标题候选中选择主记录"}>确认重复（选择主记录）</ArcoButton>
+      <ArcoButton htmlType="button" size="small" onClick={() => openMode("confirmed_unique")} disabled={busy}>确认非重复</ArcoButton>
+      <ArcoButton htmlType="button" size="small" onClick={() => openMode("ignored")} disabled={busy}>忽略</ArcoButton>
+      {suppressed && <ArcoButton type="primary" htmlType="button" size="small" onClick={() => openMode("revoke")} disabled={busy}>撤销判定（恢复活跃）</ArcoButton>}
     </div> : <div className="rules-form duplicate-form">
       <strong style={{ flexBasis: "100%" }}>{heading}</strong>
       {mode === "duplicate" && <label className="field"><span>主记录（同标题候选）</span><ArcoSelect aria-label="主记录候选" value={canonicalId} onChange={(value: string) => setCanonicalId(value)} disabled={busy} style={{ minWidth: 260 }} placeholder="选择主记录" options={canonicalOptions.map((candidate) => ({ label: `${candidate.title}（${candidate.hint}）`, value: candidate.id }))} /></label>}
       <label className="field"><span>判定理由 *</span><input aria-label="判定理由" value={reason} onChange={(event) => setReason(event.target.value)} disabled={busy} placeholder={mode === "ignored" ? "例如：已知重复诉求，无需再处理" : "例如：与主记录描述同一诉求"} /></label>
-      <button className="button button-primary button-small" onClick={() => void submit()} disabled={busy}>{busy ? "提交中…" : submitLabel}</button>
-      <button className="button button-secondary button-small" onClick={() => { setMode(null); setError(null); setConflict(false); }} disabled={busy}>取消</button>
+      <ArcoButton type="primary" htmlType="button" size="small" onClick={() => void submit()} disabled={busy}>{busy ? "提交中…" : submitLabel}</ArcoButton>
+      <ArcoButton htmlType="button" size="small" onClick={() => { setMode(null); setError(null); setConflict(false); }} disabled={busy}>取消</ArcoButton>
     </div>}
   </section>;
 }
@@ -1484,7 +1484,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
     : <div className="req-empty-state">
       <strong>尚未分析</strong>
       <span>{detail.pipeline.analysis === "running" ? "AI 分析正在进行中；完成后刷新查看结果。" : "该需求还没有可用的 AI 分析结果。"}</span>
-      <button className="button button-secondary button-small" onClick={() => void onAct(async () => { await retryAnalysis(detail.id); return "AI 分析重试已入队"; }, detail.id)} disabled={busy || !analysisRetryable} title={analysisRetryable ? "提交 AI 分析" : analysisDisabledReason}>{analysisActionLabel}</button>
+      <ArcoButton htmlType="button" size="small" onClick={() => void onAct(async () => { await retryAnalysis(detail.id); return "AI 分析重试已入队"; }, detail.id)} disabled={busy || !analysisRetryable} title={analysisRetryable ? "提交 AI 分析" : analysisDisabledReason}>{analysisActionLabel}</ArcoButton>
     </div>;
   const aiAnalysisContent = <>{audienceEditor}{aiAnalysisBody}<div className="score-analysis-beta"><BetaPanel requirementId={detail.id} /></div></>;
 
@@ -1525,8 +1525,8 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
         <div className="req-stage-row" role="group" aria-label="处理状态">{stages.map(([stage, state]) => <StageBadge key={stage} stage={stage} state={state} />)}</div>
         <div className="req-summary-actions" role="group" aria-label="需求操作">
           <HeroButton className="button button-primary button-small" aria-expanded={ownerPickerOpen} aria-controls={ownerEditorId} onPress={() => setOwnerPickerOpen((open) => !open)} isDisabled={busy || suppressed}>{suppressed ? "分配 / 变更负责人（已压制）" : "分配 / 变更负责人"}</HeroButton>
-          <button className="button button-secondary button-small" onClick={() => void onAct(async () => { await retryAnalysis(detail.id); return "AI 分析重试已入队"; }, detail.id)} disabled={busy || !analysisRetryable} title={analysisRetryable ? "重新提交 AI 分析" : analysisDisabledReason}>{analysisActionLabel}</button>
-          <button className="button button-secondary button-small" onClick={() => void onAct(async () => { const result = await pushRequirement(detail.id); return result.status === "queued" ? "Base 推送重试已入队" : `推送状态：${result.status}`; }, detail.id)} disabled={busy || !pushRetryable} title={pushRetryable ? "重新提交 Base 推送" : pushDisabledReason}>重试 Base 推送</button>
+          <ArcoButton htmlType="button" size="small" onClick={() => void onAct(async () => { await retryAnalysis(detail.id); return "AI 分析重试已入队"; }, detail.id)} disabled={busy || !analysisRetryable} title={analysisRetryable ? "重新提交 AI 分析" : analysisDisabledReason}>{analysisActionLabel}</ArcoButton>
+          <ArcoButton htmlType="button" size="small" onClick={() => void onAct(async () => { const result = await pushRequirement(detail.id); return result.status === "queued" ? "Base 推送重试已入队" : `推送状态：${result.status}`; }, detail.id)} disabled={busy || !pushRetryable} title={pushRetryable ? "重新提交 Base 推送" : pushDisabledReason}>重试 Base 推送</ArcoButton>
           <HeroButton className="button button-secondary button-small" onPress={onRefresh} isDisabled={busy}><RefreshCw size={14} />刷新</HeroButton>
         </div>
       </div>
@@ -1550,7 +1550,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
         <strong>该需求已被压制（{suppressedLabel}）</strong>
         <span>被压制的需求不会进入 AI 分析、Base 推送与通知；记录仍保留。请在下方「重复处理」撤销判定后恢复为活跃。</span>
       </div>
-      <a className="button button-secondary button-small" href="#req-duplicate-heading">前往撤销判定</a>
+      <ArcoButton href="#req-duplicate-heading" size="small">前往撤销判定</ArcoButton>
     </div>}
 
     <section className="req-section" aria-labelledby="req-l1-heading">
@@ -1807,7 +1807,7 @@ export function MappingsPanel({ onRefresh }: { onRefresh: () => void }) {
             : <HeroButton className="button button-secondary button-small" onPress={() => setTargetId(row.id)}>选择飞书用户</HeroButton> },
       ]}
     /> : loadState === "loading" ? <SkeletonTableRows rows={4} columns={3} /> : <div className="table-empty"><strong>没有待匹配的负责人</strong><span>未匹配需求会出现在这里，等待为每一条需求单独指定负责人。</span></div>}
-    {cursor && <div style={{ display: "flex", justifyContent: "center", padding: "10px 0" }}><button className="button button-secondary button-small" disabled={loadingMore || busy} onClick={() => void load(cursor)}>{loadingMore ? "加载中…" : "加载更多待匹配需求"}</button></div>}
+    {cursor && <div style={{ display: "flex", justifyContent: "center", padding: "10px 0" }}><ArcoButton htmlType="button" size="small" disabled={loadingMore || busy} onClick={() => void load(cursor)}>{loadingMore ? "加载中…" : "加载更多待匹配需求"}</ArcoButton></div>}
     {mappings.length > 0 && <ArcoTable<PersonMapping>
       rowKey="id"
       data={mappings}

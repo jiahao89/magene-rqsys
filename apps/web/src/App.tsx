@@ -3,7 +3,7 @@ import { ArrowDownToLine, ArrowRight, Blocks, Check, CircleAlert, CircleHelp, Cl
 import { ApiError, createPriorityRuleDraft, getHealth, getOverviewMetrics, listPriorityRules, listSources, publishPriorityRule, runSync, type OverviewMetrics, type PriorityRuleVersion, type RequirementSummary, type SourceConfig, type SyncExecutionMode } from "./api";
 import { GuidePanel, ModulesPanel, PanelErrorBoundary, PublishStatusChip, RequirementsPanel, SourcesPanel, SyncRecordsPanel, TeamPanel } from "./panels";
 import { SkeletonBlock, SkeletonCards, SkeletonTableRows } from "./skeleton";
-import { Button as ArcoButton, Input as ArcoInput, Table as ArcoTable } from "@arco-design/web-react";
+import { Button as ArcoButton, Dropdown as ArcoDropdown, Input as ArcoInput, Menu as ArcoMenu, Table as ArcoTable } from "@arco-design/web-react";
 import { readRequirementDeepLink } from "./deep-link";
 import { readWorkbenchPage, readWorkbenchRoute, workbenchUrl, type WorkbenchPage, type WorkbenchTab } from "./workbench-routing";
 import type { RequirementListFilters } from "./requirements-url";
@@ -312,7 +312,7 @@ function App() {
           {actionError && <div className="alert-banner" role="alert"><CircleAlert size={18} /><div><strong>操作未完成</strong><span>{actionError}</span></div><button className="icon-button" aria-label="关闭提示" onClick={() => setActionError(null)}><X size={15} /></button></div>}
           {notice && <div className="notice-banner" role="status"><Check size={16} /><span>{notice}</span><button className="icon-button" aria-label="关闭提示" onClick={() => setNotice(null)}><X size={15} /></button></div>}
           {page === "Overview" && <>
-            <section className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" />SYNC WORKBENCH</div><h1>工作流总览</h1><p>查看需求同步进度、分析状态与推送健康度。</p></div><div className="heading-actions"><ArcoButton type="secondary" onClick={() => void loadData()} disabled={health === "loading"}><RefreshCw size={15} className={health === "loading" ? "spin" : ""} />刷新</ArcoButton><details className="advanced-actions"><summary className="button button-secondary">高级操作</summary><div className="advanced-actions-menu"><button className="button button-secondary button-small" title="只导入 Teambition 源数据；不触发 AI、负责人匹配、Base 推送或通知" onClick={() => void handleRunSync("source_only")} disabled={busy || health !== "ready"}>仅同步源数据</button></div></details><ArcoButton type="primary" onClick={() => void handleRunSync()} disabled={busy || health !== "ready"}><Play size={15} fill="currentColor" />{busy ? "提交中…" : "立即同步"}</ArcoButton></div></section>
+            <section className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" />SYNC WORKBENCH</div><h1>工作流总览</h1><p>查看需求同步进度、分析状态与推送健康度。</p></div><div className="heading-actions"><ArcoButton type="secondary" onClick={() => void loadData()} disabled={health === "loading"}><RefreshCw size={15} className={health === "loading" ? "spin" : ""} />刷新</ArcoButton><ArcoDropdown position="br" trigger="click" droplist={<ArcoMenu onClickMenuItem={(key: string) => { if (key === "source-only") void handleRunSync("source_only"); }}><ArcoMenu.Item key="source-only" disabled={busy || health !== "ready"}><span title="只导入 Teambition 源数据；不触发 AI、负责人匹配、Base 推送或通知">仅同步源数据</span></ArcoMenu.Item></ArcoMenu>}><ArcoButton>高级操作</ArcoButton></ArcoDropdown><ArcoButton type="primary" onClick={() => void handleRunSync()} disabled={busy || health !== "ready"}><Play size={15} fill="currentColor" />{busy ? "提交中…" : "立即同步"}</ArcoButton></div></section>
             <section className="source-banner"><div className="source-leading"><span className="source-icon"><GitBranch size={17} /></span><div><span className="micro-label">当前同步来源</span><strong>{sources[0]?.projectName ?? (health === "loading" ? "正在加载配置…" : health === "error" ? "无法读取来源配置" : "尚未配置数据源")}</strong></div></div><div className="source-meta"><span className={`status-chip ${sources[0]?.enabled ? "status-live" : "status-muted"}`}><span />{sources[0]?.enabled ? "同步已启用" : "未启用"}</span><span className="source-meta-divider" /><span className="subtle-text">Teambition 项目</span></div><button className="text-link" onClick={() => setPage("Sources")}>管理来源 <ArrowRight size={14} /></button></section>
 
             <section className="section-block"><div className="section-heading"><div><h2>同步健康度</h2><p>四个处理阶段独立统计 · 不互相阻塞</p></div><button className="link-button" onClick={() => setPage("Requirements")}>查看需求池 <ArrowRight size={14} /></button></div>
@@ -370,11 +370,11 @@ function App() {
 
             <SchedulerHealthPanel schedule={sources[0]?.schedule} now={loadedAt} loadState={health} onConfigure={() => setPage("Sources")} />
 
-            <section className="panel requirements-panel"><div className="panel-heading requirements-heading"><div><h2>最近处理的需求</h2><p>每个阶段状态分别展示，分析失败不会隐藏已推送结果</p></div><div className="table-actions"><label className="search-box"><Search size={15} /><ArcoInput aria-label="搜索需求" placeholder="在当前已加载需求内搜索…" value={query} onChange={(value: string) => setQuery(value)} /></label><button className="button button-secondary button-small" onClick={() => setPage("Requirements")}>查看全部</button></div></div><RequirementsTable rows={shownRequirements.slice(0, 5)} loading={health === "loading"} /></section>
+            <section className="panel requirements-panel"><div className="panel-heading requirements-heading"><div><h2>最近处理的需求</h2><p>每个阶段状态分别展示，分析失败不会隐藏已推送结果</p></div><div className="table-actions"><label className="search-box"><Search size={15} /><ArcoInput aria-label="搜索需求" placeholder="在当前已加载需求内搜索…" value={query} onChange={(value: string) => setQuery(value)} /></label><ArcoButton htmlType="button" size="small" onClick={() => setPage("Requirements")}>查看全部</ArcoButton></div></div><RequirementsTable rows={shownRequirements.slice(0, 5)} loading={health === "loading"} /></section>
             <footer className="page-footer"><span>RQ-Sys MVP</span><span><ShieldCheck size={14} />状态由 API 返回；不展示飞书 PM 处理状态</span></footer>
           </>}
 
-          {page !== "Overview" && <section className="secondary-page"><div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" />WORKSPACE</div><h1>{pageTitles[page]}</h1><p>{pageDescription(page)}</p></div>{page === "SyncRecords" && <div className="heading-actions"><details className="advanced-actions"><summary className="button button-secondary">高级操作</summary><div className="advanced-actions-menu"><button className="button button-secondary button-small" title="只导入 Teambition 源数据；不触发 AI、负责人匹配、Base 推送或通知" onClick={() => void handleRunSync("source_only")} disabled={busy || health !== "ready"}>仅同步源数据</button></div></details><ArcoButton type="primary" onClick={() => void handleRunSync()} disabled={busy || health !== "ready"}><Play size={15} fill="currentColor" />{busy ? "提交中…" : "立即同步"}</ArcoButton></div>}</div><SecondaryContent page={page} tab={tab} sources={sources} loadState={health} deepLinkRequirementId={deepLinkRequirementId} onNavigate={setPage} onRefresh={() => void loadData()} /></section>}
+          {page !== "Overview" && <section className="secondary-page"><div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" />WORKSPACE</div><h1>{pageTitles[page]}</h1><p>{pageDescription(page)}</p></div>{page === "SyncRecords" && <div className="heading-actions"><ArcoDropdown position="br" trigger="click" droplist={<ArcoMenu onClickMenuItem={(key: string) => { if (key === "source-only") void handleRunSync("source_only"); }}><ArcoMenu.Item key="source-only" disabled={busy || health !== "ready"}><span title="只导入 Teambition 源数据；不触发 AI、负责人匹配、Base 推送或通知">仅同步源数据</span></ArcoMenu.Item></ArcoMenu>}><ArcoButton>高级操作</ArcoButton></ArcoDropdown><ArcoButton type="primary" onClick={() => void handleRunSync()} disabled={busy || health !== "ready"}><Play size={15} fill="currentColor" />{busy ? "提交中…" : "立即同步"}</ArcoButton></div>}</div><SecondaryContent page={page} tab={tab} sources={sources} loadState={health} deepLinkRequirementId={deepLinkRequirementId} onNavigate={setPage} onRefresh={() => void loadData()} /></section>}
           </PanelErrorBoundary>
         </div>
       </main>
@@ -412,7 +412,7 @@ function SecondaryContent({ page, tab, sources, loadState, deepLinkRequirementId
   if (page === "Modules") return <ModulesPanel />;
   if (page === "Rules") return <RulesPanel />;
   if (page === "Guide") return <GuidePanel />;
-  return <section className="panel placeholder-panel"><div className="placeholder-illustration"><span><Users size={23} /></span><i /><i /><i /></div><div className="eyebrow"><span className="eyebrow-line" />API 契约待实现</div><h2>页面未实现</h2><p>该页面尚未提供 API 契约。</p><button className="button button-secondary" onClick={() => onNavigate("Overview" as Page)}>返回总览<ArrowRight size={15} /></button></section>;
+  return <section className="panel placeholder-panel"><div className="placeholder-illustration"><span><Users size={23} /></span><i /><i /><i /></div><div className="eyebrow"><span className="eyebrow-line" />API 契约待实现</div><h2>页面未实现</h2><p>该页面尚未提供 API 契约。</p><ArcoButton htmlType="button" onClick={() => onNavigate("Overview" as Page)}>返回总览<ArrowRight size={15} /></ArcoButton></section>;
 }
 
 // 评分映射输入：每行「维度:取值=分数」；分数来自规则数据本身，UI 不代填公式
@@ -462,10 +462,10 @@ function RulesPanel() {
   });
 
   return <section className="panel requirements-panel">
-      <div className="panel-heading"><div><h2>优先级规则</h2><p>规则版本经历史案例校准；发布前需求优先级保持为空。</p></div><button className="button button-secondary button-small" onClick={() => void load()} disabled={busy}><RefreshCw size={14} />刷新</button></div>
+      <div className="panel-heading"><div><h2>优先级规则</h2><p>规则版本经历史案例校准；发布前需求优先级保持为空。</p></div><ArcoButton htmlType="button" size="small" onClick={() => void load()} disabled={busy}><RefreshCw size={14} />刷新</ArcoButton></div>
       {activeV2 && <div className="notice-banner" role="status"><ShieldCheck size={16} /><span>当前生效的是已确认的 v2 评分公式（umsc_weighted_v2）。v1 四维求和规则不能再发布覆盖它，下方「创建草稿」已暂停。</span></div>}
       {loadError && <div className="alert-banner" role="alert"><CircleAlert size={18} /><div><strong>配置加载失败</strong><span>{loadError}</span></div></div>}
-      {actionError && <div className="alert-banner" role="alert"><CircleAlert size={18} /><div><strong>操作未完成</strong><span>{actionError}</span></div><button className="button button-secondary button-small" onClick={() => setActionError(null)}>关闭</button></div>}
+      {actionError && <div className="alert-banner" role="alert"><CircleAlert size={18} /><div><strong>操作未完成</strong><span>{actionError}</span></div><ArcoButton htmlType="button" size="small" onClick={() => setActionError(null)}>关闭</ArcoButton></div>}
       {notice && <div className="notice-banner" role="status"><Check size={16} /><span>{notice}</span><button className="icon-button" aria-label="关闭提示" onClick={() => setNotice(null)}><X size={15} /></button></div>}
       <details className="advanced-settings">
         <summary>高级设置：创建规则草稿（U/M/S/C 评分映射与校准证据）</summary>
@@ -474,7 +474,7 @@ function RulesPanel() {
           <div className="rules-thresholds">
             {(["p0", "p1", "p2"] as const).map((key) => <label key={key} className="rules-threshold"><span>{key.toUpperCase()} 阈值</span><input type="number" min={0} max={4} step={1} value={thresholds[key]} aria-label={`${key.toUpperCase()} 阈值`} onChange={(event) => setThresholds((prev) => ({ ...prev, [key]: Number(event.target.value) }))} /></label>)}
           </div>
-          <button className="button button-primary button-small" onClick={() => void handleCreateRule()} disabled={busy || activeV2} title={activeV2 ? "v2 公式生效期间不能发布 v1 规则" : undefined}>创建草稿</button>
+          <ArcoButton type="primary" htmlType="button" size="small" onClick={() => void handleCreateRule()} disabled={busy || activeV2} title={activeV2 ? "v2 公式生效期间不能发布 v1 规则" : undefined}>创建草稿</ArcoButton>
         </div>
         <div className="rules-form">
           <label className="field"><span>U/M/S/C 已批准评分映射（每行「维度:取值=分数」；未校准证据的规则不会用于计算）</span><textarea aria-label="评分映射" className="rules-textarea" rows={3} value={scoringInput} onChange={(event) => setScoringInput(event.target.value)} /></label>
@@ -494,7 +494,7 @@ function RulesPanel() {
           { title: "阈值 (P0/P1/P2)", dataIndex: "rules", width: 170, render: (_value, rule) => <span className="mono-cell">{[rule.rules.thresholds?.p0, rule.rules.thresholds?.p1, rule.rules.thresholds?.p2].map((value) => value ?? "—").join(" / ")}</span> },
           { title: "创建时间", dataIndex: "createdAt", width: 180, render: (_value, rule) => new Date(rule.createdAt).toLocaleString("zh-CN") },
           { title: "发布时间", dataIndex: "publishedAt", width: 180, render: (_value, rule) => rule.publishedAt ? new Date(rule.publishedAt).toLocaleString("zh-CN") : "—" },
-          { title: "操作", dataIndex: "id", width: 110, render: (_value, rule) => rule.status === "draft" && <button className="button button-secondary button-small" onClick={() => void withFeedback(async () => { await publishPriorityRule(rule.id); return `规则 v${rule.version} 已发布`; })} disabled={busy || (activeV2 && rule.rules.formulaType !== "umsc_weighted_v2")} title={activeV2 && rule.rules.formulaType !== "umsc_weighted_v2" ? "v2 公式生效期间不能发布 v1 规则" : undefined}>发布</button> },
+          { title: "操作", dataIndex: "id", width: 110, render: (_value, rule) => rule.status === "draft" && <ArcoButton htmlType="button" size="small" onClick={() => void withFeedback(async () => { await publishPriorityRule(rule.id); return `规则 v${rule.version} 已发布`; })} disabled={busy || (activeV2 && rule.rules.formulaType !== "umsc_weighted_v2")} title={activeV2 && rule.rules.formulaType !== "umsc_weighted_v2" ? "v2 公式生效期间不能发布 v1 规则" : undefined}>发布</ArcoButton> },
         ]}
       /> : <div className="table-empty"><strong>{loadError ? "配置不可用" : "还没有规则版本"}</strong><span>{loadError ? "请检查 API 连接后重试。" : "在高级设置中创建阈值规则草稿并发布后，AI 建议才会生成 P0–P3 优先级。"}</span></div>}
   </section>;

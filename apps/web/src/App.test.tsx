@@ -283,8 +283,11 @@ describe("RQ-Sys local workbench", () => {
     // 使用指南不再出现在侧栏（只有顶栏一个入口）。
     expect(screen.queryByRole("link", { name: "使用指南" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "帮助" })).toHaveAttribute("title", "使用指南");
-    // 仅同步源数据属于低频高级操作，默认收起。
-    expect(screen.getByText("仅同步源数据").closest("details")).not.toHaveAttribute("open");
+    // 仅同步源数据属于低频高级操作，收在「高级操作」下拉里，默认不可见。
+    const advanced = screen.getByRole("button", { name: "高级操作" });
+    expect(screen.queryByText("仅同步源数据")).not.toBeInTheDocument();
+    fireEvent.click(advanced);
+    expect(await screen.findByText("仅同步源数据")).toBeInTheDocument();
     // 无功能的工作区下拉、固定头像和原型工作区文案都已移除。
     expect(document.querySelector(".workspace-switch")).toBeNull();
     expect(document.querySelector(".top-avatar")).toBeNull();
