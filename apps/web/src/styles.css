@@ -1438,25 +1438,26 @@ body[arco-theme] h4 { color: var(--color-text-1); font-weight: 500; }
 .field .arco-select.arco-select-error .arco-select-view { border-color: rgb(var(--danger-6)); }
 
 /* ==================== ARCO-10：原生按钮 ArcoButton 化后的盒模型桥接（2026-11-03） ====================
- * 这些类原本写在原生 <button> 上；ArcoButton 自带 .arco-btn 基础样式（size-default 的
- * height/padding/border-radius、secondary 颜色等）会与自定义视觉类叠加。这里只补齐
- * 自定义类未声明的盒模型属性，保留原有视觉与布局；不引入新颜色。
+ * 这些类原本写在原生 <button> 上；ArcoButton 自带 .arco-btn 基础样式与 size-default 的
+ * height/padding/line-height 会覆盖自定义视觉类。这里用双类选择器逐类还原原布局，
+ * 保证控件尺寸/对齐与改造前一致；颜色仍由各自的自定义类提供。
  */
 .arco-btn.icon-button,
-.arco-btn.mobile-menu-button { min-width: 0; height: 30px; padding: 0; line-height: normal; border-radius: var(--rq-radius-sm); }
+.arco-btn.mobile-menu-button { display: inline-grid; place-items: center; min-width: 0; height: 30px; padding: 0; line-height: 1; border-radius: var(--rq-radius-sm); }
 .arco-btn.icon-button > span { display: inline-flex; align-items: center; justify-content: center; }
 .arco-btn.text-link,
-.arco-btn.link-button { height: auto; min-width: 0; line-height: 1.4; }
-.arco-btn.audience-save-button,
-.arco-btn.audience-ai-chip,
-.arco-btn.audience-tag,
-.arco-btn.feishu-user-option,
-.arco-btn.owner-cell-button,
-.arco-btn.req-owner-revert,
-.arco-btn.req-audit-trigger,
-.arco-btn.todo-card { height: auto; min-width: 0; line-height: normal; }
-.arco-btn.todo-card { align-items: flex-start; text-align: left; }
-.arco-btn.sidebar-backdrop { min-width: 0; padding: 0; border: 0; }
+.arco-btn.link-button { height: auto; min-width: 0; padding: 4px 2px; line-height: 1.4; font-size: var(--rq-font-caption); }
+.arco-btn.text-link > span,
+.arco-btn.link-button > span { display: inline-flex; align-items: center; gap: 5px; }
+.arco-btn.audience-save-button { height: auto; min-width: 0; padding: 8px 16px; line-height: 1.4; border: 0; color: #fff; background: var(--rq-brand); font-size: 12.5px; font-weight: 700; }
+.arco-btn.audience-ai-chip { height: auto; min-width: 0; padding: 4px 9px; line-height: 1.4; border: 1px dashed var(--rq-accent-border-soft); border-radius: 999px; color: #35558d; background: #fff; font-size: var(--rq-font-caption); font-weight: 600; }
+.arco-btn.audience-tag { height: auto; min-width: 0; padding: 7px 12px; line-height: 1.4; border: 1px solid var(--rq-border); border-radius: 999px; color: var(--rq-text-muted); background: var(--rq-surface); font-size: 12.5px; font-weight: 600; }
+.arco-btn.feishu-user-option { display: flex; height: auto; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 9px; line-height: 1.4; border: 0; background: transparent; color: var(--rq-foreground); text-align: left; }
+.arco-btn.owner-cell-button { display: inline-flex; height: auto; min-width: 0; align-items: center; gap: 6px; width: 100%; padding: 4px 8px; margin: -4px -8px; line-height: 1.4; border: none; background: transparent; text-align: left; }
+.arco-btn.req-owner-revert { height: auto; min-width: 0; padding: 0; line-height: 1.4; border: 0; background: transparent; color: var(--rq-link-strong); text-decoration: underline; }
+.arco-btn.req-audit-trigger { height: auto; min-width: 0; padding: 0; line-height: 1.4; border: 0; background: transparent; font-size: var(--rq-font-body); font-weight: 600; }
+.arco-btn.todo-card { display: flex; height: auto; min-width: 0; flex-direction: column; align-items: flex-start; justify-content: flex-start; gap: 4px; padding: 16px 18px; line-height: 1.4; background: var(--rq-surface); border-radius: 10px; text-align: left; }
+.arco-btn.sidebar-backdrop { display: block; min-width: 0; padding: 0; border: 0; }
 
 /* ==================== ARCO-09 语义色补充（2026-11-03） ====================
  * 把组件规则里重复出现的字面量收敛为语义 token；取值与原字面量一致，亮/暗视觉不变。
