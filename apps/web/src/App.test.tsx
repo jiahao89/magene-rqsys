@@ -252,12 +252,21 @@ describe("RQ-Sys local workbench", () => {
 
     render(<App />);
     fireEvent.click(await screen.findByRole("link", { name: "团队管理" }));
-    expect(await screen.findByRole("tab", { name: "人员" })).toHaveAttribute("aria-selected", "true");
+    const peopleTab = await screen.findByRole("tab", { name: "人员" });
+    expect(peopleTab).toHaveAttribute("aria-selected", "true");
     expect(await screen.findByText("贾浩")).toBeInTheDocument();
+    // ARCO-06：Arco Tabs 生成 tab→tabpanel 关联，面板通过 aria-controls 指向。
+    const peoplePanelId = peopleTab.getAttribute("aria-controls");
+    expect(peoplePanelId).toBeTruthy();
+    expect(document.getElementById(peoplePanelId as string)?.getAttribute("role")).toBe("tabpanel");
 
     fireEvent.click(screen.getByRole("tab", { name: "负责人映射" }));
     expect(await screen.findByRole("heading", { name: "负责人映射" })).toBeInTheDocument();
     expect(window.location.hash).toBe("#team");
+
+    // 键盘切换：Arco tab 响应 Enter 键
+    fireEvent.keyDown(screen.getByRole("tab", { name: "人员" }), { key: "Enter", keyCode: 13 });
+    await waitFor(() => expect(screen.getByRole("tab", { name: "人员" })).toHaveAttribute("aria-selected", "true"));
   });
 
   it("keeps batches and audit under one sync records page with tabs", async () => {

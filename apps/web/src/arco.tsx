@@ -1,7 +1,7 @@
 import { Button as ArcoButton, Card as ArcoCard, Input as ArcoInput, Tag } from "@arco-design/web-react";
 import type { CSSProperties, KeyboardEvent, ReactNode } from "react";
 
-/** HeroUI 语义到 Arco 的映射层：保留旧调用方 props，内部统一渲染 Arco 组件。 */
+/** Arco 语义包装层：保留旧工作台调用习惯（variant/onPress/isDisabled/size），内部统一渲染 Arco 组件。 */
 type Variant = "primary" | "secondary" | "danger" | "default" | "ghost";
 type InputEventLike = { target: { value: string } };
 
@@ -10,27 +10,20 @@ export function Button(props: {
   className?: string;
   style?: CSSProperties;
   variant?: Variant;
+  size?: "small" | "default" | "large";
   onPress?: () => void;
   isDisabled?: boolean;
-  slot?: string;
   tabIndex?: number;
   type?: "button" | "submit" | "reset";
   title?: string;
   "aria-label"?: string;
   "aria-expanded"?: boolean;
   "aria-controls"?: string;
+  "aria-pressed"?: boolean;
 }) {
-  const { variant = "default", onPress, isDisabled, slot: _slot, type = "button", className, ...rest } = props;
-  // 旧工作台把视觉样式写在 button/button-* 类上；Arco 按钮应使用自身视觉，只保留布局类。
-  const legacy = new Set(["button", "button-primary", "button-secondary", "button-small", "button-danger"]);
-  const classes = (className ?? "").split(/\s+/).filter(Boolean);
-  const kept = classes.filter((token) => !legacy.has(token));
-  const primary = variant === "primary" || classes.includes("button-primary");
-  const secondary = variant === "secondary" || classes.includes("button-secondary");
-  const danger = variant === "danger" || classes.includes("button-danger");
-  const small = classes.includes("button-small");
-  const arcoType = primary ? "primary" : secondary ? "secondary" : "default";
-  return <ArcoButton type={arcoType} status={danger ? "danger" : undefined} size={small ? "small" : undefined} disabled={isDisabled} onClick={onPress} htmlType={type} className={kept.join(" ") || undefined} {...rest} />;
+  const { variant = "default", size, onPress, isDisabled, type = "button", className, ...rest } = props;
+  const arcoType = variant === "primary" ? "primary" : variant === "secondary" ? "secondary" : "default";
+  return <ArcoButton type={arcoType} status={variant === "danger" ? "danger" : undefined} size={size} disabled={isDisabled} onClick={onPress} htmlType={type} className={className} {...rest} />;
 }
 
 const CHIP_COLOR: Record<string, string> = { success: "green", warning: "orange", danger: "red", accent: "arcoblue", default: "gray" };

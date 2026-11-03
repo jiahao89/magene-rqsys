@@ -3,7 +3,7 @@ import { ArrowDownToLine, ArrowRight, Blocks, Check, CircleAlert, CircleHelp, Cl
 import { ApiError, createPriorityRuleDraft, getHealth, getOverviewMetrics, listPriorityRules, listSources, publishPriorityRule, runSync, type OverviewMetrics, type PriorityRuleVersion, type RequirementSummary, type SourceConfig, type SyncExecutionMode } from "./api";
 import { GuidePanel, ModulesPanel, PanelErrorBoundary, PublishStatusChip, RequirementsPanel, SourcesPanel, SyncRecordsPanel, TeamPanel } from "./panels";
 import { SkeletonBlock, SkeletonCards, SkeletonTableRows } from "./skeleton";
-import { Button as ArcoButton, Dropdown as ArcoDropdown, Input as ArcoInput, Menu as ArcoMenu, Table as ArcoTable } from "@arco-design/web-react";
+import { Button as ArcoButton, Dropdown as ArcoDropdown, Input as ArcoInput, InputNumber as ArcoInputNumber, Menu as ArcoMenu, Table as ArcoTable } from "@arco-design/web-react";
 import { readRequirementDeepLink } from "./deep-link";
 import { readWorkbenchPage, readWorkbenchRoute, workbenchUrl, type WorkbenchPage, type WorkbenchTab } from "./workbench-routing";
 import type { RequirementListFilters } from "./requirements-url";
@@ -487,6 +487,8 @@ function RulesPanel() {
   const [thresholds, setThresholds] = useState({ p0: 4, p1: 3, p2: 2 });
   const [scoringInput, setScoringInput] = useState("user:强=3\nuser:中=2\nuser:弱=1\nmarket:强=3\nmarket:中=2\nmarket:弱=1\nbusiness:强=3\nbusiness:中=2\nbusiness:弱=1\ntechnology:强=3\ntechnology:中=2\ntechnology:弱=1");
   const [evidenceInput, setEvidenceInput] = useState("");
+  // ARCO-05：高级设置由 details/summary 改为受控按钮 + 条件渲染。
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   // v2 是已确认的固定公式：生效期间 API 拒绝发布任何 v1 草稿，界面必须提前说明而不是让人点了才收到 409。
   const activeV2 = rules.some((rule) => rule.status === "published" && rule.rules.formulaType === "umsc_weighted_v2");
 
@@ -520,22 +522,24 @@ function RulesPanel() {
       {loadError && <div className="alert-banner" role="alert"><CircleAlert size={18} /><div><strong>配置加载失败</strong><span>{loadError}</span></div></div>}
       {actionError && <div className="alert-banner" role="alert"><CircleAlert size={18} /><div><strong>操作未完成</strong><span>{actionError}</span></div><ArcoButton htmlType="button" size="small" onClick={() => setActionError(null)}>关闭</ArcoButton></div>}
       {notice && <div className="notice-banner" role="status"><Check size={16} /><span>{notice}</span><button className="icon-button" aria-label="关闭提示" onClick={() => setNotice(null)}><X size={15} /></button></div>}
-      <details className="advanced-settings">
-        <summary>高级设置：创建规则草稿（U/M/S/C 评分映射与校准证据）</summary>
+      <div className="advanced-settings">
+        <ArcoButton htmlType="button" size="small" aria-expanded={advancedOpen} aria-controls="rule-advanced-settings" onClick={() => setAdvancedOpen((open) => !open)}>高级设置：创建规则草稿（U/M/S/C 评分映射与校准证据）</ArcoButton>
+        {advancedOpen && <div id="rule-advanced-settings">
         <p className="advanced-settings-hint">这些输入直接决定规则 JSON；未校准证据的规则发布后不会用于优先级计算。</p>
         <div className="rules-form">
           <div className="rules-thresholds">
-            {(["p0", "p1", "p2"] as const).map((key) => <label key={key} className="rules-threshold"><span>{key.toUpperCase()} 阈值</span><input type="number" min={0} max={4} step={1} value={thresholds[key]} aria-label={`${key.toUpperCase()} 阈值`} onChange={(event) => setThresholds((prev) => ({ ...prev, [key]: Number(event.target.value) }))} /></label>)}
+            {(["p0", "p1", "p2"] as const).map((key) => <label key={key} className="rules-threshold"><span>{key.toUpperCase()} 阈值</span><ArcoInputNumber min={0} max={4} step={1} precision={0} value={thresholds[key]} aria-label={`${key.toUpperCase()} 阈值`} onChange={(value: number | undefined) => setThresholds((prev) => ({ ...prev, [key]: typeof value === "number" ? value : 0 }))} /></label>)}
           </div>
           <ArcoButton type="primary" htmlType="button" size="small" onClick={() => void handleCreateRule()} disabled={busy || activeV2} title={activeV2 ? "v2 公式生效期间不能发布 v1 规则" : undefined}>创建草稿</ArcoButton>
         </div>
         <div className="rules-form">
-          <label className="field"><span>U/M/S/C 已批准评分映射（每行「维度:取值=分数」；未校准证据的规则不会用于计算）</span><textarea aria-label="评分映射" className="rules-textarea" rows={3} value={scoringInput} onChange={(event) => setScoringInput(event.target.value)} /></label>
+          <label className="field"><span>U/M/S/C 已批准评分映射（每行「维度:取值=分数」；未校准证据的规则不会用于计算）</span><ArcoInput.TextArea aria-label="评分映射" className="rules-textarea" rows={3} value={scoringInput} onChange={(value: string) => setScoringInput(value)} /></label>
         </div>
         <div className="rules-form">
-          <label className="rules-threshold" style={{ flex: 1 }}><span>校准证据（每行一个 JSON 对象；为空的规则发布后不会用于优先级计算）</span><textarea aria-label="校准证据" className="rules-textarea" rows={2} placeholder='例如：{"cohort":"2026-Q3","cases":12}' value={evidenceInput} onChange={(event) => setEvidenceInput(event.target.value)} /></label>
+          <label className="rules-threshold" style={{ flex: 1 }}><span>校准证据（每行一个 JSON 对象；为空的规则发布后不会用于优先级计算）</span><ArcoInput.TextArea aria-label="校准证据" className="rules-textarea" rows={2} placeholder='例如：{"cohort":"2026-Q3","cases":12}' value={evidenceInput} onChange={(value: string) => setEvidenceInput(value)} /></label>
         </div>
-      </details>
+        </div>}
+      </div>
       {rules.length ? <ArcoTable<PriorityRuleVersion>
         rowKey="id"
         data={rules}

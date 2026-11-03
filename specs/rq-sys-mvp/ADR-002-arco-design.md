@@ -1,8 +1,8 @@
 # ADR-002：工作台与妙搭客户端采用 Arco Design
 
-- **状态**：已实施完成（2026-10-31）
-- **取代**：ADR-001 中关于 `apps/web` UI 组件库的决定（HeroUI v3）；ADR-001 的其余结论（Tailwind 作为布局/工具类、妙搭 client 禁止引入 HeroUI）继续有效
-- **相关计划**：`docs/2026-10-31-arco-design-migration-plan.md`
+- **状态**：部分实施（2026-11-03 校正）：两端 UI 组件库已统一为 Arco；组件覆盖已按 ARCO-01~07 收尾（剩余任务见 `docs/2026-11-03-arco-design-remaining-tasks.md`）；**视觉仍为 RQ 自定义设计语言（目标 A）**；目标 B（完整 Arco token/`ConfigProvider` 主题与视觉改写）未做，登记为后续决策项。
+- **取代**：ADR-001 中关于 `apps/web` UI 组件库的决定（HeroUI v3）；ADR-001 的其余结论（妙搭 client 禁止引入 HeroUI）继续有效
+- **相关计划**：`docs/2026-10-31-arco-design-migration-plan.md`；剩余任务与决策记录：`docs/2026-11-03-arco-design-remaining-tasks.md`
 
 ## 背景
 
@@ -11,8 +11,8 @@
 ## 决定
 
 1. `apps/web` 与 `rq-sys-miaoda/client` 的 UI 组件库统一为 **Arco Design**，逐步移除 HeroUI（根仓）与被替换的 Radix 原语（妙搭 client）。
-2. 视觉采用 **Arco 默认设计语言**；品牌信息通过 Arco token（`ConfigProvider`）与少量 CSS 变量承载，不再保留 HeroUI 主题层。
-3. Tailwind 保留用于布局与工具类，不作为组件库。
+2. 视觉保留 **RQ 自定义设计语言**（现有 `--rq-*` CSS 变量 + `styles.css` 的 Arco token 桥接）；不整体切换 Arco 默认 token/视觉，组件行为与 API 遵循 Arco。入口接入 `ConfigProvider` 的 `zhCN` locale（仅中文本地化，不覆盖品牌视觉 token）。目标 B（完整 Arco token/`ConfigProvider` 主题、视觉改写）需单独设计确认，暂缓并登记为后续决策项。
+3. Tailwind 保留依赖，仅承担 preflight/reset 与 `@theme inline` 主题变量桥；不启用工具类布局（TSX 中 0 工具类，ARCO-14）。
 4. React 19 下必须在应用入口引入 Arco 官方适配器：
    `import "@arco-design/web-react/es/_util/react-19-adapter";`
    否则 `Message/Notification/Modal.confirm` 等命令式 API 会因 React 19 移除 `ReactDOM.render` 而抛错。
@@ -26,6 +26,16 @@
 - 仍保留的原生 `<table>`：两端的"九项评分输入网格"（分组、可编辑，需要保留 input 语义）。
 - 妙搭生产发布：release `7702750651457850659`（commit `a23c673`）完成，目标环境多页验证通过。本次校正涉及的总览表、规则表、删除确认改动**尚未发布到目标环境**，只有本地验证。
 - 后续新增页面必须直接使用 Arco 组件，不再引入 HeroUI/Radix 组件。
+
+## 2026-11-03 决策与豁免（ARCO-08 / ARCO-09 / ARCO-14）
+
+- **ARCO-08 目标选定 A**：两端同一功能使用同一 Arco 组件；视觉继续沿用 RQ 自定义设计语言（`--rq-*` 变量 + `styles.css` 桥接）。理由：当前最大缺口是组件一致性而非视觉体系；目标 B（完整 Arco token/`ConfigProvider` 主题与视觉改写）会改变现有视觉，需单独设计确认，暂缓并登记为后续决策项。
+- **`ConfigProvider` 定位**：入口接入 `ConfigProvider` 的 `zhCN` locale，仅做中文本地化，不使用它覆盖品牌视觉 token——属目标 A 范围内的低风险规范化。
+- **豁免清单**：① 日期筛选 2 处 `datetime-local` 保留原生控件（避免 dayjs/时区回归）；② 评分九项输入网格保留原生 `<table>`（分组可编辑，保留 `input` 语义）；③ `skeleton.tsx` 的 `aria-hidden` 占位 `<table>`；④ `<a>` 导航链接（Arco 无对应 Link 组件）。
+- **ARCO-09 颜色规则**：新增/修改样式禁止直接写十六进制颜色，语义色统一走 `--rq-*` 变量；存量硬编码 hex 收敛列为后续债务，本轮不全量清零。
+- **ARCO-14 Tailwind 定位**：保留依赖，仅承担 preflight/reset 与 `@theme inline` 主题变量桥，TSX 中 0 工具类，不启用工具类布局。
+- **ARCO-10**：`Hero*` 为 `arco.tsx` 导出组件在调用处的历史别名，`button button-*` 为已丢弃的死参数；机械清理按清单进行，状态以 Lead 最终提交为准。
+- **ARCO-12**：按需 Arco 样式防回归检查随脚本落地，运行 `npm run check:arco-styles`（提交后可用）。
 
 ## 已知限制
 

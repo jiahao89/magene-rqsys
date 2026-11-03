@@ -76,6 +76,33 @@ describe("ScoringPanel (V02-S06)", () => {
     expect(body?.alpha).toBe(1);
     expect(body?.reason).toBe("补充证据");
   });
+  it("steps and clears Arco InputNumber score controls", async () => {
+    let body: Record<string, unknown> | undefined;
+    fetchMock.mockImplementation(async (_input, init) => {
+      if (init?.method === "PUT") { body = JSON.parse(String(init.body)) as Record<string, unknown>; return jsonOk({ scoring: scoreVersion }); }
+      return jsonOk({});
+    });
+    render(<ScoringPanel requirementId="req-1" scoring={{ current: scoreVersion, aiSuggestion: null, history: [scoreVersion], formula: { text: "formula", thresholds: { p0: 45, p1: 25, p2: 10 } } }} onSaved={() => undefined} />);
+    fireEvent.click(screen.getByRole("button", { name: "编辑评分" }));
+    const alpha = screen.getByLabelText("评分 alpha") as HTMLInputElement;
+    expect(alpha.value).toBe("0.8");
+    // Arco InputNumber 步进：ArrowUp 按 step=0.1 递增
+    fireEvent.keyDown(alpha, { key: "ArrowUp", keyCode: 38 });
+    await waitFor(() => expect((screen.getByLabelText("评分 alpha") as HTMLInputElement).value).toBe("0.9"));
+    // 清空后不产生 NaN：显示为空或回落为 0 均可接受，受控值保持数字
+    fireEvent.change(alpha, { target: { value: "" } });
+    await waitFor(() => {
+      const cleared = (screen.getByLabelText("评分 alpha") as HTMLInputElement).value;
+      expect(["", "0", "0.0"]).toContain(cleared);
+      expect(Number.isNaN(Number(cleared))).toBe(false);
+    });
+    fireEvent.change(screen.getByLabelText("评分 alpha"), { target: { value: "1.2" } });
+    fireEvent.change(screen.getByLabelText("评分修改理由"), { target: { value: "步进测试" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存评分" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/requirements/req-1/scoring", expect.objectContaining({ method: "PUT" })));
+    expect(body?.alpha).toBe(1.2);
+  });
+
   it("offers manual fill when no score exists", () => {
     render(<ScoringPanel requirementId="req-1" scoring={null} onSaved={() => undefined} />);
     expect(screen.getByText("暂无评分")).toBeInTheDocument();
@@ -159,6 +186,33 @@ describe("SourcesPanel (ticket 16)", () => {
     if (!updateBody) throw new Error("Source update request was not captured");
     expect((updateBody.schedule as { weekdays: number[] }).weekdays).toEqual([1, 3, 5]);
     expect((updateBody.schedule as { weekday: number }).weekday).toBe(1);
+  });
+
+  it("toggles Arco checkboxes for sync and schedule and saves booleans", async () => {
+    let updateBody: Record<string, unknown> | undefined;
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/sources/source-1" && init?.method === "PUT") {
+        updateBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+        return jsonOk(source);
+      }
+      return jsonOk(source);
+    });
+
+    render(<SourcesPanel sources={[source]} loadState="ready" onRefresh={() => undefined} />);
+    const syncEnabled = screen.getByLabelText("启用同步");
+    expect(syncEnabled).toBeChecked();
+
+    fireEvent.click(syncEnabled);
+    expect(syncEnabled).not.toBeChecked();
+    fireEvent.click(syncEnabled);
+    expect(syncEnabled).toBeChecked();
+
+    fireEvent.click(screen.getByLabelText("启用周计划"));
+    fireEvent.click(screen.getByRole("button", { name: "保存更新" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/sources/source-1", expect.objectContaining({ method: "PUT" })));
+    expect(updateBody).toMatchObject({ enabled: true, schedule: expect.objectContaining({ enabled: true }) });
   });
 
   it("updates the existing source and re-reads a consistent result", async () => {
@@ -819,13 +873,23 @@ describe("RequirementsPanel (ticket 17)", () => {
     expect(screen.getByLabelText("搜索需求标题")).toBeInTheDocument();
     expect(screen.getByLabelText("TB负责人筛选")).toBeInTheDocument();
     expect(screen.getByLabelText("同步状态筛选")).toBeInTheDocument();
-    const moreFilters = screen.getByText(/更多筛选/).closest("details");
-    expect(moreFilters).not.toHaveAttribute("open");
-    // 高级筛选控件在 details 内，收起时仍然存在于 DOM
-    expect(within(moreFilters as HTMLElement).getByLabelText("负责人筛选")).toBeInTheDocument();
-    expect(within(moreFilters as HTMLElement).getByLabelText("分析状态筛选")).toBeInTheDocument();
-    expect(within(moreFilters as HTMLElement).getByLabelText("推送状态筛选")).toBeInTheDocument();
-    expect(within(moreFilters as HTMLElement).getByLabelText("批次 ID 筛选")).toBeInTheDocument();
+    // ARCO-05：details/summary 改为受控按钮 + 条件渲染；aria-expanded/aria-controls 表达展开状态。
+    const moreFiltersButton = screen.getByRole("button", { name: /更多筛选/ });
+    expect(moreFiltersButton).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByLabelText("负责人筛选")).not.toBeInTheDocument();
+    fireEvent.click(moreFiltersButton);
+    expect(moreFiltersButton).toHaveAttribute("aria-expanded", "true");
+    expect(moreFiltersButton).toHaveAttribute("aria-controls", "requirement-more-filters");
+    const moreFilters = document.getElementById("requirement-more-filters");
+    if (!moreFilters) throw new Error("更多筛选区域未渲染");
+    expect(within(moreFilters).getByLabelText("负责人筛选")).toBeInTheDocument();
+    expect(within(moreFilters).getByLabelText("分析状态筛选")).toBeInTheDocument();
+    expect(within(moreFilters).getByLabelText("推送状态筛选")).toBeInTheDocument();
+    expect(within(moreFilters).getByLabelText("批次 ID 筛选")).toBeInTheDocument();
+    // 再次点击收起后条件区域卸载
+    fireEvent.click(moreFiltersButton);
+    expect(moreFiltersButton).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByLabelText("批次 ID 筛选")).not.toBeInTheDocument();
 
     await chooseArcoOption("TB负责人筛选", "毕梓浩");
     // 草稿未提交时不显示"已生效"，点「筛选」后才出现
@@ -1031,7 +1095,7 @@ describe("RequirementsPanel intake (V02-T04)", () => {
     render(<RequirementsPanel onRefresh={() => undefined} />);
     fireEvent.click(await screen.findByRole("button", { name: "新建需求" }));
     fireEvent.change(screen.getByLabelText("新建需求标题"), { target: { value: "售后反馈的诉求" } });
-    fireEvent.change(screen.getByLabelText("新建来源渠道"), { target: { value: "售后" } });
+    await chooseArcoOption("新建来源渠道", "售后");
     fireEvent.change(screen.getByLabelText("新建需求描述"), { target: { value: "用户希望导出报表" } });
     fireEvent.click(screen.getByRole("button", { name: "提交并进入分析" }));
     await waitFor(() => expect(posts.length).toBe(1));
@@ -1057,7 +1121,7 @@ describe("RequirementsPanel intake (V02-T04)", () => {
     render(<RequirementsPanel onRefresh={() => undefined} />);
     fireEvent.click(await screen.findByRole("button", { name: "新建需求" }));
     fireEvent.change(screen.getByLabelText("新建需求标题"), { target: { value: "售后反馈的诉求" } });
-    fireEvent.change(screen.getByLabelText("新建来源渠道"), { target: { value: "售后" } });
+    await chooseArcoOption("新建来源渠道", "售后");
     fireEvent.change(screen.getByLabelText("新建需求描述"), { target: { value: "用户希望导出报表" } });
     fireEvent.click(screen.getByRole("button", { name: "提交并进入分析" }));
     expect(await screen.findByRole("alert")).toBeInTheDocument();

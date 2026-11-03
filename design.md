@@ -5,9 +5,7 @@
 
 > 参考 HeroUI v3 与 HeroUI Pro React Web 官方文档整理，作为本项目 Web UI 的设计与实现基线。该文件不是 HeroUI Pro 源码或 Figma 变量的逐项导出；颜色与主题变量以官方当前默认主题为准，尺寸层级和组件使用规则中标为“建议”的部分是为了项目统一而补充的约定。
 
-**范围：** React Web / Tailwind CSS v4 / HeroUI v3 + HeroUI Pro  
-**模式：** Light、Dark
-**视觉基调：** 清爽、克制、内容优先；用中性表面建立层级，以单一强调色表达主要操作。
+**范围：** React Web / Arco Design（`@arco-design/web-react`）/ Tailwind CSS v4（仅 preflight/reset + `@theme inline` 主题桥）；**模式：** Light、Dark；**视觉基调：** 清爽、克制、内容优先，用中性表面建立层级，以单一强调色表达主要操作。
 
 ## 1. 设计原则
 
@@ -431,7 +429,7 @@ HeroUI Pro 模板是可运行的完整应用骨架，适合参考信息架构、
 | | `apps/web` | `rq-sys-miaoda/client`（线上） |
 |---|---|---|
 | UI 组件库 | Arco Design（`@arco-design/web-react`） | Arco Design，与根仓同版本 |
-| Tailwind | ✅ 仅用于布局与工具类 | ✅ 仅用于布局与工具类 |
+| Tailwind | ⚠️ 仅 preflight/reset + `@theme inline` 主题变量桥；TSX 中 0 工具类（ARCO-14，2026-11-03） | 同左 |
 | 不得引入 | HeroUI（已移除） | HeroUI（曾因 `@heroui/styles` 导致云端构建失败） |
 | 主题 | `body[arco-theme]` 与 `html[data-theme]` 同步切换 | 同左（目前无切换入口，暗色样式暂不生效） |
 
@@ -440,7 +438,7 @@ HeroUI Pro 模板是可运行的完整应用骨架，适合参考信息架构、
 - 入口必须引入 React 19 适配器：`import "@arco-design/web-react/es/_util/react-19-adapter";`，否则 `Message` / `Modal.confirm` 等命令式 API 会抛错。
 - 新增页面直接使用 Arco 组件；不再新增 HeroUI 或被替换的 Radix 原语。
 - `Table` 同一张表内每列必须有唯一 `key`（或唯一 `dataIndex`）：多列读同一个字段时（如总览表的四个阶段列都读 `pipeline`）要显式写 `key`，否则 React 会报重复 key。
-- 业务按钮沿用 `button button-primary|secondary` 类时，这些类只负责布局骨架；圆角、字号、配色统一由 `styles.css` 末尾的 Arco token 规则给出，不要在前面再写第二份。
+- 按钮统一使用 Arco `Button`。`HeroButton/HeroInput/HeroChip/HeroCard` 等 `Hero*` 只是 `arco.tsx` 导出组件在调用处的历史别名，不是独立组件；`button button-primary|secondary` 字符串参数已被 `arco.tsx` 丢弃、对应 CSS 已删除，属清理中的死参数（ARCO-10 机械清理，状态以 Lead 最终提交为准）。
 - 「高级操作」等下拉使用受控 `AdvancedActions` 包装：`aria-haspopup="menu"` / `aria-expanded`、打开后焦点进入菜单、Esc 关闭并把焦点还给触发按钮（Arco Dropdown 默认都不提供）。不要直接用裸 `Dropdown` 承载键盘用户必须可达的操作。
 - 两端在**行为与信息层级上必须一致**，像素级允许差异。
 
@@ -452,7 +450,7 @@ HeroUI Pro 模板是可运行的完整应用骨架，适合参考信息架构、
 | 状态徽标 | `Tag`（颜色 green/orange/red/gray） | 业务状态胶囊仍用 `.status-chip` |
 | 信息卡 | `Card` | |
 | 折叠区 | `Collapse` | 移动端保持可点击区域 ≥ 44px |
-| 表单控件 | `Select` / `Input` / `Input.TextArea` | `Select` 选项在 portal 中渲染，测试需到 `document` 查找 |
+| 表单控件 | `Select` / `Input` / `Input.TextArea` / `InputNumber` / `Checkbox` | P0 改造（ARCO-01~04）后两端均已完成；`Select` 选项在 portal 中渲染，测试需到 `document` 查找。以 Lead 最终验收提交为准 |
 | 列表 / 数据表 | `Table`，`pagination={false}` | 列表分页沿用游标「加载更多」 |
 | 删除确认 | 统一用 `ConfirmModal`（`confirm-modal.tsx`） | 内部包装 `Modal`，打开后把 role 改为 `alertdialog` 并关联正文；不要直接用 `Modal` 做破坏性确认 |
 | 空态 / 加载 | 自定义 + `Skeleton` / `Spin` | |
@@ -464,3 +462,16 @@ HeroUI Pro 模板是可运行的完整应用骨架，适合参考信息架构、
 - 主操作在同一屏只出现一个（详情页是「分配/变更负责人」）。
 - 危险操作（删除、清空负责人）需二次确认；普通操作不弹确认。
 - 所有状态徽标**中文呈现、英文原值放 `title`**。
+
+## 10.4 Arco 定位、豁免与样式规则（2026-11-03 决策）
+
+- **目标 A（已选定）**：两端同一功能使用同一 Arco 组件，**视觉继续沿用 RQ 自定义设计语言**（现有 `--rq-*` CSS 变量 + `styles.css` 的 Arco token 桥接）；不整体切换 Arco 默认设计语言。目标 B（完整 Arco token/`ConfigProvider` 主题与视觉改写）会改变现有视觉，需单独设计确认，暂缓并登记为后续决策项。
+- **ConfigProvider locale**：入口接入 `ConfigProvider` 的 `zhCN` locale，仅做中文本地化，**不用它覆盖品牌视觉 token**；主题仍走现有 `body[arco-theme]` / `html[data-theme]` 桥接。
+- **已记录豁免（不得作为分叉理由）**：
+  - 日期筛选 2 处 `datetime-local` 保留原生控件（`dayjs`/时区偏移风险，ARCO-04 已登记豁免）；
+  - 评分九项输入网格保留原生 `<table>`（分组可编辑，需保留 `input` 语义）；
+  - `skeleton.tsx` 的 `aria-hidden` 占位 `<table>`；
+  - `<a>` 导航链接（Arco 无对应 Link 组件）。
+- **ARCO-09 颜色规则**：新增/修改的样式禁止直接写十六进制颜色；危险/成功/警告/链接/焦点等语义色统一走 `--rq-*` 变量。存量硬编码 hex（现状见 `docs/2026-11-03-arco-design-remaining-tasks.md`）收敛列为后续债务，本轮不全量清零。
+- **ARCO-14 Tailwind 定位**：保留依赖，仅承担 preflight/reset 与 `@theme inline` 主题变量桥；TSX 中 0 个工具类，**不启用工具类布局**。第 13 节的 Tailwind/HeroUI 导入顺序样例仅作历史参考，运行时以两端 `styles.css`/`arco-styles.ts` 实际为准。
+- **ARCO-12 防回归**：源码用到的 Arco 组件必须登记在两端 `arco-styles.ts` 的按需样式列表中；检查脚本随 ARCO-12 落地，运行 `npm run check:arco-styles`（提交后可用）。

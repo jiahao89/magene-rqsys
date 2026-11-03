@@ -3,8 +3,8 @@
 // 需求池/批次/审计面板自治加载，支持服务端筛选与游标分页。
 import { Fragment, useCallback, useEffect, useId, useRef, useState, Component, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { AudienceEditor, BetaPanel, IntakeForm, ManualEditSection } from "./intake-form";
-import { Button as HeroButton, Card as HeroCard, Chip as HeroChip, Input as HeroInput } from "./arco";
-import { Button as ArcoButton, Collapse, Select as ArcoSelect, Table as ArcoTable } from "@arco-design/web-react";
+import { Button, Card, Chip, Input } from "./arco";
+import { Button as ArcoButton, Checkbox as ArcoCheckbox, Collapse, Input as ArcoInput, InputNumber as ArcoInputNumber, Select as ArcoSelect, Table as ArcoTable, Tabs as ArcoTabs } from "@arco-design/web-react";
 import { ConfirmModal } from "./confirm-modal";
 import { ArrowLeft, RefreshCw, X } from "lucide-react";
 import { stateLabel } from "./state-labels";
@@ -44,7 +44,7 @@ function errorText(cause: unknown): string {
 function StateBanner({ loadError, notice, onCloseNotice }: { loadError: string | null; notice: string | null; onCloseNotice: () => void }) {
   return <>
     {loadError && <div className="alert-banner" role="alert"><div><strong>请求失败</strong><span>{loadError}</span></div></div>}
-    {notice && <div className="notice-banner" role="status"><span>{notice}</span><HeroButton className="icon-button" aria-label="关闭提示" onPress={onCloseNotice}><X size={15} /></HeroButton></div>}
+    {notice && <div className="notice-banner" role="status"><span>{notice}</span><Button className="icon-button" aria-label="关闭提示" onPress={onCloseNotice}><X size={15} /></Button></div>}
   </>;
 }
 
@@ -212,18 +212,18 @@ export function SourcesPanel({ sources, loadState, onRefresh }: { sources: Sourc
     <div className="panel-heading"><div><h2>连接与数据源</h2><p>填写 Teambition 项目名称；系统会自动匹配项目及需求任务类型。凭据保存在服务端。</p></div>{existing && <span className={`status-chip ${existing.enabled ? "status-live" : "status-muted"}`}><span />{existing.enabled ? "已启用" : "已停用"}</span>}</div>
     <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
     <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
-      <label className="field"><span>Teambition 项目名称</span><HeroInput aria-label="项目名称" value={draft.projectName} onChange={(e) => set("projectName", e.target.value)} /></label>
-      <label className="rules-threshold"><span>启用同步</span><input type="checkbox" aria-label="启用同步" checked={draft.enabled} onChange={(e) => set("enabled", e.target.checked)} /></label>
+      <label className="field"><span>Teambition 项目名称</span><Input aria-label="项目名称" value={draft.projectName} onChange={(e) => set("projectName", e.target.value)} /></label>
+      <div className="rules-threshold"><ArcoCheckbox checked={draft.enabled} onChange={(checked: boolean) => set("enabled", checked)}>启用同步</ArcoCheckbox></div>
     </div>
     <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
       <div className="rules-threshold"><span>周计划（可多选）</span><div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-        {WEEKDAY_LABELS.map((label, index) => { const day = index + 1; return <button key={label} type="button" aria-label={label} aria-pressed={selectedDays.includes(day)} className={`button button-small ${selectedDays.includes(day) ? "button-primary" : "button-secondary"}`} onClick={() => toggleWeekday(day)}>{label}</button>; })}
+        {WEEKDAY_LABELS.map((label, index) => { const day = index + 1; return <ArcoButton key={label} htmlType="button" size="small" type={selectedDays.includes(day) ? "primary" : "secondary"} aria-label={label} aria-pressed={selectedDays.includes(day)} onClick={() => toggleWeekday(day)}>{label}</ArcoButton>; })}
       </div></div>
-      <label className="field field--short"><span>执行时间（HH:MM）</span><HeroInput aria-label="执行时间" placeholder="09:00" value={draft.schedule.time ?? ""} onChange={(e) => set("schedule", { ...draft.schedule, time: e.target.value === "" ? null : e.target.value })} /></label>
-      <label className="field"><span>时区</span><HeroInput aria-label="时区" placeholder="Asia/Shanghai" value={draft.schedule.timezone ?? ""} onChange={(e) => set("schedule", { ...draft.schedule, timezone: e.target.value === "" ? null : e.target.value })} /></label>
-      <label className="rules-threshold"><span>启用周计划</span><input type="checkbox" aria-label="启用周计划" checked={draft.schedule.enabled} onChange={(e) => set("schedule", { ...draft.schedule, enabled: e.target.checked })} /></label>
+      <label className="field field--short"><span>执行时间（HH:MM）</span><Input aria-label="执行时间" placeholder="09:00" value={draft.schedule.time ?? ""} onChange={(e) => set("schedule", { ...draft.schedule, time: e.target.value === "" ? null : e.target.value })} /></label>
+      <label className="field"><span>时区</span><Input aria-label="时区" placeholder="Asia/Shanghai" value={draft.schedule.timezone ?? ""} onChange={(e) => set("schedule", { ...draft.schedule, timezone: e.target.value === "" ? null : e.target.value })} /></label>
+      <div className="rules-threshold"><ArcoCheckbox checked={draft.schedule.enabled} onChange={(checked: boolean) => set("schedule", { ...draft.schedule, enabled: checked })}>启用周计划</ArcoCheckbox></div>
     </div>
-    <div className="rules-form"><HeroButton className="button button-primary button-small" onPress={() => void save()} isDisabled={busy || loadState === "loading"}>{existing ? "保存更新" : "创建来源"}</HeroButton></div>
+    <div className="rules-form"><Button onPress={() => void save()} isDisabled={busy || loadState === "loading"} variant="primary" size="small">{existing ? "保存更新" : "创建来源"}</Button></div>
     {loadState === "ready" && <ConnectionSelfCheck existing={existing} draft={draft} />}
     {loadState === "error" && <div className="table-empty"><strong>无法读取来源配置</strong><span>请检查 API 连接后重试。</span></div>}
     {!existing && loadState === "ready" && <div className="table-empty"><strong>尚未配置数据源</strong><span>填写项目名称并创建后，可手动同步；周计划启用后按设定执行。</span></div>}
@@ -288,8 +288,8 @@ function FeishuAccountBinder({ personName, disabled, onSave, onCancel }: {
 
   return <div className="feishu-account-binder">
     <div className="feishu-user-search">
-      <HeroInput aria-label="搜索飞书账号" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void search(query); }} />
-      <HeroButton className="button button-secondary button-small" onPress={() => void search(query)} isDisabled={disabled || searching}>{searching ? "搜索中…" : "搜索"}</HeroButton>
+      <Input aria-label="搜索飞书账号" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void search(query); }} />
+      <Button onPress={() => void search(query)} isDisabled={disabled || searching} variant="secondary" size="small">{searching ? "搜索中…" : "搜索"}</Button>
     </div>
     {error && <span className="feishu-user-error" role="alert">{error}</span>}
     {!error && !searching && candidates.length === 0 && <span className="feishu-user-hint">没有搜索到匹配的飞书账号。可换一个关键字（例如英文名）再试。</span>}
@@ -300,8 +300,8 @@ function FeishuAccountBinder({ personName, disabled, onSave, onCancel }: {
       </button>)}
     </div>}
     <div className="feishu-account-actions">
-      <HeroButton className="button button-primary button-small" onPress={() => void save()} isDisabled={disabled || saving || !selected}>{saving ? "保存中…" : "保存绑定"}</HeroButton>
-      <HeroButton className="button button-secondary button-small" onPress={onCancel} isDisabled={saving}>取消</HeroButton>
+      <Button onPress={() => void save()} isDisabled={disabled || saving || !selected} variant="primary" size="small">{saving ? "保存中…" : "保存绑定"}</Button>
+      <Button onPress={onCancel} isDisabled={saving} variant="secondary" size="small">取消</Button>
     </div>
     <span className="feishu-user-hint">绑定后该人员会出现在需求详情的负责人下拉中；没有 TB 用户 ID 的需求会按姓名唯一匹配到此人。</span>
   </div>;
@@ -349,16 +349,16 @@ export function PeoplePanel() {
   };
 
   return <section className="panel requirements-panel">
-    <div className="panel-heading"><div><h2>组内人员</h2><p>用于按 TB 负责人筛选需求、维护功能模块责任人；绑定飞书账号后，该人员才会出现在需求的负责人下拉中。</p></div><HeroButton className="button button-secondary button-small" onPress={() => void load()} isDisabled={busy}><RefreshCw size={14} />刷新</HeroButton></div>
+    <div className="panel-heading"><div><h2>组内人员</h2><p>用于按 TB 负责人筛选需求、维护功能模块责任人；绑定飞书账号后，该人员才会出现在需求的负责人下拉中。</p></div><Button onPress={() => void load()} isDisabled={busy} variant="secondary" size="small"><RefreshCw size={14} />刷新</Button></div>
     <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
-    <div className="rules-form" style={{ alignItems: "flex-end" }}><label className="field" style={{ flex: 1 }}><span>人员姓名</span><HeroInput aria-label="新增人员姓名" value={draft} onChange={(event) => setDraft(event.target.value)} /></label><HeroButton className="button button-primary button-small" onPress={() => void submit(() => addTeamPerson(draft), "人员已添加。")} isDisabled={busy || !draft.trim()}>新增人员</HeroButton></div>
+    <div className="rules-form" style={{ alignItems: "flex-end" }}><label className="field" style={{ flex: 1 }}><span>人员姓名</span><Input aria-label="新增人员姓名" value={draft} onChange={(event) => setDraft(event.target.value)} /></label><Button onPress={() => void submit(() => addTeamPerson(draft), "人员已添加。")} isDisabled={busy || !draft.trim()} variant="primary" size="small">新增人员</Button></div>
     {people.length ? <ArcoTable<TeamPerson>
       rowKey="name"
       data={people}
       pagination={false}
       border={false}
       columns={[
-        { title: "人员", dataIndex: "name", width: 200, render: (_value, person) => editing === person.name ? <HeroInput aria-label="编辑人员姓名" value={editDraft} onChange={(event) => setEditDraft(event.target.value)} /> : person.name },
+        { title: "人员", dataIndex: "name", width: 200, render: (_value, person) => editing === person.name ? <Input aria-label="编辑人员姓名" value={editDraft} onChange={(event) => setEditDraft(event.target.value)} /> : person.name },
         { title: "飞书账号", dataIndex: "feishuUserId", render: (_value, person) => bindingName === person.name
             ? <FeishuAccountBinder personName={person.name} disabled={busy} onSave={(selection) => bindFeishu(person.name, selection)} onCancel={() => setBindingName(null)} />
             : <div className="person-binding">
@@ -369,11 +369,11 @@ export function PeoplePanel() {
                     : <span className="subtle-text">未绑定</span>}
                 {person.bindingConflict
                   ? <span className="feishu-user-hint">同一姓名对应多个飞书账号，请先在「团队管理 → 负责人映射」核对，或解除绑定后重新绑定。</span>
-                  : <HeroButton className="button button-secondary button-small" onPress={() => { setBindingName(person.name); setEditing(null); }} isDisabled={busy || editing === person.name}>{person.feishuUserId ? "重新绑定" : "绑定飞书账号"}</HeroButton>}
+                  : <Button onPress={() => { setBindingName(person.name); setEditing(null); }} isDisabled={busy || editing === person.name} variant="secondary" size="small">{person.feishuUserId ? "重新绑定" : "绑定飞书账号"}</Button>}
               </div> },
         { title: "操作", width: 280, render: (_value, person) => editing === person.name
-            ? <div className="row-actions"><HeroButton className="button button-primary button-small" onPress={() => void submit(() => renameTeamPerson(person.name, editDraft), "人员及模块责任关系已更新。")} isDisabled={busy || !editDraft.trim()}>保存</HeroButton><HeroButton className="button button-secondary button-small" onPress={() => setEditing(null)} isDisabled={busy}>取消</HeroButton></div>
-            : <div className="row-actions"><HeroButton className="button button-secondary button-small" onPress={() => { setEditing(person.name); setEditDraft(person.name); setBindingName(null); }} isDisabled={busy}>编辑</HeroButton>{(person.feishuUserId || person.bindingConflict) && <DeleteConfirmation disabled={busy} triggerLabel="解除绑定" heading="解除飞书绑定" confirmLabel="确认解除" description={`解除「${person.name}」的飞书账号绑定？该人员名下需求的负责人映射将被清除，后续推送会停在待匹配负责人；已推送的 Base 记录不会被清除。`} onConfirm={() => void unbindFeishu(person.name)} />}<DeleteConfirmation disabled={busy} description={`删除人员“${person.name}”？相关功能模块将变为未分配，飞书账号绑定同时解除。`} onConfirm={() => void submit(() => deleteTeamPerson(person.name), "人员已删除，相关模块已解除分配。")} /></div> },
+            ? <div className="row-actions"><Button onPress={() => void submit(() => renameTeamPerson(person.name, editDraft), "人员及模块责任关系已更新。")} isDisabled={busy || !editDraft.trim()} variant="primary" size="small">保存</Button><Button onPress={() => setEditing(null)} isDisabled={busy} variant="secondary" size="small">取消</Button></div>
+            : <div className="row-actions"><Button onPress={() => { setEditing(person.name); setEditDraft(person.name); setBindingName(null); }} isDisabled={busy} variant="secondary" size="small">编辑</Button>{(person.feishuUserId || person.bindingConflict) && <DeleteConfirmation disabled={busy} triggerLabel="解除绑定" heading="解除飞书绑定" confirmLabel="确认解除" description={`解除「${person.name}」的飞书账号绑定？该人员名下需求的负责人映射将被清除，后续推送会停在待匹配负责人；已推送的 Base 记录不会被清除。`} onConfirm={() => void unbindFeishu(person.name)} />}<DeleteConfirmation disabled={busy} description={`删除人员“${person.name}”？相关功能模块将变为未分配，飞书账号绑定同时解除。`} onConfirm={() => void submit(() => deleteTeamPerson(person.name), "人员已删除，相关模块已解除分配。")} /></div> },
       ]}
     /> : loadState === "loading" ? <SkeletonTableRows rows={4} columns={3} /> : <div className="table-empty"><strong>{loadError ? "人员读取失败" : "暂无人员"}</strong><span>{loadError ? "检查 API 连接后刷新。" : "填写姓名并新增；数据源配置完成后可维护组内名单并绑定飞书账号。"}</span></div>}
   </section>;
@@ -449,10 +449,10 @@ export function ModulesPanel() {
   };
 
   return <section className="panel requirements-panel">
-    <div className="panel-heading"><div><h2>功能模块</h2><p>AI 仅从已发布的模块名称中选择；无法匹配时输出“无法识别”。每次保存生成一个新字典版本，且至少保留一个模块。</p></div><HeroButton className="button button-secondary button-small" onPress={() => void load()} isDisabled={busy}><RefreshCw size={14} />刷新</HeroButton></div>
+    <div className="panel-heading"><div><h2>功能模块</h2><p>AI 仅从已发布的模块名称中选择；无法匹配时输出“无法识别”。每次保存生成一个新字典版本，且至少保留一个模块。</p></div><Button onPress={() => void load()} isDisabled={busy} variant="secondary" size="small"><RefreshCw size={14} />刷新</Button></div>
     <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
     {formError && <div className="field-error" role="alert">{formError}</div>}
-    <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}><label className="field" style={{ flex: 1 }}><span>功能模块</span><HeroInput aria-label="功能模块名称" value={name} onChange={(event) => setName(event.target.value)} /></label><label className="field"><span>人员</span><ArcoSelect aria-label="模块责任人员" value={personName} onChange={(value: string) => setPersonName(value)} style={{ minWidth: 150 }} options={[{ label: "未分配", value: "" }, ...people.filter((person) => person.name).map((person) => ({ label: person.name!, value: person.name! }))]} /></label><HeroButton className="button button-primary button-small" onPress={submit} isDisabled={busy}>新增模块</HeroButton></div>
+    <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}><label className="field" style={{ flex: 1 }}><span>功能模块</span><Input aria-label="功能模块名称" value={name} onChange={(event) => setName(event.target.value)} /></label><label className="field"><span>人员</span><ArcoSelect aria-label="模块责任人员" value={personName} onChange={(value: string) => setPersonName(value)} style={{ minWidth: 150 }} options={[{ label: "未分配", value: "" }, ...people.filter((person) => person.name).map((person) => ({ label: person.name!, value: person.name! }))]} /></label><Button onPress={submit} isDisabled={busy} variant="primary" size="small">新增模块</Button></div>
     {items.length ? <div tabIndex={0} role="region" aria-label="功能模块列表"><ArcoTable<FunctionModuleEntry>
       rowKey="name"
       data={items}
@@ -460,11 +460,11 @@ export function ModulesPanel() {
       border={false}
       rowClassName={(item: FunctionModuleEntry) => editing === item.name ? "module-row is-editing" : "module-row"}
       columns={[
-        { title: "功能模块", dataIndex: "name", render: (_value, item) => editing === item.name ? <input className="inline-input" aria-label="编辑功能模块名称" value={editName} onChange={(event) => setEditName(event.target.value)} autoFocus /> : item.name },
+        { title: "功能模块", dataIndex: "name", render: (_value, item) => editing === item.name ? <ArcoInput className="inline-input" aria-label="编辑功能模块名称" value={editName} onChange={(value: string) => setEditName(value)} autoFocus /> : item.name },
         { title: "人员", dataIndex: "personName", width: 220, render: (_value, item) => editing === item.name ? <ArcoSelect className="inline-input" aria-label="编辑模块责任人员" value={editPerson} onChange={(value: string) => setEditPerson(value)} style={{ minWidth: 150 }} options={[{ label: "未分配", value: "" }, ...people.filter((person) => person.name).map((person) => ({ label: person.name!, value: person.name! }))]} /> : (item.personName ?? "未分配") },
         { title: "操作", width: 200, render: (_value, item) => editing === item.name
-            ? <div className="row-actions"><HeroButton className="button button-primary button-small" onPress={submitEdit} isDisabled={busy}>保存</HeroButton><HeroButton className="button button-secondary button-small" onPress={() => { setEditing(null); setEditName(""); setEditPerson(""); }} isDisabled={busy}>取消</HeroButton></div>
-            : <div className="row-actions"><HeroButton className="button button-secondary button-small" onPress={() => beginEdit(item)} isDisabled={busy}>编辑</HeroButton><DeleteConfirmation disabled={busy || items.length === 1} description={`删除功能模块“${item.name}”？`} onConfirm={() => void save(items.filter((candidate) => candidate.name !== item.name))} /></div> },
+            ? <div className="row-actions"><Button onPress={submitEdit} isDisabled={busy} variant="primary" size="small">保存</Button><Button onPress={() => { setEditing(null); setEditName(""); setEditPerson(""); }} isDisabled={busy} variant="secondary" size="small">取消</Button></div>
+            : <div className="row-actions"><Button onPress={() => beginEdit(item)} isDisabled={busy} variant="secondary" size="small">编辑</Button><DeleteConfirmation disabled={busy || items.length === 1} description={`删除功能模块“${item.name}”？`} onConfirm={() => void save(items.filter((candidate) => candidate.name !== item.name))} /></div> },
       ]}
     /></div> : loadState === "loading" ? <SkeletonTableRows rows={4} columns={3} /> : <div className="table-empty"><strong>{loadError ? "模块字典读取失败" : "暂无功能模块"}</strong><span>{loadError ? "检查 API 连接后刷新。" : "新增模块后，AI 分析会使用最新的已发布字典。"}</span></div>}
     <div className="subsection">
@@ -545,14 +545,14 @@ export function BatchesPanel({ onRefresh }: { onRefresh: () => void }) {
   return <section className="panel requirements-panel">
     <div className="panel-heading"><div><h2>同步批次历史</h2><p>触发者、批次时间与逐条结果由 API 提供；点击批次查看明细。</p></div><div style={{ display: "flex", gap: 8 }}>
       <ArcoSelect aria-label="批次状态筛选" value={statusFilter} onChange={(value: string) => setStatusFilter(value)} style={{ minWidth: 120 }} options={[{ label: "全部状态", value: "" }, { label: "进行中", value: "running" }, { label: "已完成", value: "succeeded" }, { label: "部分失败", value: "partial_failure" }, { label: "失败", value: "failed" }]} />
-      <label className="field"><span>开始时间</span><HeroInput type="datetime-local" aria-label="批次开始时间" value={since} onChange={(e) => setSince(e.target.value)} /></label>
-      <label className="field"><span>结束时间</span><HeroInput type="datetime-local" aria-label="批次结束时间" value={until} onChange={(e) => setUntil(e.target.value)} /></label>
-      <HeroButton className="button button-secondary button-small" onPress={() => void load({ status: statusFilter, since, until }, null)}>筛选</HeroButton>
-      <HeroButton className="button button-secondary button-small" onPress={() => { onRefresh(); void load({ status: statusFilter, since, until }, null); }}><RefreshCw size={14} />刷新</HeroButton>
+      <label className="field"><span>开始时间</span><Input type="datetime-local" aria-label="批次开始时间" value={since} onChange={(e) => setSince(e.target.value)} /></label>
+      <label className="field"><span>结束时间</span><Input type="datetime-local" aria-label="批次结束时间" value={until} onChange={(e) => setUntil(e.target.value)} /></label>
+      <Button onPress={() => void load({ status: statusFilter, since, until }, null)} variant="secondary" size="small">筛选</Button>
+      <Button onPress={() => { onRefresh(); void load({ status: statusFilter, since, until }, null); }} variant="secondary" size="small"><RefreshCw size={14} />刷新</Button>
     </div></div>
     <StateBanner loadError={loadError ?? detailError} notice={notice} onCloseNotice={() => setNotice(null)} />
     {openBatch && <div className="config-source" style={{ flexDirection: "column", alignItems: "stretch" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><strong>批次 {openBatch.id}</strong><HeroButton className="button button-secondary button-small" onPress={() => setOpenBatch(null)}>收起</HeroButton></div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><strong>批次 {openBatch.id}</strong><Button onPress={() => setOpenBatch(null)} variant="secondary" size="small">收起</Button></div>
       <span>{stateChip(openBatch.status)} · 总数 {openBatch.totalCount} · 成功 {openBatch.succeededCount} · 失败 {openBatch.failedCount} · {openBatch.errorSummary ?? ""}</span>
       <ArcoTable<BatchDetail["items"][number]>
         rowKey="id"
@@ -564,7 +564,7 @@ export function BatchesPanel({ onRefresh }: { onRefresh: () => void }) {
           { title: "动作", dataIndex: "action" },
           { title: "状态", dataIndex: "status", render: (_value, item) => <span className={`status-chip ${item.status === "failed" ? "status-danger" : "status-muted"}`}><span />{item.status === "failed" ? "失败" : "成功"}</span> },
           { title: "错误", dataIndex: "errorCode", render: (_value, item) => item.errorCode ?? "—" },
-          { title: "操作", render: (_value, item) => item.status === "failed" && <HeroButton className="button button-secondary button-small" onPress={() => void retryItem(item)} isDisabled={busy}>重试</HeroButton> },
+          { title: "操作", render: (_value, item) => item.status === "failed" && <Button onPress={() => void retryItem(item)} isDisabled={busy} variant="secondary" size="small">重试</Button> },
         ]}
       />
     </div>}
@@ -582,10 +582,10 @@ export function BatchesPanel({ onRefresh }: { onRefresh: () => void }) {
           { title: "成功", dataIndex: "succeededCount" },
           { title: "失败", dataIndex: "failedCount", render: (_value, batch) => <span className={batch.failedCount ? "text-danger" : ""}>{batch.failedCount}</span> },
           { title: "开始时间", dataIndex: "startedAt", render: (_value, batch) => timeLabel(batch.startedAt) },
-          { title: "明细", render: (_value, batch) => <HeroButton className="button button-secondary button-small" onPress={() => void open(batch.id)}>查看</HeroButton> },
+          { title: "明细", render: (_value, batch) => <Button onPress={() => void open(batch.id)} variant="secondary" size="small">查看</Button> },
         ]}
       />
-      {cursor && <div className="rules-form"><HeroButton className="button button-secondary button-small" onPress={() => void load(appliedFiltersRef.current, cursor)} isDisabled={loadState === "loading"}>加载更多</HeroButton></div>}
+      {cursor && <div className="rules-form"><Button onPress={() => void load(appliedFiltersRef.current, cursor)} isDisabled={loadState === "loading"} variant="secondary" size="small">加载更多</Button></div>}
     </> : loadState === "loading" ? <SkeletonTableRows rows={5} columns={4} /> : <div className="table-empty"><strong>还没有同步批次</strong><span>启动手动同步后，真实批次记录会显示在这里。</span></div>}
   </section>;
 }
@@ -698,13 +698,13 @@ function pipelineChipColor(state: string): "success" | "warning" | "danger" | "d
 
 // 中文文案 + 语义色；原始枚举留在 title 上，符合 design.md 10.3。
 function StageBadge({ stage, state }: { stage: PipelineStage; state: string }) {
-  return <HeroChip
+  return <Chip
     className="req-badge"
     color={pipelineChipColor(state)}
     variant="soft"
     size="sm"
     title={`${pipelineStageNames[stage]}：${pipelineLabel(stage, state)}（${state}）`}
-  >{pipelineLabel(stage, state)}</HeroChip>;
+  >{pipelineLabel(stage, state)}</Chip>;
 }
 
 function TbFieldLabel({ children, sourceType = "teambition" }: { children: ReactNode; sourceType?: "teambition" | "web_manual" }) {
@@ -783,6 +783,8 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // ARCO-05：更多筛选的展开状态（受控按钮 + 条件渲染，替代 details/summary）。
+  const [moreFiltersOpen, setMoreFiltersOpen] = useState(false);
   const filters: RequirementListFilters = { title: query.trim(), owner: executorName, pull: pullState, analysis: analysisState, ownerState, push: pushState, processingState, batchId: batchId.trim(), from: since, to: until };
   // 已生效筛选：列表行/详情 URL 与刷新必须以「点过筛选」的条件为准，
   // 不能把用户尚未应用的草稿输入写进 URL。
@@ -965,7 +967,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
       <div className="qtoolbar-main">
         <label className="qfield qfield-search">
           <span className="sr-only">需求标题</span>
-          <input aria-label="搜索需求标题" placeholder="搜索需求标题或批次 ID…" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(event) => { if (event.key === "Enter") applyFilters(); }} />
+          <ArcoInput aria-label="搜索需求标题" placeholder="搜索需求标题或批次 ID…" value={query} onChange={(value: string) => setQuery(value)} onPressEnter={() => applyFilters()} />
         </label>
         <label className="qfield">
           <span className="sr-only">负责人</span>
@@ -975,9 +977,10 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
           <span className="sr-only">同步状态</span>
           <ArcoSelect aria-label="同步状态筛选" value={pullState} onChange={(value: string) => setPullState(value)} style={{ minWidth: 130 }} options={pullStateOptions.map(([value, label]) => ({ label, value }))} />
         </label>
-        <details className="qmore">
-          <summary>更多筛选{activeFilterCount - (query.trim() ? 1 : 0) - (executorName ? 1 : 0) - (pullState ? 1 : 0) > 0 ? `（${activeFilterCount - (query.trim() ? 1 : 0) - (executorName ? 1 : 0) - (pullState ? 1 : 0)}）` : ""}</summary>
-          <div className="qmore-body">
+        {/* ARCO-05：details/summary 改为受控按钮 + 条件渲染；aria-expanded/aria-controls 表达展开状态。 */}
+        <div className="qmore">
+          <ArcoButton htmlType="button" size="small" aria-expanded={moreFiltersOpen} aria-controls="requirement-more-filters" onClick={() => setMoreFiltersOpen((open) => !open)}>更多筛选{activeFilterCount - (query.trim() ? 1 : 0) - (executorName ? 1 : 0) - (pullState ? 1 : 0) > 0 ? `（${activeFilterCount - (query.trim() ? 1 : 0) - (executorName ? 1 : 0) - (pullState ? 1 : 0)}）` : ""}</ArcoButton>
+          {moreFiltersOpen && <div className="qmore-body" id="requirement-more-filters">
             <label className="qfield">
               <span className="sr-only">负责人状态</span>
               <ArcoSelect aria-label="负责人筛选" value={ownerState} onChange={(value: string) => setOwnerState(value)} style={{ minWidth: 150 }} options={ownerStateOptions.map(([value, label]) => ({ label, value }))} />
@@ -992,8 +995,9 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
             </label>
             <label className="qfield">
               <span className="sr-only">批次 ID</span>
-              <input aria-label="批次 ID 筛选" placeholder="批次 ID" value={batchId} onChange={(e) => setBatchId(e.target.value)} />
+              <ArcoInput aria-label="批次 ID 筛选" placeholder="批次 ID" value={batchId} onChange={(value: string) => setBatchId(value)} />
             </label>
+            {/* ARCO-04 豁免：datetime-local 依赖浏览器本地时区语义；改用 Arco DatePicker 会引入 dayjs/时区转换风险，已决策保留原生控件（见 docs/2026-11-03-arco-design-remaining-tasks.md ARCO-04）。 */}
             <label className="qfield">
               <span className="sr-only">最近同步始于</span>
               <input type="datetime-local" aria-label="最近同步开始时间" value={since} onChange={(e) => setSince(e.target.value)} />
@@ -1002,8 +1006,8 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
               <span className="sr-only">最近同步止于</span>
               <input type="datetime-local" aria-label="最近同步结束时间" value={until} onChange={(e) => setUntil(e.target.value)} />
             </label>
-          </div>
-        </details>
+          </div>}
+        </div>
       </div>
       <IntakeForm onCreated={(id) => { refresh(); void open(id, { push: true }); }} />
       <div className="toolbar-actions">
@@ -1025,7 +1029,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
       <span className="list-summary-sort">排序仅作用于已加载的记录：待分配 → 推送失败 → 待推送 → 已推送</span>
     </div>
     <RequirementsTable rows={sortedRows} loading={loadState === "loading"} onOpen={(row) => void open(row.id, { push: true })} onAssign={(row) => void open(row.id, { push: true, openOwnerPicker: true })} />
-    {cursor && <div className="rules-form"><HeroButton className="button button-secondary button-small" onPress={() => void load(appliedFiltersRef.current, cursor)} isDisabled={loadState === "loading"}>加载更多</HeroButton></div>}
+    {cursor && <div className="rules-form"><Button onPress={() => void load(appliedFiltersRef.current, cursor)} isDisabled={loadState === "loading"} variant="secondary" size="small">加载更多</Button></div>}
   </section>;
 }
 
@@ -1207,16 +1211,16 @@ export function ScoringPanel({ requirementId, scoring, dimensionInsights = [], c
             <tr>
               <td className="score-input-label">{label}</td>
               <td>{ai ? scoringValue(ai.inputs, path) : "—"}</td>
-              <td>{editing ? <input aria-label={`评分 ${label}`} type="number" min={1} max={max} value={scoringValue(inputs, path)} onChange={(event) => setInputs(withScoringValue(inputs, path, Number(event.target.value)))} style={{ width: 72 }} /> : scoringValue(display.inputs, path)}</td>
+              <td>{editing ? <ArcoInputNumber aria-label={`评分 ${label}`} min={1} max={max} step={1} precision={0} value={scoringValue(inputs, path)} onChange={(value: number | undefined) => setInputs(withScoringValue(inputs, path, typeof value === "number" ? value : 0))} style={{ width: 72 }} /> : scoringValue(display.inputs, path)}</td>
               <td>{rowLabel(path)}</td>
             </tr>
           </Fragment>;
         })}
-        <tr><td className="score-input-label">α 修正系数</td><td>{ai?.alpha ?? "—"}</td><td>{editing ? <input aria-label="评分 alpha" type="number" min={0.5} max={2} step={0.1} value={alpha} onChange={(event) => setAlpha(Number(event.target.value))} style={{ width: 72 }} /> : display.alpha}</td><td>{display.rationale ?? "—"}</td></tr>
+        <tr><td className="score-input-label">α 修正系数</td><td>{ai?.alpha ?? "—"}</td><td>{editing ? <ArcoInputNumber aria-label="评分 alpha" min={0.5} max={2} step={0.1} precision={1} value={alpha} onChange={(value: number | undefined) => setAlpha(typeof value === "number" ? value : 0)} style={{ width: 72 }} /> : display.alpha}</td><td>{display.rationale ?? "—"}</td></tr>
       </tbody></table></div>
       {editing && <div className="rules-form score-edit-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
-        <label className="rules-threshold"><span>涉及安全</span><input type="checkbox" checked={safetyFlag} onChange={(event) => setSafetyFlag(event.target.checked)} /></label>
-        <label className="field"><span>修改理由（必填）</span><input aria-label="评分修改理由" value={reason} onChange={(event) => setReason(event.target.value)} /></label>
+        <div className="rules-threshold"><ArcoCheckbox checked={safetyFlag} onChange={(checked: boolean) => setSafetyFlag(checked)}>涉及安全</ArcoCheckbox></div>
+        <label className="field"><span>修改理由（必填）</span><ArcoInput aria-label="评分修改理由" value={reason} onChange={(value: string) => setReason(value)} /></label>
         <ArcoButton type="primary" htmlType="button" size="small" onClick={() => void save()} disabled={busy || reason.trim().length === 0}>{busy ? "保存中…" : "保存评分"}</ArcoButton>
       </div>}
       {historyOpen && <ArcoTable<RequirementScoreVersion>
@@ -1333,7 +1337,7 @@ function DuplicateDecisionSection({ detail, onSaved }: { detail: RequirementDeta
     </div> : <div className="rules-form duplicate-form">
       <strong style={{ flexBasis: "100%" }}>{heading}</strong>
       {mode === "duplicate" && <label className="field"><span>主记录（同标题候选）</span><ArcoSelect aria-label="主记录候选" value={canonicalId} onChange={(value: string) => setCanonicalId(value)} disabled={busy} style={{ minWidth: 260 }} placeholder="选择主记录" options={canonicalOptions.map((candidate) => ({ label: `${candidate.title}（${candidate.hint}）`, value: candidate.id }))} /></label>}
-      <label className="field"><span>判定理由 *</span><input aria-label="判定理由" value={reason} onChange={(event) => setReason(event.target.value)} disabled={busy} placeholder={mode === "ignored" ? "例如：已知重复诉求，无需再处理" : "例如：与主记录描述同一诉求"} /></label>
+      <label className="field"><span>判定理由 *</span><ArcoInput aria-label="判定理由" value={reason} onChange={(value: string) => setReason(value)} disabled={busy} placeholder={mode === "ignored" ? "例如：已知重复诉求，无需再处理" : "例如：与主记录描述同一诉求"} /></label>
       <ArcoButton type="primary" htmlType="button" size="small" onClick={() => void submit()} disabled={busy}>{busy ? "提交中…" : submitLabel}</ArcoButton>
       <ArcoButton htmlType="button" size="small" onClick={() => { setMode(null); setError(null); setConflict(false); }} disabled={busy}>取消</ArcoButton>
     </div>}
@@ -1384,7 +1388,7 @@ export function PriorityOverrideSection({ detail, onSaved }: { detail: Requireme
       {override && <ArcoButton htmlType="button" size="small" onClick={() => { setMode("clear"); setReason(""); setError(null); setNotice(null); }} disabled={busy || suppressed} title={suppressed ? "已压制需求不能清除人工优先级" : "清除人工优先级，恢复评分结果"}>清除人工优先级</ArcoButton>}
     </div> : <div className="rules-form priority-override-form">
       {mode === "edit" && <label className="field"><span>覆盖为 *</span><ArcoSelect aria-label="人工优先级" value={priority} onChange={(value: "P0" | "P1" | "P2" | "P3") => setPriority(value)} style={{ minWidth: 120 }} options={["P0", "P1", "P2", "P3"].map((level) => ({ label: level, value: level }))} /></label>}
-      <label className="field"><span>{mode === "clear" ? "清除原因 *" : "覆盖原因 *"}</span><input aria-label="人工优先级原因" value={reason} onChange={(event) => setReason(event.target.value)} disabled={busy} placeholder="例如：产品会议决定提前处理（1–500 字）" /></label>
+      <label className="field"><span>{mode === "clear" ? "清除原因 *" : "覆盖原因 *"}</span><ArcoInput aria-label="人工优先级原因" value={reason} onChange={(value: string) => setReason(value)} disabled={busy} placeholder="例如：产品会议决定提前处理（1–500 字）" /></label>
       <ArcoButton type="primary" htmlType="button" size="small" onClick={() => void submit()} disabled={busy || reason.trim().length === 0}>{busy ? "保存中…" : mode === "clear" ? "确认清除" : "保存"}</ArcoButton>
       <ArcoButton htmlType="button" size="small" onClick={() => { setMode(null); setError(null); }} disabled={busy}>取消</ArcoButton>
     </div>}
@@ -1425,7 +1429,7 @@ export function AnalysisContextSection({ detail, onSaved }: { detail: Requiremen
     <div className="req-section-head"><h3 id="req-analysis-context-heading">补充上下文</h3><span className="req-source-note">仅进入 AI 分析 · 不写 Base</span></div>
     <p className="detail-note">补充 PM 已知但来源未记录的事实（场景、约束、历史决策等）；下一次分析会以“补充上下文：”独立段提供给模型。不写入 Base，也不改变 PM 已确认字段。</p>
     {saved && <p className="subtle-text">上次更新：{timeLabel(saved.updatedAt)} · {saved.updatedBy}</p>}
-    <label className="field" style={{ flexBasis: "100%" }}><span>补充上下文（不超过 4000 字）</span><textarea aria-label="补充上下文" className="rules-textarea" rows={4} value={context} onChange={(event) => setContext(event.target.value)} disabled={busy || suppressed} placeholder="例如：该能力需在 Q4 前上线；硬件仅支持 C706；与 GEOID 项目存在复用关系。" /></label>
+    <label className="field" style={{ flexBasis: "100%" }}><span>补充上下文（不超过 4000 字）</span><ArcoInput.TextArea aria-label="补充上下文" className="rules-textarea" rows={4} value={context} onChange={(value: string) => setContext(value)} disabled={busy || suppressed} placeholder="例如：该能力需在 Q4 前上线；硬件仅支持 C706；与 GEOID 项目存在复用关系。" /></label>
     <StateBanner loadError={error} notice={notice} onCloseNotice={() => setNotice(null)} />
     <div className="req-summary-actions">
       <ArcoButton htmlType="button" size="small" onClick={() => void save(false)} disabled={busy || suppressed} title={suppressed ? "已压制需求不能保存补充上下文；请先撤销判定" : "仅保存补充上下文"}>{busy ? "保存中…" : "保存"}</ArcoButton>
@@ -1457,7 +1461,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
   if (!detail) {
     return <div className="req-detail-page">
       <header className="req-detail-summary">
-        <div className="req-summary-backbar"><HeroButton className="button button-secondary button-small" onPress={onBack}><ArrowLeft size={14} />返回需求池</HeroButton></div>
+        <div className="req-summary-backbar"><Button onPress={onBack} variant="secondary" size="small"><ArrowLeft size={14} />返回需求池</Button></div>
         <div className="req-summary-hero">
           <div className="req-summary-copy">
             <h2 className="req-summary-title">{loading ? <SkeletonBlock className="skeleton-title" /> : "无法载入需求详情"}</h2>
@@ -1467,7 +1471,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
       </header>
       {loading && <RequirementDetailSkeleton />}
       <StateBanner loadError={error} notice={notice} onCloseNotice={onCloseNotice} />
-      {!loading && <div className="rules-form"><HeroButton className="button button-secondary button-small" onPress={onRefresh}><RefreshCw size={14} />重试载入</HeroButton></div>}
+      {!loading && <div className="rules-form"><Button onPress={onRefresh} variant="secondary" size="small"><RefreshCw size={14} />重试载入</Button></div>}
     </div>;
   }
 
@@ -1571,15 +1575,15 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
     ? <>
       <div className="score-analysis-subsection">
         <div className="score-analysis-subhead"><h5>模块、类型与整体判断</h5><span>AI 生成 · 可被推翻</span></div>
-        <div className="advice-grid">{adviceCards.map((card) => <HeroCard key={card.label} className="advice-card">
-          <HeroCard.Content>
+        <div className="advice-grid">{adviceCards.map((card) => <Card key={card.label} className="advice-card">
+          <Card.Content>
             <span className="advice-label">{card.label}</span>
             <strong className="advice-conclusion">{card.conclusion}</strong>
             {card.rationale && <p className="advice-rationale">理由：{card.rationale}</p>}
             {card.evidence && card.evidence.length > 0 && <p className="advice-evidence">证据：{card.evidence.join("；")}</p>}
             {card.missing && <span className="advice-missing">需要补充信息</span>}
-          </HeroCard.Content>
-        </HeroCard>)}</div>
+          </Card.Content>
+        </Card>)}</div>
       </div>
     </>
     : <div className="req-empty-state">
@@ -1591,7 +1595,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
 
   return <div className="req-detail-page">
     <header className="req-detail-summary">
-      <div className="req-summary-backbar"><HeroButton className="button button-secondary button-small" onPress={onBack}><ArrowLeft size={14} />返回需求池</HeroButton></div>
+      <div className="req-summary-backbar"><Button onPress={onBack} variant="secondary" size="small"><ArrowLeft size={14} />返回需求池</Button></div>
       <div className="req-summary-hero">
         <div className="req-summary-copy">
           <h2 className="req-summary-title">{detail.title}</h2>
@@ -1625,10 +1629,10 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
         </span>
         <div className="req-stage-row" role="group" aria-label="处理状态">{stages.map(([stage, state]) => <StageBadge key={stage} stage={stage} state={state} />)}</div>
         <div className="req-summary-actions" role="group" aria-label="需求操作">
-          <HeroButton className="button button-primary button-small" aria-expanded={ownerPickerOpen} aria-controls={ownerEditorId} onPress={() => setOwnerPickerOpen((open) => !open)} isDisabled={busy || suppressed}>{suppressed ? "分配 / 变更负责人（已压制）" : "分配 / 变更负责人"}</HeroButton>
+          <Button aria-expanded={ownerPickerOpen} aria-controls={ownerEditorId} onPress={() => setOwnerPickerOpen((open) => !open)} isDisabled={busy || suppressed} variant="primary" size="small">{suppressed ? "分配 / 变更负责人（已压制）" : "分配 / 变更负责人"}</Button>
           <ArcoButton htmlType="button" size="small" onClick={() => void onAct(async () => { await retryAnalysis(detail.id); return "AI 分析重试已入队"; }, detail.id)} disabled={busy || !analysisRetryable} title={analysisRetryable ? "重新提交 AI 分析" : analysisDisabledReason}>{analysisActionLabel}</ArcoButton>
           <ArcoButton htmlType="button" size="small" onClick={() => void onAct(async () => { const result = await pushRequirement(detail.id); return result.status === "queued" ? "Base 推送重试已入队" : `推送状态：${result.status}`; }, detail.id)} disabled={busy || !pushRetryable} title={pushRetryable ? "重新提交 Base 推送" : pushDisabledReason}>重试 Base 推送</ArcoButton>
-          <HeroButton className="button button-secondary button-small" onPress={onRefresh} isDisabled={busy}><RefreshCw size={14} />刷新</HeroButton>
+          <Button onPress={onRefresh} isDisabled={busy} variant="secondary" size="small"><RefreshCw size={14} />刷新</Button>
         </div>
       </div>
       <p className="detail-actionbar-hint">{guidance}</p>
@@ -1664,7 +1668,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
         <TbFieldLabel sourceType={detail.sourceType}>描述</TbFieldLabel>
         {facts.description ? <>
           <p className={`req-description${descriptionExpanded ? " is-expanded" : ""}`}>{facts.description}</p>
-          {facts.description.length > 140 && <HeroButton className="link-button" onPress={() => setDescriptionExpanded((expanded) => !expanded)}>{descriptionExpanded ? "收起描述" : "展开全部"}</HeroButton>}
+          {facts.description.length > 140 && <Button className="link-button" onPress={() => setDescriptionExpanded((expanded) => !expanded)}>{descriptionExpanded ? "收起描述" : "展开全部"}</Button>}
         </> : <span className="req-empty-value" title="Teambition 未提供该字段">—</span>}
       </div>
       <div className="req-l1-meta">
@@ -1812,7 +1816,7 @@ function RequirementsTable({ rows, loading, onOpen, onAssign }: { rows: Requirem
       width: 120,
       render: (_value: unknown, row: RequirementSummary) => {
         const owner = requirementOwnerView(row);
-        return <div className="req-row-action">{owner.unassigned ? <HeroButton className="button button-secondary button-small" onPress={() => onAssign(row)}>分配</HeroButton> : null}</div>;
+        return <div className="req-row-action">{owner.unassigned ? <Button onPress={() => onAssign(row)} variant="secondary" size="small">分配</Button> : null}</div>;
       },
     },
   ];
@@ -1897,7 +1901,7 @@ export function MappingsPanel({ onRefresh }: { onRefresh: () => void }) {
   const matchMethodLabel: Record<PersonMapping["matchMethod"], string> = { tb_user_id: "TB 用户 ID", unique_name: "姓名唯一匹配", manual: "人工指定" };
 
   return <section className="panel requirements-panel">
-    <div className="panel-heading"><div><h2>负责人映射</h2><p>为待匹配负责人逐条选择飞书用户；只影响选中的这一条需求，不会改写同 TB 执行人的其他需求。</p></div><HeroButton className="button button-secondary button-small" onPress={() => { onRefresh(); void load(null); }}><RefreshCw size={14} />刷新</HeroButton></div>
+    <div className="panel-heading"><div><h2>负责人映射</h2><p>为待匹配负责人逐条选择飞书用户；只影响选中的这一条需求，不会改写同 TB 执行人的其他需求。</p></div><Button onPress={() => { onRefresh(); void load(null); }} variant="secondary" size="small"><RefreshCw size={14} />刷新</Button></div>
     <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
     {pending.length ? <ArcoTable<RequirementSummary>
       rowKey="id"
@@ -1908,8 +1912,8 @@ export function MappingsPanel({ onRefresh }: { onRefresh: () => void }) {
         { title: "需求", dataIndex: "title", render: (_value, row) => <div className="requirement-title"><span className="req-id">{requirementDisplayId(row)}</span><strong>{row.title}</strong></div> },
         { title: "TB 负责人", dataIndex: "executorName", width: 140, render: () => "待匹配" },
         { title: "操作", dataIndex: "id", width: 320, render: (_value, row) => targetId === row.id
-            ? <div className="mapping-editor"><FeishuUserPicker disabled={busy} onMap={submit} saveLabel="保存" /><HeroButton className="button button-secondary button-small" onPress={() => setTargetId(null)} isDisabled={busy}>取消</HeroButton></div>
-            : <HeroButton className="button button-secondary button-small" onPress={() => setTargetId(row.id)}>选择飞书用户</HeroButton> },
+            ? <div className="mapping-editor"><FeishuUserPicker disabled={busy} onMap={submit} saveLabel="保存" /><Button onPress={() => setTargetId(null)} isDisabled={busy} variant="secondary" size="small">取消</Button></div>
+            : <Button onPress={() => setTargetId(row.id)} variant="secondary" size="small">选择飞书用户</Button> },
       ]}
     /> : loadState === "loading" ? <SkeletonTableRows rows={4} columns={3} /> : <div className="table-empty"><strong>没有待匹配的负责人</strong><span>未匹配需求会出现在这里，等待为每一条需求单独指定负责人。</span></div>}
     {cursor && <div style={{ display: "flex", justifyContent: "center", padding: "10px 0" }}><ArcoButton htmlType="button" size="small" disabled={loadingMore || busy} onClick={() => void load(cursor)}>{loadingMore ? "加载中…" : "加载更多待匹配需求"}</ArcoButton></div>}
@@ -1949,10 +1953,10 @@ export function AuditPanel() {
 
   return <section className="panel requirements-panel">
     <div className="panel-heading"><div><h2>审计日志</h2><p>同步、分析、映射、推送与配置操作的留痕；对象与时间筛选由服务端执行。</p></div><div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-      <HeroInput aria-label="对象 ID 筛选" placeholder="按对象 ID 筛选" value={entityId} onChange={(e) => setEntityId(e.target.value)} />
-      <label className="field"><span>开始时间</span><HeroInput type="datetime-local" aria-label="开始时间" value={since} onChange={(e) => setSince(e.target.value)} /></label>
-      <label className="field"><span>结束时间</span><HeroInput type="datetime-local" aria-label="结束时间" value={until} onChange={(e) => setUntil(e.target.value)} /></label>
-      <HeroButton className="button button-secondary button-small" onPress={() => void load({ entityId: entityId.trim(), since: since ? new Date(since).toISOString() : "", until: until ? new Date(until).toISOString() : "" })}>筛选</HeroButton>
+      <Input aria-label="对象 ID 筛选" placeholder="按对象 ID 筛选" value={entityId} onChange={(e) => setEntityId(e.target.value)} />
+      <label className="field"><span>开始时间</span><Input type="datetime-local" aria-label="开始时间" value={since} onChange={(e) => setSince(e.target.value)} /></label>
+      <label className="field"><span>结束时间</span><Input type="datetime-local" aria-label="结束时间" value={until} onChange={(e) => setUntil(e.target.value)} /></label>
+      <Button onPress={() => void load({ entityId: entityId.trim(), since: since ? new Date(since).toISOString() : "", until: until ? new Date(until).toISOString() : "" })} variant="secondary" size="small">筛选</Button>
     </div></div>
     <StateBanner loadError={loadError} notice={null} onCloseNotice={() => undefined} />
     {events.length >= AUDIT_PAGE_LIMIT && <div className="list-summary-count">已加载最近 {AUDIT_PAGE_LIMIT} 条审计记录；更早的记录请缩小时间范围或按对象筛选。</div>}
@@ -1981,7 +1985,7 @@ export class PanelErrorBoundary extends Component<{ children: ReactNode }, Error
   static getDerivedStateFromError(error: Error): ErrorBoundaryState { return { error }; }
   render() {
     if (this.state.error) {
-      return <section className="panel requirements-panel"><div className="alert-banner" role="alert"><div><strong>页面渲染出错</strong><span>{this.state.error.message}。请刷新页面重试；问题持续时检查本地 API 日志。</span></div></div><div className="rules-form"><HeroButton className="button button-secondary button-small" onPress={() => this.setState({ error: null })}>重试渲染</HeroButton></div></section>;
+      return <section className="panel requirements-panel"><div className="alert-banner" role="alert"><div><strong>页面渲染出错</strong><span>{this.state.error.message}。请刷新页面重试；问题持续时检查本地 API 日志。</span></div></div><div className="rules-form"><Button onPress={() => this.setState({ error: null })} variant="secondary" size="small">重试渲染</Button></div></section>;
     }
     return this.props.children;
   }
@@ -1989,19 +1993,16 @@ export class PanelErrorBoundary extends Component<{ children: ReactNode }, Error
 
 // ---------- 菜单收敛：团队管理 / 同步记录（同一入口下的页签，不做重复菜单） ----------
 
-function CompositeTabs({ label, tabs, active, onSelect }: { label: string; tabs: { id: string; label: string }[]; active: string; onSelect: (id: string) => void }) {
-  return <div className="composite-tabs" role="tablist" aria-label={label}>
-    {tabs.map((tab) => <button key={tab.id} type="button" role="tab" id={`${label}-${tab.id}`} aria-selected={active === tab.id} aria-controls={`${label}-${tab.id}-panel`} className={`composite-tab ${active === tab.id ? "is-active" : ""}`} onClick={() => onSelect(tab.id)}>{tab.label}</button>)}
-  </div>;
-}
-
 export function TeamPanel({ initialTab, onRefresh }: { initialTab?: WorkbenchTab | null; onRefresh: () => void }) {
   const [tab, setTab] = useState<"people" | "mappings">(initialTab === "mappings" ? "mappings" : "people");
   useEffect(() => { if (initialTab === "people" || initialTab === "mappings") setTab(initialTab); }, [initialTab]);
   return <div className="composite-page">
-    <CompositeTabs label="团队管理" tabs={[{ id: "people", label: "人员" }, { id: "mappings", label: "负责人映射" }]} active={tab} onSelect={(id) => setTab(id as "people" | "mappings")} />
-    <div role="tabpanel" id={`团队管理-${tab}-panel`} aria-labelledby={`团队管理-${tab}`}>
-      {tab === "people" ? <PeoplePanel /> : <MappingsPanel onRefresh={onRefresh} />}
+    {/* ARCO-06：自定义 tablist 改为受控 Arco Tabs；role=tab/tabpanel 与 aria-controls 由组件生成，aria-label 语义保留在外层 group。 */}
+    <div role="group" aria-label="团队管理">
+      <ArcoTabs activeTab={tab} onChange={(key) => setTab(key as "people" | "mappings")}>
+        <ArcoTabs.TabPane key="people" title="人员"><PeoplePanel /></ArcoTabs.TabPane>
+        <ArcoTabs.TabPane key="mappings" title="负责人映射"><MappingsPanel onRefresh={onRefresh} /></ArcoTabs.TabPane>
+      </ArcoTabs>
     </div>
   </div>;
 }
@@ -2010,9 +2011,12 @@ export function SyncRecordsPanel({ initialTab, onRefresh }: { initialTab?: Workb
   const [tab, setTab] = useState<"batches" | "audit">(initialTab === "audit" ? "audit" : "batches");
   useEffect(() => { if (initialTab === "batches" || initialTab === "audit") setTab(initialTab); }, [initialTab]);
   return <div className="composite-page">
-    <CompositeTabs label="同步记录" tabs={[{ id: "batches", label: "同步批次" }, { id: "audit", label: "审计日志" }]} active={tab} onSelect={(id) => setTab(id as "batches" | "audit")} />
-    <div role="tabpanel" id={`同步记录-${tab}-panel`} aria-labelledby={`同步记录-${tab}`}>
-      {tab === "batches" ? <BatchesPanel onRefresh={onRefresh} /> : <AuditPanel />}
+    {/* ARCO-06：同 TeamPanel，受控 Arco Tabs。 */}
+    <div role="group" aria-label="同步记录">
+      <ArcoTabs activeTab={tab} onChange={(key) => setTab(key as "batches" | "audit")}>
+        <ArcoTabs.TabPane key="batches" title="同步批次"><BatchesPanel onRefresh={onRefresh} /></ArcoTabs.TabPane>
+        <ArcoTabs.TabPane key="audit" title="审计日志"><AuditPanel /></ArcoTabs.TabPane>
+      </ArcoTabs>
     </div>
   </div>;
 }

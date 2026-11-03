@@ -57,6 +57,10 @@ jobs:
       - name: Migration filename check
         run: npm run check:migrations
 
+      # ARCO-12：源码用到的 Arco 组件必须登记在 arco-styles.ts，否则运行时无样式。
+      - name: Arco on-demand style registry check
+        run: npm run check:arco-styles
+
       - name: Tests (API + Web)
         run: npm test
 

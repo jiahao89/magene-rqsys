@@ -273,12 +273,6 @@ html[data-theme="dark"] .field-error { color: var(--rq-danger); }
 .toolbar-field input, .toolbar-field select { min-height: 30px; }
 .toolbar-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; padding-top: 10px; border-top: 1px dashed var(--rq-divider-strong); }
 .toolbar-active-count { margin-right: auto; padding: 3px 8px; border-radius: var(--rq-radius-sm); color: var(--rq-accent-text); background: var(--rq-accent-soft); font-size: var(--rq-font-caption); font-weight: 600; }
-.toolbar-more { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
-.toolbar-more summary { padding: 5px 8px; border: 1px solid var(--rq-input-border); border-radius: var(--rq-radius-sm); color: var(--rq-text-soft); background: var(--rq-surface); font-size: var(--rq-font-caption); cursor: pointer; list-style: none; }
-.toolbar-more summary::-webkit-details-marker { display: none; }
-.toolbar-more summary::before { display: inline-block; margin-right: 5px; color: var(--rq-text-muted); content: "▸"; }
-.toolbar-more[open] summary::before { content: "▾"; }
-.toolbar-more-body { display: flex; flex-basis: 100%; flex-wrap: wrap; align-items: flex-end; gap: 8px; padding-top: 4px; }
 @media (max-width: 760px) {
   .toolbar-group-title { width: 100%; flex-basis: 100%; justify-content: flex-start; }
   .toolbar-field { flex: 1 1 140px; }
@@ -319,7 +313,6 @@ html[data-theme="dark"] .field-error { color: var(--rq-danger); }
 .field--short, .rules-form .field--short { flex: 0 0 auto; }
 .field--short input { width: 96px; min-width: 96px; }
 .source-snapshot { margin: 0 14px 12px; }
-.source-snapshot summary { color: var(--rq-link); font-size: var(--rq-font-caption); cursor: pointer; }
 .source-snapshot-pre { max-height: 260px; overflow: auto; margin: 8px 0 0; padding: 10px; border: 1px solid var(--rq-border); border-radius: var(--rq-radius-sm); background: var(--rq-surface-inset); color: var(--rq-text-strong); font-size: var(--rq-font-caption); line-height: 1.6; white-space: pre-wrap; word-break: break-all; }
 
 /* 调度状态卡片：只呈现已保存的计划配置与本地纯计算出的下次计划时刻。 */
@@ -898,7 +891,6 @@ html[data-theme="dark"] .field input[type="checkbox"] { accent-color: var(--rq-a
 .toolbar-field input { width: 190px; }
 .toolbar-field select { min-width: 140px; }
 .toolbar-actions { padding-top: 0; margin-left: auto; align-self: flex-end; justify-content: flex-end; }
-.toolbar-more summary { height: 32px; display: inline-flex; align-items: center; }
 
 @media (max-width: 1100px) {
   .toolbar-group + .toolbar-group { padding-left: 0; border-left: none; }
@@ -928,29 +920,19 @@ html[data-theme="dark"] .field input[type="checkbox"] { accent-color: var(--rq-a
 }
 .qfield-search { flex: 1 1 260px; max-width: 360px; }
 .qfield-search > input { width: 100%; padding-left: 32px; background-image: url("data:image/svg+xml;charset=utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='15' height='15' viewBox='0 0 24 24' fill='none' stroke='%238b94a3' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M21 21l-4.3-4.3'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: 10px center; }
-.qfield > select { min-width: 150px; cursor: pointer; }
 
 .qmore { position: relative; }
-.qmore > summary {
-  display: inline-flex; align-items: center; height: 34px; padding: 0 12px; cursor: pointer;
-  font-size: 13px; color: var(--rq-text-secondary, #5a6270);
-  border: 1px dashed var(--rq-border, #dcdfe6); border-radius: 8px; list-style: none; user-select: none;
-}
-.qmore > summary::-webkit-details-marker { display: none; }
-.qmore > summary::after { content: "▾"; margin-left: 6px; font-size: 10px; }
-.qmore[open] > summary { border-style: solid; border-color: #3b82f6; color: #2563eb; }
 .qmore-body {
   position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; min-width: 300px;
   display: flex; flex-direction: column; gap: 8px; padding: 12px;
   background: var(--rq-field, #fff); border: 1px solid var(--rq-border, #e8eaee); border-radius: 10px;
   box-shadow: 0 8px 24px rgba(31,35,41,.12);
 }
-.qmore-body .qfield > input, .qmore-body .qfield > select { width: 100%; }
+.qmore-body .qfield > input, .qmore-body .qfield > .arco-input-wrapper, .qmore-body .qfield > .arco-select { width: 100%; }
 .qtoolbar .toolbar-actions { margin-left: auto; align-self: center; gap: 8px; }
 
 @media (max-width: 900px) {
   .qfield-search { flex: 1 1 100%; max-width: none; }
-  .qfield > select { min-width: 0; flex: 1 1 140px; }
   .qtoolbar .toolbar-actions { margin-left: 0; width: 100%; justify-content: flex-end; }
   .qmore-body { position: static; box-shadow: none; }
 }
@@ -1125,23 +1107,15 @@ html, body, #root, .app-shell { max-width: 100%; overflow-x: clip; }
 
 /* ---------- 规则版本模块明细 ---------- */
 .rules-module-count { white-space: nowrap; }
-.rules-module-detail { display: none; }
-.rules-module-detail[open] { display: block; }
-
 /* 菜单收敛：合并页签（团队管理 / 同步记录） */
-.composite-tabs { display: flex; flex-wrap: wrap; gap: 4px; width: fit-content; margin: 0 0 16px; padding: 4px; border: 1px solid var(--rq-border); border-radius: var(--rq-radius-md); background: var(--rq-surface-subtle); }
-.composite-tab { padding: 7px 14px; border: 0; border-radius: var(--rq-radius-sm); background: transparent; color: var(--rq-text-muted); font: inherit; font-size: var(--rq-font-caption); font-weight: 600; cursor: pointer; }
-.composite-tab:hover { color: var(--rq-text-strong); background: var(--rq-surface); }
-.composite-tab.is-active { color: var(--rq-accent-text); background: var(--rq-surface); box-shadow: 0 1px 2px rgba(16, 24, 40, .08); }
-.composite-tab:focus-visible { outline: 2px solid var(--rq-accent-text); outline-offset: 2px; }
+/* 菜单收敛：合并页签（团队管理 / 同步记录）改用 Arco Tabs（ARCO-06）。 */
+.composite-page .arco-tabs { margin-bottom: 16px; }
 
 /* 低频操作不占主操作位：高级设置折叠区 */
-.advanced-settings { margin: 0 0 14px; border: 1px solid var(--rq-border); border-radius: var(--rq-radius-md); background: var(--rq-surface); }
-.advanced-settings > summary { padding: 10px 14px; cursor: pointer; color: var(--rq-text-strong); font-size: var(--rq-font-caption); font-weight: 600; }
-.advanced-settings[open] > summary { border-bottom: 1px solid var(--rq-divider); }
-.advanced-settings-hint { margin: 10px 14px 0; color: var(--rq-text-muted); font-size: var(--rq-font-caption); }
-.advanced-settings > .rules-form { padding: 10px 14px; }
-.advanced-settings > .rules-form:last-child { padding-bottom: 14px; }
+/* 高级设置：details/summary 已替换为受控按钮 + #rule-advanced-settings 区域（ARCO-05）。 */
+.advanced-settings { margin: 0 0 14px; padding: 10px 14px; border: 1px solid var(--rq-border); border-radius: var(--rq-radius-md); background: var(--rq-surface); }
+.advanced-settings-hint { margin: 10px 0 0; color: var(--rq-text-muted); font-size: var(--rq-font-caption); }
+#rule-advanced-settings > .rules-form { padding: 10px 0 0; }
 .subsection { margin-top: 22px; padding-top: 6px; border-top: 1px solid var(--rq-divider); }
 .subsection h3 { margin: 0; font-size: var(--rq-font-body); }
 
@@ -1441,3 +1415,24 @@ body[arco-theme] h4 { color: var(--color-text-1); font-weight: 500; }
   .toolbar-actions { border-top: 0; padding-top: 0; }
   .toolbar-actions .arco-btn { flex: 1 1 0; }
 }
+
+/* ==================== ARCO-03/04 表单控件布局桥接（2026-11-03） ====================
+ * 原生 input/select/textarea 换成 Arco 组件后，原 .field 原生元素规则不再命中；
+ * 这里只补宽度/密度/错误态桥接，控件视觉交给 Arco token（目标 A：RQ 视觉基调 + Arco 组件）。
+ */
+.field .arco-input-wrapper,
+.field .arco-textarea-wrapper,
+.field .arco-select,
+.field .arco-input-number { width: 100%; min-width: 150px; }
+.field .arco-select .arco-select-view { width: 100%; }
+.field--short .arco-input-wrapper,
+.field--short .arco-select,
+.field--short .arco-input-number { width: 96px; min-width: 96px; }
+.rules-form .arco-select,
+.rules-form .arco-input-number { min-width: 140px; }
+.rules-threshold .arco-input-number { width: 84px; }
+.rules-threshold .arco-checkbox { margin: 0; }
+.search-box .arco-input-wrapper { min-width: 0; padding: 0; border: 0; background: transparent; }
+.search-box .arco-input-wrapper .arco-input { height: 27px; padding: 0; font-size: var(--rq-font-caption); }
+.field .arco-input-wrapper.arco-input-error,
+.field .arco-select.arco-select-error .arco-select-view { border-color: rgb(var(--danger-6)); }

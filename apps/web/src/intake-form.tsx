@@ -2,7 +2,7 @@
 // 只必填标题/描述/渠道；四段提示是 placeholder 引导，不是四个必填项（PRD 3.2）。
 // 幂等键在同一次提交意图内复用（失败重试不换键），成功或重新展开表单后重置。
 import { useEffect, useRef, useState } from "react";
-import { Button as ArcoButton } from "@arco-design/web-react";
+import { Button as ArcoButton, Input, Select } from "@arco-design/web-react";
 import { ApiError, AUDIENCE_LEVELS, AUDIENCE_LEVEL_NAMES, REQUIREMENT_INTAKE_CHANNELS, REQUIREMENT_INTAKE_TYPES, createRequirement, getFunctionModules, getRiceDraft, listKanoEvidence, listKanoRuns, saveRiceDraft, setAudienceTags, triggerKanoRun, updateRequirement, type KanoEvidenceVersionDto, type KanoRunDto, type RiceDraft } from "./api";
 
 export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) => void }) {
@@ -59,45 +59,36 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
   return <div className="rules-form intake-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
     <label className="field" style={{ flex: 2, minWidth: 240 }}>
       <span>标题 *</span>
-      <input aria-label="新建需求标题" placeholder="一句话描述用户的问题或诉求" value={title} onChange={(event) => setTitle(event.target.value)} disabled={busy} />
+      <Input aria-label="新建需求标题" placeholder="一句话描述用户的问题或诉求" value={title} onChange={(value: string) => setTitle(value)} disabled={busy} />
     </label>
     <label className="field">
       <span>来源渠道 *</span>
-      <select aria-label="新建来源渠道" value={channel} onChange={(event) => setChannel(event.target.value)} disabled={busy}>
-        <option value="">请选择</option>
-        {REQUIREMENT_INTAKE_CHANNELS.map((item) => <option key={item} value={item}>{item}</option>)}
-      </select>
+      <Select aria-label="新建来源渠道" value={channel} onChange={(value: string) => setChannel(value)} disabled={busy} placeholder="请选择" style={{ minWidth: 160 }} options={[{ label: "请选择", value: "" }, ...REQUIREMENT_INTAKE_CHANNELS.map((item) => ({ label: item, value: item }))]} />
     </label>
     <label className="field">
       <span>产品/型号</span>
-      <input aria-label="关联产品或型号" placeholder="选填，如码表 C606" value={productModel} onChange={(event) => setProductModel(event.target.value)} disabled={busy} />
+      <Input aria-label="关联产品或型号" placeholder="选填，如码表 C606" value={productModel} onChange={(value: string) => setProductModel(value)} disabled={busy} />
     </label>
     <label className="field">
       <span>需求类型</span>
-      <select aria-label="需求类型" value={requirementType} onChange={(event) => setRequirementType(event.target.value)} disabled={busy}>
-        <option value="">未选择</option>
-        {REQUIREMENT_INTAKE_TYPES.map((item) => <option key={item} value={item}>{item}</option>)}
-      </select>
+      <Select aria-label="需求类型" value={requirementType} onChange={(value: string) => setRequirementType(value)} disabled={busy} placeholder="未选择" style={{ minWidth: 160 }} options={[{ label: "未选择", value: "" }, ...REQUIREMENT_INTAKE_TYPES.map((item) => ({ label: item, value: item }))]} />
     </label>
     <label className="field">
       <span>功能模块</span>
-      <select aria-label="功能模块（录入）" value={intakeModule} onChange={(event) => setIntakeModule(event.target.value)} disabled={busy}>
-        <option value="">未选择</option>
-        {modules.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}
-      </select>
+      <Select aria-label="功能模块（录入）" value={intakeModule} onChange={(value: string) => setIntakeModule(value)} disabled={busy} placeholder="未选择" style={{ minWidth: 160 }} options={[{ label: "未选择", value: "" }, ...modules.map((item) => ({ label: item.name, value: item.name }))]} />
     </label>
     {moduleCandidate && <span className="status-hint" style={{ flexBasis: "100%" }}>该模块责任人：{moduleCandidate}（候选提示；负责人在创建后的详情里确认分配）</span>}
     <label className="field" style={{ flexBasis: "100%" }}>
       <span>边界/限制</span>
-      <textarea aria-label="边界或限制" rows={2} placeholder="选填：兼容性、法规、成本、上市时间等已知约束；未知留空" value={constraintNotes} onChange={(event) => setConstraintNotes(event.target.value)} disabled={busy} />
+      <Input.TextArea aria-label="边界或限制" rows={2} placeholder="选填：兼容性、法规、成本、上市时间等已知约束；未知留空" value={constraintNotes} onChange={(value: string) => setConstraintNotes(value)} disabled={busy} />
     </label>
     <label className="field" style={{ flexBasis: "100%" }}>
       <span>来源链接</span>
-      <input aria-label="来源链接" type="url" placeholder="选填：原始反馈或工单链接（http/https）" value={supplementUrl} onChange={(event) => setSupplementUrl(event.target.value)} disabled={busy} />
+      <Input aria-label="来源链接" type="url" placeholder="选填：原始反馈或工单链接（http/https）" value={supplementUrl} onChange={(value: string) => setSupplementUrl(value)} disabled={busy} />
     </label>
     <label className="field" style={{ flexBasis: "100%" }}>
       <span>需求描述 *</span>
-      <textarea aria-label="新建需求描述" rows={4} placeholder={"建议按四段描述（缺段不阻断提交，AI 会标出缺失项）：\n用户/场景：谁在什么场景下…\n现状问题：当前遇到…\n期望结果：希望…\n补充：约束、链接等（可留空）"} value={description} onChange={(event) => setDescription(event.target.value)} disabled={busy} />
+      <Input.TextArea aria-label="新建需求描述" rows={4} placeholder={"建议按四段描述（缺段不阻断提交，AI 会标出缺失项）：\n用户/场景：谁在什么场景下…\n现状问题：当前遇到…\n期望结果：希望…\n补充：约束、链接等（可留空）"} value={description} onChange={(value: string) => setDescription(value)} disabled={busy} />
     </label>
     <div className="field" style={{ flexBasis: "100%", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
       <ArcoButton type="primary" size="small" htmlType="button" onClick={() => void submit()} disabled={busy}>提交并进入分析</ArcoButton>
@@ -166,23 +157,17 @@ export function ManualEditSection({ detail, onSaved }: { detail: ManualEditSourc
     } finally { setBusy(false); }
   };
   return <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap", borderTop: "1px solid rgba(125,131,140,.25)", paddingTop: 12 }}>
-    <label className="field" style={{ flex: 2, minWidth: 240 }}><span>标题 *</span><input aria-label="编辑需求标题" value={title} onChange={(event) => setTitle(event.target.value)} disabled={busy} /></label>
+    <label className="field" style={{ flex: 2, minWidth: 240 }}><span>标题 *</span><Input aria-label="编辑需求标题" value={title} onChange={(value: string) => setTitle(value)} disabled={busy} /></label>
     <label className="field"><span>来源渠道 *</span>
-      <select aria-label="编辑来源渠道" value={channel} onChange={(event) => setChannel(event.target.value)} disabled={busy}>
-        <option value="">请选择</option>
-        {REQUIREMENT_INTAKE_CHANNELS.map((item) => <option key={item} value={item}>{item}</option>)}
-      </select>
+      <Select aria-label="编辑来源渠道" value={channel} onChange={(value: string) => setChannel(value)} disabled={busy} placeholder="请选择" style={{ minWidth: 160 }} options={[{ label: "请选择", value: "" }, ...REQUIREMENT_INTAKE_CHANNELS.map((item) => ({ label: item, value: item }))]} />
     </label>
-    <label className="field"><span>产品/型号</span><input aria-label="编辑产品或型号" value={productModel} onChange={(event) => setProductModel(event.target.value)} disabled={busy} /></label>
+    <label className="field"><span>产品/型号</span><Input aria-label="编辑产品或型号" value={productModel} onChange={(value: string) => setProductModel(value)} disabled={busy} /></label>
     <label className="field"><span>需求类型</span>
-      <select aria-label="编辑需求类型" value={requirementType} onChange={(event) => setRequirementType(event.target.value)} disabled={busy}>
-        <option value="">未选择</option>
-        {REQUIREMENT_INTAKE_TYPES.map((item) => <option key={item} value={item}>{item}</option>)}
-      </select>
+      <Select aria-label="编辑需求类型" value={requirementType} onChange={(value: string) => setRequirementType(value)} disabled={busy} placeholder="未选择" style={{ minWidth: 160 }} options={[{ label: "未选择", value: "" }, ...REQUIREMENT_INTAKE_TYPES.map((item) => ({ label: item, value: item }))]} />
     </label>
-    <label className="field" style={{ flexBasis: "100%" }}><span>需求描述 *</span><textarea aria-label="编辑需求描述" rows={4} value={description} onChange={(event) => setDescription(event.target.value)} disabled={busy} /></label>
-    <label className="field" style={{ flexBasis: "100%" }}><span>边界/限制</span><textarea aria-label="编辑边界或限制" rows={2} value={constraintNotes} onChange={(event) => setConstraintNotes(event.target.value)} disabled={busy} /></label>
-    <label className="field" style={{ flexBasis: "100%" }}><span>来源链接</span><input aria-label="编辑来源链接" type="url" value={supplementUrl} onChange={(event) => setSupplementUrl(event.target.value)} disabled={busy} /></label>
+    <label className="field" style={{ flexBasis: "100%" }}><span>需求描述 *</span><Input.TextArea aria-label="编辑需求描述" rows={4} value={description} onChange={(value: string) => setDescription(value)} disabled={busy} /></label>
+    <label className="field" style={{ flexBasis: "100%" }}><span>边界/限制</span><Input.TextArea aria-label="编辑边界或限制" rows={2} value={constraintNotes} onChange={(value: string) => setConstraintNotes(value)} disabled={busy} /></label>
+    <label className="field" style={{ flexBasis: "100%" }}><span>来源链接</span><Input aria-label="编辑来源链接" type="url" value={supplementUrl} onChange={(value: string) => setSupplementUrl(value)} disabled={busy} /></label>
     <div className="field" style={{ flexBasis: "100%", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
       <ArcoButton type="primary" size="small" htmlType="button" onClick={() => void submit()} disabled={busy}>保存（基于 v{detail.sourceVersion}）</ArcoButton>
       <ArcoButton size="small" htmlType="button" onClick={() => setOpen(false)} disabled={busy}>取消</ArcoButton>
@@ -303,11 +288,11 @@ export function BetaPanel({ requirementId }: { requirementId: string }) {
   };
   return <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap", borderTop: "1px solid rgba(125,131,140,.25)", paddingTop: 12 }}>
     <strong style={{ flexBasis: "100%" }}>RICE 草稿（Beta · 与主优先级无关）</strong>
-    <label className="field"><span>Reach（草稿）</span><input aria-label="RICE Reach 草稿" value={reach} onChange={(event) => setReach(event.target.value)} disabled={busy} placeholder="如：约 200 次/月（单位待配置）" /></label>
-    <label className="field"><span>Impact（草稿）</span><input aria-label="RICE Impact 草稿" value={impact} onChange={(event) => setImpact(event.target.value)} disabled={busy} /></label>
-    <label className="field"><span>Confidence（草稿）</span><input aria-label="RICE Confidence 草稿" value={confidence} onChange={(event) => setConfidence(event.target.value)} disabled={busy} /></label>
-    <label className="field"><span>Effort（草稿）</span><input aria-label="RICE Effort 草稿" value={effort} onChange={(event) => setEffort(event.target.value)} disabled={busy} /></label>
-    <label className="field" style={{ flexBasis: "100%" }}><span>依据说明</span><textarea aria-label="RICE 依据说明" rows={2} value={notes} onChange={(event) => setNotes(event.target.value)} disabled={busy} /></label>
+    <label className="field"><span>Reach（草稿）</span><Input aria-label="RICE Reach 草稿" value={reach} onChange={(value: string) => setReach(value)} disabled={busy} placeholder="如：约 200 次/月（单位待配置）" /></label>
+    <label className="field"><span>Impact（草稿）</span><Input aria-label="RICE Impact 草稿" value={impact} onChange={(value: string) => setImpact(value)} disabled={busy} /></label>
+    <label className="field"><span>Confidence（草稿）</span><Input aria-label="RICE Confidence 草稿" value={confidence} onChange={(value: string) => setConfidence(value)} disabled={busy} /></label>
+    <label className="field"><span>Effort（草稿）</span><Input aria-label="RICE Effort 草稿" value={effort} onChange={(value: string) => setEffort(value)} disabled={busy} /></label>
+    <label className="field" style={{ flexBasis: "100%" }}><span>依据说明</span><Input.TextArea aria-label="RICE 依据说明" rows={2} value={notes} onChange={(value: string) => setNotes(value)} disabled={busy} /></label>
     <div className="field" style={{ flexBasis: "100%", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
       <ArcoButton type="primary" size="small" htmlType="button" onClick={() => void save()} disabled={busy || !draft}>保存草稿</ArcoButton>
       <ArcoButton size="small" htmlType="button" onClick={() => setOpen(false)} disabled={busy}>收起</ArcoButton>
@@ -320,10 +305,7 @@ export function BetaPanel({ requirementId }: { requirementId: string }) {
         {evidence.map((item) => <li key={item.id}>v{item.version} · {item.title}{item.coverageNotes ? `（覆盖限制：${item.coverageNotes}）` : ""}{item.sourceUrl ? <> · <a href={item.sourceUrl} target="_blank" rel="noreferrer">来源</a></> : null}</li>)}
       </ul>}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 8 }}>
-        <select aria-label="Kano 资料版本" value={selectedEvidence} onChange={(event) => setSelectedEvidence(event.target.value)} disabled={kanoBusy || evidence.length === 0}>
-          <option value="">选择资料版本</option>
-          {evidence.map((item) => <option key={item.id} value={String(item.version)}>v{item.version} · {item.title}</option>)}
-        </select>
+        <Select aria-label="Kano 资料版本" value={selectedEvidence} onChange={(value: string) => setSelectedEvidence(value)} disabled={kanoBusy || evidence.length === 0} placeholder="选择资料版本" style={{ minWidth: 200 }} options={[{ label: "选择资料版本", value: "" }, ...evidence.map((item) => ({ label: `v${item.version} · ${item.title}`, value: String(item.version) }))]} />
         <ArcoButton type="primary" size="small" htmlType="button" disabled={kanoBusy || !selectedEvidence} onClick={() => void (async () => {
           setKanoBusy(true); setKanoError(null);
           try {
