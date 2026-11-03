@@ -617,6 +617,96 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Requirement' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /api/requirements/{id}/priority-override:
+    put:
+      summary: Set or clear the manual priority override
+      description: >-
+        V02-T26. The manual override takes precedence over the current scoring version priority
+        for the in-app list, detail page and overview distribution; it is never written back to
+        Base. `priority: null` clears the override (reason is still required for the audit
+        trail). Suppressed (duplicate/ignored) requirements return 409 until the decision is
+        revoked.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                priority: { type: [string, 'null'], enum: [P0, P1, P2, P3, null], description: null clears the override. }
+                reason: { type: string, minLength: 1, maxLength: 500 }
+              required: [priority, reason]
+              additionalProperties: false
+      responses:
+        '200':
+          description: Override applied (or cleared); effectivePriority = override ?? current scoring priority
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  requirementId: { type: string, format: uuid }
+                  priorityOverride:
+                    type: [object, 'null']
+                    properties:
+                      priority: { type: string, enum: [P0, P1, P2, P3] }
+                      reason: { type: string }
+                      actorId: { type: string }
+                      at: { type: string, format: date-time }
+                    required: [priority, reason, actorId, at]
+                  effectivePriority: { type: [string, 'null'], enum: [P0, P1, P2, P3, null] }
+                required: [requirementId, priorityOverride, effectivePriority]
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Requirement is suppressed; revoke the duplicate decision first }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /api/requirements/{id}/analysis-context:
+    put:
+      summary: Save or clear the manual analysis context
+      description: >-
+        V02-T26. The note is independent of source facts and PM-confirmed fields; it is appended
+        to the next model request as a separate `补充上下文：` section and is never written to
+        Base. `context: null` clears it (1–4000 characters otherwise, trimmed). Suppressed
+        requirements return 409 until the decision is revoked.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                context: { type: [string, 'null'], minLength: 1, maxLength: 4000, description: null clears the stored context. }
+              required: [context]
+              additionalProperties: false
+      responses:
+        '200':
+          description: Context saved or cleared
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  requirementId: { type: string, format: uuid }
+                  analysisContext:
+                    type: [object, 'null']
+                    properties:
+                      note: { type: string }
+                      updatedAt: { type: string, format: date-time }
+                      updatedBy: { type: string }
+                    required: [note, updatedAt, updatedBy]
+                required: [requirementId, analysisContext]
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Requirement is suppressed; revoke the duplicate decision first }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /api/requirements/{id}/owner:
     put:
       summary: Save an operator-selected owner for this requirement only
@@ -694,13 +784,28 @@ paths:
   /api/analysis/{id}/retry:
     post:
       summary: Queue a new analysis attempt
+      description: >-
+        V02-T26 adds an optional body. `force: true` re-runs the analysis even when the same
+        source version was already analyzed (used after saving the analysis context). The
+        server generates a unique dedupe key for the forced job; if a first-pass analysis job
+        is already queued/running it is reused instead of starting a second concurrent run.
       parameters:
         - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                force: { type: boolean, default: false, description: Force a new analysis version even if the current source version is already analyzed. }
+              additionalProperties: false
       responses:
         '202': { description: Analysis retry accepted; push is not blocked }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
-        '409': { description: Requirement is already analyzed/running, or its pending state conflicts with a completed job }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { description: Requirement is suppressed, already analyzed/running, or its pending state conflicts with a completed job }
   /api/audit:
     get:
       summary: Search workflow audit events
@@ -1121,7 +1226,7 @@ components:
         failed: { type: integer, minimum: 0 }
         priority:
           type: object
-          description: 总览优先级分级；当前评分优先，无评分时使用最近分析优先级（legacy）。
+          description: 总览优先级分级；人工优先级覆盖优先，其次当前评分版本，无评分时使用最近分析优先级（legacy）。
           properties:
             P0: { type: integer, minimum: 0 }
             P1: { type: integer, minimum: 0 }
@@ -1233,6 +1338,25 @@ components:
               properties:
                 text: { type: string }
                 thresholds: { type: object, properties: { p0: { type: number }, p1: { type: number }, p2: { type: number } } }
+        # V02-T26：人工优先级覆盖（优先于当前评分版本；只影响应用内展示/统计，不回写 Base）。
+        priorityOverride:
+          type: [object, 'null']
+          properties:
+            priority: { type: string, enum: [P0, P1, P2, P3] }
+            reason: { type: string }
+            actorId: { type: string }
+            at: { type: string, format: date-time }
+          required: [priority, reason, actorId, at]
+        # 当前生效优先级 = priorityOverride ?? 当前评分版本 priority；两者都没有时为 null。
+        effectivePriority: { type: [string, 'null'], enum: [P0, P1, P2, P3, null] }
+        # V02-T26：人工补充上下文（下一次分析以独立段进入模型输入；不写 Base）。
+        analysisContext:
+          type: [object, 'null']
+          properties:
+            note: { type: string }
+            updatedAt: { type: string, format: date-time }
+            updatedBy: { type: string }
+          required: [note, updatedAt, updatedBy]
         # RQ-Sys 展示用连续编号（RQ-000001）；迁移未执行时为 null。
         platformRequirementId: { type: string, nullable: true }
         title: { type: string }

@@ -12,7 +12,7 @@ export interface OverviewMetrics {
   pushFailed: number;
   pushPending: number;
   failed: number;
-  /** 总览分级统计：当前评分优先；无评分时使用最近一次已分析优先级（legacy）。 */
+  /** 总览分级统计：人工优先级覆盖 > 当前评分；无评分时使用最近一次已分析优先级（legacy）。 */
   priority?: { P0: number; P1: number; P2: number; P3: number; scored: number; legacy: number; unscored: number } | null;
   /** 当前已发布评分规则；规则未发布时为 null。 */
   priorityRule?: { version: number; thresholds: { p0: number; p1: number; p2: number } | null; formulaText: string } | null;
@@ -248,8 +248,25 @@ export function getRequirement(id: string, fetcher: typeof fetch = fetch): Promi
   return requestJson<RequirementDetail>(`/api/requirements/${id}`, fetcher);
 }
 
-export function retryAnalysis(id: string, fetcher: typeof fetch = fetch): Promise<{ requirementId: string; status: string }> {
-  return postJson<{ requirementId: string; status: string }>(`/api/analysis/${id}/retry`, null, fetcher);
+export function retryAnalysis(id: string, options: { force?: boolean } = {}, fetcher: typeof fetch = fetch): Promise<{ requirementId: string; status: string }> {
+  return postJson<{ requirementId: string; status: string }>(`/api/analysis/${id}/retry`, options.force ? { force: true } : null, fetcher);
+}
+
+/** V02-T26：设置/清除人工优先级。priority=null 表示清除（reason 仍必填，用于审计留痕）。 */
+export function setPriorityOverride(
+  id: string,
+  input: { priority: "P0" | "P1" | "P2" | "P3" | null; reason: string },
+  fetcher: typeof fetch = fetch,
+): Promise<{ requirementId: string; priorityOverride: PriorityOverrideState | null; effectivePriority: "P0" | "P1" | "P2" | "P3" | null }> {
+  return putJson(`/api/requirements/${id}/priority-override`, input, fetcher);
+}
+/** V02-T26：保存/清除分析补充上下文（context=null 清除）。 */
+export function saveAnalysisContext(
+  id: string,
+  context: string | null,
+  fetcher: typeof fetch = fetch,
+): Promise<{ requirementId: string; analysisContext: AnalysisContextState | null }> {
+  return putJson(`/api/requirements/${id}/analysis-context`, { context }, fetcher);
 }
 
 export function pushRequirement(id: string, fetcher: typeof fetch = fetch, idempotencyKey: string = crypto.randomUUID()): Promise<{ requirementId: string; status: string }> {
@@ -335,6 +352,11 @@ export interface RequirementResolution {
  * 列表 DTO 实际包含 `source`（Teambition allowlist 快照）；`ownerName`/`updatedAt`
  * 是可选展示字段，只有服务端未来下发时才使用。缺失时由 UI 显示「—」。
  */
+/** V02-T26：人工优先级覆盖（只影响应用内列表/详情/总览，不回写 Base）。 */
+export type PriorityOverrideState = { priority: "P0" | "P1" | "P2" | "P3"; reason: string; actorId: string; at: string };
+/** V02-T26：分析补充上下文（保存后可选强制重跑分析）。 */
+export type AnalysisContextState = { note: string; updatedAt: string; updatedBy: string };
+
 export interface RequirementSummary {
   id: string;
   /** RQ-Sys 展示编号（RQ-000001）；列表行优先显示它，缺失时才退回 TB 来源 ID。 */
@@ -355,6 +377,10 @@ export interface RequirementSummary {
   processingState?: RequirementProcessingState;
   /** 人工/系统重复判定；未判定或旧响应为 null。 */
   resolution?: RequirementResolution | null;
+  /** V02-T26：人工优先级覆盖与当前生效优先级（覆盖 > 当前评分版本）。 */
+  priorityOverride?: PriorityOverrideState | null;
+  effectivePriority?: "P0" | "P1" | "P2" | "P3" | null;
+  analysisContext?: AnalysisContextState | null;
   source?: Record<string, unknown>;
   ownerName?: string | null;
   manualOwner?: { feishuUserId: string; feishuIdType: "open_id" | "user_id" | "union_id"; name: string | null; assignedAt: string } | null;
@@ -433,6 +459,11 @@ export interface RequirementDetail {
   processingState?: RequirementProcessingState;
   /** 当前重复判定（含判定版本，用于乐观并发）。 */
   resolution?: RequirementResolution | null;
+  /** V02-T26：人工优先级覆盖与当前生效优先级。 */
+  priorityOverride?: PriorityOverrideState | null;
+  effectivePriority?: "P0" | "P1" | "P2" | "P3" | null;
+  /** V02-T26：人工补充上下文（下一次分析作为独立段发送给模型）。 */
+  analysisContext?: AnalysisContextState | null;
   source: Record<string, unknown>;
   analysis: Record<string, unknown> | null;
   analyses: AnalysisVersionSummary[];

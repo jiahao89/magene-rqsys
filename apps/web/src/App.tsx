@@ -408,7 +408,7 @@ function App() {
                   <span><b>P3</b> 综合分 &lt; {priorityRule.thresholds.p2}</span>
                 </div> : <p className="priority-rule-empty">规则未发布时优先级保持为空，不使用模型自报 P 填充。</p>}
                 <code className="priority-rule-formula">{priorityRule?.formulaText ?? "U/M/S/C 固定公式"}</code>
-                <p className="priority-rule-note">{priority ? <>已分级 {priorityGraded} 条，其中 <strong>{priority.legacy}</strong> 条来自历史分析优先级（v1，不套用上方 v2 分数范围）；<strong>{priority.unscored}</strong> 条待评分。当前评分版本优先于历史分析优先级。</> : "评分统计随总览指标加载；合成验收数据不计入。"}</p>
+                <p className="priority-rule-note">{priority ? <>已分级 {priorityGraded} 条，其中 <strong>{priority.legacy}</strong> 条来自历史分析优先级（v1，不套用上方 v2 分数范围）；<strong>{priority.unscored}</strong> 条待评分。人工优先级优先于评分；当前评分版本优先于历史分析优先级。</> : "评分统计随总览指标加载；合成验收数据不计入。"}</p>
               </div>
             </section>
 

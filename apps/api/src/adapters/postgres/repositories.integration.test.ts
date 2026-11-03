@@ -599,3 +599,52 @@ test("confirmed duplicate decisions suppress processing and survive requirement 
     assert.equal((await ctx.repos.requirements.get(canonical.id))?.processingState, "active");
   } finally { await cleanup(ctx); }
 });
+
+test("V02-T26 priority override and analysis context persist and drive overview counts", async () => {
+  const ctx = await setup();
+  try {
+    const source = await ctx.repos.sources.create(config);
+    const batch = await ctx.repos.batches.create({ sourceConfigId: source.id, triggerType: "manual", actorId: null, idempotencyKey: "v02t26-batch-1", startedAt: "2026-10-08T00:00:00Z" });
+    const created = await ctx.repos.requirements.upsertRequirement(source.id, "task-1", requirementWrite(source.id, batch.id));
+    await ctx.repos.scoring.createAi({
+      requirementId: created.id, sourceVersion: 1, analysisVersion: 1, ruleVersionId: null,
+      inputs: { user: { pain: 3, frequency: 4 }, market: { sellingPoint: 1, competitor: 1 }, strategy: { roadmap: 1, dependency: 1 }, cost: { workload: 3, technicalRisk: 2, resource: 2 } },
+      alpha: 0.8, score: 6.4, priority: "P3", scoreConfidence: "中", scoreConfidenceReason: "r", safetyFlag: false, basis: {}, rationale: "r",
+    });
+    // 覆盖 → 生效优先级 P0，总览分布按覆盖计
+    assert.deepEqual(
+      await ctx.repos.requirements.setPriorityOverride(created.id, { priority: "P0", reason: "产品会议决定提前", actorId: "pm-1", at: "2026-11-03T00:00:00Z" }),
+      { outcome: "saved", override: { priority: "P0", reason: "产品会议决定提前", actorId: "pm-1", at: "2026-11-03T00:00:00.000Z" } },
+    );
+    assert.deepEqual((await ctx.repos.requirements.get(created.id))?.priorityOverride, { priority: "P0", reason: "产品会议决定提前", actorId: "pm-1", at: "2026-11-03T00:00:00.000Z" });
+    const withOverride = await ctx.repos.requirements.getPipelineCounts();
+    assert.equal(withOverride.priority.P0, 1);
+    assert.equal(withOverride.priority.P3, 0);
+    // 列表搜索投影当前评分版本 priority（DTO 层据此计算 effectivePriority）
+    const listed = (await ctx.repos.requirements.search({ limit: 10 })).items[0];
+    assert.equal(listed?.currentScorePriority, "P3");
+    // 清除 → 回到评分 P3
+    assert.deepEqual(
+      await ctx.repos.requirements.setPriorityOverride(created.id, { priority: null, reason: "恢复评分结果", actorId: "pm-1", at: "2026-11-03T01:00:00Z" }),
+      { outcome: "saved", override: null },
+    );
+    const cleared = await ctx.repos.requirements.getPipelineCounts();
+    assert.equal(cleared.priority.P0, 0);
+    assert.equal(cleared.priority.P3, 1);
+    // 补充上下文保存/清除
+    assert.deepEqual(
+      await ctx.repos.requirements.setAnalysisContext(created.id, { context: "硬件仅支持 C706", actorId: "pm-1", at: "2026-11-03T00:00:00Z" }),
+      { outcome: "updated", context: { note: "硬件仅支持 C706", updatedAt: "2026-11-03T00:00:00.000Z", updatedBy: "pm-1" } },
+    );
+    assert.equal((await ctx.repos.requirements.get(created.id))?.analysisContext?.note, "硬件仅支持 C706");
+    assert.deepEqual(
+      await ctx.repos.requirements.setAnalysisContext(created.id, { context: null, actorId: "pm-1", at: "2026-11-03T02:00:00Z" }),
+      { outcome: "updated", context: null },
+    );
+    assert.equal((await ctx.repos.requirements.get(created.id))?.analysisContext, null);
+    assert.deepEqual(
+      await ctx.repos.requirements.setPriorityOverride(randomUUID(), { priority: "P1", reason: "x", actorId: "pm-1", at: "2026-11-03T00:00:00Z" }),
+      { outcome: "not_found" },
+    );
+  } finally { await cleanup(ctx); }
+});

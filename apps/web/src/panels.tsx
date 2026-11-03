@@ -13,7 +13,7 @@ import { checkScheduleHealth } from "./schedule";
 import { readRequirementDeepLink } from "./deep-link";
 import { emptyRequirementListFilters, readRequirementListFilters, requirementPoolUrl, type RequirementListFilters } from "./requirements-url";
 import { formatDateTime, requirementDisplayId, requirementOwnerView, requirementSourceFacts, requirementTime, sortRequirementsForAttention } from "./requirement-view";
-import { AUDIT_PAGE_LIMIT, ApiError, addTeamPerson, applyRequirementAiScore, bindTeamPersonFeishu, createSource, deleteTeamPerson, getBatch, getFunctionModules, getRequirement, listAudit, listBatches, listDictionaryVersions, listMappings, listRequirements, listTeamPeople, pushRequirement, renameTeamPerson, revokeDuplicateDecision, saveFunctionModules, retryAnalysis, retrySyncItem, saveRequirementScore, searchFeishuUsers, setDuplicateDecision, setOwner, unbindTeamPersonFeishu, updateSource, type AnalysisVersionSummary, type AuditEvent, type BatchDetail, type BatchSummary, type DictionaryVersion, type DuplicateDecision, type PersonMapping, type PublishStatus, type FeishuUserSelection, type FeishuUserCandidate, type FunctionModuleEntry, type RequirementDetail, type RequirementProcessingState, type RequirementResolution, type RequirementScoreVersion, type RequirementSummary, type ScoringInputs, type SourceConfig, type SourceConfigUpdate, type TeamPerson, clearOwner } from "./api";
+import { AUDIT_PAGE_LIMIT, ApiError, addTeamPerson, applyRequirementAiScore, bindTeamPersonFeishu, createSource, deleteTeamPerson, getBatch, getFunctionModules, getRequirement, listAudit, listBatches, listDictionaryVersions, listMappings, listRequirements, listTeamPeople, pushRequirement, renameTeamPerson, revokeDuplicateDecision, saveAnalysisContext, saveFunctionModules, retryAnalysis, setPriorityOverride, retrySyncItem, saveRequirementScore, searchFeishuUsers, setDuplicateDecision, setOwner, unbindTeamPersonFeishu, updateSource, type AnalysisVersionSummary, type AuditEvent, type BatchDetail, type BatchSummary, type DictionaryVersion, type DuplicateDecision, type PersonMapping, type PublishStatus, type FeishuUserSelection, type FeishuUserCandidate, type FunctionModuleEntry, type RequirementDetail, type RequirementProcessingState, type RequirementResolution, type RequirementScoreVersion, type RequirementSummary, type ScoringInputs, type SourceConfig, type SourceConfigUpdate, type TeamPerson, clearOwner } from "./api";
 import type { WorkbenchTab } from "./workbench-routing";
 
 export type LoadState = "loading" | "ready" | "error";
@@ -1340,6 +1340,100 @@ function DuplicateDecisionSection({ detail, onSaved }: { detail: RequirementDeta
   </section>;
 }
 
+// ---------- V02-T26：人工优先级覆盖（只影响应用内列表/详情/总览，不回写 Base） ----------
+export function PriorityOverrideSection({ detail, onSaved }: { detail: RequirementDetail; onSaved: () => void }) {
+  const override = detail.priorityOverride ?? null;
+  const effective = detail.effectivePriority ?? null;
+  const suppressed = requirementProcessingState(detail) !== "active";
+  const [mode, setMode] = useState<"edit" | "clear" | null>(null);
+  const [priority, setPriority] = useState<"P0" | "P1" | "P2" | "P3">(override?.priority ?? "P1");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => { setMode(null); setReason(""); setError(null); setNotice(null); setPriority(override?.priority ?? "P1"); }, [detail.id, override?.priority]);
+  const submit = async () => {
+    const trimmed = reason.trim();
+    if (!trimmed) { setError("请填写覆盖原因（或清除原因）。"); return; }
+    setBusy(true); setError(null); setNotice(null);
+    try {
+      const result = await setPriorityOverride(detail.id, { priority: mode === "clear" ? null : priority, reason: trimmed });
+      setMode(null); setReason("");
+      setNotice(mode === "clear" ? "已清除人工优先级，恢复使用当前评分版本优先级。" : `人工优先级已保存为 ${result.effectivePriority ?? priority}。`);
+      onSaved();
+    } catch (cause) { setError(cause instanceof ApiError ? errorText(cause) : "人工优先级保存失败，请重试。"); }
+    finally { setBusy(false); }
+  };
+  return <section className="req-section req-priority-override-section" aria-labelledby="req-priority-override-heading">
+    <div className="req-section-head"><h3 id="req-priority-override-heading">人工优先级</h3><span className="req-source-note">人工覆盖 · 仅应用内，不回写 Base</span></div>
+    <div className="priority-override-current">
+      <span className="req-meta-label">当前生效</span>
+      {effective ? <span className={`priority-pill priority-${effective.toLowerCase()}`}>{effective}</span> : <span className="req-empty-value">暂无优先级</span>}
+      {override ? <span className="status-chip status-warning"><span />已人工覆盖</span> : <span className="subtle-text">取自当前评分版本{detail.scoring?.current ? `（v${detail.scoring.current.version}）` : ""}</span>}
+    </div>
+    {override && <dl className="req-source-grid priority-override-meta">
+      <div><dt>覆盖为</dt><dd>{override.priority}</dd></div>
+      <div><dt>原因</dt><dd>{override.reason}</dd></div>
+      <div><dt>操作人</dt><dd>{override.actorId}</dd></div>
+      <div><dt>时间</dt><dd>{timeLabel(override.at)}</dd></div>
+    </dl>}
+    <p className="detail-note">人工优先级只影响应用内列表/详情/总览统计，不回写 Base；清除后恢复当前评分版本优先级。</p>
+    <StateBanner loadError={error} notice={notice} onCloseNotice={() => setNotice(null)} />
+    {mode === null ? <div className="req-summary-actions">
+      <ArcoButton htmlType="button" size="small" onClick={() => { setMode("edit"); setReason(""); setError(null); setNotice(null); }} disabled={busy || suppressed} title={suppressed ? "已压制需求不能设置人工优先级；请先撤销判定" : "设置人工优先级覆盖"}>{override ? "修改人工优先级" : "设置人工优先级"}</ArcoButton>
+      {override && <ArcoButton htmlType="button" size="small" onClick={() => { setMode("clear"); setReason(""); setError(null); setNotice(null); }} disabled={busy || suppressed} title={suppressed ? "已压制需求不能清除人工优先级" : "清除人工优先级，恢复评分结果"}>清除人工优先级</ArcoButton>}
+    </div> : <div className="rules-form priority-override-form">
+      {mode === "edit" && <label className="field"><span>覆盖为 *</span><ArcoSelect aria-label="人工优先级" value={priority} onChange={(value: "P0" | "P1" | "P2" | "P3") => setPriority(value)} style={{ minWidth: 120 }} options={["P0", "P1", "P2", "P3"].map((level) => ({ label: level, value: level }))} /></label>}
+      <label className="field"><span>{mode === "clear" ? "清除原因 *" : "覆盖原因 *"}</span><input aria-label="人工优先级原因" value={reason} onChange={(event) => setReason(event.target.value)} disabled={busy} placeholder="例如：产品会议决定提前处理（1–500 字）" /></label>
+      <ArcoButton type="primary" htmlType="button" size="small" onClick={() => void submit()} disabled={busy || reason.trim().length === 0}>{busy ? "保存中…" : mode === "clear" ? "确认清除" : "保存"}</ArcoButton>
+      <ArcoButton htmlType="button" size="small" onClick={() => { setMode(null); setError(null); }} disabled={busy}>取消</ArcoButton>
+    </div>}
+  </section>;
+}
+
+// ---------- V02-T26：分析补充上下文（进入下一次分析请求，不写 Base） ----------
+export function AnalysisContextSection({ detail, onSaved }: { detail: RequirementDetail; onSaved: () => void }) {
+  const suppressed = requirementProcessingState(detail) !== "active";
+  const saved = detail.analysisContext ?? null;
+  const [context, setContext] = useState(saved?.note ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => { setContext(saved?.note ?? ""); setError(null); setNotice(null); }, [detail.id, saved?.note]);
+  const save = async (rerun: boolean) => {
+    setBusy(true); setError(null); setNotice(null);
+    const trimmed = context.trim();
+    try {
+      await saveAnalysisContext(detail.id, trimmed.length > 0 ? trimmed : null);
+      if (rerun) {
+        try { await retryAnalysis(detail.id, { force: true }); }
+        catch (cause) {
+          if (cause instanceof ApiError && cause.status === 409) {
+            setError("补充上下文已保存，但重新分析未开始：当前状态不允许重试（可能有分析排队/运行中），请刷新后重试。");
+            onSaved();
+            return;
+          }
+          throw cause;
+        }
+      }
+      setNotice(rerun ? "补充上下文已保存，已提交重新分析。" : trimmed.length > 0 ? "补充上下文已保存。" : "补充上下文已清除。");
+      onSaved();
+    } catch (cause) { setError(cause instanceof ApiError ? errorText(cause) : "补充上下文保存失败，请重试。"); }
+    finally { setBusy(false); }
+  };
+  return <section className="req-section req-analysis-context-section" aria-labelledby="req-analysis-context-heading">
+    <div className="req-section-head"><h3 id="req-analysis-context-heading">补充上下文</h3><span className="req-source-note">仅进入 AI 分析 · 不写 Base</span></div>
+    <p className="detail-note">补充 PM 已知但来源未记录的事实（场景、约束、历史决策等）；下一次分析会以“补充上下文：”独立段提供给模型。不写入 Base，也不改变 PM 已确认字段。</p>
+    {saved && <p className="subtle-text">上次更新：{timeLabel(saved.updatedAt)} · {saved.updatedBy}</p>}
+    <label className="field" style={{ flexBasis: "100%" }}><span>补充上下文（不超过 4000 字）</span><textarea aria-label="补充上下文" className="rules-textarea" rows={4} value={context} onChange={(event) => setContext(event.target.value)} disabled={busy || suppressed} placeholder="例如：该能力需在 Q4 前上线；硬件仅支持 C706；与 GEOID 项目存在复用关系。" /></label>
+    <StateBanner loadError={error} notice={notice} onCloseNotice={() => setNotice(null)} />
+    <div className="req-summary-actions">
+      <ArcoButton htmlType="button" size="small" onClick={() => void save(false)} disabled={busy || suppressed} title={suppressed ? "已压制需求不能保存补充上下文；请先撤销判定" : "仅保存补充上下文"}>{busy ? "保存中…" : "保存"}</ArcoButton>
+      <ArcoButton type="primary" htmlType="button" size="small" onClick={() => void save(true)} disabled={busy || suppressed} title={suppressed ? "已压制需求不能重新分析" : "保存补充上下文后强制重跑一次 AI 分析"}>{busy ? "提交中…" : "保存并重新分析"}</ArcoButton>
+    </div>
+  </section>;
+}
+
 function RequirementDetailPage({ detail, detailId, loading, error, notice, busy, autoOpenOwnerPicker, onCloseNotice, onBack, onRefresh, onAct, onSaved }: {
   detail: RequirementDetail | null;
   detailId: string;
@@ -1602,6 +1696,10 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
     <ScoringPanel requirementId={detail.id} scoring={detail.scoring} dimensionInsights={dimensionInsights} onSaved={() => onSaved(detail.id)}>
       {aiAnalysisContent}
     </ScoringPanel>
+
+    <PriorityOverrideSection detail={detail} onSaved={() => onSaved(detail.id)} />
+
+    <AnalysisContextSection detail={detail} onSaved={() => onSaved(detail.id)} />
 
     <section className="req-section" aria-labelledby="req-status-heading">
       <div className="req-section-head"><h3 id="req-status-heading">处理与推送</h3><span className="req-source-note">系统状态</span></div>

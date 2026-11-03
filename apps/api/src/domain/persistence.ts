@@ -75,6 +75,22 @@ export type AudienceLevel = "L1" | "L2" | "L3" | "L4" | "L5" | "L6";
 /** PRD 4.1 固定八类；人工录入与后续 AI 建议分开（V02-T05-AC04）。 */
 export type RequirementType = "新增功能" | "功能扩展" | "体验优化" | "性能优化" | "质量修复" | "安全合规" | "成本效率" | "技术治理";
 
+/** 人工优先级覆盖（V02-T26）：优先于当前评分版本 priority，只影响应用内展示/统计，不回写 Base。 */
+export interface RequirementPriorityOverride {
+  priority: PriorityLevel;
+  /** 人工填写的原因（1–500 字）；审计与详情展示使用。 */
+  reason: string;
+  actorId: string;
+  at: string;
+}
+
+/** 人工补充上下文（V02-T26）：以独立段进入下一次分析请求，不写入 Base。 */
+export interface RequirementAnalysisContext {
+  note: string;
+  updatedAt: string;
+  updatedBy: string;
+}
+
 export interface RequirementRecord {
   id: string;
   /** RQ-Sys stable display ID, e.g. RQ-000001; distinct from the Teambition source ID. */
@@ -126,6 +142,12 @@ export interface RequirementRecord {
   duplicateOfRequirementId?: string | null;
   /** 重复/忽略决策派生出的处理状态；缺省视为 active（决策表为空时行为与旧版一致）。 */
   processingState?: "active" | "suppressed_duplicate" | "suppressed_ignored";
+  /** V02-T26：人工优先级覆盖；缺省/为空表示未覆盖（effectivePriority 回退到当前评分版本 priority）。 */
+  priorityOverride?: RequirementPriorityOverride | null;
+  /** 列表查询投影：当前评分版本（requirements.current_score_version_id）的 priority；非持久化字段。 */
+  currentScorePriority?: PriorityLevel | null;
+  /** V02-T26：人工补充上下文；下一次分析以“补充上下文：<note>”独立段进入模型输入。 */
+  analysisContext?: RequirementAnalysisContext | null;
   firstSeenAt: string;
   lastSeenAt: string;
   createdAt: string;

@@ -6,7 +6,7 @@
 import type { AuditEventRecord, BasePushRunRecord, BatchState, AnalysisRunRecord, FunctionModuleEntry, ModuleDictionaryVersionRecord, PersonMappingRecord, PmSnapshotRecord, PipelineJobRecord, PipelineJobType, PriorityLevel, PriorityRuleVersionRecord, SourceConfigRecord, SourceSnapshotRecord, SyncBatchRecord, SyncItemAction, SyncItemRecord, SyncTrigger, FeishuIdType, AudienceLevel, RiceDraftRecord, KanoEvidenceVersion, KanoRunRecord, RequirementScoreVersionRecord } from "../domain/persistence.js";
 import type { AnalysisState, OwnerState, PullState, PushState } from "../domain/workflow.js";
 import type { ResolvedSourceConfigUpdate } from "../contracts/source.js";
-import type { RequirementManualOwner, RequirementRecord } from "../domain/persistence.js";
+import type { RequirementManualOwner, RequirementRecord, RequirementPriorityOverride, RequirementAnalysisContext } from "../domain/persistence.js";
 import type { TeamPersonBindingInput, TeamPersonRecord } from "../domain/team-directory.js";
 
 export type AuditEventInput = Omit<AuditEventRecord, "entityId">;
@@ -365,6 +365,15 @@ export interface RequirementQueryRepository {
   clearResolution?(input: { requirementId: string; expectedVersion: number }):
     Promise<{ outcome: "cleared" } | { outcome: "version_conflict"; version: number } | { outcome: "not_found" }>;
 
+  // V02-T26：人工优先级覆盖（null=清除）。优先于当前评分版本 priority；只影响应用内展示/统计，不回写 Base。
+  setPriorityOverride(requirementId: string, input: {
+    priority: PriorityLevel | null; reason: string | null; actorId: string; at: string;
+  }): Promise<{ outcome: "saved"; override: RequirementPriorityOverride | null } | { outcome: "not_found" }>;
+  // V02-T26：分析补充上下文（null=清除）。只进入下一次分析请求，不写 Base。
+  setAnalysisContext(requirementId: string, input: {
+    context: string | null; actorId: string; at: string;
+  }): Promise<{ outcome: "updated"; context: RequirementAnalysisContext | null } | { outcome: "not_found" }>;
+
 
 
 
@@ -450,7 +459,7 @@ export interface RequirementQueryRepository {
     pushFailed: number;
     /** 仅推送待处理，与「待推送」卡片的筛选口径一致。 */
     pushPending: number;
-    /** 总览优先级分级：优先当前评分版本，未评分时使用最近一次已分析优先级（标记为 legacy）。 */
+    /** 总览优先级分级：人工优先级覆盖 > 当前评分版本 > 最近一次已分析优先级（legacy）；三者皆无计入 unscored。 */
     priority: {
       P0: number; P1: number; P2: number; P3: number;
       scored: number; legacy: number; unscored: number;

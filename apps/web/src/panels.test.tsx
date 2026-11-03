@@ -1,9 +1,9 @@
 // 工单 16/17 面板测试：数据全部来自 mock API；覆盖正向、权限拒绝与详情/重试交互。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { BatchesPanel, MappingsPanel, ModulesPanel, PeoplePanel, RequirementsPanel, ScoringPanel, SourcesPanel } from "./panels";
+import { AnalysisContextSection, BatchesPanel, MappingsPanel, ModulesPanel, PeoplePanel, PriorityOverrideSection, RequirementsPanel, ScoringPanel, SourcesPanel } from "./panels";
 import { AudienceEditor } from "./intake-form";
-import type { SourceConfig, TeamPerson } from "./api";
+import type { RequirementDetail, SourceConfig, TeamPerson } from "./api";
 
 /** 原生 select 已替换为 Arco Select：等待控件可用后点开下拉并按选项文字选择。 */
 async function chooseArcoOption(label: string, optionText: string | RegExp) {
@@ -1064,5 +1064,104 @@ describe("RequirementsPanel intake (V02-T04)", () => {
     fireEvent.click(screen.getByRole("button", { name: "提交并进入分析" }));
     await waitFor(() => expect(keys.length).toBe(2));
     expect(keys[0]).toBe(keys[1]);
+  });
+});
+
+
+describe("PriorityOverrideSection (V02-T26)", () => {
+  const baseDetail = {
+    id: "req-1",
+    processingState: "active",
+    effectivePriority: "P3",
+    priorityOverride: null,
+    analysisContext: null,
+    scoring: { current: { version: 2 }, aiSuggestion: null, history: [], formula: { text: "formula", thresholds: { p0: 45, p1: 25, p2: 10 } } },
+  } as unknown as RequirementDetail;
+
+  it("shows the effective priority and saves a manual override with a reason", async () => {
+    let body: Record<string, unknown> | undefined;
+    const onSaved = vi.fn();
+    fetchMock.mockImplementation(async (_input, init) => {
+      if (init?.method === "PUT") { body = JSON.parse(String(init.body)) as Record<string, unknown>; return jsonOk({ requirementId: "req-1", priorityOverride: { priority: "P1", reason: body.reason, actorId: "pm-1", at: "2026-11-03T00:00:00.000Z" }, effectivePriority: "P1" }); }
+      return jsonOk({});
+    });
+    render(<PriorityOverrideSection detail={baseDetail} onSaved={onSaved} />);
+    expect(screen.getByText("P3")).toBeInTheDocument();
+    expect(screen.getByText(/取自当前评分版本（v2）/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "设置人工优先级" }));
+    fireEvent.change(screen.getByLabelText("人工优先级原因"), { target: { value: "产品会议决定提前" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/requirements/req-1/priority-override", expect.objectContaining({ method: "PUT" })));
+    expect(body).toEqual({ priority: "P1", reason: "产品会议决定提前" });
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+  });
+
+  it("clears an existing override (priority: null) and shows who/when/why", async () => {
+    let body: Record<string, unknown> | undefined;
+    const detail = {
+      ...baseDetail,
+      effectivePriority: "P0",
+      priorityOverride: { priority: "P0", reason: "旧覆盖", actorId: "pm-0", at: "2026-11-01T00:00:00.000Z" },
+    } as unknown as RequirementDetail;
+    fetchMock.mockImplementation(async (_input, init) => {
+      if (init?.method === "PUT") { body = JSON.parse(String(init.body)) as Record<string, unknown>; return jsonOk({ requirementId: "req-1", priorityOverride: null, effectivePriority: "P3" }); }
+      return jsonOk({});
+    });
+    render(<PriorityOverrideSection detail={detail} onSaved={() => undefined} />);
+    expect(screen.getByText("已人工覆盖")).toBeInTheDocument();
+    expect(screen.getByText("旧覆盖")).toBeInTheDocument();
+    expect(screen.getByText("pm-0")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "清除人工优先级" }));
+    fireEvent.change(screen.getByLabelText("人工优先级原因"), { target: { value: "恢复评分结果" } });
+    fireEvent.click(screen.getByRole("button", { name: "确认清除" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/requirements/req-1/priority-override", expect.objectContaining({ method: "PUT" })));
+    expect(body).toEqual({ priority: null, reason: "恢复评分结果" });
+  });
+
+  it("disables editing for suppressed requirements", () => {
+    const detail = { ...baseDetail, processingState: "suppressed_duplicate" } as unknown as RequirementDetail;
+    render(<PriorityOverrideSection detail={detail} onSaved={() => undefined} />);
+    expect(screen.getByRole("button", { name: "设置人工优先级" })).toBeDisabled();
+  });
+});
+
+describe("AnalysisContextSection (V02-T26)", () => {
+  const detail = {
+    id: "req-1",
+    processingState: "active",
+    analysisContext: { note: "旧上下文", updatedAt: "2026-11-02T00:00:00.000Z", updatedBy: "pm-1" },
+  } as unknown as RequirementDetail;
+
+  it("saves the context and then forces a re-analysis from the same button", async () => {
+    const calls: Array<{ url: string; method: string | undefined; body: Record<string, unknown> | undefined }> = [];
+    const onSaved = vi.fn();
+    fetchMock.mockImplementation(async (input, init) => {
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
+      calls.push({ url: String(input), method: init?.method, body });
+      return jsonOk({ requirementId: "req-1", status: "queued", analysisContext: { note: body?.context, updatedAt: "2026-11-03T00:00:00.000Z", updatedBy: "pm-1" } }, 202);
+    });
+    render(<AnalysisContextSection detail={detail} onSaved={onSaved} />);
+    expect((screen.getByRole("textbox", { name: "补充上下文" }) as HTMLTextAreaElement).value).toBe("旧上下文");
+    fireEvent.change(screen.getByRole("textbox", { name: "补充上下文" }), { target: { value: "  硬件仅支持 C706  " } });
+    fireEvent.click(screen.getByRole("button", { name: "保存并重新分析" }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    const contextCall = calls.find((call) => call.url === "/api/requirements/req-1/analysis-context");
+    const retryCall = calls.find((call) => call.url === "/api/analysis/req-1/retry");
+    expect(contextCall?.method).toBe("PUT");
+    expect(contextCall?.body).toEqual({ context: "硬件仅支持 C706" });
+    expect(retryCall?.method).toBe("POST");
+    expect(retryCall?.body).toEqual({ force: true });
+  });
+
+  it("keeps the saved context but reports a readable 409 when re-analysis cannot start", async () => {
+    fetchMock.mockImplementation(async (input, init) => {
+      if (String(input) === "/api/requirements/req-1/analysis-context") return jsonOk({ requirementId: "req-1", analysisContext: { note: "x", updatedAt: "2026-11-03T00:00:00.000Z", updatedBy: "pm-1" } });
+      if (String(input) === "/api/analysis/req-1/retry" && init?.method === "POST") return jsonOk({ error: { code: "CONFLICT", message: "conflict" } }, 409);
+      return jsonOk({});
+    });
+    render(<AnalysisContextSection detail={detail} onSaved={() => undefined} />);
+    fireEvent.change(screen.getByRole("textbox", { name: "补充上下文" }), { target: { value: "新上下文" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存并重新分析" }));
+    await waitFor(() => expect(screen.getByText(/补充上下文已保存，但重新分析未开始/)).toBeInTheDocument());
   });
 });

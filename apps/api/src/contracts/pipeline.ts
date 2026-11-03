@@ -147,3 +147,17 @@ export const DuplicateDecisionSchema = z.strictObject({
 export const ClearDuplicateDecisionSchema = z.strictObject({
   expectedVersion: z.number().int().min(0),
 });
+
+// V02-T26：人工优先级覆盖（null=清除；清除时 reason 仍必填，用于审计留痕）。
+export const PriorityOverrideUpdateSchema = z.strictObject({
+  priority: z.enum(["P0", "P1", "P2", "P3"]).nullable(),
+  reason: z.string().trim().min(1).max(500),
+});
+// V02-T26：分析补充上下文（null=清除；非空 1–4000 字，trim 后不得为空）。
+export const AnalysisContextUpdateSchema = z.strictObject({
+  context: z.string().trim().min(1).max(4_000).nullable(),
+});
+// 保存上下文后强制重跑分析：跳过“同源版本已分析”的幂等短路，并生成唯一 dedupe key。
+export const RetryAnalysisRequestSchema = z.strictObject({
+  force: z.boolean().optional(),
+});

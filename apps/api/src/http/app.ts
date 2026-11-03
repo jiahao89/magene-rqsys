@@ -8,7 +8,7 @@ import { RICE_CONFIG_VERSION, RICE_EFFORT_UNIT, RICE_IMPACT_LEVELS, RICE_REACH_U
 import type { AuditEventRepository, AnalysisRunRepository, PipelineJobRepository, SourceConfigRepository, SyncBatchRepository, SyncItemRepository, PersonMappingRepository, RequirementQueryRepository, BasePushRunRepository, ModuleDictionaryRepository, PriorityRuleRepository, SourceSnapshotRepository, TeamDirectoryRepository, RequirementScoringRepository } from "../application/repositories.js";
 import type { PersonMappingRecord, AnalysisRunRecord, ModuleDictionaryVersionRecord, PriorityRuleVersionRecord, RequirementRecord, SourceConfigRecord, SyncBatchRecord } from "../domain/persistence.js";
 import type { TeamPersonRecord } from "../domain/team-directory.js";
-import { AuditListQuerySchema, ClearDuplicateDecisionSchema, DuplicateDecisionSchema, KanoEvidenceImportSchema, KanoRunRequestSchema, AudienceUpdateSchema, BatchListQuerySchema, RiceDraftUpdateSchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementIntakeEditSchema, RequirementIntakeSchema, RequirementListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
+import { AnalysisContextUpdateSchema, AuditListQuerySchema, ClearDuplicateDecisionSchema, DuplicateDecisionSchema, PriorityOverrideUpdateSchema, RetryAnalysisRequestSchema, KanoEvidenceImportSchema, KanoRunRequestSchema, AudienceUpdateSchema, BatchListQuerySchema, RiceDraftUpdateSchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementIntakeEditSchema, RequirementIntakeSchema, RequirementListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
 import { createHash, randomUUID } from "node:crypto";
 import { ApplyAiScoringSchema, ManualScoringUpdateSchema, SCORING_FORMULA_TEXT, SCORING_THRESHOLDS, computeUmcScore } from "../analysis/scoring.js";
 import { maskPii } from "../analysis/contract.js";
@@ -83,7 +83,7 @@ function requirementResolutionDto(req: RequirementRecord) {
   };
 }
 
-function requirementDto(req: RequirementRecord, analysis: Record<string, unknown> | null = null, analyses: unknown[] = [], ownerName: string | null = null) {
+function requirementDto(req: RequirementRecord, analysis: Record<string, unknown> | null = null, analyses: unknown[] = [], ownerName: string | null = null, currentScorePriority: RequirementRecord["currentScorePriority"] = null) {
   // 展示字段：详情页 L1 需要标题/描述/负责人/更新时间；只加不改，避免破坏既有调用方。
   // ownerName 仅在详情接口注入（列表逐行查映射会 N+1），解析不到时为 null。
   return {
@@ -91,6 +91,11 @@ function requirementDto(req: RequirementRecord, analysis: Record<string, unknown
     // 重复决策派生的处理状态；active 时链路行为与旧版完全一致。
     processingState: req.processingState ?? "active",
     resolution: requirementResolutionDto(req),
+    // V02-T26：人工优先级覆盖优先于当前评分版本；effectivePriority 供列表/详情直接展示（无覆盖/无评分时为 null）。
+    priorityOverride: req.priorityOverride ? { priority: req.priorityOverride.priority, reason: req.priorityOverride.reason, actorId: req.priorityOverride.actorId, at: req.priorityOverride.at } : null,
+    effectivePriority: req.priorityOverride?.priority ?? currentScorePriority ?? req.currentScorePriority ?? null,
+    // V02-T26：人工补充上下文（详情/列表同构返回；不写 Base）。
+    analysisContext: req.analysisContext ? { note: req.analysisContext.note, updatedAt: req.analysisContext.updatedAt, updatedBy: req.analysisContext.updatedBy } : null,
     sourceRequirementId: req.teambitionRequirementId,
     // V02-T02 加法：来源类型（teambition/web_manual）与业务渠道；TB 显示不变，手工预留已收录语义。
     sourceType: req.sourceType,
@@ -698,6 +703,41 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     if (result.outcome === "ai_not_found") return jsonError("NOT_FOUND");
     return json({ scoring: result.version });
   }
+  // V02-T26：人工优先级覆盖（只影响应用内列表/详情/总览，不回写 Base）。
+  const priorityOverrideMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/priority-override$/);
+  if (method === "PUT" && priorityOverrideMatch) {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.requirements || !repositories.audit) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const requirementId = pathUuid(priorityOverrideMatch[1]!, dependencies); if (!requirementId) return jsonError("NOT_FOUND");
+    const parsed = PriorityOverrideUpdateSchema.safeParse(await readJson(request)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
+    const req = await repositories.requirements.get(requirementId); if (!req) return jsonError("NOT_FOUND");
+    // 已压制需求不参与处理链路：人工优先级也不允许写入，避免“看起来已生效”。
+    if ((req.processingState ?? "active") !== "active") return jsonError("CONFLICT", "该需求已被压制，请先撤销判定再设置人工优先级。");
+    const now = (dependencies.now ?? (() => new Date()))().toISOString();
+    const cleared = parsed.data.priority === null;
+    const result = await repositories.requirements.setPriorityOverride(req.id, { priority: parsed.data.priority, reason: cleared ? null : parsed.data.reason, actorId: auth.actor.id, at: now });
+    if (result.outcome === "not_found") return jsonError("NOT_FOUND");
+    const auditFailure = await appendAudit(repositories, { id: randomUUID(), actorId: auth.actor.id, eventType: cleared ? "requirement.priority_override_cleared" : "requirement.priority_override_set", entityType: "requirement", entityId: req.id, result: "succeeded", safeDetails: { priority: parsed.data.priority, at: now }, occurredAt: now });
+    if (auditFailure) return auditFailure;
+    const currentScore = repositories.scoring ? await repositories.scoring.current(req.id) : null;
+    return json({ requirementId: req.id, priorityOverride: result.override, effectivePriority: result.override?.priority ?? currentScore?.priority ?? null });
+  }
+  // V02-T26：分析补充上下文（只进入下一次分析请求，不写 Base）。
+  const analysisContextMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/analysis-context$/);
+  if (method === "PUT" && analysisContextMatch) {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.requirements || !repositories.audit) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const requirementId = pathUuid(analysisContextMatch[1]!, dependencies); if (!requirementId) return jsonError("NOT_FOUND");
+    const parsed = AnalysisContextUpdateSchema.safeParse(await readJson(request)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
+    const req = await repositories.requirements.get(requirementId); if (!req) return jsonError("NOT_FOUND");
+    if ((req.processingState ?? "active") !== "active") return jsonError("CONFLICT", "该需求已被压制，请先撤销判定再补充上下文。");
+    const now = (dependencies.now ?? (() => new Date()))().toISOString();
+    const result = await repositories.requirements.setAnalysisContext(req.id, { context: parsed.data.context, actorId: auth.actor.id, at: now });
+    if (result.outcome === "not_found") return jsonError("NOT_FOUND");
+    const auditFailure = await appendAudit(repositories, { id: randomUUID(), actorId: auth.actor.id, eventType: "requirement.analysis_context_updated", entityType: "requirement", entityId: req.id, result: "succeeded", safeDetails: { cleared: parsed.data.context === null, at: now }, occurredAt: now });
+    if (auditFailure) return auditFailure;
+    return json({ requirementId: req.id, analysisContext: result.context });
+  }
   const requirementMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)$/);
   if (method === "GET" && requirementMatch) {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
@@ -720,7 +760,7 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const aiScore = repositories.scoring ? await repositories.scoring.aiSuggestion(req.id) : null;
     const scoreHistory = repositories.scoring ? await repositories.scoring.list(req.id) : [];
     return json({
-      ...requirementDto(req, latest && latest.status === "analyzed" ? latest.structuredResult : null, history.map(analysisVersionDto), ownerName),
+      ...requirementDto(req, latest && latest.status === "analyzed" ? latest.structuredResult : null, history.map(analysisVersionDto), ownerName, currentScore?.priority ?? null),
       duplicates,
       resolution: resolution ?? requirementResolutionDto(req),
       scoring: {
@@ -795,13 +835,35 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
       retryAllowed = !jobs.some((job) => job && ["queued", "running"].includes(job.status));
     }
     if (!isIntakeComplete(req.pipeline.pull) || !retryAllowed) return jsonError("CONFLICT");
+    // V02-T26：可选 body { force?: boolean }。force=true 用于“保存补充上下文后立即重跑”，
+    // 需要唯一 dedupe key 越过同源版本已分析的幂等短路（分析作业侧再按 payload.force 跳过守卫）。
+    // 显式读 body 以区分“无 body”和“非法 JSON”：非法 JSON 返回 400，而不是静默按 false 处理。
+    const retryText = await request.text().catch(() => "");
+    let force = false;
+    if (retryText.trim().length > 0) {
+      let retryBody: unknown;
+      try { retryBody = JSON.parse(retryText); } catch { return jsonError("VALIDATION_FAILED"); }
+      const retryParsed = RetryAnalysisRequestSchema.safeParse(retryBody);
+      if (!retryParsed.success) return jsonError("VALIDATION_FAILED");
+      force = retryParsed.data.force === true;
+    }
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
-    const dedupeKey = `analysis:${req.id}:sv${req.sourceVersion}:after${priorAnalysisVersion}`;
+    const baseDedupeKey = `analysis:${req.id}:sv${req.sourceVersion}:after${priorAnalysisVersion}`;
+    const dedupeKey = force ? `${baseDedupeKey}:force:${crypto.randomUUID()}` : baseDedupeKey;
     const currentJob = await repositories.jobs.findByDedupeKey?.(dedupeKey);
     const auditRetry = (result: "succeeded" | "failed" | "denied", analysisStatus: string) => appendAudit(repositories, {
       id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "analysis.retry_requested", entityType: "requirement", entityId: req.id,
-      result, safeDetails: { sourceVersion: req.sourceVersion, priorAnalysisVersion, analysisStatus }, occurredAt: now,
+      result, safeDetails: { sourceVersion: req.sourceVersion, priorAnalysisVersion, analysisStatus, ...(force ? { force: true } : {}) }, occurredAt: now,
     });
+    // force 不叠加第二条活跃分析：已有 queued/running 首轮作业时沿用，避免双份 AI 调用。
+    if (force) {
+      const live = await repositories.jobs.findByDedupeKey?.(baseDedupeKey);
+      if (live && ["queued", "running"].includes(live.status)) {
+        const auditFailure = await auditRetry("succeeded", "reused_existing_job");
+        if (auditFailure) return auditFailure;
+        return json({ requirementId: req.id, status: "queued" }, 202);
+      }
+    }
     if (currentJob?.status === "queued" || currentJob?.status === "running") {
       const auditFailure = await auditRetry("succeeded", "reused_existing_job");
       if (auditFailure) return auditFailure;
@@ -812,7 +874,7 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
       if (auditFailure) return auditFailure;
       return jsonError("CONFLICT");
     }
-    try { await repositories.jobs.enqueue({ jobType: "analysis", dedupeKey, payload: { requirementId: req.id, sourceVersion: req.sourceVersion, actorId: auth.actor.id }, availableAt: now }); }
+    try { await repositories.jobs.enqueue({ jobType: "analysis", dedupeKey, payload: { requirementId: req.id, sourceVersion: req.sourceVersion, actorId: auth.actor.id, ...(force ? { force: true } : {}) }, availableAt: now }); }
     catch {
       const auditFailure = await auditRetry("failed", "enqueue_failed");
       if (auditFailure) return auditFailure;
