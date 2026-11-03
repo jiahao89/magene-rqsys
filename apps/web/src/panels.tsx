@@ -294,7 +294,7 @@ function FeishuAccountBinder({ personName, disabled, onSave, onCancel }: {
     {error && <span className="feishu-user-error" role="alert">{error}</span>}
     {!error && !searching && candidates.length === 0 && <span className="feishu-user-hint">没有搜索到匹配的飞书账号。可换一个关键字（例如英文名）再试。</span>}
     {candidates.length > 0 && <div className="feishu-user-results" role="listbox" aria-label="飞书账号候选">
-      {candidates.map((candidate) => <ArcoButton key={candidate.openId} role="option" aria-selected={selectedId === candidate.openId} className="feishu-user-option" onClick={() => setSelectedId(candidate.openId)} htmlType="button">
+      {candidates.map((candidate) => <ArcoButton type="text" key={candidate.openId} role="option" aria-selected={selectedId === candidate.openId} className="feishu-user-option" onClick={() => setSelectedId(candidate.openId)} htmlType="button">
         <span>{candidate.name}{candidate.enName ? <small>{candidate.enName}</small> : null}</span>
         <code>{shortFeishuId(candidate.openId)}</code>
       </ArcoButton>)}
@@ -1010,7 +1010,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
       <IntakeForm onCreated={(id) => { refresh(); void open(id, { push: true }); }} />
       <div className="toolbar-actions">
         {appliedFilterCount > 0 && <span className="toolbar-active-count" role="status">{appliedFilterCount} 个筛选已生效</span>}
-        {activeFilterCount > 0 && <ArcoButton className="link-button" onClick={clearFilters} htmlType="button">清除筛选</ArcoButton>}
+        {activeFilterCount > 0 && <ArcoButton type="text" className="link-button" onClick={clearFilters} htmlType="button">清除筛选</ArcoButton>}
         <ArcoButton htmlType="button" size="small" onClick={refresh}><RefreshCw size={14} />刷新</ArcoButton>
         <ArcoButton type="primary" htmlType="button" size="small" onClick={applyFilters}>筛选</ArcoButton>
       </div>
@@ -1047,7 +1047,7 @@ function BaseRecordReference({ recordId }: { recordId: string | null }) {
   };
   return <span className="base-ref">
     <code className="base-ref-id">{recordId}</code>
-    <ArcoButton className="link-button" onClick={() => void copy()} htmlType="button">{copied ? "已复制" : "复制记录 ID"}</ArcoButton>
+    <ArcoButton type="text" className="link-button" onClick={() => void copy()} htmlType="button">{copied ? "已复制" : "复制记录 ID"}</ArcoButton>
     <span className="base-ref-hint">PM 处理状态与通知送达请在飞书 Base 中查看；本工作台不读取这些字段。</span>
   </span>;
 }
@@ -1620,7 +1620,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
         <span className="req-owner-line">
           <span className="req-meta-label">负责人</span><OwnerBadge owner={owner} />
           {detail.manualOwner && <span className="req-owner-manual" title="只影响这一条需求，不会改动同 TB 执行人的其他需求">手动指定</span>}
-          {detail.manualOwner && <ArcoButton className="req-owner-revert" disabled={busy || suppressed} title={suppressed ? "已压制需求不会推送；请先撤销判定" : undefined} onClick={() => void onAct(async () => {
+          {detail.manualOwner && <ArcoButton type="text" className="req-owner-revert" disabled={busy || suppressed} title={suppressed ? "已压制需求不会推送；请先撤销判定" : undefined} onClick={() => void onAct(async () => {
             const result = await clearOwner(detail.id);
             return `已恢复默认负责人（${pipelineLabel("owner", result.ownerState)}）${result.status === "queued" ? "，Base 推送已排队" : "；等待默认负责人映射"}`;
           }, detail.id)} htmlType="button">恢复默认负责人</ArcoButton>}
@@ -1783,7 +1783,7 @@ function RequirementsTable({ rows, loading, onOpen, onAssign }: { rows: Requirem
       width: 170,
       render: (_value: unknown, row: RequirementSummary) => {
         const owner = requirementOwnerView(row);
-        return <ArcoButton className="owner-cell-button" title={owner.unassigned ? "分配负责人" : "变更负责人"}
+        return <ArcoButton type="text" className="owner-cell-button" title={owner.unassigned ? "分配负责人" : "变更负责人"}
           onClick={(event) => { event.stopPropagation(); onAssign(row); }} htmlType="button">
           <OwnerBadge owner={owner} />
           <span className="owner-cell-edit">{owner.unassigned ? "分配" : "变更"}</span>
