@@ -232,3 +232,11 @@ npm run build:client
 - 数据源与计划：2 个 Arco Checkbox（同步/周计划）；优先级规则「高级设置」展开后 3 个 Arco InputNumber。
 - 两端原生 `<select>`/`<details>` 为 0；原生 `<input>` 仅剩 2 处 `datetime-local` 豁免；`grep Hero*` = 0、死 class 字符串 = 0。
 
+### 7.4 补充收尾（2026-11-03 第二轮：全部 UI 问题）
+
+- **原生 `<button>` 全量 Arco 化**：两端 6 个页面文件中的全部原生按钮（web 18 / 妙搭 19）→ `ArcoButton`（`htmlType="button"`，保留 className/aria/ref/disabled）；两端 `<button` 计数 = 0。覆盖 icon-button、link-button、text-link、sidebar-backdrop、todo-card、audience-save-button、audience-ai-chip、audience-tag、feishu-user-option、owner-cell-button、req-owner-revert、req-audit-trigger。
+- **ArcoButton 盒模型桥接**：新增 `ARCO-10` 桥接规则（`.arco-btn.icon-button`/`.link-button`/`.todo-card` 等重置 Arco 默认 height/padding/min-width），避免 Arco 默认尺寸破坏原布局。
+- **ARCO-09 首轮收敛**：移除已定义变量上多余的 `var(--rq-*, #hex)` 回退值 72 处；新增 37 个语义色 token 并替换 74 处规则字面量；两文件组件规则 hex 从 462/463 降至 **232**（约 −50%）；剩余为一次性色值（按既有 token 策略保留）。
+- **暗色 UI 修复**：原生 `datetime-local` 增加统一样式与 `color-scheme`（暗色下日期选择器/图标不再白底）；`.sidebar-backdrop` 显式 `display:block`。
+- 生产验证：待本轮 release 后在浏览器复核亮/暗主题、更多筛选日期控件、按钮（icon/link/todo/audience）观感与布局。
+

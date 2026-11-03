@@ -214,19 +214,19 @@ export function AudienceEditor({ requirementId, audience, suggestedTags = [], on
     <div className="audience-ai-row">
       <span className="audience-ai-label">AI 建议</span>
       {suggestedTags.length > 0
-        ? <div className="audience-ai-chips">{suggestedTags.map((level) => <button key={level} type="button" className={`audience-ai-chip${selected.includes(level) ? " is-in-draft" : ""}`} onClick={() => toggle(level)} disabled={busy} aria-pressed={selected.includes(level)} title="把该 AI 建议加入/移出本次选择">{AUDIENCE_LEVEL_NAMES[level] ?? level}</button>)}</div>
+        ? <div className="audience-ai-chips">{suggestedTags.map((level) => <ArcoButton key={level} className={`audience-ai-chip${selected.includes(level) ? " is-in-draft" : ""}`} onClick={() => toggle(level)} disabled={busy} aria-pressed={selected.includes(level)} title="把该 AI 建议加入/移出本次选择" htmlType="button">{AUDIENCE_LEVEL_NAMES[level] ?? level}</ArcoButton>)}</div>
         : <span className="audience-ai-empty">AI 未给出人群建议</span>}
       <span className="audience-ai-hint">未确认时默认选中首个 AI 建议；可修改后保存</span>
     </div>
     <div className="audience-choice-row" role="group" aria-label="选择适用人群">
       {AUDIENCE_LEVELS.map((level) => (
-        <button key={level} type="button" aria-pressed={selected.includes(level)} className={`audience-tag${selected.includes(level) ? " is-selected" : ""}`} onClick={() => toggle(level)} disabled={busy} title={AUDIENCE_LEVEL_NAMES[level]}>
+        <ArcoButton key={level} aria-pressed={selected.includes(level)} className={`audience-tag${selected.includes(level) ? " is-selected" : ""}`} onClick={() => toggle(level)} disabled={busy} title={AUDIENCE_LEVEL_NAMES[level]} htmlType="button">
           {AUDIENCE_LEVEL_NAMES[level]}
-        </button>
+        </ArcoButton>
       ))}
     </div>
     <div className="audience-actions">
-      <button className="audience-save-button" onClick={() => void save()} disabled={busy}>{busy ? "保存中…" : "保存人群标签"}</button>
+      <ArcoButton className="audience-save-button" onClick={() => void save()} disabled={busy} htmlType="button">{busy ? "保存中…" : "保存人群标签"}</ArcoButton>
       {audience.confirmed && audience.tags.length === 0 && <span className="status-hint">已确认为空（不再默认采用 AI 建议）</span>}
       {!audience.confirmed && <span className="status-hint">尚未确认；当前选择是草稿，保存后才成为 PM 确认值</span>}
       {error && <span className="field-error" role="alert">{error}</span>}
