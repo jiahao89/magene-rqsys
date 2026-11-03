@@ -238,5 +238,10 @@ npm run build:client
 - **ArcoButton 盒模型桥接**：新增 `ARCO-10` 桥接规则（`.arco-btn.icon-button`/`.link-button`/`.todo-card` 等重置 Arco 默认 height/padding/min-width），避免 Arco 默认尺寸破坏原布局。
 - **ARCO-09 首轮收敛**：移除已定义变量上多余的 `var(--rq-*, #hex)` 回退值 72 处；新增 37 个语义色 token 并替换 74 处规则字面量；两文件组件规则 hex 从 462/463 降至 **232**（约 −50%）；剩余为一次性色值（按既有 token 策略保留）。
 - **暗色 UI 修复**：原生 `datetime-local` 增加统一样式与 `color-scheme`（暗色下日期选择器/图标不再白底）；`.sidebar-backdrop` 显式 `display:block`。
-- 生产验证：待本轮 release 后在浏览器复核亮/暗主题、更多筛选日期控件、按钮（icon/link/todo/audience）观感与布局。
+- 生产验证（release `7703841253931109621`，commit `b224fa2`，`error_logs=[]`）：
+  - 总览：`todo-card` 恢复 107px 卡片（含 warn/danger/info/ok 左侧 3px 色条）、icon 按钮 30×30、link 按钮 padding 4px 2px；亮/暗均正常。
+  - 需求详情：`audience-save-button` 恢复品牌蓝底白字（rgb(43,97,216)），人群 chip 白底/蓝灰描边、选中态浅蓝底，`req-owner-revert` 恢复行内文本按钮。
+  - 需求池「更多筛选」：亮色日期控件 h34、暗色下背景/文字/`color-scheme` 均切到暗色（浏览器日期图标不再白底）。
+  - 两端 `button:not(.arco-btn)` = 0；`<button` 计数 = 0；按钮布局/尺寸截图见 `/tmp/ui5-*.png`。
+- 相关提交：root `2156063`（按钮 Arco 化 + ARCO-09 首轮 + 暗色日期）→ `a66ebec`（盒模型桥接）→ `463851f`（custom 控件 text 类型）→ `f7dffde`（高优先级视觉桥接）；妙搭镜像 `1cc13a3` → `4af3b29` → `0802775` → `b224fa2`。
 
