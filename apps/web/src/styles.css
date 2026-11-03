@@ -1467,7 +1467,7 @@ body[arco-theme] h4 { color: var(--color-text-1); font-weight: 500; }
 .arco-btn.todo-card.is-info { border-left: 3px solid var(--rq-focus-accent) !important; }
 .arco-btn.todo-card.is-ok { border-left: 3px solid var(--rq-success-strong) !important; }
 .arco-btn.todo-card:disabled { opacity: .72 !important; }
-.arco-btn.sidebar-backdrop { display: block !important; width: 100% !important; height: 100% !important; min-width: 0 !important; padding: 0 !important; border: 0 !important; background: rgba(17, 24, 39, .38) !important; }
+.arco-btn.sidebar-backdrop { position: fixed !important; z-index: 6 !important; inset: 0 !important; display: block !important; width: 100% !important; height: 100% !important; min-width: 0 !important; padding: 0 !important; border: 0 !important; background: rgba(17, 24, 39, .38) !important; }
 
 /* ==================== ARCO-09 语义色补充（2026-11-03） ====================
  * 把组件规则里重复出现的字面量收敛为语义 token；取值与原字面量一致，亮/暗视觉不变。
