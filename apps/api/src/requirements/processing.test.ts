@@ -154,6 +154,27 @@ test("handleAnalysisJob drops stale jobs whose substantive hash no longer matche
   assert.equal(ofJobType(h.enqueued, "base_push").length, 0);
 });
 
+test("handleAnalysisJob force re-runs an already analyzed requirement and still skips the guard otherwise", async () => {
+  // 回归：幂等守卫会短路"重跑分析"，导致 retry 请求返回 202 但实际不调用模型。
+  // force=true 是人工重跑/补充上下文后重算的显式入口，必须绕过守卫并产生新的分析版本。
+  const h = harness();
+  const repositories = {
+    ...h.deps.repositories,
+    analyses: {
+      ...h.deps.repositories.analyses,
+      async latest() { return { status: "analyzed", sourceVersion: 1, analysisVersion: 1 } as never; },
+    },
+  } as unknown as RequirementWorkflowDeps["repositories"];
+  const workflow = createRequirementWorkflow({ ...h.deps, repositories });
+
+  await workflow.handleAnalysisJob({ payload: { requirementId: "req-1" } });
+  assert.deepEqual(h.analysisStates, [], "无 force 时幂等守卫直接返回，不调用模型");
+
+  await workflow.handleAnalysisJob({ payload: { requirementId: "req-1", force: true } });
+  assert.deepEqual(h.analysisStates, ["running", "analyzed"], "force=true 时真正重跑分析");
+  assert.ok(h.providerInput(), "force 时必须实际调用模型");
+});
+
 test("handleBasePushJob without a configured transport fails fast instead of pretending", async () => {
   const h = harness();
   const workflow = createRequirementWorkflow(h.deps);

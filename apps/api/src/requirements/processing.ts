@@ -162,8 +162,9 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
       const dictionary = await loadPublishedDictionary();
       const priorityRule = await loadPriorityRule();
       // 幂等前置检查：同一 sourceVersion 已有成功分析时不再重复调用模型（worker 重试/租约接管都会走到这里）。
+      // force=true 用于人工发起的"重跑分析"（重新校准评分/补充上下文后复算）：跳过该检查产生新分析版本。
       const latestRun = await deps.repositories.analyses.latest(requirement.id);
-      if (latestRun?.status === "analyzed" && latestRun.sourceVersion === requirement.sourceVersion) return;
+      if (job.payload.force !== true && latestRun?.status === "analyzed" && latestRun.sourceVersion === requirement.sourceVersion) return;
       const provider = createProvider();
       await deps.repositories.requirements.updateAnalysisState(requirement.id, "running");
       const run = await runAnalysis({
