@@ -113,6 +113,18 @@ export function scorePriority(score: number): ComputedScore["priority"] {
   return "P3";
 }
 
+/**
+ * VOC/NPS 尚未接入时 α 的确定性取值。
+ * 文档把 VOC 规则列为"待引入"：α=1.2/1.0/0.8 依赖"反馈条数 + 跨渠道"这类 VOC 证据，
+ * 当前系统拿不到，因此不能照抄"单条反馈 → 0.8"给所有需求统一打 8 折。
+ * - safetyFlag=true（来源明确涉及安全/事故）→ 1.5（文档：安全类强制 P0 候选）
+ * - 其余 → 1.0（中性：不放大也不惩罚）
+ * 服务端计分与落库都使用该值；模型返回的 alpha 仅作参考。
+ */
+export function resolveScoringAlpha(scoring: { safetyFlag: boolean }): number {
+  return scoring.safetyFlag ? 1.5 : 1.0;
+}
+
 /** 固定评分 v2 公式；只接受已校验范围的值。 */
 export function computeUmcScore(inputs: ScoringInputs, alpha: number): ComputedScore {
   if (!Number.isFinite(alpha) || alpha < 0.5 || alpha > 2) throw new ScoringValidationError("alpha is out of range");

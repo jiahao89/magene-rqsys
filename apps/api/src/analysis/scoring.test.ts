@@ -4,6 +4,7 @@ import {
   SCORING_BASIS_KEYS,
   ScoringSchema,
   computeUmcScore,
+  resolveScoringAlpha,
   scorePriority,
   validateScoringEvidence,
   type ScoringInputs,
@@ -105,4 +106,10 @@ test("blank-only evidence is rejected instead of trivially matching the source",
   assert.throws(() => ScoringSchema.parse({ ...validScoring, basis: { ...basis, "user.pain": { reason: "x", evidence: ["   "], assumption: false } } }));
   const parsed = ScoringSchema.parse({ ...validScoring, basis: { ...basis, "user.pain": { reason: "x", evidence: [" 用户描述循环选择太难受 "], assumption: false } } });
   assert.doesNotThrow(() => validateScoringEvidence(parsed, "用户描述循环选择太难受"));
+});
+
+test("VOC 未接入时 α 由服务端定为中性 1.0，只有安全证据才升到 1.5", () => {
+  // 文档把 VOC/NPS 规则列为"待引入"：模型对单条反馈一律给 0.8 会让全部需求统一打 8 折。
+  assert.equal(resolveScoringAlpha({ safetyFlag: false }), 1.0);
+  assert.equal(resolveScoringAlpha({ safetyFlag: true }), 1.5);
 });

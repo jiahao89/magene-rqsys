@@ -1,6 +1,7 @@
 import type { AnalysisPriorityRule, ValidatedAnalysis } from "./contract.js";
 import { AiProviderError, type AiProvider } from "./provider.js";
 import { recommendationValues } from "./priority-rule.js";
+import { resolveScoringAlpha } from "./scoring.js";
 
 export interface AnalysisRun {
   id: string;
@@ -82,15 +83,19 @@ export async function runAnalysis(input: AnalysisServiceInput, options: Analysis
       dictionary: input.dictionary,
       priorityRule: input.priorityRule,
     });
-    // 已发布 v1 规则时用四维建议映射计算；评分 v2 则用九项输入+α由服务端公式计算。
+    // 已发布 v1 规则时用四维建议映射计算；评分 v2 则用九项输入 + 服务端归一后的 α 计算。
+    // α 归一：VOC 未接入前，模型给的"单条反馈 0.8"不再作为全量折扣，改由服务端确定（安全 1.5，其余 1.0）。
     // 有 scoring 但没有 v2 规则时优先级留空，不回退到 v1 的不同口径。
-    const scored = result.scoring && input.priorityRule?.computeScore
-      ? input.priorityRule.computeScore(result.scoring.inputs, result.scoring.alpha)
+    const scoring = result.scoring
+      ? { ...result.scoring, alpha: resolveScoringAlpha(result.scoring) }
+      : null;
+    const scored = scoring && input.priorityRule?.computeScore
+      ? input.priorityRule.computeScore(scoring.inputs, scoring.alpha)
       : null;
     const priority = scored?.priority
-      ?? (result.scoring ? null : input.priorityRule ? input.priorityRule.compute(recommendationValues(result)) : result.priority);
+      ?? (scoring ? null : input.priorityRule ? input.priorityRule.compute(recommendationValues(result)) : result.priority);
     const completed = await options.repository.complete(run.id, {
-      status: "analyzed", result: { ...result, priority }, completedAt: (options.now ?? (() => new Date()))().toISOString(),
+      status: "analyzed", result: { ...result, ...(scoring ? { scoring } : {}), priority }, completedAt: (options.now ?? (() => new Date()))().toISOString(),
       provider: run.provider, model: run.model, promptVersion: run.promptVersion,
       moduleDictionaryVersion: run.moduleDictionaryVersion, ...(run.priorityRuleVersionId ? { priorityRuleVersionId: run.priorityRuleVersionId } : {}),
       safeErrorCode: null, safeErrorSummary: null,

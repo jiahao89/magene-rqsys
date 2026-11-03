@@ -5,7 +5,7 @@ export const DEFAULT_BASE_URL = "https://api.deepseek.com";
 export const DEFAULT_MODEL = "deepseek-flash";
 const DEFAULT_TIMEOUT_MS = 20_000;
 const DEFAULT_TEMPERATURE = 0;
-const DEFAULT_PROMPT_VERSION = "rq-analysis-v3";
+const DEFAULT_PROMPT_VERSION = "rq-analysis-v4";
 const ENDPOINT = "/chat/completions";
 const MAX_EVIDENCE_SEGMENT_LENGTH = 240;
 
@@ -196,15 +196,15 @@ function prompt(request: SafeAnalysisRequest, segments: EvidenceSegment[]): stri
       audience: [{ level: "L1|L2|L3|L4|L5|L6", reason: "为什么适用该人群", evidence: ["T1"] }],
       scoring: {
         inputs: {
-          user: { pain: 3, frequency: 4 },
-          market: { sellingPoint: 1, competitor: 1 },
-          strategy: { roadmap: 1, dependency: 1 },
-          cost: { workload: 3, technicalRisk: 2, resource: 2 },
+          user: { pain: "<整数 1-5>", frequency: "<整数 1-5>" },
+          market: { sellingPoint: "<整数 1-3>", competitor: "<整数 1-3>" },
+          strategy: { roadmap: "<整数 1-3>", dependency: "<整数 1-3>" },
+          cost: { workload: "<整数 1-5>", technicalRisk: "<整数 1-5>", resource: "<整数 1-5>" },
         },
-        alpha: 0.8,
+        alpha: 1.0,
         safetyFlag: false,
-        scoreConfidence: "中",
-        scoreConfidenceReason: "频次和竞品依据不足，已按假设估算",
+        scoreConfidence: "高|中|低",
+        scoreConfidenceReason: "一句话说明本组评分的置信度与主要不确定来源",
         basis: {
           "user.pain": { reason: "为什么打这个分", evidence: ["T1"], assumption: false },
           "user.frequency": { reason: "没有频次数据时的估算假设", evidence: [], assumption: true },
@@ -217,11 +217,21 @@ function prompt(request: SafeAnalysisRequest, segments: EvidenceSegment[]): stri
           "cost.resource": { reason: "资源估算假设", evidence: [], assumption: true },
         },
         rationale: "总体评分说明",
-        proposedScore: 6.4,
       },
     }, null, 2),
       "Constraints: evidence fields must contain only IDs from the source segments below, never quote text; overall evidence must include at least one ID when source segments exist; missing_evidence is a boolean and true requires an empty evidence array; every inference must have ai_inference: true; facts[].text must be a VERBATIM excerpt copied character-for-character from the source text (never paraphrase, never translate, keep original punctuation); priority must always be null because the server applies any published calibrated rule deterministically; each recommendations dimension recommendation field must be exactly one of 高|中|低|无法判断 (the rationale carries the substantive reasoning) — the published rule scores those exact levels.",
-      "Scoring v2: return the scoring object exactly as shaped above. It must contain all nine inputs and alpha; every basis key is required. Use assumption=false only when you provide at least one source evidence ID; otherwise set assumption=true and state the estimation assumption in reason. Never invent competitor, roadmap, frequency or engineering facts. alpha defaults: 0.8 for a single feedback/channel without cross-evidence, 1.0 for multiple independent sources, 1.5 only when the source confirms a safety/irreversible impact. safetyFlag must be false unless the source contains safety evidence. proposedScore is optional and only explanatory; the server computes the official score and priority, so never return a priority field.",
+      "Scoring anchors (from the approved requirement-scoring standard; pick each integer against these anchors, never against the example or a habitual default):",
+      "user.pain 1-5: 5=blocks the goal / strong frustration / safety or data risk; 4=clearly hurts efficiency, requires a workaround; 3=inconvenient, needs time to handle; 2=minor discomfort, tolerable; 1=nearly imperceptible, pure preference.",
+      "user.frequency 1-5: 5=≥3 times per week, almost every ride; 4=1-2 times per week, most rides; 3=2-4 times per month, specific ride types; 2=≤1 time per month, limited scenarios; 1=a few times per year, very niche.",
+      "market.sellingPoint 1-3: 3=main launch/detail-page selling point; 2=supporting comparison-page selling point; 1=internal talking point only.",
+      "market.competitor 1-3: 3=mainstream competitors (80%+) already have it, missing means falling behind; 2=some competitors have it, can differentiate; 1=competitors lack it and its absence has no obvious impact.",
+      "strategy.roadmap 1-3: 3=core item of this quarter's strategy; 2=already planned on the roadmap but not core; 1=not planned on the current roadmap.",
+      "strategy.dependency 1-3: 3=hard dependency (blocks a launch/market window); 2=soft dependency (hurts experience, does not block release); 1=no dependency (standalone).",
+      "cost.workload 1-5: 1=≤0.5 person-month (config/copy/existing capability); 2=0.5-1 person-month (single module); 3=1-2 person-months (multi-module); 4=2-3 person-months (cross-end coordination); 5=≥3 person-months (architecture/hardware).",
+      "cost.technicalRisk 1-5: 1=mature solution, no risk; 2=minor boundary risk, controllable; 3=architecture/protocol-level risk; 4=unproven new technology or protocol; 5=new hardware/platform or unverified protocol.",
+      "cost.resource 1-5: 1=no key-person dependency; 2=1-2 engineers can complete independently; 3=requires algorithm/architect time; 4=requires hardware/vendor coordination; 5=requires deep external-vendor collaboration.",
+      "If the source has no evidence for a dimension, choose that dimension's lowest anchor and set assumption=true with the gap in basis reason; never invent facts, and never treat missing evidence as proof that the dimension is unimportant.",
+      "Scoring v2: return the scoring object exactly as shaped above. All nine inputs must be JSON integers within the anchor ranges above — never return the quoted placeholder text, never copy sample values, and never default every dimension to its minimum. Every basis key is required; use assumption=false only when you provide at least one source evidence ID, otherwise set assumption=true and state the estimation assumption in reason. Never invent competitor, roadmap, frequency or engineering facts. alpha: return 1.0 for a normal requirement and 1.5 only when the source explicitly confirms a safety/irreversible impact; the server normalizes alpha for official scoring, so do not use 0.8 to express uncertainty — record uncertainty in scoreConfidence, scoreConfidenceReason and assumption basis entries. safetyFlag must be false unless the source contains safety evidence. The server computes the official score and priority, so never return a priority field and do not return proposedScore.",
     `Controlled modules: ${JSON.stringify(request.dictionary.modules)}. Choose one exact listed module only when the requirement clearly matches it; otherwise set module to exactly 无法识别.`,
     `Audience levels are fixed: L1=职业级 Pro, L2=竞技级 Racing, L3=爱好者/专业入门 Enthusiast, L4=健身锻炼 Fitness, L5=休闲娱乐 Recreation, L6=通勤代步 Commuter. Suggest audience entries only when the source text supports them (each with reason and evidence IDs); use an empty array when evidence is insufficient — never invent a seventh level and never infer that an unmentioned level is unsuitable. typeSuggestion must be one of the eight fixed categories or null.`,
     `Published priority rule: ${JSON.stringify(request.priorityRule)}.`,
