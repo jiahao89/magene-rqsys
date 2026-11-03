@@ -1437,27 +1437,37 @@ body[arco-theme] h4 { color: var(--color-text-1); font-weight: 500; }
 .field .arco-input-wrapper.arco-input-error,
 .field .arco-select.arco-select-error .arco-select-view { border-color: rgb(var(--danger-6)); }
 
-/* ==================== ARCO-10：原生按钮 ArcoButton 化后的盒模型桥接（2026-11-03） ====================
- * 这些类原本写在原生 <button> 上；ArcoButton 自带 .arco-btn 基础样式与 size-default 的
- * height/padding/line-height 会覆盖自定义视觉类。这里用双类选择器逐类还原原布局，
- * 保证控件尺寸/对齐与改造前一致；颜色仍由各自的自定义类提供。
+/* ==================== ARCO-10：原生按钮 ArcoButton 化后的视觉桥接（2026-11-03） ====================
+ * 这些类原本写在原生 <button> 上；ArcoButton 的 variant 规则（text/secondary 的
+ * background/color/padding 及其 :not() 选择器）优先级高于自定义类。这里用带
+ * !important 的受限桥接逐类还原改造前的视觉与盒模型；只作用于这些 legacy 自定义类。
  */
 .arco-btn.icon-button,
-.arco-btn.mobile-menu-button { display: inline-grid; place-items: center; min-width: 0; height: 30px; padding: 0; line-height: 1; border-radius: var(--rq-radius-sm); }
-.arco-btn.icon-button > span { display: inline-flex; align-items: center; justify-content: center; }
+.arco-btn.mobile-menu-button { display: inline-grid !important; width: 30px !important; height: 30px !important; min-width: 0 !important; padding: 0 !important; place-items: center !important; border: 0 !important; border-radius: var(--rq-radius-sm) !important; color: var(--rq-icon-color) !important; background: transparent !important; line-height: 1 !important; }
+.arco-btn.icon-button > span { display: inline-flex !important; align-items: center; justify-content: center; }
+.arco-btn.icon-button:hover { color: var(--rq-icon-hover-color) !important; background: var(--rq-surface-muted-hover) !important; }
 .arco-btn.text-link,
-.arco-btn.link-button { height: auto; min-width: 0; padding: 4px 2px; line-height: 1.4; font-size: var(--rq-font-caption); }
+.arco-btn.link-button { display: inline-flex !important; height: auto !important; min-width: 0 !important; align-items: center; justify-content: center; gap: 5px; padding: 4px 2px !important; border: 0 !important; color: var(--rq-link) !important; background: none !important; font-size: var(--rq-font-caption) !important; line-height: 1.4 !important; white-space: nowrap; }
+.arco-btn.text-link:hover,
+.arco-btn.link-button:hover { color: var(--rq-link-hover) !important; }
 .arco-btn.text-link > span,
-.arco-btn.link-button > span { display: inline-flex; align-items: center; gap: 5px; }
-.arco-btn.audience-save-button { height: auto; min-width: 0; padding: 8px 16px; line-height: 1.4; border: 0; color: #fff; background: var(--rq-brand); font-size: 12.5px; font-weight: 700; }
-.arco-btn.audience-ai-chip { height: auto; min-width: 0; padding: 4px 9px; line-height: 1.4; border: 1px dashed var(--rq-accent-border-soft); border-radius: 999px; color: #35558d; background: #fff; font-size: var(--rq-font-caption); font-weight: 600; }
-.arco-btn.audience-tag { height: auto; min-width: 0; padding: 7px 12px; line-height: 1.4; border: 1px solid var(--rq-border); border-radius: 999px; color: var(--rq-text-muted); background: var(--rq-surface); font-size: 12.5px; font-weight: 600; }
-.arco-btn.feishu-user-option { display: flex; height: auto; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 9px; line-height: 1.4; border: 0; background: transparent; color: var(--rq-foreground); text-align: left; }
-.arco-btn.owner-cell-button { display: inline-flex; height: auto; min-width: 0; align-items: center; gap: 6px; width: 100%; padding: 4px 8px; margin: -4px -8px; line-height: 1.4; border: none; background: transparent; text-align: left; }
-.arco-btn.req-owner-revert { height: auto; min-width: 0; padding: 0; line-height: 1.4; border: 0; background: transparent; color: var(--rq-link-strong); text-decoration: underline; }
-.arco-btn.req-audit-trigger { height: auto; min-width: 0; padding: 0; line-height: 1.4; border: 0; background: transparent; font-size: var(--rq-font-body); font-weight: 600; }
-.arco-btn.todo-card { display: flex; height: auto; min-width: 0; flex-direction: column; align-items: flex-start; justify-content: flex-start; gap: 4px; padding: 16px 18px; line-height: 1.4; background: var(--rq-surface); border-radius: 10px; text-align: left; }
-.arco-btn.sidebar-backdrop { display: block; min-width: 0; padding: 0; border: 0; }
+.arco-btn.link-button > span { display: inline-flex !important; align-items: center; gap: 5px; }
+.arco-btn.audience-save-button { height: auto !important; min-width: 0 !important; padding: 8px 16px !important; border: 0 !important; color: #fff !important; background: var(--rq-brand) !important; font-size: 12.5px !important; font-weight: 700 !important; line-height: 1.4 !important; box-shadow: 0 4px 10px -6px #2458cf99; }
+.arco-btn.audience-ai-chip { height: auto !important; min-width: 0 !important; padding: 4px 9px !important; border: 1px dashed var(--rq-accent-border-soft) !important; border-radius: 999px !important; color: var(--rq-ai-chip-text) !important; background: #fff !important; font-size: var(--rq-font-caption) !important; font-weight: 600 !important; line-height: 1.4 !important; }
+.arco-btn.audience-ai-chip.is-in-draft { border-style: solid !important; border-color: var(--rq-accent-border) !important; color: var(--rq-link-strong-alt) !important; background: #e9f1ff !important; }
+.arco-btn.audience-tag { height: auto !important; min-width: 0 !important; padding: 7px 12px !important; border: 1px solid var(--rq-border) !important; border-radius: 999px !important; color: var(--rq-text-muted) !important; background: var(--rq-surface) !important; font-size: 12.5px !important; font-weight: 600 !important; line-height: 1.4 !important; }
+.arco-btn.audience-tag.is-selected { border-color: var(--rq-brand-active) !important; color: var(--rq-brand-strongest) !important; background: #eaf1ff !important; box-shadow: inset 0 0 0 1px var(--rq-brand-active) !important; }
+.arco-btn.feishu-user-option { display: flex !important; height: auto !important; min-width: 0 !important; align-items: center; justify-content: space-between; gap: 12px; width: 100% !important; padding: 7px 9px !important; border: 0 !important; border-radius: var(--rq-radius-sm) !important; background: transparent !important; color: var(--rq-foreground) !important; text-align: left; line-height: 1.4 !important; }
+.arco-btn.owner-cell-button { display: inline-flex !important; height: auto !important; min-width: 0 !important; align-items: center; gap: 6px; width: 100% !important; padding: 4px 8px !important; margin: -4px -8px; border: none !important; border-radius: 7px !important; background: transparent !important; color: inherit !important; text-align: left; line-height: 1.4 !important; }
+.arco-btn.req-owner-revert { height: auto !important; min-width: 0 !important; padding: 0 !important; border: 0 !important; background: transparent !important; color: var(--rq-link-strong) !important; font-size: 12px !important; line-height: 1.4 !important; text-decoration: underline; }
+.arco-btn.req-audit-trigger { height: auto !important; min-width: 0 !important; padding: 0 !important; border: 0 !important; background: transparent !important; color: var(--rq-text-strong) !important; font-size: var(--rq-font-body) !important; font-weight: 600 !important; line-height: 1.4 !important; }
+.arco-btn.todo-card { display: flex !important; height: auto !important; min-width: 0 !important; flex-direction: column !important; align-items: flex-start !important; justify-content: flex-start !important; gap: 4px !important; padding: 16px 18px !important; border: 1px solid var(--rq-border) !important; border-radius: 10px !important; background: var(--rq-surface) !important; color: var(--rq-text-strong) !important; text-align: left !important; line-height: 1.4 !important; }
+.arco-btn.todo-card.is-warn { border-left: 3px solid var(--rq-warning-accent) !important; }
+.arco-btn.todo-card.is-danger { border-left: 3px solid var(--rq-danger-accent) !important; }
+.arco-btn.todo-card.is-info { border-left: 3px solid var(--rq-focus-accent) !important; }
+.arco-btn.todo-card.is-ok { border-left: 3px solid var(--rq-success-strong) !important; }
+.arco-btn.todo-card:disabled { opacity: .72 !important; }
+.arco-btn.sidebar-backdrop { display: block !important; width: 100% !important; height: 100% !important; min-width: 0 !important; padding: 0 !important; border: 0 !important; background: rgba(17, 24, 39, .38) !important; }
 
 /* ==================== ARCO-09 语义色补充（2026-11-03） ====================
  * 把组件规则里重复出现的字面量收敛为语义 token；取值与原字面量一致，亮/暗视觉不变。
