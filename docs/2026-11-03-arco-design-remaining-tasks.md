@@ -221,3 +221,14 @@ npm run build:client
 3. 原生 `<button>` 仍有少量（web 18 / 妙搭 19，均为 `.icon-button`/`.link-button`/`.audience-save-button` 等自定义文本按钮）；清单未列入 P0/P1，本轮未全量替换，登记为后续可选项（替换需同步校准 `.arco-btn` 与自定义类样式）。
 4. 文案/字段仍以 web 与妙搭各自数据源为准；ARCO-07 只保证同义字段组件一致。
 
+### 7.3 生产验证（2026-11-03，root `830dc38` / 妙搭 `4641ec2`，release `7703794419095850176`）
+
+- release 状态 finished，commit `4641ec2`，`error_logs=[]`；线上冒烟无崩溃。
+- 亮/暗主题切换正常：`body[arco-theme]` 随开关切换，Arco 控件与自定义变量同步（亮色截图 `/tmp/arco2-*.png`，暗色 `/tmp/arco-*.png`）。
+- 团队管理、同步记录：Arco Tabs 渲染并可点击切换（人员/负责人映射、同步批次/审计日志）；审计筛选 3 个 Arco Input。
+- 需求池：搜索 Input、3 个筛选 Select、更多筛选按钮 `aria-expanded=true` + `#requirement-more-filters` 区域出现（区域内 3 Select + 2 个原生 datetime-local 豁免）。
+- 新建需求表单：3 个文本 Input + 3 个 Select（portal 展开 7 个渠道选项）+ 2 个 TextArea；控件宽度与字段容器一致（1036px 文本域），无原生 select。
+- 需求详情：人工优先级/补充上下文区块可见；「编辑评分」展开后 10 个 Arco InputNumber + 1 个 Checkbox，无原生 number input。
+- 数据源与计划：2 个 Arco Checkbox（同步/周计划）；优先级规则「高级设置」展开后 3 个 Arco InputNumber。
+- 两端原生 `<select>`/`<details>` 为 0；原生 `<input>` 仅剩 2 处 `datetime-local` 豁免；`grep Hero*` = 0、死 class 字符串 = 0。
+
