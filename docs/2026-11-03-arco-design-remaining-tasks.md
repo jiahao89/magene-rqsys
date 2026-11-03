@@ -243,5 +243,8 @@ npm run build:client
   - 需求详情：`audience-save-button` 恢复品牌蓝底白字（rgb(43,97,216)），人群 chip 白底/蓝灰描边、选中态浅蓝底，`req-owner-revert` 恢复行内文本按钮。
   - 需求池「更多筛选」：亮色日期控件 h34、暗色下背景/文字/`color-scheme` 均切到暗色（浏览器日期图标不再白底）。
   - 两端 `button:not(.arco-btn)` = 0；`<button` 计数 = 0；按钮布局/尺寸截图见 `/tmp/ui5-*.png`。
+
+- **响应式与移动端回归（2026-11-03，CDP 视口模拟 860/560）**：总览、需求池、团队管理、同步记录、数据源、优先级规则、功能模块均无横向溢出（`document.scrollWidth == innerWidth`）；需求池表格在 560 宽保留内部横向滚动；560 宽新建需求表单字段自动换行（两列/整行），删除确认弹窗 520×183 居中；移动端侧栏抽屉 + 全屏遮罩正常（`.sidebar-backdrop` 修复为 `position:fixed; inset:0`，实测 560×900，点击遮罩可关闭）。
+
 - 相关提交：root `2156063`（按钮 Arco 化 + ARCO-09 首轮 + 暗色日期）→ `a66ebec`（盒模型桥接）→ `463851f`（custom 控件 text 类型）→ `f7dffde`（高优先级视觉桥接）；妙搭镜像 `1cc13a3` → `4af3b29` → `0802775` → `b224fa2`。
 
