@@ -785,6 +785,26 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
 
   // ARCO-05：更多筛选的展开状态（受控按钮 + 条件渲染，替代 details/summary）。
   const [moreFiltersOpen, setMoreFiltersOpen] = useState(false);
+  const moreFiltersRef = useRef<HTMLDivElement | null>(null);
+  const moreFiltersButtonRef = useRef<HTMLButtonElement | null>(null);
+  // UI 修复：更多筛选是含 datetime-local 的自定义浮层，补齐点击外部 / Escape 关闭，避免遮挡其它工具栏。
+  useEffect(() => {
+    if (!moreFiltersOpen) return;
+    const closeIfOutside = (event: globalThis.PointerEvent) => {
+      if (!moreFiltersRef.current?.contains(event.target as Node)) setMoreFiltersOpen(false);
+    };
+    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setMoreFiltersOpen(false);
+      moreFiltersButtonRef.current?.focus();
+    };
+    document.addEventListener("pointerdown", closeIfOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeIfOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [moreFiltersOpen]);
   const filters: RequirementListFilters = { title: query.trim(), owner: executorName, pull: pullState, analysis: analysisState, ownerState, push: pushState, processingState, batchId: batchId.trim(), from: since, to: until };
   // 已生效筛选：列表行/详情 URL 与刷新必须以「点过筛选」的条件为准，
   // 不能把用户尚未应用的草稿输入写进 URL。
@@ -976,8 +996,8 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
           <ArcoSelect aria-label="同步状态筛选" value={pullState} onChange={(value: string) => setPullState(value)} style={{ minWidth: 130 }} options={pullStateOptions.map(([value, label]) => ({ label, value }))} />
         </label>
         {/* ARCO-05：details/summary 改为受控按钮 + 条件渲染；aria-expanded/aria-controls 表达展开状态。 */}
-        <div className="qmore">
-          <ArcoButton htmlType="button" size="small" aria-expanded={moreFiltersOpen} aria-controls="requirement-more-filters" onClick={() => setMoreFiltersOpen((open) => !open)}>更多筛选{activeFilterCount - (query.trim() ? 1 : 0) - (executorName ? 1 : 0) - (pullState ? 1 : 0) > 0 ? `（${activeFilterCount - (query.trim() ? 1 : 0) - (executorName ? 1 : 0) - (pullState ? 1 : 0)}）` : ""}</ArcoButton>
+        <div className="qmore" ref={moreFiltersRef}>
+          <ArcoButton ref={moreFiltersButtonRef} htmlType="button" size="small" aria-expanded={moreFiltersOpen} aria-controls="requirement-more-filters" onClick={() => setMoreFiltersOpen((open) => !open)}>更多筛选{activeFilterCount - (query.trim() ? 1 : 0) - (executorName ? 1 : 0) - (pullState ? 1 : 0) > 0 ? `（${activeFilterCount - (query.trim() ? 1 : 0) - (executorName ? 1 : 0) - (pullState ? 1 : 0)}）` : ""}</ArcoButton>
           {moreFiltersOpen && <div className="qmore-body" id="requirement-more-filters">
             <label className="qfield">
               <span className="sr-only">负责人状态</span>
@@ -1991,17 +2011,27 @@ export class PanelErrorBoundary extends Component<{ children: ReactNode }, Error
 
 // ---------- 菜单收敛：团队管理 / 同步记录（同一入口下的页签，不做重复菜单） ----------
 
+/** ARCO-06 收尾：Arco Tabs 自身不渲染 role=tablist；挂载后在头部补 role/aria-label，保留 tab/tabpanel 关联。 */
+function AccessibleTabs({ label, activeTab, onChange, children }: { label: string; activeTab: string; onChange: (key: string) => void; children: ReactNode }) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const header = hostRef.current?.querySelector<HTMLElement>(".arco-tabs-header");
+    if (!header) return;
+    header.setAttribute("role", "tablist");
+    header.setAttribute("aria-label", label);
+  });
+  return <div ref={hostRef}><ArcoTabs activeTab={activeTab} onChange={onChange}>{children}</ArcoTabs></div>;
+}
+
 export function TeamPanel({ initialTab, onRefresh }: { initialTab?: WorkbenchTab | null; onRefresh: () => void }) {
   const [tab, setTab] = useState<"people" | "mappings">(initialTab === "mappings" ? "mappings" : "people");
   useEffect(() => { if (initialTab === "people" || initialTab === "mappings") setTab(initialTab); }, [initialTab]);
   return <div className="composite-page">
     {/* ARCO-06：自定义 tablist 改为受控 Arco Tabs；role=tab/tabpanel 与 aria-controls 由组件生成，aria-label 语义保留在外层 group。 */}
-    <div role="group" aria-label="团队管理">
-      <ArcoTabs activeTab={tab} onChange={(key) => setTab(key as "people" | "mappings")}>
-        <ArcoTabs.TabPane key="people" title="人员"><PeoplePanel /></ArcoTabs.TabPane>
-        <ArcoTabs.TabPane key="mappings" title="负责人映射"><MappingsPanel onRefresh={onRefresh} /></ArcoTabs.TabPane>
-      </ArcoTabs>
-    </div>
+    <AccessibleTabs label="团队管理" activeTab={tab} onChange={(key) => setTab(key as "people" | "mappings")}>
+      <ArcoTabs.TabPane key="people" title="人员"><PeoplePanel /></ArcoTabs.TabPane>
+      <ArcoTabs.TabPane key="mappings" title="负责人映射"><MappingsPanel onRefresh={onRefresh} /></ArcoTabs.TabPane>
+    </AccessibleTabs>
   </div>;
 }
 
@@ -2010,12 +2040,10 @@ export function SyncRecordsPanel({ initialTab, onRefresh }: { initialTab?: Workb
   useEffect(() => { if (initialTab === "batches" || initialTab === "audit") setTab(initialTab); }, [initialTab]);
   return <div className="composite-page">
     {/* ARCO-06：同 TeamPanel，受控 Arco Tabs。 */}
-    <div role="group" aria-label="同步记录">
-      <ArcoTabs activeTab={tab} onChange={(key) => setTab(key as "batches" | "audit")}>
-        <ArcoTabs.TabPane key="batches" title="同步批次"><BatchesPanel onRefresh={onRefresh} /></ArcoTabs.TabPane>
-        <ArcoTabs.TabPane key="audit" title="审计日志"><AuditPanel /></ArcoTabs.TabPane>
-      </ArcoTabs>
-    </div>
+    <AccessibleTabs label="同步记录" activeTab={tab} onChange={(key) => setTab(key as "batches" | "audit")}>
+      <ArcoTabs.TabPane key="batches" title="同步批次"><BatchesPanel onRefresh={onRefresh} /></ArcoTabs.TabPane>
+      <ArcoTabs.TabPane key="audit" title="审计日志"><AuditPanel /></ArcoTabs.TabPane>
+    </AccessibleTabs>
   </div>;
 }
 

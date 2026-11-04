@@ -899,6 +899,15 @@ describe("RequirementsPanel (ticket 17)", () => {
     fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
     expect(screen.queryByText(/个筛选已生效/)).not.toBeInTheDocument();
     expect(arcoSelectText("TB负责人筛选").trim()).toBe("全部 TB 负责人");
+
+    // UI 修复：更多筛选是自定义浮层，点击面板外部或按 Escape 都应关闭，避免遮挡工具栏。
+    fireEvent.click(moreFiltersButton);
+    expect(moreFiltersButton).toHaveAttribute("aria-expanded", "true");
+    fireEvent.pointerDown(document.body);
+    expect(moreFiltersButton).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(moreFiltersButton);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(moreFiltersButton).toHaveAttribute("aria-expanded", "false");
   });
 });
 

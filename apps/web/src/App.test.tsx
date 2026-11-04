@@ -254,6 +254,8 @@ describe("RQ-Sys local workbench", () => {
     fireEvent.click(await screen.findByRole("link", { name: "团队管理" }));
     const peopleTab = await screen.findByRole("tab", { name: "人员" });
     expect(peopleTab).toHaveAttribute("aria-selected", "true");
+    // ARCO-06 收尾：Arco Tabs 自身不渲染 role=tablist，AccessibleTabs 挂载后补齐并保留可访问名称。
+    expect(await screen.findByRole("tablist", { name: "团队管理" })).toBeInTheDocument();
     expect(await screen.findByText("贾浩")).toBeInTheDocument();
     // ARCO-06：Arco Tabs 生成 tab→tabpanel 关联，面板通过 aria-controls 指向。
     const peoplePanelId = peopleTab.getAttribute("aria-controls");
