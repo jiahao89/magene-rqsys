@@ -554,7 +554,7 @@ export function BatchesPanel({ onRefresh }: { onRefresh: () => void }) {
     {openBatch && <div className="config-source" style={{ flexDirection: "column", alignItems: "stretch" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><strong>批次 {openBatch.id}</strong><Button onPress={() => setOpenBatch(null)} variant="secondary" size="small">收起</Button></div>
       <span>{stateChip(openBatch.status)} · 总数 {openBatch.totalCount} · 成功 {openBatch.succeededCount} · 失败 {openBatch.failedCount} · {openBatch.errorSummary ?? ""}</span>
-      <ArcoTable<BatchDetail["items"][number]>
+      <ArcoTable<BatchDetail["items"][number]> scroll={{ x: 760 }}
         rowKey="id"
         data={openBatch.items}
         pagination={false}
@@ -569,7 +569,7 @@ export function BatchesPanel({ onRefresh }: { onRefresh: () => void }) {
       />
     </div>}
     {batches.length ? <>
-      <ArcoTable<BatchSummary>
+      <ArcoTable<BatchSummary> scroll={{ x: 760 }}
         rowKey="id"
         data={batches}
         pagination={false}
@@ -1979,7 +1979,7 @@ export function AuditPanel() {
     </div></div>
     <StateBanner loadError={loadError} notice={null} onCloseNotice={() => undefined} />
     {events.length >= AUDIT_PAGE_LIMIT && <div className="list-summary-count">已加载最近 {AUDIT_PAGE_LIMIT} 条审计记录；更早的记录请缩小时间范围或按对象筛选。</div>}
-    {events.length ? <ArcoTable<AuditEvent>
+    {events.length ? <ArcoTable<AuditEvent> scroll={{ x: 820 }}
       rowKey="id"
       data={events}
       pagination={false}
