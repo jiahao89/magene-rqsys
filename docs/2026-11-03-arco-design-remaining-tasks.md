@@ -248,3 +248,12 @@ npm run build:client
 
 - 相关提交：root `2156063`（按钮 Arco 化 + ARCO-09 首轮 + 暗色日期）→ `a66ebec`（盒模型桥接）→ `463851f`（custom 控件 text 类型）→ `f7dffde`（高优先级视觉桥接）；妙搭镜像 `1cc13a3` → `4af3b29` → `0802775` → `b224fa2`。
 
+
+### 7.5 交互与移动端收尾（2026-11-04）
+
+- **更多筛选浮层**：新增点击外部 / Escape 关闭（`click` 监听兼容键盘 Enter/Space 激活外部按钮），关闭后焦点回到「更多筛选」；打开「新建需求」等外部控件时浮层自动收起。
+- **Arco Tabs 可访问性**：新增 `AccessibleTabs` 包装（团队管理 / 同步记录），挂载后在 `.arco-tabs-header` 上补 `role="tablist"` 与 `aria-label`，保留 Arco 生成的 tab↔tabpanel 关联；测试补充 `getByRole("tablist", { name })` 断言。
+- **移动端宽表**：批次/审计表加 `scroll={{ x: 960/1040 }}`，需求池表格保留内部横向滚动；≤700px 时表格单元格 `white-space:nowrap + overflow:hidden + text-overflow:ellipsis`，不再出现「批 次 ID」「需 求 总 数」逐字换行或长 JSON 撑爆行高；实测 560 宽批次表滚动区 960 > 532、长批次 ID 以省略号截断。
+- **移动端回归**：560/860 断点下各页面无横向页面溢出；侧栏抽屉遮罩 `position:fixed; inset:0`（560×900）；删除确认弹窗 520×183 居中；新建需求表单字段自动换行；亮/暗主题均复核。
+- 提交与发布：root `97f65ed`/`b93d77c`/`697e1e1`/`b809e28`，妙搭 `8bd6c29`/`d76bf75`/`b9e8746`/`06b5d74`；最新 release `7704170906138414385`（commit `06b5d74`，`error_logs=[]`）。
+
