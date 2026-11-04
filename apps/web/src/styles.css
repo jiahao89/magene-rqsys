@@ -1518,10 +1518,13 @@ input[type="datetime-local"]:focus { border-color: var(--rq-focus-border); outli
 html[data-theme="dark"] input[type="datetime-local"] { color-scheme: dark; }
 .arco-btn.sidebar-backdrop { display: block; }
 
-/* 移动端表格：窄屏不再把列挤压成逐字换行，改为保留最小列宽并在容器内横向滚动（2026-11-04） */
+/* 移动端表格：窄屏不再把列挤压成逐字换行，改为保留最小列宽、容器内横向滚动并省略超长内容（2026-11-04） */
 @media (max-width: 700px) {
   .req-list-scroll table { min-width: 760px; }
-  .req-list-scroll td, .req-list-scroll th { white-space: nowrap; }
-  .panel .arco-table-container { overflow-x: auto; }
-  .panel .arco-table-cell { white-space: nowrap; }
+  .panel .arco-table-container,
+  .req-list-scroll .arco-table-container { overflow-x: auto; }
+  .panel .arco-table-cell,
+  .req-list-scroll .arco-table-cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .panel .arco-table-td,
+  .req-list-scroll .arco-table-td { overflow: hidden; }
 }
