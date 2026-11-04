@@ -903,7 +903,7 @@ describe("RequirementsPanel (ticket 17)", () => {
     // UI 修复：更多筛选是自定义浮层，点击面板外部或按 Escape 都应关闭，避免遮挡工具栏。
     fireEvent.click(moreFiltersButton);
     expect(moreFiltersButton).toHaveAttribute("aria-expanded", "true");
-    fireEvent.pointerDown(document.body);
+    fireEvent.click(document.body);
     expect(moreFiltersButton).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(moreFiltersButton);
     fireEvent.keyDown(document, { key: "Escape" });

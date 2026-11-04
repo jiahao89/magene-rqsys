@@ -790,7 +790,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
   // UI 修复：更多筛选是含 datetime-local 的自定义浮层，补齐点击外部 / Escape 关闭，避免遮挡其它工具栏。
   useEffect(() => {
     if (!moreFiltersOpen) return;
-    const closeIfOutside = (event: globalThis.PointerEvent) => {
+    const closeIfOutside = (event: Event) => {
       if (!moreFiltersRef.current?.contains(event.target as Node)) setMoreFiltersOpen(false);
     };
     const closeOnEscape = (event: globalThis.KeyboardEvent) => {
@@ -798,10 +798,11 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
       setMoreFiltersOpen(false);
       moreFiltersButtonRef.current?.focus();
     };
-    document.addEventListener("pointerdown", closeIfOutside);
+    // 用 click 而不是 pointerdown：键盘 Enter/Space 激活外部按钮时也能关闭浮层。
+    document.addEventListener("click", closeIfOutside);
     document.addEventListener("keydown", closeOnEscape);
     return () => {
-      document.removeEventListener("pointerdown", closeIfOutside);
+      document.removeEventListener("click", closeIfOutside);
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, [moreFiltersOpen]);
