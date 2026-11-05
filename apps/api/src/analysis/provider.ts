@@ -88,11 +88,18 @@ const EnvelopeSchema = z.object({
   choices: z.array(z.object({ message: z.object({ content: z.string().nullable().optional() }).passthrough() }).passthrough()).min(1),
 }).passthrough();
 
-function safeHttpError(status: number): AiProviderError {
-  if (status === 401 || status === 403) return new AiProviderError("auth_error", "AI provider authentication failed.");
-  if (status === 429) return new AiProviderError("rate_limited", "AI provider rate limit reached.");
-  if (status >= 500) return new AiProviderError("provider_error", "AI provider request failed.");
-  return new AiProviderError("request_error", "AI provider rejected the request.");
+async function safeHttpError(status: number, response: Response): Promise<AiProviderError> {
+  let detail = "";
+  try {
+    const text = (await response.text()).trim();
+    if (text) detail = ` ${text.replace(/sk-[A-Za-z0-9_-]{6,}/g, "sk-***").slice(0, 240)}`;
+  } catch {
+    detail = "";
+  }
+  if (status === 401 || status === 403) return new AiProviderError("auth_error", `AI provider authentication failed (HTTP ${status}).${detail}`);
+  if (status === 429) return new AiProviderError("rate_limited", `AI provider rate limit reached (HTTP ${status}).${detail}`);
+  if (status >= 500) return new AiProviderError("provider_error", `AI provider request failed (HTTP ${status}).${detail}`);
+  return new AiProviderError("request_error", `AI provider rejected the request (HTTP ${status}).${detail}`);
 }
 
 interface EvidenceSegment {
@@ -276,7 +283,7 @@ export function createDeepSeekProvider(options: Partial<AiProviderConfig> & { fe
       // 计时器要一直活到响应体读完：只在拿到响应头时清掉，中途挂住的响应体会无限等待。
       let envelope: z.infer<typeof EnvelopeSchema>;
       try {
-        if (!response.ok) throw safeHttpError(response.status);
+        if (!response.ok) throw await safeHttpError(response.status, response);
         envelope = EnvelopeSchema.parse(await response.json());
       } catch (error) {
         if (error instanceof AiProviderError) throw error;
