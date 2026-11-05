@@ -49,6 +49,12 @@ function usedComponents(files) {
 const strict = process.argv.includes("--strict");
 let failed = false;
 for (const target of targets) {
+  // rq-sys-miaoda 是独立运行时仓：本地未检出（或 CI 未配置仓库 secrets）时应显式跳过并告警，
+  // 而不是抛 ENOENT 让整个门禁失败。可访问时仍完整检查两仓。
+  if (!existsSync(join(root, target.source)) || !existsSync(join(root, target.styles))) {
+    console.warn(`\n[${target.name}] 目录不存在（${target.source}），跳过该仓的 Arco 样式检查。`);
+    continue;
+  }
   const files = walk(join(root, target.source));
   const used = usedComponents(files);
   const styled = readStyleComponents(target.styles);

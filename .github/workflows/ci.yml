@@ -57,6 +57,22 @@ jobs:
       - name: Migration filename check
         run: npm run check:migrations
 
+      # 注意：GitHub Actions 不允许在 `if:` 条件里引用 secrets（会直接判为无效 workflow，
+      # run 以 0 job 失败）。这里把 secrets 映射成 step 级 env，在脚本里判断是否可用；
+      # 未配置时打印 warning 并跳过，后续 alignment 步骤会显式标记"未运行"。
+      - name: Checkout Miaoda runtime repository
+        run: |
+          if [ -z "${RQSYS_MIAODA_REPO_URL}" ] || [ -z "${RQSYS_MIAODA_TOKEN}" ]; then
+            echo "::warning title=Alignment gate NOT run::rq-sys-miaoda checkout skipped (missing repository secrets). Shared-module drift is unchecked in this run."
+            exit 0
+          fi
+          # token 通过 http.extraheader 传入，不写进 remote URL，避免出现在 git 输出里。
+          git -c "http.extraheader=Authorization: Bearer ${RQSYS_MIAODA_TOKEN}" \
+            clone --depth 1 --branch sprint/default "${RQSYS_MIAODA_REPO_URL}" rq-sys-miaoda
+        env:
+          RQSYS_MIAODA_REPO_URL: ${{ secrets.RQSYS_MIAODA_REPO_URL }}
+          RQSYS_MIAODA_TOKEN: ${{ secrets.RQSYS_MIAODA_TOKEN }}
+
       # ARCO-12：源码用到的 Arco 组件必须登记在 arco-styles.ts，否则运行时无样式。
       - name: Arco on-demand style registry check
         run: npm run check:arco-styles
@@ -79,22 +95,6 @@ jobs:
       # 默认只读：缺凭据的边界记为 SKIP，只有 FAIL 才让流水线失败。
       - name: External contract matrix (read-only)
         run: npm run check:contract
-
-      # 注意：GitHub Actions 不允许在 `if:` 条件里引用 secrets（会直接判为无效 workflow，
-      # run 以 0 job 失败）。这里把 secrets 映射成 step 级 env，在脚本里判断是否可用；
-      # 未配置时打印 warning 并跳过，后续 alignment 步骤会显式标记"未运行"。
-      - name: Checkout Miaoda runtime repository
-        run: |
-          if [ -z "${RQSYS_MIAODA_REPO_URL}" ] || [ -z "${RQSYS_MIAODA_TOKEN}" ]; then
-            echo "::warning title=Alignment gate NOT run::rq-sys-miaoda checkout skipped (missing repository secrets). Shared-module drift is unchecked in this run."
-            exit 0
-          fi
-          # token 通过 http.extraheader 传入，不写进 remote URL，避免出现在 git 输出里。
-          git -c "http.extraheader=Authorization: Bearer ${RQSYS_MIAODA_TOKEN}" \
-            clone --depth 1 --branch sprint/default "${RQSYS_MIAODA_REPO_URL}" rq-sys-miaoda
-        env:
-          RQSYS_MIAODA_REPO_URL: ${{ secrets.RQSYS_MIAODA_REPO_URL }}
-          RQSYS_MIAODA_TOKEN: ${{ secrets.RQSYS_MIAODA_TOKEN }}
 
       - name: Two-repository alignment
         run: |
