@@ -50,8 +50,15 @@ export const RequirementListQuerySchema = z.object({
 });
 
 // GET /api/audit 查询参数（date-time 允许 "+08:00" 等偏移，offset: true 对齐 RFC 3339）
+// GET /api/ops/jobs — 只读运维视图：失败作业与卡住的运行中作业。
+export const OpsJobsQuerySchema = z.object({
+  limit: LimitSchema.default(50),
+});
+
 export const AuditListQuerySchema = z.object({
   entityId: z.string().optional(),
+  // 事件类型精确匹配（如 analysis.retry_requested）；只允许小写点分标识，避免任意文本进入查询。
+  eventType: z.string().trim().regex(/^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$/).max(100).optional(),
   since: z.iso.datetime({ offset: true }).optional(),
   until: z.iso.datetime({ offset: true }).optional(),
   limit: LimitSchema.default(50),

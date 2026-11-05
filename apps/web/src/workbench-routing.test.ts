@@ -16,6 +16,7 @@ describe("workbench routes", () => {
     expect(readWorkbenchRoute("#audit", "")).toEqual({ page: "SyncRecords", tab: "audit" });
     expect(readWorkbenchRoute("#team", "")).toEqual({ page: "Team", tab: null });
     expect(readWorkbenchRoute("#sync-records", "")).toEqual({ page: "SyncRecords", tab: null });
+    expect(readWorkbenchRoute("#ops", "")).toEqual({ page: "Ops", tab: null });
   });
 
   it("keeps notification deep links on the requirement page", () => {

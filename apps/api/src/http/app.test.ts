@@ -63,10 +63,10 @@ test("overview metrics return full pipeline counts and require an authenticated 
  assert.equal(protectedResponse.status, 401);
 
  const d = makeDependencies();
- (d.repositories!.requirements as unknown as { getPipelineCounts: () => Promise<unknown> }).getPipelineCounts = async () => ({ total: 311, pullSynced: 311, analysisAnalyzed: 0, ownerResolved: 0, pushPushed: 0, failed: 0, pushFailed: 0, pushPending: 0, priority: { P0: 0, P1: 0, P2: 0, P3: 0, scored: 0, legacy: 0, unscored: 0 } });
+ (d.repositories!.requirements as unknown as { getPipelineCounts: () => Promise<unknown> }).getPipelineCounts = async () => ({ total: 311, pullSynced: 311, analysisAnalyzed: 0, ownerResolved: 0, pushPushed: 0, failed: 0, pushFailed: 0, pushPending: 0, suppressed: 5, priority: { P0: 0, P1: 0, P2: 0, P3: 0, scored: 0, legacy: 0, unscored: 0 } });
  const response = await handleApiRequest(new Request("http://localhost/api/overview/metrics"), d);
  assert.equal(response.status, 200);
- assert.deepEqual(await response.json(), { counts: { total: 311, pullSynced: 311, analysisAnalyzed: 0, ownerResolved: 0, pushPushed: 0, failed: 0, pushFailed: 0, pushPending: 0, priority: { P0: 0, P1: 0, P2: 0, P3: 0, scored: 0, legacy: 0, unscored: 0 }, priorityRule: null } });
+ assert.deepEqual(await response.json(), { counts: { total: 311, pullSynced: 311, analysisAnalyzed: 0, ownerResolved: 0, pushPushed: 0, failed: 0, pushFailed: 0, pushPending: 0, suppressed: 5, priority: { P0: 0, P1: 0, P2: 0, P3: 0, scored: 0, legacy: 0, unscored: 0 }, priorityRule: null } });
 });
 test("test fixture status requires authentication and reports only its availability", async () => {
  const unauthenticatedResponse = await handleApiRequest(new Request("http://localhost/api/dev/fixtures/status"), unauthenticated);
@@ -296,6 +296,39 @@ test("empty requirement search returns an empty page without querying mappings w
  assert.deepEqual(await response.json(), { items: [], nextCursor: null });
  assert.equal(mappingQueries, 0);
 });
+test("audit list forwards an event-type filter and rejects malformed event types", async () => {
+ const d = makeDependencies();
+ const seen: Array<Record<string, unknown>> = [];
+ d.repositories!.audit.search = async (query) => { seen.push(query as unknown as Record<string, unknown>); return []; };
+ const ok = await handleApiRequest(new Request("http://localhost/api/audit?eventType=analysis.retry_requested&entityId=foo&limit=5"), d);
+ assert.equal(ok.status, 200);
+ assert.deepEqual(seen[0], { limit: 5, entityId: "foo", eventType: "analysis.retry_requested" });
+ const none = await handleApiRequest(new Request("http://localhost/api/audit"), d);
+ assert.equal(none.status, 200);
+ assert.equal("eventType" in seen[1]!, false);
+ for (const bad of ["Analysis.Retry", "analysis..retry", "drop table", "a".repeat(101)]) {
+  const r = await handleApiRequest(new Request(`http://localhost/api/audit?eventType=${encodeURIComponent(bad)}`), d);
+  assert.equal(r.status, 400, bad);
+ }
+ assert.equal(seen.length, 2);
+});
+test("ops job view lists failed and stuck jobs without leaking payload", async () => {
+ const base = { jobType: "base_push", dedupeKey: "base-push:req-1", payload: { requirementId: "req-1", actorId: "actor-1", substantiveHash: "secret-ish" }, attemptCount: 5, maxAttempts: 5, availableAt: "2026-10-08T00:00:00.000Z", lockedUntil: null, lastErrorCode: "BASE_TIMEOUT", lastErrorSummary: "upstream timed out", createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T01:00:00.000Z" };
+ const d = makeDependencies();
+ d.repositories!.jobs.listFailed = async () => [{ ...base, id: "job-failed", status: "failed" } as never];
+ d.repositories!.jobs.listExhaustedRunning = async () => [{ ...base, id: "job-stuck", status: "running" } as never];
+ const response = await handleApiRequest(new Request("http://localhost/api/ops/jobs?limit=20"), d);
+ assert.equal(response.status, 200);
+ const body = await response.json() as { now: string; items: { failed: Array<Record<string, unknown>>; stuck: Array<Record<string, unknown>> } };
+ assert.equal(body.items.failed[0]?.id, "job-failed");
+ assert.equal(body.items.failed[0]?.requirementId, "req-1");
+ assert.equal(body.items.stuck[0]?.id, "job-stuck");
+ assert.equal("payload" in body.items.failed[0]!, false);
+ assert.equal(body.now, "2026-10-08T00:00:00.000Z");
+ assert.equal((await handleApiRequest(new Request("http://localhost/api/ops/jobs?limit=0"), d)).status, 400);
+ assert.equal((await handleApiRequest(new Request("http://localhost/api/ops/jobs"), unauthenticated)).status, 401);
+});
+
 test("lists audit events", async () => { const r = await handleApiRequest(new Request("http://localhost/api/audit?entityId=foo&limit=10"), makeDependencies()); assert.equal(r.status, 200); assert.deepEqual(await r.json(), { items: [auditEvent] }); });
 test("requirement detail returns the full analysis version history (spec 02 prior versions)", async () => {
   const r = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`), makeDependencies());

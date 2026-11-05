@@ -1,14 +1,14 @@
 import type { Pool } from "pg";
 import { normalizeOwnerName } from "../owner/mapping.js";
-import { analysisRunningJobKeys } from "../scheduler/analysis-recovery.js";
+import { analysisForceDedupeKey, analysisRetryDedupeKey, analysisRunningJobKeys } from "../scheduler/analysis-recovery.js";
 import { SourceProjectResolutionError, type FeishuUserDirectory, type FeishuUserSelectionResolver, type IdentityProvider, type TeambitionSourceProjectResolver } from "../application/ports.js";
 import { isIntakeComplete, normalizeScheduleTime } from "../domain/workflow.js";
 import { stableJson } from "../sync/hashes.js";
 import { RICE_CONFIG_VERSION, RICE_EFFORT_UNIT, RICE_IMPACT_LEVELS, RICE_REACH_UNIT, computeRiceScore } from "../beta/rice.js";
 import type { AuditEventRepository, AnalysisRunRepository, PipelineJobRepository, SourceConfigRepository, SyncBatchRepository, SyncItemRepository, PersonMappingRepository, RequirementQueryRepository, BasePushRunRepository, ModuleDictionaryRepository, PriorityRuleRepository, SourceSnapshotRepository, TeamDirectoryRepository, RequirementScoringRepository } from "../application/repositories.js";
-import type { PersonMappingRecord, AnalysisRunRecord, ModuleDictionaryVersionRecord, PriorityRuleVersionRecord, RequirementRecord, SourceConfigRecord, SyncBatchRecord } from "../domain/persistence.js";
+import type { PersonMappingRecord, AnalysisRunRecord, ModuleDictionaryVersionRecord, PriorityRuleVersionRecord, RequirementRecord, SourceConfigRecord, SyncBatchRecord, PipelineJobRecord } from "../domain/persistence.js";
 import type { TeamPersonRecord } from "../domain/team-directory.js";
-import { AnalysisContextUpdateSchema, AuditListQuerySchema, ClearDuplicateDecisionSchema, DuplicateDecisionSchema, PriorityOverrideUpdateSchema, RetryAnalysisRequestSchema, KanoEvidenceImportSchema, KanoRunRequestSchema, AudienceUpdateSchema, BatchListQuerySchema, RiceDraftUpdateSchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementIntakeEditSchema, RequirementIntakeSchema, RequirementListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
+import { AnalysisContextUpdateSchema, AuditListQuerySchema, OpsJobsQuerySchema, ClearDuplicateDecisionSchema, DuplicateDecisionSchema, PriorityOverrideUpdateSchema, RetryAnalysisRequestSchema, KanoEvidenceImportSchema, KanoRunRequestSchema, AudienceUpdateSchema, BatchListQuerySchema, RiceDraftUpdateSchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementIntakeEditSchema, RequirementIntakeSchema, RequirementListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
 import { createHash, randomUUID } from "node:crypto";
 import { ApplyAiScoringSchema, ManualScoringUpdateSchema, SCORING_FORMULA_TEXT, SCORING_THRESHOLDS, computeUmcScore } from "../analysis/scoring.js";
 import { maskPii } from "../analysis/contract.js";
@@ -71,6 +71,26 @@ function batchDto(batch: SyncBatchRecord) {
 }
 // Teambition 自建站的任务地址规则（由一条真实地址确认：/task/<任务ID>）。
 const TEAMBITION_TASK_BASE_URL = process.env.RQSYS_TEAMBITION_TASK_BASE_URL ?? "https://teambition.magene.cn/task";
+// Base 记录直达链接：飞书租户域名与 Base app/table 只有部署方知道，代码里不猜。
+// 由 RQSYS_BASE_RECORD_URL_TEMPLATE 配置，必须是 https 且包含 {recordId}，例如
+// https://<租户>.feishu.cn/base/<app>?table=<table>&record={recordId}。未配置或不合法时返回 null，
+// 详情页只提供复制记录 ID。
+function baseRecordUrl(recordId: string | null): string | null {
+  const template = process.env.RQSYS_BASE_RECORD_URL_TEMPLATE?.trim();
+  if (!recordId || !template || !template.startsWith("https://") || !template.includes("{recordId}")) return null;
+  return template.replaceAll("{recordId}", encodeURIComponent(recordId));
+}
+// 运维视图只回传作业元数据与安全错误摘要；payload 可能含 actorId/hash 等运行细节，不整体透出。
+function opsJobDto(job: PipelineJobRecord) {
+  return {
+    id: job.id, jobType: job.jobType, status: job.status, dedupeKey: job.dedupeKey,
+    attemptCount: job.attemptCount, maxAttempts: job.maxAttempts,
+    availableAt: job.availableAt, lockedUntil: job.lockedUntil,
+    lastErrorCode: job.lastErrorCode, lastErrorSummary: job.lastErrorSummary,
+    createdAt: job.createdAt, updatedAt: job.updatedAt,
+    requirementId: typeof job.payload.requirementId === "string" ? job.payload.requirementId : null,
+  };
+}
 function requirementResolutionDto(req: RequirementRecord) {
   const state = req.processingState ?? "active";
   if (state === "active") return null;
@@ -118,6 +138,7 @@ function requirementDto(req: RequirementRecord, analysis: Record<string, unknown
     source: req.sourcePayload,
     analysis,
     baseRecordId: req.baseRecordId,
+    baseRecordUrl: baseRecordUrl(req.baseRecordId),
     manualOwner: req.manualOwner ? { feishuUserId: req.manualOwner.feishuUserId, feishuIdType: req.manualOwner.feishuIdType, name: req.manualOwner.name, assignedAt: req.manualOwner.assignedAt, assignmentVersion: req.manualOwner.assignmentVersion } : null,
     duplicateOf: req.duplicateOfRequirementId ?? null,
     analyses,
@@ -305,7 +326,21 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     if (!repositories) return jsonError("DEPENDENCY_UNAVAILABLE");
     const query = Object.fromEntries(url.searchParams.entries()); if (query.limit !== undefined) query.limit = String(Number(query.limit));
     const parsed = AuditListQuerySchema.safeParse(query); if (!parsed.success) return jsonError("VALIDATION_FAILED");
-    return json({ items: await repositories.audit.search({ limit: parsed.data.limit, ...(parsed.data.entityId === undefined ? {} : { entityId: parsed.data.entityId }), ...(parsed.data.since === undefined ? {} : { since: parsed.data.since }), ...(parsed.data.until === undefined ? {} : { until: parsed.data.until }) }) });
+    return json({ items: await repositories.audit.search({ limit: parsed.data.limit, ...(parsed.data.entityId === undefined ? {} : { entityId: parsed.data.entityId }), ...(parsed.data.eventType === undefined ? {} : { eventType: parsed.data.eventType }), ...(parsed.data.since === undefined ? {} : { since: parsed.data.since }), ...(parsed.data.until === undefined ? {} : { until: parsed.data.until }) }) });
+  }
+  // 只读运维视图：失败的作业 + 尝试次数用尽且租约过期的运行中作业。
+  // 不提供重试/清理动作，避免绕过状态机；修复由各自的恢复器/人工重试完成。
+  if (method === "GET" && url.pathname === "/api/ops/jobs") {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.jobs?.listFailed || !repositories.jobs.listExhaustedRunning) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const query = Object.fromEntries(url.searchParams.entries()); if (query.limit !== undefined) query.limit = String(Number(query.limit));
+    const parsed = OpsJobsQuerySchema.safeParse(query); if (!parsed.success) return jsonError("VALIDATION_FAILED");
+    const now = (dependencies.now ?? (() => new Date()))().toISOString();
+    const [failed, stuck] = await Promise.all([
+      repositories.jobs.listFailed(parsed.data.limit),
+      repositories.jobs.listExhaustedRunning(now, parsed.data.limit),
+    ]);
+    return json({ now, items: { failed: failed.map(opsJobDto), stuck: stuck.map(opsJobDto) } });
   }
   if (method === "GET" && url.pathname === "/api/rules/dictionary") {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
@@ -848,17 +883,18 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
       force = retryParsed.data.force === true;
     }
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
-    const baseDedupeKey = `analysis:${req.id}:sv${req.sourceVersion}:after${priorAnalysisVersion}`;
-    const dedupeKey = force ? `${baseDedupeKey}:force:${crypto.randomUUID()}` : baseDedupeKey;
+    // force 键是确定性的（同一 sourceVersion/prior 只有一个）：重复点击、并发请求命中同一键而复用活作业，
+    // 不会各自入队一份 AI 调用；作业 failed/cancelled 后同键入队由仓储重置。
+    const dedupeKey = force ? analysisForceDedupeKey(req, priorAnalysisVersion) : analysisRetryDedupeKey(req, priorAnalysisVersion);
     const currentJob = await repositories.jobs.findByDedupeKey?.(dedupeKey);
     const auditRetry = (result: "succeeded" | "failed" | "denied", analysisStatus: string) => appendAudit(repositories, {
       id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "analysis.retry_requested", entityType: "requirement", entityId: req.id,
       result, safeDetails: { sourceVersion: req.sourceVersion, priorAnalysisVersion, analysisStatus, ...(force ? { force: true } : {}) }, occurredAt: now,
     });
-    // force 不叠加第二条活跃分析：已有 queued/running 首轮作业时沿用，避免双份 AI 调用。
+    // force 不叠加第二条活跃分析：任一可能的分析作业（首轮/重试/force）仍 queued/running 时沿用它。
     if (force) {
-      const live = await repositories.jobs.findByDedupeKey?.(baseDedupeKey);
-      if (live && ["queued", "running"].includes(live.status)) {
+      const liveJobs = await Promise.all(analysisRunningJobKeys(req, priorAnalysisVersion).map((key) => repositories.jobs.findByDedupeKey?.(key)));
+      if (liveJobs.some((live) => live && ["queued", "running"].includes(live.status))) {
         const auditFailure = await auditRetry("succeeded", "reused_existing_job");
         if (auditFailure) return auditFailure;
         return json({ requirementId: req.id, status: "queued" }, 202);

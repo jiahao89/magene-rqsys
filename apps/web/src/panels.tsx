@@ -11,9 +11,9 @@ import { stateLabel } from "./state-labels";
 import { RequirementDetailSkeleton, SkeletonBlock, SkeletonTableRows } from "./skeleton";
 import { checkScheduleHealth } from "./schedule";
 import { readRequirementDeepLink } from "./deep-link";
-import { emptyRequirementListFilters, readRequirementListFilters, requirementPoolUrl, type RequirementListFilters } from "./requirements-url";
+import { emptyRequirementListFilters, readRequirementListFilters, requirementFilterCount, requirementPoolUrl, type RequirementListFilters, type RequirementProcessingView } from "./requirements-url";
 import { formatDateTime, requirementDisplayId, requirementOwnerView, requirementSourceFacts, requirementTime, sortRequirementsForAttention } from "./requirement-view";
-import { AUDIT_PAGE_LIMIT, ApiError, addTeamPerson, applyRequirementAiScore, bindTeamPersonFeishu, createSource, deleteTeamPerson, getBatch, getFunctionModules, getRequirement, listAudit, listBatches, listDictionaryVersions, listMappings, listRequirements, listTeamPeople, pushRequirement, renameTeamPerson, revokeDuplicateDecision, saveAnalysisContext, saveFunctionModules, retryAnalysis, setPriorityOverride, retrySyncItem, saveRequirementScore, searchFeishuUsers, setDuplicateDecision, setOwner, unbindTeamPersonFeishu, updateSource, type AnalysisVersionSummary, type AuditEvent, type BatchDetail, type BatchSummary, type DictionaryVersion, type DuplicateDecision, type PersonMapping, type PublishStatus, type FeishuUserSelection, type FeishuUserCandidate, type FunctionModuleEntry, type RequirementDetail, type RequirementProcessingState, type RequirementResolution, type RequirementScoreVersion, type RequirementSummary, type ScoringInputs, type SourceConfig, type SourceConfigUpdate, type TeamPerson, clearOwner } from "./api";
+import { AUDIT_PAGE_LIMIT, ApiError, addTeamPerson, applyRequirementAiScore, bindTeamPersonFeishu, createSource, deleteTeamPerson, getBatch, getFunctionModules, getRequirement, getOpsJobs, listAudit, listBatches, listDictionaryVersions, listMappings, listRequirements, listTeamPeople, pushRequirement, renameTeamPerson, revokeDuplicateDecision, saveAnalysisContext, saveFunctionModules, retryAnalysis, setPriorityOverride, retrySyncItem, saveRequirementScore, searchFeishuUsers, setDuplicateDecision, setOwner, unbindTeamPersonFeishu, updateSource, type AnalysisVersionSummary, type AuditEvent, type OpsJob, type BatchDetail, type BatchSummary, type DictionaryVersion, type DuplicateDecision, type PersonMapping, type PublishStatus, type FeishuUserSelection, type FeishuUserCandidate, type FunctionModuleEntry, type RequirementDetail, type RequirementProcessingState, type RequirementResolution, type RequirementScoreVersion, type RequirementSummary, type ScoringInputs, type SourceConfig, type SourceConfigUpdate, type TeamPerson, clearOwner } from "./api";
 import type { WorkbenchTab } from "./workbench-routing";
 
 export type LoadState = "loading" | "ready" | "error";
@@ -681,9 +681,9 @@ export function processingBadge(requirement: Pick<RequirementSummary, "processin
   return null;
 }
 
-/** 需求池顶部视图切换值（与 API processingState 查询参数同名）。 */
-const PROCESSING_VIEWS: Array<{ value: "" | "active" | "suppressed"; label: string }> = [
-  { value: "", label: "全部" },
+/** 需求池顶部视图切换值；`all` 只在 UI/URL 层使用，请求时省略参数。 */
+const PROCESSING_VIEWS: Array<{ value: RequirementProcessingView; label: string }> = [
+  { value: "all", label: "全部" },
   { value: "active", label: "仅活跃" },
   { value: "suppressed", label: "已压制重复" },
 ];
@@ -743,7 +743,7 @@ function requirementListQuery(filter: RequirementListFilters) {
     analysisState: filter.analysis || undefined,
     ownerState: filter.ownerState || undefined,
     pushState: filter.push || undefined,
-    processingState: filter.processingState === "active" || filter.processingState === "suppressed" ? filter.processingState : undefined,
+    processingState: filter.processingState === "all" ? undefined : filter.processingState,
     batchId: filter.batchId || undefined,
     since: toIso(filter.from),
     until: toIso(filter.to),
@@ -763,7 +763,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
   const [analysisState, setAnalysisState] = useState(initialFilters.analysis);
   const [pullState, setPullState] = useState(initialFilters.pull);
   const [pushState, setPushState] = useState(initialFilters.push);
-  // 重复处理视图：""=全部 / active=仅活跃 / suppressed=已压制（重复或忽略）。
+  // 重复处理视图：all=全部 / active=仅活跃（默认）/ suppressed=已压制（重复或忽略）。
   const [processingState, setProcessingState] = useState(initialFilters.processingState);
   const [batchId, setBatchId] = useState(initialFilters.batchId);
   const [since, setSince] = useState(initialFilters.from);
@@ -810,7 +810,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
   // 已生效筛选：列表行/详情 URL 与刷新必须以「点过筛选」的条件为准，
   // 不能把用户尚未应用的草稿输入写进 URL。
   const appliedFiltersRef = useRef(initialFilters);
-  const activeFilterCount = Object.values(filters).filter(Boolean).length;
+  const activeFilterCount = requirementFilterCount(filters);
   // 已生效 = 上一次真正发给服务端的条件；草稿输入不算，否则还没点筛选就显示"已生效"。
   const [appliedFilterCount, setAppliedFilterCount] = useState(0);
   const dateFilterCount = [since, until].filter(Boolean).length;
@@ -927,10 +927,10 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
   };
 
   // 重复处理视图切换：立即生效、重置游标并重新拉取，不要求用户再点「筛选」。
-  const applyProcessingView = (view: "" | "active" | "suppressed") => {
+  const applyProcessingView = (view: RequirementProcessingView) => {
     setProcessingState(view);
     const next: RequirementListFilters = { ...filters, processingState: view };
-    setAppliedFilterCount(Object.values(next).filter(Boolean).length);
+    setAppliedFilterCount(requirementFilterCount(next));
     window.history.replaceState(null, "", requirementPoolUrl(window.location.pathname || "/", next, null, window.location.hash));
     void load(next, null);
   };
@@ -939,7 +939,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
   const clearFilters = () => {
     setAppliedFilterCount(0);
     const cleared = { ...emptyRequirementListFilters };
-    setQuery(""); setExecutorName(""); setPullState(""); setOwnerState(""); setAnalysisState(""); setPushState(""); setProcessingState(""); setBatchId(""); setSince(""); setUntil("");
+    setQuery(""); setExecutorName(""); setPullState(""); setOwnerState(""); setAnalysisState(""); setPushState(""); setProcessingState(cleared.processingState); setBatchId(""); setSince(""); setUntil("");
     window.history.replaceState(null, "", requirementPoolUrl(window.location.pathname || "/", cleared, null, window.location.hash));
     void load(cleared, null);
   };
@@ -976,7 +976,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
     <div className="processing-view-switch" role="group" aria-label="重复处理视图">
       <span className="processing-view-switch-label">重复处理</span>
       {PROCESSING_VIEWS.map((view) => <ArcoButton
-        key={view.value || "all"}
+        key={view.value}
         className={processingState === view.value ? "is-active" : undefined}
         aria-pressed={processingState === view.value}
         onClick={() => applyProcessingView(view.value)} htmlType="button">{view.label}</ArcoButton>)}
@@ -1056,7 +1056,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
  * Base 记录引用。工作台只拿得到 record ID，拿不到 Base app token（凭据不下发浏览器），
  * 因此提供可复制的引用，而不是伪造一个打不开的链接。
  */
-function BaseRecordReference({ recordId }: { recordId: string | null }) {
+function BaseRecordReference({ recordId, url }: { recordId: string | null; url?: string | null }) {
   const [copied, setCopied] = useState(false);
   if (!recordId) return <span className="base-ref-empty">尚未写入飞书 Base</span>;
   const copy = async () => {
@@ -1068,6 +1068,7 @@ function BaseRecordReference({ recordId }: { recordId: string | null }) {
   };
   return <span className="base-ref">
     <code className="base-ref-id">{recordId}</code>
+    {url ? <a className="link-button" href={url} target="_blank" rel="noreferrer">在飞书 Base 中打开</a> : null}
     <ArcoButton type="text" className="link-button" onClick={() => void copy()} htmlType="button">{copied ? "已复制" : "复制记录 ID"}</ArcoButton>
     <span className="base-ref-hint">PM 处理状态与通知送达请在飞书 Base 中查看；本工作台不读取这些字段。</span>
   </span>;
@@ -1729,7 +1730,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
       <dl className="req-system-grid">
         <div><dt>四阶段状态</dt><dd><div className="req-stage-row">{stages.map(([stage, state]) => <StageBadge key={stage} stage={stage} state={state} />)}</div></dd></div>
         <div><dt>负责人映射方式</dt><dd>{pipelineLabel("owner", detail.pipeline.owner)}</dd></div>
-        <div><dt>Base 记录</dt><dd><BaseRecordReference recordId={detail.baseRecordId} /></dd></div>
+        <div><dt>Base 记录</dt><dd><BaseRecordReference recordId={detail.baseRecordId} url={detail.baseRecordUrl ?? null} /></dd></div>
         <div><dt>推送时间</dt><dd>{pushTime ?? <span className="req-empty-value" title="接口未返回推送时间">—</span>}</dd></div>
         <div><dt>最近一次失败</dt><dd>{failureText ?? <span className="req-empty-value" title="没有最近失败记录">—</span>}</dd></div>
       </dl>
@@ -1956,26 +1957,28 @@ export function MappingsPanel({ onRefresh }: { onRefresh: () => void }) {
 export function AuditPanel() {
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [entityId, setEntityId] = useState("");
+  const [eventType, setEventType] = useState("");
   const [since, setSince] = useState("");
   const [until, setUntil] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loadState, setLoadState] = useState<LoadState>("loading");
 
-  const load = useCallback(async (filter: { entityId: string; since: string; until: string }) => {
+  const load = useCallback(async (filter: { entityId: string; eventType: string; since: string; until: string }) => {
     setLoadState("loading"); setLoadError(null);
     try {
-      setEvents(await listAudit({ entityId: filter.entityId || undefined, since: filter.since || undefined, until: filter.until || undefined, limit: AUDIT_PAGE_LIMIT }));
+      setEvents(await listAudit({ entityId: filter.entityId || undefined, eventType: filter.eventType || undefined, since: filter.since || undefined, until: filter.until || undefined, limit: AUDIT_PAGE_LIMIT }));
       setLoadState("ready");
     } catch (cause) { setLoadError(errorText(cause)); setLoadState("error"); }
   }, []);
-  useEffect(() => { void load({ entityId: "", since: "", until: "" }); }, [load]);
+  useEffect(() => { void load({ entityId: "", eventType: "", since: "", until: "" }); }, [load]);
 
   return <section className="panel requirements-panel">
-    <div className="panel-heading"><div><h2>审计日志</h2><p>同步、分析、映射、推送与配置操作的留痕；对象与时间筛选由服务端执行。</p></div><div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+    <div className="panel-heading"><div><h2>审计日志</h2><p>同步、分析、映射、推送与配置操作的留痕；对象、事件类型与时间筛选由服务端执行。</p></div><div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
       <Input aria-label="对象 ID 筛选" placeholder="按对象 ID 筛选" value={entityId} onChange={(e) => setEntityId(e.target.value)} />
+      <Input aria-label="事件类型筛选" placeholder="事件类型，如 analysis.retry_requested" value={eventType} onChange={(e) => setEventType(e.target.value)} />
       <label className="field"><span>开始时间</span><Input type="datetime-local" aria-label="开始时间" value={since} onChange={(e) => setSince(e.target.value)} /></label>
       <label className="field"><span>结束时间</span><Input type="datetime-local" aria-label="结束时间" value={until} onChange={(e) => setUntil(e.target.value)} /></label>
-      <Button onPress={() => void load({ entityId: entityId.trim(), since: since ? new Date(since).toISOString() : "", until: until ? new Date(until).toISOString() : "" })} variant="secondary" size="small">筛选</Button>
+      <Button onPress={() => void load({ entityId: entityId.trim(), eventType: eventType.trim(), since: since ? new Date(since).toISOString() : "", until: until ? new Date(until).toISOString() : "" })} variant="secondary" size="small">筛选</Button>
     </div></div>
     <StateBanner loadError={loadError} notice={null} onCloseNotice={() => undefined} />
     {events.length >= AUDIT_PAGE_LIMIT && <div className="list-summary-count">已加载最近 {AUDIT_PAGE_LIMIT} 条审计记录；更早的记录请缩小时间范围或按对象筛选。</div>}
@@ -1987,12 +1990,62 @@ export function AuditPanel() {
       columns={[
         { title: "时间", dataIndex: "occurredAt", width: 180, render: (_value, event) => timeLabel(event.occurredAt) },
         { title: "操作者", dataIndex: "actorId", width: 140, render: (_value, event) => event.actorId ?? "系统" },
-        { title: "动作", dataIndex: "eventType", width: 220, render: (_value, event) => <span className="mono-cell">{event.eventType}</span> },
+        { title: "动作", dataIndex: "eventType", width: 220, render: (_value, event) => <ArcoButton type="text" size="mini" className="mono-cell" title="只看该类型事件" onClick={() => { setEventType(event.eventType); void load({ entityId: entityId.trim(), eventType: event.eventType, since: since ? new Date(since).toISOString() : "", until: until ? new Date(until).toISOString() : "" }); }} htmlType="button">{event.eventType}</ArcoButton> },
         { title: "对象", dataIndex: "entityId", width: 230, render: (_value, event) => <span className="mono-cell">{event.entityType}:{event.entityId.slice(0, 8)}</span> },
         { title: "结果", dataIndex: "result", width: 110, render: (_value, event) => auditResultLabel(event.result) },
         { title: "安全摘要", dataIndex: "safeDetails", render: (_value, event) => Object.keys(event.safeDetails).length ? JSON.stringify(event.safeDetails) : "—" },
       ]}
     /> : loadState === "loading" ? <SkeletonTableRows rows={6} columns={6} /> : <div className="table-empty"><strong>没有匹配的审计记录</strong><span>调整筛选条件或执行操作后再试。</span></div>}
+  </section>;
+}
+
+// ---------- 运维视图：失败 / 卡住的作业（只读） ----------
+
+function opsJobColumns() {
+  return [
+    { title: "作业类型", dataIndex: "jobType", width: 130, render: (_value: unknown, job: OpsJob) => <span className="mono-cell">{job.jobType}</span> },
+    { title: "尝试", dataIndex: "attemptCount", width: 90, render: (_value: unknown, job: OpsJob) => `${job.attemptCount} / ${job.maxAttempts}` },
+    { title: "需求", dataIndex: "requirementId", width: 140, render: (_value: unknown, job: OpsJob) => job.requirementId ? <span className="mono-cell" title={job.requirementId}>{job.requirementId.slice(0, 8)}</span> : "—" },
+    { title: "错误码", dataIndex: "lastErrorCode", width: 170, render: (_value: unknown, job: OpsJob) => job.lastErrorCode ? <span className="mono-cell">{job.lastErrorCode}</span> : "—" },
+    { title: "安全摘要", dataIndex: "lastErrorSummary", render: (_value: unknown, job: OpsJob) => job.lastErrorSummary ?? "—" },
+    { title: "更新时间", dataIndex: "updatedAt", width: 180, render: (_value: unknown, job: OpsJob) => timeLabel(job.updatedAt) },
+  ];
+}
+
+function OpsJobTable({ jobs, emptyTitle, emptyHint }: { jobs: OpsJob[]; emptyTitle: string; emptyHint: string }) {
+  return jobs.length
+    ? <ArcoTable<OpsJob> rowKey="id" data={jobs} pagination={false} border={false} scroll={{ x: 980 }} columns={opsJobColumns()} />
+    : <div className="table-empty"><strong>{emptyTitle}</strong><span>{emptyHint}</span></div>;
+}
+
+export function OpsPanel() {
+  const [items, setItems] = useState<{ failed: OpsJob[]; stuck: OpsJob[] } | null>(null);
+  const [loadState, setLoadState] = useState<LoadState>("loading");
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoadState("loading"); setLoadError(null);
+    try {
+      const result = await getOpsJobs({ limit: 50 });
+      setItems(result.items);
+      setLoadState("ready");
+    } catch (cause) { setLoadError(errorText(cause)); setLoadState("error"); }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+
+  return <section className="panel requirements-panel">
+    <div className="panel-heading"><div><h2>作业运维</h2><p>只读视图：最近失败的作业，以及尝试次数用尽且租约过期的运行中作业。</p></div>
+      <ArcoButton size="small" onClick={() => void load()} disabled={loadState === "loading"} htmlType="button"><RefreshCw size={14} />刷新</ArcoButton>
+    </div>
+    <StateBanner loadError={loadError} notice={null} onCloseNotice={() => undefined} />
+    <div className="subsection">
+      <div className="panel-heading"><div><h3>失败作业</h3><p>恢复由各自的重试入口或恢复器完成；本页不提供写入操作。</p></div></div>
+      {items ? <OpsJobTable jobs={items.failed} emptyTitle="没有失败作业" emptyHint="最近没有处于 failed 状态的作业。" /> : <SkeletonTableRows rows={3} columns={6} />}
+    </div>
+    <div className="subsection">
+      <div className="panel-heading"><div><h3>卡住的运行中作业</h3><p>尝试次数已用尽且租约过期，等待回收器或人工处理；仅含 base_push / kano_run。</p></div></div>
+      {items ? <OpsJobTable jobs={items.stuck} emptyTitle="没有卡住的作业" emptyHint="运行中的作业都有有效租约或仍有重试机会。" /> : <SkeletonTableRows rows={3} columns={6} />}
+    </div>
   </section>;
 }
 

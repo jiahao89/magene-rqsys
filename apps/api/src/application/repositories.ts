@@ -264,6 +264,12 @@ export interface PipelineJobRepository {
    * 可选：内存实现可不提供。
    */
   listExhaustedRunning?(now: string, limit: number): Promise<PipelineJobRecord[]>;
+  /**
+   * 运维视图（只读）：最近失败的作业，按更新时间倒序。
+   * 只返回作业元数据与安全错误摘要，调用方不得回传 payload。
+   * 可选：内存实现可不提供。
+   */
+  listFailed?(limit: number): Promise<PipelineJobRecord[]>;
   claimNext(workerId: string, leaseMs: number, now: string): Promise<PipelineJobRecord | null>;
   /**
    * 续约：仅当作业仍是本次认领的那次（status='running' 且 attempt_count 匹配）才延长租约。
@@ -301,6 +307,7 @@ export interface AuditEventRepository {
   append(record: AuditEventRecord): Promise<void>;
   search(query: {
     entityId?: string;
+    eventType?: string;
     since?: string;
     until?: string;
     limit: number;
@@ -459,6 +466,8 @@ export interface RequirementQueryRepository {
     pushFailed: number;
     /** 仅推送待处理，与「待推送」卡片的筛选口径一致。 */
     pushPending: number;
+    /** 已压制（重复/忽略）需求数量；不计入上面的阶段与优先级统计（验收 #27）。 */
+    suppressed: number;
     /** 总览优先级分级：人工优先级覆盖 > 当前评分版本 > 最近一次已分析优先级（legacy）；三者皆无计入 unscored。 */
     priority: {
       P0: number; P1: number; P2: number; P3: number;

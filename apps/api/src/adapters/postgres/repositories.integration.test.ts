@@ -75,6 +75,26 @@ test("suspected duplicates stay in the pool/counts and keep detail links",async(
 
 test("batch keyset cursor does not skip rows with identical start times and applies inclusive time filters",async()=>{const ctx=await setup();try{const source=await ctx.repos.sources.create(config);const ids:string[]=[];for(let i=0;i<3;i++){const batch=await ctx.repos.batches.create({sourceConfigId:source.id,triggerType:"manual",actorId:null,idempotencyKey:`same-time-batch-${i}`,startedAt:"2026-10-08T00:00:00Z"});ids.push(batch.id);await ctx.repos.batches.complete(batch.id,{status:"succeeded",totalCount:0,succeededCount:0,failedCount:0,errorSummary:null,completedAt:"2026-10-08T00:00:01Z"});}const first=await ctx.repos.batches.list({since:"2026-10-08T00:00:00Z",until:"2026-10-08T00:00:00Z",limit:1});assert.equal(first.items.length,1);assert.ok(first.nextCursor);const {decodeBatchCursor}=await import("../../application/batch-cursor.js");const second=await ctx.repos.batches.list({since:"2026-10-08T00:00:00Z",until:"2026-10-08T00:00:00Z",limit:1,cursor:decodeBatchCursor(first.nextCursor)!});assert.equal(second.items.length,1);assert.notEqual(second.items[0]?.id,first.items[0]?.id);assert.equal(ids.length,3);}finally{await cleanup(ctx);}});
 
+test("pool search treats % and _ literally and ships the search indexes", async () => {
+  const ctx = await setup();
+  try {
+    const source = await ctx.repos.sources.create(config);
+    const batch = await ctx.repos.batches.create({ sourceConfigId: source.id, triggerType: "manual", actorId: null, idempotencyKey: "search-escape-0001", startedAt: "2026-10-08T00:00:00Z" });
+    await ctx.repos.requirements.upsertRequirement(source.id, "t1", requirementWrite(source.id, batch.id, { teambitionRequirementId: "t1", title: "提升 100% 覆盖率" }));
+    await ctx.repos.requirements.upsertRequirement(source.id, "t2", requirementWrite(source.id, batch.id, { teambitionRequirementId: "t2", title: "提升 100元 覆盖率" }));
+    await ctx.repos.requirements.upsertRequirement(source.id, "t3", requirementWrite(source.id, batch.id, { teambitionRequirementId: "t3", title: "下划线 _ 需求" }));
+
+    const percent = await ctx.repos.requirements.search({ q: "100%", limit: 10 });
+    assert.deepEqual(percent.items.map((item) => item.title), ["提升 100% 覆盖率"]);
+    const underscore = await ctx.repos.requirements.search({ q: "_", limit: 10 });
+    assert.deepEqual(underscore.items.map((item) => item.title), ["下划线 _ 需求"]);
+
+    // 迁移 0024：搜索/分页索引必须随迁移建立（trgm 扩展 + 毫秒截断表达式索引）。
+    const indexes = await ctx.pool.query("SELECT indexname FROM pg_indexes WHERE schemaname = current_schema() AND indexname IN ('requirements_title_trgm_idx','requirements_created_at_ms_id_idx') ORDER BY indexname");
+    assert.deepEqual(indexes.rows.map((row) => row.indexname), ["requirements_created_at_ms_id_idx", "requirements_title_trgm_idx"]);
+  } finally { await cleanup(ctx); }
+});
+
 test("changed source upsert atomically snapshots, resets analysis and push, and only clears owner mapping when the TB owner changes",async()=>{
   const ctx=await setup();
   try{
@@ -581,6 +601,11 @@ test("confirmed duplicate decisions suppress processing and survive requirement 
     assert.equal((await ctx.repos.requirements.get(duplicate.id))?.processingState, "suppressed_duplicate");
     assert.equal((await ctx.repos.requirements.getResolution(duplicate.id))?.decision, "duplicate");
 
+    // 验收 #27：已压制需求不进入阶段/优先级统计，只计入 suppressed。
+    const suppressedCounts = await ctx.repos.requirements.getPipelineCounts();
+    assert.equal(suppressedCounts.total, 1);
+    assert.equal(suppressedCounts.suppressed, 1);
+
     // 同步重推同一 TB 需求（upsert）：触发器按决策表重算，压制状态必须保留。
     await ctx.repos.requirements.upsertRequirement(source.id, "task-2", requirementWrite(source.id, batch.id, { teambitionRequirementId: "task-2", title: "Duplicate", sourceHash: "c".repeat(64), substantiveHash: "d".repeat(64), sourceVersion: 2 }));
     assert.equal((await ctx.repos.requirements.get(duplicate.id))?.processingState, "suppressed_duplicate");
@@ -597,6 +622,9 @@ test("confirmed duplicate decisions suppress processing and survive requirement 
     assert.equal((await ctx.repos.requirements.get(duplicate.id))?.processingState, "active");
     assert.equal(await ctx.repos.requirements.getResolution(duplicate.id), null);
     assert.equal((await ctx.repos.requirements.get(canonical.id))?.processingState, "active");
+    const restoredCounts = await ctx.repos.requirements.getPipelineCounts();
+    assert.equal(restoredCounts.total, 2);
+    assert.equal(restoredCounts.suppressed, 0);
   } finally { await cleanup(ctx); }
 });
 

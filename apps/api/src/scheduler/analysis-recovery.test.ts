@@ -6,6 +6,7 @@ import type { RequirementQueryRepository } from "../application/repositories.js"
 import {
   ANALYSIS_RECOVERY_SCAN_LIMIT,
   MAX_SCHEDULER_ANALYSIS_RETRIES,
+  analysisForceDedupeKey,
   analysisRetryDedupeKey,
   analysisRunningJobKeys,
   recoverAnalysisPipeline,
@@ -424,12 +425,16 @@ test("作业键助手覆盖重试键、上一版本键与首轮同步键", () =>
   const req = requirement();
   assert.deepEqual(analysisRunningJobKeys(req, 0), [
     "analysis:req-1:sv3:after0",
+    "analysis:req-1:sv3:after0:force",
     "analysis:req-1:v3",
   ]);
   assert.deepEqual(analysisRunningJobKeys(req, 2), [
     "analysis:req-1:sv3:after2",
+    "analysis:req-1:sv3:after2:force",
     "analysis:req-1:sv3:after1",
+    "analysis:req-1:sv3:after1:force",
     "analysis:req-1:v3",
   ]);
   assert.equal(analysisRetryDedupeKey(req, 2), "analysis:req-1:sv3:after2");
+  assert.equal(analysisForceDedupeKey(req, 2), "analysis:req-1:sv3:after2:force");
 });

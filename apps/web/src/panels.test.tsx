@@ -1,7 +1,7 @@
 // 工单 16/17 面板测试：数据全部来自 mock API；覆盖正向、权限拒绝与详情/重试交互。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { AnalysisContextSection, BatchesPanel, MappingsPanel, ModulesPanel, PeoplePanel, PriorityOverrideSection, RequirementsPanel, ScoringPanel, SourcesPanel } from "./panels";
+import { AnalysisContextSection, AuditPanel, OpsPanel, BatchesPanel, MappingsPanel, ModulesPanel, PeoplePanel, PriorityOverrideSection, RequirementsPanel, ScoringPanel, SourcesPanel } from "./panels";
 import { AudienceEditor } from "./intake-form";
 import type { RequirementDetail, SourceConfig, TeamPerson } from "./api";
 
@@ -734,6 +734,16 @@ describe("RequirementsPanel (ticket 17)", () => {
     expect(screen.queryByRole("link", { name: /Base/ })).not.toBeInTheDocument();
   });
 
+  it("links to the Base record when the server provides a direct URL", async () => {
+    mockPanel({ detailBody: detail({ baseRecordId: "recvxwGs5Js0PA", baseRecordUrl: "https://tenant.feishu.cn/base/app?table=t&record=recvxwGs5Js0PA" }) });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await openFirstRow();
+    const link = await screen.findByRole("link", { name: "在飞书 Base 中打开" });
+    expect(link).toHaveAttribute("href", "https://tenant.feishu.cn/base/app?table=t&record=recvxwGs5Js0PA");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noreferrer");
+  });
+
   it("keeps the owner action available and explains disabled retries with titles", async () => {
     mockPanel();
     render(<RequirementsPanel onRefresh={() => undefined} />);
@@ -860,7 +870,7 @@ describe("RequirementsPanel (ticket 17)", () => {
     await chooseArcoOption("TB负责人筛选", "毕梓浩");
     fireEvent.click(screen.getByRole("button", { name: "筛选" }));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/requirements?q=%E6%8A%A5%E8%A1%A8&executorName=%E6%AF%95%E6%A2%93%E6%B5%A9&limit=25", expect.anything()));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/requirements?q=%E6%8A%A5%E8%A1%A8&executorName=%E6%AF%95%E6%A2%93%E6%B5%A9&processingState=active&limit=25", expect.anything()));
     expect(await screen.findByRole("button", { name: "加载更多" })).toBeInTheDocument();
   });
 
@@ -1236,5 +1246,49 @@ describe("AnalysisContextSection (V02-T26)", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "补充上下文" }), { target: { value: "新上下文" } });
     fireEvent.click(screen.getByRole("button", { name: "保存并重新分析" }));
     await waitFor(() => expect(screen.getByText(/补充上下文已保存，但重新分析未开始/)).toBeInTheDocument());
+  });
+});
+
+describe("AuditPanel event-type filter", () => {
+  const event = { id: "ev-1", actorId: "pm-1", eventType: "analysis.retry_requested", entityType: "requirement", entityId: "req-12345678", result: "succeeded", safeDetails: {}, occurredAt: "2026-11-03T00:00:00.000Z" };
+
+  it("sends the typed event type to the server", async () => {
+    fetchMock.mockImplementation(async () => jsonOk({ items: [event] }));
+    render(<AuditPanel />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/audit?limit=50", expect.anything()));
+    fireEvent.change(screen.getByLabelText("事件类型筛选"), { target: { value: "  owner.manually_mapped  " } });
+    fireEvent.click(screen.getByRole("button", { name: "筛选" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/audit?eventType=owner.manually_mapped&limit=50", expect.anything()));
+  });
+
+  it("clicking an event type in the table filters by that type", async () => {
+    fetchMock.mockImplementation(async () => jsonOk({ items: [event] }));
+    render(<AuditPanel />);
+    fireEvent.click(await screen.findByRole("button", { name: "analysis.retry_requested" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/audit?eventType=analysis.retry_requested&limit=50", expect.anything()));
+    expect((screen.getByLabelText("事件类型筛选") as HTMLInputElement).value).toBe("analysis.retry_requested");
+  });
+});
+
+describe("OpsPanel", () => {
+  const job = { id: "job-1", jobType: "base_push", status: "failed", dedupeKey: "base-push:req-1", attemptCount: 5, maxAttempts: 5, availableAt: "2026-11-03T00:00:00.000Z", lockedUntil: null, lastErrorCode: "BASE_TIMEOUT", lastErrorSummary: "upstream timed out", createdAt: "2026-11-03T00:00:00.000Z", updatedAt: "2026-11-03T01:00:00.000Z", requirementId: "req-12345678" };
+
+  it("renders failed and stuck jobs from the read-only endpoint", async () => {
+    fetchMock.mockImplementation(async () => jsonOk({ now: "2026-11-03T02:00:00.000Z", items: { failed: [job], stuck: [{ ...job, id: "job-2", status: "running" }] } }));
+    render(<OpsPanel />);
+    expect(await screen.findByRole("heading", { name: "作业运维" })).toBeInTheDocument();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/ops/jobs?limit=50", expect.anything()));
+    expect(screen.getAllByText("base_push").length).toBe(2);
+    expect(screen.getAllByText("BASE_TIMEOUT").length).toBe(2);
+    expect(screen.getAllByText("upstream timed out").length).toBe(2);
+    expect(screen.getAllByText("5 / 5").length).toBe(2);
+  });
+
+  it("shows empty states and keeps the refresh action", async () => {
+    fetchMock.mockImplementation(async () => jsonOk({ now: "2026-11-03T02:00:00.000Z", items: { failed: [], stuck: [] } }));
+    render(<OpsPanel />);
+    expect(await screen.findByText("没有失败作业")).toBeInTheDocument();
+    expect(screen.getByText("没有卡住的作业")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /刷新/ })).toBeEnabled();
   });
 });

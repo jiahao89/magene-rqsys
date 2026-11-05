@@ -16,19 +16,25 @@ export interface RequirementListFilters {
   analysis: string;
   ownerState: string;
   push: string;
-  /** 重复处理视图：""=全部，active=仅活跃，suppressed=已压制（重复/忽略）。 */
+  /** 重复处理视图：all=全部，active=仅活跃（默认），suppressed=已压制（重复/忽略）。 */
   processingState: RequirementProcessingView;
   batchId: string;
   from: string;
   to: string;
 }
 
-/** 重复处理视图的合法取值；与服务端 processingState 查询参数取值一致。 */
-export type RequirementProcessingView = "" | "active" | "suppressed";
+/**
+ * 重复处理视图的合法取值。
+ * 注意 `all` 只存在于 URL/UI 层：请求服务端时省略 processingState 表示不过滤。
+ */
+export type RequirementProcessingView = "all" | "active" | "suppressed";
 
-/** URL 参数 → 重复处理视图；未知值回落到「全部」，避免深链把非法枚举发给服务端。 */
+/** 默认工作视图：仅活跃（PRD 验收 #27：默认工作视图不包含已压制需求）。 */
+export const DEFAULT_PROCESSING_VIEW: RequirementProcessingView = "active";
+
+/** URL 参数 → 重复处理视图；未知值回落到默认视图，避免深链把非法枚举发给服务端。 */
 export function parseRequirementProcessingView(value: string | null | undefined): RequirementProcessingView {
-  return value === "active" || value === "suppressed" ? value : "";
+  return value === "all" || value === "suppressed" || value === "active" ? value : DEFAULT_PROCESSING_VIEW;
 }
 
 export const emptyRequirementListFilters: RequirementListFilters = {
@@ -38,7 +44,7 @@ export const emptyRequirementListFilters: RequirementListFilters = {
   analysis: "",
   ownerState: "",
   push: "",
-  processingState: "",
+  processingState: DEFAULT_PROCESSING_VIEW,
   batchId: "",
   from: "",
   to: "",
@@ -73,8 +79,19 @@ export function readRequirementListFilters(search: string): RequirementListFilte
   };
 }
 
+/** 默认视图不算筛选：避免「清除筛选」和筛选计数把默认的「仅活跃」当成用户条件。 */
+export function isRequirementFilterApplied(key: typeof requirementFilterParams[number], value: string): boolean {
+  if (value === "") return false;
+  return !(key === "processingState" && value === DEFAULT_PROCESSING_VIEW);
+}
+
 export function hasRequirementListFilters(filters: RequirementListFilters): boolean {
-  return requirementFilterParams.some((key) => filters[key] !== "");
+  return requirementFilterParams.some((key) => isRequirementFilterApplied(key, filters[key]));
+}
+
+/** 已生效筛选数量，口径与 hasRequirementListFilters 一致。 */
+export function requirementFilterCount(filters: RequirementListFilters): number {
+  return requirementFilterParams.filter((key) => isRequirementFilterApplied(key, filters[key])).length;
 }
 
 /**
@@ -88,7 +105,8 @@ export function buildRequirementPoolSearch(
   const params = new URLSearchParams();
   for (const key of requirementFilterParams) {
     const value = filters[key];
-    if (value !== "") params.set(key, value);
+    // 默认视图不写入 URL：无参数即默认（仅活跃），URL 更短且语义稳定。
+    if (isRequirementFilterApplied(key, value)) params.set(key, value);
   }
   const requirement = requirementId?.trim();
   if (requirement) params.set("requirement", requirement);

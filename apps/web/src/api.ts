@@ -12,6 +12,8 @@ export interface OverviewMetrics {
   pushFailed: number;
   pushPending: number;
   failed: number;
+  /** 已压制（重复/忽略）数量；不计入上面的阶段与优先级统计（验收 #27）。 */
+  suppressed: number;
   /** 总览分级统计：人工优先级覆盖 > 当前评分；无评分时使用最近一次已分析优先级（legacy）。 */
   priority?: { P0: number; P1: number; P2: number; P3: number; scored: number; legacy: number; unscored: number } | null;
   /** 当前已发布评分规则；规则未发布时为 null。 */
@@ -468,6 +470,8 @@ export interface RequirementDetail {
   analysis: Record<string, unknown> | null;
   analyses: AnalysisVersionSummary[];
   baseRecordId: string | null;
+  /** 服务端按部署配置拼出的 Base 记录直达链接；未配置时为 null（只能复制记录 ID）。 */
+  baseRecordUrl?: string | null;
   ownerName?: string | null;
   manualOwner?: { feishuUserId: string; feishuIdType: "open_id" | "user_id" | "union_id"; name: string | null; assignedAt: string } | null;
   duplicateOf?: string | null;
@@ -537,9 +541,31 @@ export async function listMappings(fetcher: typeof fetch = fetch): Promise<Perso
 /** 审计面板默认取最近 N 条；与 API 的 AuditListQuerySchema 默认 limit 一致。 */
 export const AUDIT_PAGE_LIMIT = 50;
 
-export function listAudit(params: { entityId?: string; since?: string; until?: string; limit?: number; fetcher?: typeof fetch } = {}): Promise<AuditEvent[]> {
-  const { fetcher = fetch, entityId, since, until, limit } = params;
-  return requestJson<{ items: AuditEvent[] }>(`/api/audit${buildSearch({ entityId, since, until, limit })}`, fetcher).then((result) => result.items);
+export interface OpsJob {
+  id: string;
+  jobType: string;
+  status: string;
+  dedupeKey: string;
+  attemptCount: number;
+  maxAttempts: number;
+  availableAt: string;
+  lockedUntil: string | null;
+  lastErrorCode: string | null;
+  lastErrorSummary: string | null;
+  createdAt: string;
+  updatedAt: string;
+  requirementId: string | null;
+}
+
+/** 只读运维视图：失败的作业 + 尝试次数用尽且租约过期的运行中作业。 */
+export function getOpsJobs(params: { limit?: number; fetcher?: typeof fetch } = {}): Promise<{ now: string; items: { failed: OpsJob[]; stuck: OpsJob[] } }> {
+  const { fetcher = fetch, limit } = params;
+  return requestJson<{ now: string; items: { failed: OpsJob[]; stuck: OpsJob[] } }>(`/api/ops/jobs${buildSearch({ limit })}`, fetcher);
+}
+
+export function listAudit(params: { entityId?: string; eventType?: string; since?: string; until?: string; limit?: number; fetcher?: typeof fetch } = {}): Promise<AuditEvent[]> {
+  const { fetcher = fetch, entityId, eventType, since, until, limit } = params;
+  return requestJson<{ items: AuditEvent[] }>(`/api/audit${buildSearch({ entityId, eventType, since, until, limit })}`, fetcher).then((result) => result.items);
 }
 
 export interface IntakeResult {

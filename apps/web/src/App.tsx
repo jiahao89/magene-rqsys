@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
-import { ArrowDownToLine, ArrowRight, Blocks, Check, CircleAlert, CircleHelp, Clock3, Database, FolderSync, Gauge, GitBranch, Layers3, ListChecks, LoaderCircle, Menu, Moon, Play, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Sun, Users, X } from "lucide-react";
+import { Activity, ArrowDownToLine, ArrowRight, Blocks, Check, CircleAlert, CircleHelp, Clock3, Database, FolderSync, Gauge, GitBranch, Layers3, ListChecks, LoaderCircle, Menu, Moon, Play, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Sun, Users, X } from "lucide-react";
 import { ApiError, createPriorityRuleDraft, getHealth, getOverviewMetrics, listPriorityRules, listSources, publishPriorityRule, runSync, type OverviewMetrics, type PriorityRuleVersion, type RequirementSummary, type SourceConfig, type SyncExecutionMode } from "./api";
-import { GuidePanel, ModulesPanel, PanelErrorBoundary, PublishStatusChip, RequirementsPanel, SourcesPanel, SyncRecordsPanel, TeamPanel } from "./panels";
+import { GuidePanel, ModulesPanel, OpsPanel, PanelErrorBoundary, PublishStatusChip, RequirementsPanel, SourcesPanel, SyncRecordsPanel, TeamPanel } from "./panels";
 import { SkeletonBlock, SkeletonCards, SkeletonTableRows } from "./skeleton";
 import { Button as ArcoButton, Dropdown as ArcoDropdown, Input as ArcoInput, InputNumber as ArcoInputNumber, Menu as ArcoMenu, Table as ArcoTable } from "@arco-design/web-react";
 import { readRequirementDeepLink } from "./deep-link";
@@ -33,10 +33,10 @@ const navigationGroups: { title: string; items: { label: Page; icon: typeof Gaug
     { label: "Team", icon: Users }, { label: "Modules", icon: Blocks },
   ] },
   { title: "设置", items: [
-    { label: "Sources", icon: Database }, { label: "Rules", icon: Settings2 },
+    { label: "Sources", icon: Database }, { label: "Rules", icon: Settings2 }, { label: "Ops", icon: Activity },
   ] },
 ];
-const pageTitles: Record<Page, string> = { Overview: "总览", Requirements: "需求池", Team: "团队管理", Modules: "功能模块", SyncRecords: "同步记录", Sources: "数据源与计划", Rules: "优先级规则", Guide: "使用指南" };
+const pageTitles: Record<Page, string> = { Overview: "总览", Requirements: "需求池", Team: "团队管理", Modules: "功能模块", SyncRecords: "同步记录", Sources: "数据源与计划", Rules: "优先级规则", Ops: "作业运维", Guide: "使用指南" };
 
 const API_ERROR_TEXT: Record<string, string> = {
   INTERNAL: "服务暂时不可用，请稍后重试。",
@@ -323,7 +323,7 @@ function App() {
     }, 5000);
     return () => window.clearInterval(timer);
   }, [latestBatch?.status, refreshBatches]);
-  const counts = { pull: metrics?.pullSynced ?? 0, analysis: metrics?.analysisAnalyzed ?? 0, owner: metrics?.ownerResolved ?? 0, push: metrics?.pushPushed ?? 0, failed: metrics?.failed ?? 0, pushFailed: metrics?.pushFailed ?? 0, pushPending: metrics?.pushPending ?? 0 };
+  const counts = { pull: metrics?.pullSynced ?? 0, analysis: metrics?.analysisAnalyzed ?? 0, owner: metrics?.ownerResolved ?? 0, push: metrics?.pushPushed ?? 0, failed: metrics?.failed ?? 0, pushFailed: metrics?.pushFailed ?? 0, pushPending: metrics?.pushPending ?? 0, suppressed: metrics?.suppressed ?? 0 };
   const total = metrics?.total ?? 0;
   const priority = metrics?.priority ?? null;
   const priorityRule = metrics?.priorityRule ?? null;
@@ -368,7 +368,7 @@ function App() {
             <section className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" />SYNC WORKBENCH</div><h1>工作流总览</h1><p>查看需求同步进度、分析状态与推送健康度。</p></div><div className="heading-actions"><ArcoButton type="secondary" onClick={() => void loadData()} disabled={health === "loading"}><RefreshCw size={15} className={health === "loading" ? "spin" : ""} />刷新</ArcoButton><AdvancedActions busy={busy} health={health} onRunSourceOnly={() => void handleRunSync("source_only")} /><ArcoButton type="primary" onClick={() => void handleRunSync()} disabled={busy || health !== "ready"}><Play size={15} fill="currentColor" />{busy ? "提交中…" : "立即同步"}</ArcoButton></div></section>
             <section className="source-banner"><div className="source-leading"><span className="source-icon"><GitBranch size={17} /></span><div><span className="micro-label">当前同步来源</span><strong>{sources[0]?.projectName ?? (health === "loading" ? "正在加载配置…" : health === "error" ? "无法读取来源配置" : "尚未配置数据源")}</strong></div></div><div className="source-meta"><span className={`status-chip ${sources[0]?.enabled ? "status-live" : "status-muted"}`}><span />{sources[0]?.enabled ? "同步已启用" : "未启用"}</span><span className="source-meta-divider" /><span className="subtle-text">Teambition 项目</span></div><ArcoButton type="text" className="text-link" onClick={() => setPage("Sources")} htmlType="button">管理来源 <ArrowRight size={14} /></ArcoButton></section>
 
-            <section className="section-block"><div className="section-heading"><div><h2>同步健康度</h2><p>四个处理阶段独立统计 · 不互相阻塞</p></div><ArcoButton type="text" className="link-button" onClick={() => setPage("Requirements")} htmlType="button">查看需求池 <ArrowRight size={14} /></ArcoButton></div>
+            <section className="section-block"><div className="section-heading"><div><h2>同步健康度</h2><p>四个处理阶段独立统计 · 不互相阻塞{metrics ? ` · 已压制 ${counts.suppressed} 条不计入` : ""}</p></div><ArcoButton type="text" className="link-button" onClick={() => setPage("Requirements")} htmlType="button">查看需求池 <ArrowRight size={14} /></ArcoButton></div>
               {/* 今日待办：把统计数字翻译成"该做什么"，并直接跳到对应筛选 */}
             <section className="panel todo-panel">
               <div className="panel-heading"><div><h2>今天要处理什么</h2><p>按优先级排列，点击直接跳到对应需求。</p></div></div>
@@ -464,6 +464,7 @@ function SecondaryContent({ page, tab, sources, loadState, deepLinkRequirementId
   if (page === "Sources") return <SourcesPanel sources={sources} loadState={loadState} onRefresh={onRefresh} />;
   if (page === "Modules") return <ModulesPanel />;
   if (page === "Rules") return <RulesPanel />;
+  if (page === "Ops") return <OpsPanel />;
   if (page === "Guide") return <GuidePanel />;
   return <section className="panel placeholder-panel"><div className="placeholder-illustration"><span><Users size={23} /></span><i /><i /><i /></div><div className="eyebrow"><span className="eyebrow-line" />API 契约待实现</div><h2>页面未实现</h2><p>该页面尚未提供 API 契约。</p><ArcoButton htmlType="button" onClick={() => onNavigate("Overview" as Page)}>返回总览<ArrowRight size={15} /></ArcoButton></section>;
 }
@@ -562,7 +563,7 @@ function EmptyPanel({ loading, title, description }: { loading: boolean; title: 
 }
 
 function pageDescription(page: Page): string {
-  const descriptions: Record<Page, string> = { Overview: "同步流程的当前健康状态与执行概况。", Requirements: "按需求标题、TB负责人和处理状态检索需求；负责人分配在需求详情页完成。", Team: "维护组内人员、飞书账号绑定和 Teambition 负责人映射。", Modules: "维护 AI 分类使用的功能模块、责任人员及词典版本历史。", SyncRecords: "检查同步批次、失败项与可追踪的审计操作。", Sources: "单项目的数据源与周计划设置。", Rules: "管理已校准的优先级规则；评分映射与校准证据在高级设置中维护。", Guide: "系统工作流、状态含义与日常操作说明。" };
+  const descriptions: Record<Page, string> = { Overview: "同步流程的当前健康状态与执行概况。", Requirements: "按需求标题、TB负责人和处理状态检索需求；负责人分配在需求详情页完成。", Team: "维护组内人员、飞书账号绑定和 Teambition 负责人映射。", Modules: "维护 AI 分类使用的功能模块、责任人员及词典版本历史。", SyncRecords: "检查同步批次、失败项与可追踪的审计操作。", Sources: "单项目的数据源与周计划设置。", Rules: "管理已校准的优先级规则；评分映射与校准证据在高级设置中维护。", Ops: "只读查看失败与卡住的作业，辅助定位同步、分析和推送中断。", Guide: "系统工作流、状态含义与日常操作说明。" };
   return descriptions[page];
 }
 

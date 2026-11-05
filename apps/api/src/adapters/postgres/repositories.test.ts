@@ -287,13 +287,13 @@ test("overview aggregation excludes synthetic fixtures and maps database counts"
   const pool = {
     query: async (sql: string, values?: unknown[]) => {
       calls.push({ sql, values });
-      return { rows: [{ total: "311", pull_synced: "311", analysis_analyzed: "0", owner_resolved: "0", push_pushed: "0", failed: "0", push_failed: "0", push_pending: "0", priority_p0: "2", priority_p1: "3", priority_p2: "4", priority_p3: "5", priority_scored: "6", priority_legacy: "7", priority_unscored: "298" }], rowCount: 1 };
+      return { rows: [{ total: "311", pull_synced: "311", analysis_analyzed: "0", owner_resolved: "0", push_pushed: "0", failed: "0", push_failed: "0", push_pending: "0", priority_p0: "2", priority_p1: "3", priority_p2: "4", priority_p3: "5", priority_scored: "6", priority_legacy: "7", priority_unscored: "298", suppressed: "9" }], rowCount: 1 };
     },
     connect: async () => { throw new Error("not used"); },
   } as never;
   const store = new PostgresRepositories(pool);
   assert.deepEqual(await store.requirements.getPipelineCounts(), {
-    total: 311, pullSynced: 311, analysisAnalyzed: 0, ownerResolved: 0, pushPushed: 0, failed: 0, pushFailed: 0, pushPending: 0,
+    total: 311, pullSynced: 311, analysisAnalyzed: 0, ownerResolved: 0, pushPushed: 0, failed: 0, pushFailed: 0, pushPending: 0, suppressed: 9,
     priority: { P0: 2, P1: 3, P2: 4, P3: 5, scored: 6, legacy: 7, unscored: 298 },
   });
   assert.match(calls[0]!.sql, /GROUP BY|FILTER/);
@@ -312,7 +312,9 @@ test("source config JSON fields are passed as JSON, not PostgreSQL array literal
 test("audit search uses parameterized filters and limit", async()=>{
   const {pool,calls}=recordingPool();const store=new PostgresRepositories(pool);
   await store.audit.search({entityId:"e1",since:"2026-01-01T00:00:00Z",limit:10});
-  assert.match(calls[0]!.sql,/WHERE \(\$1::text IS NULL/);assert.deepEqual(calls[0]!.values,["e1","2026-01-01T00:00:00Z",null,10]);
+  assert.match(calls[0]!.sql,/WHERE \(\$1::text IS NULL/);assert.deepEqual(calls[0]!.values,["e1","2026-01-01T00:00:00Z",null,10,null]);
+  await store.audit.search({eventType:"analysis.retry_requested",limit:10});
+  assert.match(calls[1]!.sql,/event_type=\$5/);assert.deepEqual(calls[1]!.values,[null,null,null,10,"analysis.retry_requested"]);
 });
 
 test("audit persistence strips fields outside the safe details allowlist", async()=>{
@@ -337,11 +339,28 @@ test("requirement search filters by latest batch and last-seen time on the serve
   assert.deepEqual(calls[0]!.values,[null,null,null,null,null,null,"33333333-3333-4333-8333-333333333333","2026-01-01T00:00:00Z","2026-01-02T00:00:00Z",null,null,26,null]);
 });
 
+test("requirement search escapes LIKE wildcards and uses the indexed UTC keyset expression", async()=>{
+  const {pool,calls}=recordingPool();const store=new PostgresRepositories(pool);
+  const cursor={createdAt:"2026-01-01T00:00:00.000Z",id:"55555555-5555-4555-8555-555555555555"};
+  await store.requirements.search({q:"100%_done\\",limit:20,cursor});
+  assert.match(calls[0]!.sql,/AT TIME ZONE 'UTC'/);
+  assert.equal(calls[0]!.values![0],"100\\%\\_done\\\\");
+  assert.equal(calls[0]!.values![9],"2026-01-01T00:00:00.000Z");
+});
+
 test("base push repository looks up a run by idempotency key", async()=>{
   const {pool,calls}=recordingPool();const store=new PostgresRepositories(pool);
   const run=await store.basePushes.findByIdempotencyKey("push:key");
   assert.equal(run?.id,"push-1");assert.equal(run?.requirementId,"req-1");assert.equal(run?.baseRecordId,"base-1");
   assert.match(calls[0]!.sql,/FROM base_push_runs WHERE idempotency_key=\$1/);assert.deepEqual(calls[0]!.values,["push:key"]);
+});
+
+test("ops view lists failed jobs with a bounded parameterized query", async()=>{
+  const {pool,calls}=recordingPool();const store=new PostgresRepositories(pool);
+  await store.jobs.listFailed(25);
+  assert.match(calls[0]!.sql,/status='failed'/);
+  assert.match(calls[0]!.sql,/ORDER BY updated_at DESC, id DESC LIMIT \$1/);
+  assert.deepEqual(calls[0]!.values,[25]);
 });
 
 test("job claim uses SKIP LOCKED and expires old leases", async()=>{

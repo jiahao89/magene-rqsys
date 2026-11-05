@@ -320,7 +320,7 @@ export function BetaPanel({ requirementId }: { requirementId: string }) {
       </div>
       {runs.length > 0 && <div style={{ marginTop: 8 }}>
         {runs.slice(0, 3).map((run) => <div key={run.id} className="req-field" style={{ borderTop: "1px dashed rgba(125,131,140,.3)", paddingTop: 8, marginTop: 8 }}>
-          <strong>v{run.runVersion} · {run.status === "succeeded" ? "AI假设（待验证）" : run.status === "running" ? "运行中" : `失败（${run.safeErrorCode ?? ""}）`}{run.staleInputs ? " · 输入已过期，建议重跑" : ""}</strong>
+          <strong>v{run.runVersion} · {run.status === "succeeded" ? (run.result?.researchStatus ?? "AI假设（待验证）") : run.status === "running" ? "运行中" : `失败（${run.safeErrorCode ?? ""}）`}{run.staleInputs ? " · 输入已过期，建议重跑" : ""}</strong>
           {run.result && <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
             {run.result.capabilities.map((capability, index) => <li key={index}><strong>{capability.capability}</strong>（{capability.audience ?? "人群待判断"}）→ 候选 <strong>{capability.candidateType}</strong>{capability.conflicts?.length ? ` · 冲突：${capability.conflicts.join("；")}` : ""}<br /><span className="status-hint">正向：{capability.positiveQuestion}／反向：{capability.negativeQuestion}</span><br /><span className="status-hint">推演倾向：{capability.simulatedLeaning.option}——{capability.simulatedLeaning.rationale}；证据 {capability.evidence.join(", ")}</span></li>)}
           </ul>}

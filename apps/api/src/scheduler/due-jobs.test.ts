@@ -37,11 +37,11 @@ function harness(sources: SourceConfigRecord[]) {
       async findByIdempotencyKey(_sourceConfigId: string, key: string) {
         return [...batches.values()].find((b) => b.idempotencyKey === key) ?? null;
       },
-      async complete(id: string, result: { status: string; errorSummary: string | null }) {
+      async complete(id: string, result: { status: string; errorSummary?: string | null; totalCount?: number; succeededCount?: number; failedCount?: number; completedAt?: string }) {
         calls.push(["batch.complete", id, result.status]);
         const batch = batches.get(id);
         if (!batch) return null;
-        const next = { ...batch, status: result.status as SyncBatchRecord["status"], errorSummary: result.errorSummary } satisfies SyncBatchRecord;
+        const next = { ...batch, status: result.status as SyncBatchRecord["status"], errorSummary: result.errorSummary ?? null } satisfies SyncBatchRecord;
         batches.set(id, next);
         return next;
       },
@@ -72,6 +72,25 @@ test("不变量1：同一调度窗口的重复触发不创建重复批次/任务
   // 幂等键/任务键只出现一次
   assert.equal(h.calls.filter((c) => (c as unknown[])[0] === "batch.create").length, 2); // create 被调用但返回既有批次
   assert.equal(h.batchKeys().length, 1); // 只有一个批次
+});
+
+test("同窗口批次已终态时不再入队：失败的调度批次不会每个 tick 重跑", async () => {
+  for (const status of ["failed", "succeeded", "partial_failure"] as const) {
+    const h = harness([source()]);
+    const deps = { sources: h.repos.sources as never, batches: h.repos.batches as never, jobs: h.repos.jobs as never, now: NOW };
+
+    const first = await createDueSyncJobs(deps);
+    const batchId = first[0]!.batchId!;
+    assert.equal(first[0]?.skipped, undefined);
+    await h.repos.batches.complete(batchId, { status, completedAt: NOW.toISOString() });
+    const enqueues = h.calls.filter((call) => (call as unknown[])[0] === "job.enqueue").length;
+
+    const replay = await createDueSyncJobs(deps);
+    assert.equal(replay[0]?.batchId, batchId); // 同窗口仍复用同一批次
+    assert.equal(replay[0]?.skipped, "already_terminal", status);
+    assert.equal(replay[0]?.batchStatus, status);
+    assert.equal(h.calls.filter((call) => (call as unknown[])[0] === "job.enqueue").length, enqueues, status);
+  }
 });
 
 test("不变量6：调度计算按显式时区执行（UTC 08:00）", async () => {

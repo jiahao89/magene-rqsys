@@ -67,8 +67,9 @@ interface Recorded {
   searches: number;
 }
 
-function makeDeps(overrides: { stored?: RequirementRecord; score?: typeof scoreVersion | null } = {}): { deps: ApiDependencies; recorded: Recorded } {
+function makeDeps(overrides: { stored?: RequirementRecord; score?: typeof scoreVersion | null; jobsByKey?: Map<string, { status: string }> } = {}): { deps: ApiDependencies; recorded: Recorded } {
   const stored = overrides.stored ?? requirement;
+  const jobsByKey = overrides.jobsByKey ?? new Map<string, { status: string }>();
   const recorded: Recorded = { priorityCalls: [], contextCalls: [], auditEvents: [], enqueued: [], searches: 0 };
   const repositories: ApiRepositories = {
     sources: { list: async () => [], get: async () => null, update: async () => null, create: async () => ({} as never) },
@@ -76,8 +77,9 @@ function makeDeps(overrides: { stored?: RequirementRecord; score?: typeof scoreV
     items: { upsert: async () => ({} as never), get: async () => null, listByBatch: async () => [] },
     audit: { append: async (event) => { recorded.auditEvents.push(event as unknown as Record<string, unknown>); }, search: async () => [] },
     jobs: {
-      enqueue: async (input) => { recorded.enqueued.push({ dedupeKey: input.dedupeKey, payload: input.payload }); return { ...input, id: "job-1", status: "queued", attemptCount: 0, maxAttempts: 3, lockedUntil: null, lastErrorCode: null, lastErrorSummary: null, createdAt: input.availableAt, updatedAt: input.availableAt }; },
-      claimNext: async () => null, reschedule: async () => null, complete: async () => null, findByDedupeKey: async () => null,
+      enqueue: async (input) => { recorded.enqueued.push({ dedupeKey: input.dedupeKey, payload: input.payload }); jobsByKey.set(input.dedupeKey, { status: "queued" }); return { ...input, id: "job-1", status: "queued", attemptCount: 0, maxAttempts: 3, lockedUntil: null, lastErrorCode: null, lastErrorSummary: null, createdAt: input.availableAt, updatedAt: input.availableAt }; },
+      claimNext: async () => null, reschedule: async () => null, complete: async () => null,
+      findByDedupeKey: async (key: string) => { const found = jobsByKey.get(key); return found ? ({ id: `job-${key}`, dedupeKey: key, status: found.status } as never) : null; },
     },
     analyses: { append: async () => ({} as never), complete: async () => ({} as never), latest: async () => null, listByRequirement: async () => [] },
     scoring: {
@@ -96,7 +98,7 @@ function makeDeps(overrides: { stored?: RequirementRecord; score?: typeof scoreV
       listDuplicates: async () => [], listTitleCandidates: async () => [], setDuplicateOf: async () => undefined,
       markLastPushedOwner: async () => undefined, assignManualOwner: async () => undefined, clearManualOwner: async () => undefined,
       markManualOwnerPushed: async () => undefined,
-      getPipelineCounts: async () => ({ total: 1, pullSynced: 1, analysisAnalyzed: 1, ownerResolved: 1, pushPushed: 0, failed: 0, pushFailed: 0, pushPending: 1, priority: { P0: 0, P1: 0, P2: 0, P3: 1, scored: 1, legacy: 0, unscored: 0 } }),
+      getPipelineCounts: async () => ({ total: 1, pullSynced: 1, analysisAnalyzed: 1, ownerResolved: 1, pushPushed: 0, failed: 0, pushFailed: 0, pushPending: 1, suppressed: 0, priority: { P0: 0, P1: 0, P2: 0, P3: 1, scored: 1, legacy: 0, unscored: 0 } }),
       setPriorityOverride: async (id: string, input: { priority: "P0" | "P1" | "P2" | "P3" | null; reason: string | null; actorId: string; at: string }) => { recorded.priorityCalls.push({ id, ...input }); return { outcome: "saved", override: input.priority === null ? null : { priority: input.priority, reason: input.reason!, actorId: input.actorId, at: input.at } }; },
       setAnalysisContext: async (id: string, input: { context: string | null; actorId: string; at: string }) => { recorded.contextCalls.push({ id, ...input }); return { outcome: "updated", context: input.context === null ? null : { note: input.context, updatedAt: input.at, updatedBy: input.actorId } }; },
     } as never,
@@ -190,13 +192,48 @@ test("detail and list DTOs expose priorityOverride, effectivePriority and analys
   assert.equal((await overriddenDetail.json() as Record<string, unknown>).effectivePriority, "P0");
 });
 
-test("force retry uses a unique dedupe key and passes force into the job payload", async () => {
+const forceRetry = () => new Request(`http://localhost/api/analysis/${requirement.id}/retry`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ force: true }) });
+
+test("force retry uses a deterministic dedupe key and passes force into the job payload", async () => {
   const { deps, recorded } = makeDeps();
-  const response = await handleApiRequest(new Request(`http://localhost/api/analysis/${requirement.id}/retry`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ force: true }) }), deps);
+  const response = await handleApiRequest(forceRetry(), deps);
   assert.equal(response.status, 202);
   assert.equal(recorded.enqueued.length, 1);
-  assert.match(recorded.enqueued[0]!.dedupeKey, new RegExp(`^analysis:${requirement.id}:sv1:after0:force:[0-9a-f-]{36}$`));
+  assert.equal(recorded.enqueued[0]!.dedupeKey, `analysis:${requirement.id}:sv1:after0:force`);
   assert.equal(recorded.enqueued[0]!.payload.force, true);
+});
+
+test("repeated force retries reuse the queued force job instead of enqueueing another AI call", async () => {
+  const { deps, recorded } = makeDeps();
+  assert.equal((await handleApiRequest(forceRetry(), deps)).status, 202);
+  assert.equal((await handleApiRequest(forceRetry(), deps)).status, 202);
+  assert.equal((await handleApiRequest(forceRetry(), deps)).status, 202);
+  assert.equal(recorded.enqueued.length, 1);
+  const reused = recorded.auditEvents.filter((event) => (event.safeDetails as Record<string, unknown>).analysisStatus === "reused_existing_job");
+  assert.equal(reused.length, 2);
+});
+
+test("force retry reuses any live analysis job (plain retry or first-pass) for the same version", async () => {
+  for (const key of [`analysis:${requirement.id}:sv1:after0`, `analysis:${requirement.id}:v1`]) {
+    const { deps, recorded } = makeDeps({ jobsByKey: new Map([[key, { status: "running" }]]) });
+    assert.equal((await handleApiRequest(forceRetry(), deps)).status, 202);
+    assert.equal(recorded.enqueued.length, 0, key);
+  }
+});
+
+test("force retry re-enqueues the same key after the previous force job failed", async () => {
+  const key = `analysis:${requirement.id}:sv1:after0:force`;
+  const { deps, recorded } = makeDeps({ jobsByKey: new Map([[key, { status: "failed" }]]) });
+  assert.equal((await handleApiRequest(forceRetry(), deps)).status, 202);
+  assert.deepEqual(recorded.enqueued.map((job) => job.dedupeKey), [key]);
+});
+
+test("a running requirement whose live job is a force job is not treated as a crash leftover", async () => {
+  const stored: RequirementRecord = { ...requirement, pipeline: { ...requirement.pipeline, analysis: "running" } };
+  const { deps, recorded } = makeDeps({ stored, jobsByKey: new Map([[`analysis:${requirement.id}:sv1:after0:force`, { status: "running" }]]) });
+  const response = await handleApiRequest(new Request(`http://localhost/api/analysis/${requirement.id}/retry`, { method: "POST" }), deps);
+  assert.equal(response.status, 409);
+  assert.equal(recorded.enqueued.length, 0);
 });
 
 test("retry without body keeps force=false and the legacy dedupe key", async () => {
@@ -212,4 +249,27 @@ test("retry rejects malformed bodies with 400", async () => {
   const { deps } = makeDeps();
   assert.equal((await handleApiRequest(new Request(`http://localhost/api/analysis/${requirement.id}/retry`, { method: "POST", headers: { "content-type": "application/json" }, body: "{not-json" }), deps)).status, 400);
   assert.equal((await handleApiRequest(new Request(`http://localhost/api/analysis/${requirement.id}/retry`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ force: "yes" }) }), deps)).status, 400);
+});
+
+test("detail exposes a Base record link only when a valid https template is configured", async () => {
+  const stored: RequirementRecord = { ...requirement, baseRecordId: "rec/1 a" };
+  const previous = process.env.RQSYS_BASE_RECORD_URL_TEMPLATE;
+  const detailUrl = async () => {
+    const { deps } = makeDeps({ stored });
+    const response = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`), deps);
+    return (await response.json() as Record<string, unknown>).baseRecordUrl;
+  };
+  try {
+    delete process.env.RQSYS_BASE_RECORD_URL_TEMPLATE;
+    assert.equal(await detailUrl(), null);
+    process.env.RQSYS_BASE_RECORD_URL_TEMPLATE = "http://tenant.feishu.cn/base/app?record={recordId}";
+    assert.equal(await detailUrl(), null);
+    process.env.RQSYS_BASE_RECORD_URL_TEMPLATE = "https://tenant.feishu.cn/base/app?table=t";
+    assert.equal(await detailUrl(), null);
+    process.env.RQSYS_BASE_RECORD_URL_TEMPLATE = "https://tenant.feishu.cn/base/app?table=t&record={recordId}";
+    assert.equal(await detailUrl(), "https://tenant.feishu.cn/base/app?table=t&record=rec%2F1%20a");
+  } finally {
+    if (previous === undefined) delete process.env.RQSYS_BASE_RECORD_URL_TEMPLATE;
+    else process.env.RQSYS_BASE_RECORD_URL_TEMPLATE = previous;
+  }
 });

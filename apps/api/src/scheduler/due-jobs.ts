@@ -13,6 +13,10 @@ export interface DueSyncJobOutcome {
   enabled: boolean;
   /** 该来源本轮处理失败的原因。其他来源仍会继续处理，不因单个来源失败而中断。 */
   error?: string;
+  /** 同窗口批次已是终态，本轮按设计不入队（避免失败批次每个 tick 无限重跑）。 */
+  skipped?: "already_terminal";
+  /** skipped 时批次的终态，便于日志/自动化判断。 */
+  batchStatus?: SyncBatchRecord["status"];
 }
 
 export async function createDueSyncJobs(params: {
@@ -67,6 +71,14 @@ export async function createDueSyncJobs(params: {
         sourceConfigId: source.id, triggerType: "scheduled", actorId: null,
         idempotencyKey, startedAt: params.now.toISOString(),
       });
+      // 同窗口批次已终态（failed/succeeded/partial_failure）：不再入队。
+      // 否则作业键 sync:<batchId> 每次 enqueue 都会把 failed 作业重置为 queued 并清零尝试次数，
+      // 失败的调度批次会在窗口内每个 tick 重跑一次，绕过 max_attempts。
+      // 需要立即重跑时走人工重试（新批次），或等下一个调度窗口。
+      if (batch.status !== "running") {
+        outcomes.push({ sourceConfigId: source.id, batchId: batch.id, window: window.start, enabled: true, skipped: "already_terminal", batchStatus: batch.status });
+        continue;
+      }
       // 任务幂等键按批次去重：同批次的重复入队复用同一任务
       await params.jobs.enqueue({
         jobType: "sync", dedupeKey: `sync:${batch.id}`,

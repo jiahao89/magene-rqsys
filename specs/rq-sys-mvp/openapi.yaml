@@ -813,6 +813,10 @@ paths:
         - name: entityId
           in: query
           schema: { type: string }
+        - name: eventType
+          in: query
+          description: Exact event type match, e.g. analysis.retry_requested (lowercase dotted identifier).
+          schema: { type: string, maxLength: 100, pattern: '^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$' }
         - name: since
           in: query
           schema: { type: string, format: date-time }
@@ -824,6 +828,16 @@ paths:
           schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
       responses:
         '200': { description: Audit event page }
+  /api/ops/jobs:
+    get:
+      summary: Read-only ops view of failed and exhausted running pipeline jobs
+      description: Returns job metadata and safe error summaries only; job payloads are never echoed.
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        '200': { description: Failed jobs plus running jobs whose attempts are exhausted and lease expired }
   /api/mappings:
     get:
       summary: List active person mappings for the single source
@@ -1413,6 +1427,9 @@ components:
               completedAt: { type: [string, 'null'], format: date-time }
               safeErrorSummary: { type: [string, 'null'] }
         baseRecordId: { type: [string, 'null'] }
+        baseRecordUrl:
+          type: [string, 'null']
+          description: Direct https link to the Base record, built from the deployment's RQSYS_BASE_RECORD_URL_TEMPLATE; null when not configured or not yet pushed.
       required: [id, sourceRequirementId, title, sourceVersion, pipeline, source, analysis, analyses, baseRecordId]
     ScoringInputs:
       type: object

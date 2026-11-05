@@ -74,18 +74,31 @@ export function analysisRetryDedupeKey(
 }
 
 /**
- * running 需求可能对应的作业键。正在运行的 handler 不会留下新键，只能在下面三种既有键里命中：
- *   - after<latest>     手动/自动重试按入队时的最新分析版本生成；
- *   - after<latest-1>   handler 已 append 新分析版本（latest 已 +1），但作业键仍是入队时的 prior；
- *   - v<sourceVersion>  同步链路首次入队用的历史键（首轮分析可能正在跑）。
+ * 人工「重跑分析」（force）作业的 dedupe key。必须是确定性的：同一 (sourceVersion, prior) 下
+ * 重复点击/并发请求命中同一键而复用活作业；作业 failed/cancelled 后同键入队会被重置。
+ */
+export function analysisForceDedupeKey(
+  requirement: Pick<RequirementRecord, "id" | "sourceVersion">,
+  priorAnalysisVersion: number,
+): string {
+  return `${analysisRetryDedupeKey(requirement, priorAnalysisVersion)}:force`;
+}
+
+/**
+ * running 需求可能对应的作业键。正在运行的 handler 不会留下新键，只能在下面几种既有键里命中：
+ *   - after<latest>[:force]     手动/自动重试（含 force 重跑）按入队时的最新分析版本生成；
+ *   - after<latest-1>[:force]   handler 已 append 新分析版本（latest 已 +1），但作业键仍是入队时的 prior；
+ *   - v<sourceVersion>          同步链路首次入队用的历史键（首轮分析可能正在跑）。
  * 只看其中一种会把活着的分析误判成崩溃残留。
  */
 export function analysisRunningJobKeys(
   requirement: Pick<RequirementRecord, "id" | "sourceVersion">,
   priorAnalysisVersion: number,
 ): string[] {
-  const keys = [analysisRetryDedupeKey(requirement, priorAnalysisVersion)];
-  if (priorAnalysisVersion > 0) keys.push(analysisRetryDedupeKey(requirement, priorAnalysisVersion - 1));
+  const keys = [analysisRetryDedupeKey(requirement, priorAnalysisVersion), analysisForceDedupeKey(requirement, priorAnalysisVersion)];
+  if (priorAnalysisVersion > 0) {
+    keys.push(analysisRetryDedupeKey(requirement, priorAnalysisVersion - 1), analysisForceDedupeKey(requirement, priorAnalysisVersion - 1));
+  }
   keys.push(`analysis:${requirement.id}:v${requirement.sourceVersion}`);
   return [...new Set(keys)];
 }
