@@ -18,6 +18,10 @@ export interface RequirementListFilters {
   push: string;
   /** 重复处理视图：all=全部，active=仅活跃（默认），suppressed=已压制（重复/忽略）。 */
   processingState: RequirementProcessingView;
+  /** 优先级分诊视图（2026-11-06）：P0–P3 生效优先级筛选。 */
+  priority: string;
+  /** 排序：空=默认（仅活跃的注意力排序由前端完成），priority_asc=按生效优先级 P0→P3 分诊。 */
+  sort: string;
   batchId: string;
   from: string;
   to: string;
@@ -37,6 +41,13 @@ export function parseRequirementProcessingView(value: string | null | undefined)
   return value === "all" || value === "suppressed" || value === "active" ? value : DEFAULT_PROCESSING_VIEW;
 }
 
+const REQUIREMENT_PRIORITIES = ["P0", "P1", "P2", "P3"] as const;
+
+/** 非法/未知优先级回落到空（不过滤），避免深链把任意文本发给服务端。 */
+export function parseRequirementPriority(value: string | null | undefined): string {
+  return value && (REQUIREMENT_PRIORITIES as readonly string[]).includes(value) ? value : "";
+}
+
 export const emptyRequirementListFilters: RequirementListFilters = {
   title: "",
   owner: "",
@@ -45,6 +56,8 @@ export const emptyRequirementListFilters: RequirementListFilters = {
   ownerState: "",
   push: "",
   processingState: DEFAULT_PROCESSING_VIEW,
+  priority: "",
+  sort: "",
   batchId: "",
   from: "",
   to: "",
@@ -58,6 +71,8 @@ export const requirementFilterParams = [
   "ownerState",
   "push",
   "processingState",
+  "priority",
+  "sort",
   "batchId",
   "from",
   "to",
@@ -73,6 +88,8 @@ export function readRequirementListFilters(search: string): RequirementListFilte
     ownerState: params.get("ownerState")?.trim() ?? "",
     push: params.get("push")?.trim() ?? "",
     processingState: parseRequirementProcessingView(params.get("processingState")),
+    priority: parseRequirementPriority(params.get("priority")),
+    sort: params.get("sort") === "priority_asc" ? "priority_asc" : "",
     batchId: params.get("batchId")?.trim() ?? "",
     from: params.get("from")?.trim() ?? "",
     to: params.get("to")?.trim() ?? "",

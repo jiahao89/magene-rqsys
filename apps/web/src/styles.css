@@ -1534,3 +1534,10 @@ html[data-theme="dark"] input[type="datetime-local"] { color-scheme: dark; }
 @media (max-width: 860px) {
   .arco-btn.mobile-menu-button { display: inline-grid !important; }
 }
+
+/* 优先级分诊视图（2026-11-06）：P0–P3 生效优先级徽标。 */
+.priority-chip { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; padding: 2px 8px; border: 1px solid var(--rq-card-border); border-radius: var(--rq-radius-sm); font-size: var(--rq-font-caption); font-weight: 600; white-space: nowrap; }
+.priority-chip.priority-p0 { color: #b42318; background: #fef3f2; border-color: #fecdca; }
+.priority-chip.priority-p1 { color: #b54708; background: #fffaeb; border-color: #fedf89; }
+.priority-chip.priority-p2 { color: #175cd3; background: #eff8ff; border-color: #b2ddff; }
+.priority-chip.priority-p3 { color: var(--rq-text-muted); background: var(--rq-surface-muted); border-color: var(--rq-card-border); }

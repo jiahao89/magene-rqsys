@@ -10,6 +10,7 @@
 
 - Work tickets are local Markdown drafts under `.scratch/rq-sys-mvp/issues/`; there is no configured GitHub issue tracker for this project. Treat statuses and dependency labels there as binding; before editing a shared ticket, reread its README and synchronize the ticket/README status with evidence.
 - For approved V0.2 work, use `.scratch/rq-sys-v0.2/issues/README.md` and its individual tickets. The user approved this breakdown on 2026-10-23. Preserve MVP ticket statuses; check each V0.2 ticket's blockers and execution gates before claiming it.
+- 2026-11-06 新增「生产就绪」批次：`.scratch/rq-sys-production/issues/README.md`（PR-01 ~ PR-15）。本批票源自 PRD 增补 `docs/2026-11-06-rq-sys-production-readiness-prd.md` 与产品/运维差距评估；执行前同样核对每票 status/blocked_by。
 - GitHub is used as the source repository, not as the issue tracker. `gh` is not installed; ordinary Git remote operations use the configured macOS credential helper.
 
 ## Domain documentation

@@ -336,7 +336,20 @@ test("requirement search filters by latest batch and last-seen time on the serve
   const {pool,calls}=recordingPool();const store=new PostgresRepositories(pool);
   await store.requirements.search({batchId:"33333333-3333-4333-8333-333333333333",since:"2026-01-01T00:00:00Z",until:"2026-01-02T00:00:00Z",limit:25});
   assert.match(calls[0]!.sql,/latest_batch_id=\$7/);assert.match(calls[0]!.sql,/last_seen_at >= \$8/);assert.match(calls[0]!.sql,/last_seen_at <= \$9/);
-  assert.deepEqual(calls[0]!.values,[null,null,null,null,null,null,"33333333-3333-4333-8333-333333333333","2026-01-01T00:00:00Z","2026-01-02T00:00:00Z",null,null,26,null]);
+  assert.deepEqual(calls[0]!.values,[null,null,null,null,null,null,"33333333-3333-4333-8333-333333333333","2026-01-01T00:00:00Z","2026-01-02T00:00:00Z",null,null,26,null,null,null]);
+});
+
+test("priority triage search filters effective priority and disables cursor pagination", async()=>{
+  const {pool,calls}=recordingPool();const store=new PostgresRepositories(pool);
+  const page=await store.requirements.search({priority:"P2",sort:"priority_asc",limit:25,cursor:{createdAt:"2026-01-01T00:00:00.000Z",id:"55555555-5555-4555-8555-555555555555"}});
+  assert.match(calls[0]!.sql,/COALESCE\(r\.priority_override, sv\.priority\)=\$14/);
+  assert.match(calls[0]!.sql,/CASE WHEN \$15::text='priority_asc'/);
+  // priority_asc 忽略游标：$10/$11 为 null，单页最多 100 条，nextCursor 必须为 null。
+  assert.equal(calls[0]!.values![9],null);
+  assert.equal(calls[0]!.values![10],null);
+  assert.equal(calls[0]!.values![13],"P2");
+  assert.equal(calls[0]!.values![14],"priority_asc");
+  assert.equal(page.nextCursor,null);
 });
 
 test("requirement search escapes LIKE wildcards and uses the indexed UTC keyset expression", async()=>{

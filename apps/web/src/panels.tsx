@@ -603,6 +603,9 @@ function stateChip(status: string) {
 // ---------- 工单 17 / design.md 第 8–10 章：需求池列表 + 独立详情页 ----------
 
 const ownerStateOptions = [["", "全部负责人状态"], ["pending_mapping", "待匹配"], ["auto_mapped", "已匹配"], ["manually_mapped", "手动匹配"], ["not_required", "无需匹配"]] as const;
+// 优先级分诊（2026-11-06）：默认不筛选；sort=priority_asc 由服务端按生效优先级排序（P0→P3，单页最多 100 条）。
+const priorityFilterOptions = [["", "全部优先级"], ["P0", "P0"], ["P1", "P1"], ["P2", "P2"], ["P3", "P3"]] as const;
+const prioritySortOptions = [["", "默认排序"], ["priority_asc", "按优先级（P0 → P3）"]] as const;
 const analysisStateOptions = [["", "全部分析状态"], ["analyzed", "已分析"], ["failed_retryable", "待重试"], ["pending", "等待中"], ["running", "进行中"]] as const;
 const pullStateOptions = [["", "全部同步状态"], ["pending", "等待同步"], ["running", "同步中"], ["synced", "已同步"], ["failed", "同步失败"], ["collected", "已收录"]] as const;
 const pushStateOptions = [["", "全部推送状态"], ["pending", "等待推送"], ["running", "推送中"], ["pushed", "已推送"], ["failed", "推送失败"]] as const;
@@ -744,6 +747,8 @@ function requirementListQuery(filter: RequirementListFilters) {
     ownerState: filter.ownerState || undefined,
     pushState: filter.push || undefined,
     processingState: filter.processingState === "all" ? undefined : filter.processingState,
+    priority: (filter.priority || undefined) as "P0" | "P1" | "P2" | "P3" | undefined,
+    sort: filter.sort === "priority_asc" ? ("priority_asc" as const) : undefined,
     batchId: filter.batchId || undefined,
     since: toIso(filter.from),
     until: toIso(filter.to),
@@ -765,6 +770,8 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
   const [pushState, setPushState] = useState(initialFilters.push);
   // 重复处理视图：all=全部 / active=仅活跃（默认）/ suppressed=已压制（重复或忽略）。
   const [processingState, setProcessingState] = useState(initialFilters.processingState);
+  const [priorityFilter, setPriorityFilter] = useState(initialFilters.priority);
+  const [prioritySort, setPrioritySort] = useState(initialFilters.sort);
   const [batchId, setBatchId] = useState(initialFilters.batchId);
   const [since, setSince] = useState(initialFilters.from);
   const [until, setUntil] = useState(initialFilters.to);
@@ -806,7 +813,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, [moreFiltersOpen]);
-  const filters: RequirementListFilters = { title: query.trim(), owner: executorName, pull: pullState, analysis: analysisState, ownerState, push: pushState, processingState, batchId: batchId.trim(), from: since, to: until };
+  const filters: RequirementListFilters = { title: query.trim(), owner: executorName, pull: pullState, analysis: analysisState, ownerState, push: pushState, processingState, priority: priorityFilter, sort: prioritySort, batchId: batchId.trim(), from: since, to: until };
   // 已生效筛选：列表行/详情 URL 与刷新必须以「点过筛选」的条件为准，
   // 不能把用户尚未应用的草稿输入写进 URL。
   const appliedFiltersRef = useRef(initialFilters);
@@ -820,7 +827,9 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
     const version = ++listRequestVersion.current;
     setLoadState("loading"); setLoadError(null);
     try {
-      const page = await listRequirements({ ...requirementListQuery(filter), limit: 25, ...(nextCursor ? { cursor: nextCursor } : {}) });
+      // 分诊视图（priority_asc）按优先级排序且不分页：单页最多 100 条，避免游标与排序不一致。
+      const priorityMode = filter.sort === "priority_asc";
+      const page = await listRequirements({ ...requirementListQuery(filter), limit: priorityMode ? 100 : 25, ...(!priorityMode && nextCursor ? { cursor: nextCursor } : {}) });
       if (version !== listRequestVersion.current) return;
       setRows((prev) => nextCursor ? [...prev, ...page.items] : page.items);
       setCursor(page.nextCursor);
@@ -939,7 +948,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
   const clearFilters = () => {
     setAppliedFilterCount(0);
     const cleared = { ...emptyRequirementListFilters };
-    setQuery(""); setExecutorName(""); setPullState(""); setOwnerState(""); setAnalysisState(""); setPushState(""); setProcessingState(cleared.processingState); setBatchId(""); setSince(""); setUntil("");
+    setQuery(""); setExecutorName(""); setPullState(""); setOwnerState(""); setAnalysisState(""); setPushState(""); setProcessingState(cleared.processingState); setPriorityFilter(""); setPrioritySort(""); setBatchId(""); setSince(""); setUntil("");
     window.history.replaceState(null, "", requirementPoolUrl(window.location.pathname || "/", cleared, null, window.location.hash));
     void load(cleared, null);
   };
@@ -951,7 +960,8 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
     onRefresh();
   };
 
-  const sortedRows = sortRequirementsForAttention(rows);
+  // 服务端已按优先级排序时不重排；默认视图保持“注意力排序”（仅作用于已加载记录）。
+  const sortedRows = prioritySort === "priority_asc" ? rows : sortRequirementsForAttention(rows);
 
   if (detailId) {
     return <section className="panel requirements-panel">
@@ -1001,6 +1011,14 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
           <ArcoButton ref={moreFiltersButtonRef} htmlType="button" size="small" aria-expanded={moreFiltersOpen} aria-controls="requirement-more-filters" onClick={() => setMoreFiltersOpen((open) => !open)}>更多筛选{activeFilterCount - (query.trim() ? 1 : 0) - (executorName ? 1 : 0) - (pullState ? 1 : 0) > 0 ? `（${activeFilterCount - (query.trim() ? 1 : 0) - (executorName ? 1 : 0) - (pullState ? 1 : 0)}）` : ""}</ArcoButton>
           {moreFiltersOpen && <div className="qmore-body" id="requirement-more-filters">
             <label className="qfield">
+              <span className="sr-only">优先级</span>
+              <ArcoSelect aria-label="优先级筛选" value={priorityFilter} onChange={(value: string) => setPriorityFilter(value)} style={{ minWidth: 130 }} options={priorityFilterOptions.map(([value, label]) => ({ label, value }))} />
+            </label>
+            <label className="qfield">
+              <span className="sr-only">排序方式</span>
+              <ArcoSelect aria-label="排序方式" value={prioritySort} onChange={(value: string) => setPrioritySort(value)} style={{ minWidth: 170 }} options={prioritySortOptions.map(([value, label]) => ({ label, value }))} />
+            </label>
+            <label className="qfield">
               <span className="sr-only">负责人状态</span>
               <ArcoSelect aria-label="负责人筛选" value={ownerState} onChange={(value: string) => setOwnerState(value)} style={{ minWidth: 150 }} options={ownerStateOptions.map(([value, label]) => ({ label, value }))} />
             </label>
@@ -1045,10 +1063,10 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
     <StateBanner loadError={loadError ?? peopleError} notice={notice} onCloseNotice={() => setNotice(null)} />
     <div className="list-summary" role="status">
       <span className="list-summary-count">已加载 {sortedRows.length} 条{cursor ? "，还有更多" : ""}{activeFilterCount > 0 ? `（已应用 ${activeFilterCount} 个筛选）` : ""}</span>
-      <span className="list-summary-sort">排序仅作用于已加载的记录：待分配 → 推送失败 → 待推送 → 已推送</span>
+      <span className="list-summary-sort">{prioritySort === "priority_asc" ? "分诊视图：按生效优先级 P0 → P3 排序，单页最多 100 条（不分页）" : "排序仅作用于已加载的记录：待分配 → 推送失败 → 待推送 → 已推送"}</span>
     </div>
     <RequirementsTable rows={sortedRows} loading={loadState === "loading"} onOpen={(row) => void open(row.id, { push: true })} onAssign={(row) => void open(row.id, { push: true, openOwnerPicker: true })} />
-    {cursor && <div className="rules-form"><Button onPress={() => void load(appliedFiltersRef.current, cursor)} isDisabled={loadState === "loading"} variant="secondary" size="small">加载更多</Button></div>}
+    {cursor && prioritySort !== "priority_asc" && <div className="rules-form"><Button onPress={() => void load(appliedFiltersRef.current, cursor)} isDisabled={loadState === "loading"} variant="secondary" size="small">加载更多</Button></div>}
   </section>;
 }
 
@@ -1800,6 +1818,14 @@ function RequirementsTable({ rows, loading, onOpen, onAssign }: { rows: Requirem
       },
     },
     {
+      title: "优先级",
+      dataIndex: "effectivePriority",
+      width: 96,
+      render: (_value: unknown, row: RequirementSummary) => row.effectivePriority
+        ? <span className={`priority-chip priority-${row.effectivePriority.toLowerCase()}`} title={row.priorityOverride ? `人工覆盖：${row.priorityOverride.priority}（${row.priorityOverride.reason}）` : "当前评分建议"}>{row.effectivePriority}{row.priorityOverride ? " *" : ""}</span>
+        : <span className="req-empty-value">—</span>,
+    },
+    {
       title: "负责人",
       dataIndex: "executorName",
       width: 170,
@@ -1874,6 +1900,17 @@ function auditResultLabel(result: AuditEvent["result"]) {
 
 // ---------- 工单 17：负责人映射（pending 服务端筛选 + 现有映射列表） ----------
 
+/** PR-05：待匹配负责人按 TB 执行人聚合，先让 PM 看到“缺谁”，再逐条指定。 */
+function pendingExecutorSummary(rows: RequirementSummary[]): string {
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    const name = row.executorName?.trim();
+    if (name) counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  if (!counts.size) return "未返回 TB 负责人姓名（可能已离职或未同步）";
+  return [...counts.entries()].sort((left, right) => right[1] - left[1]).map(([name, count]) => `${name}×${count}`).join("、");
+}
+
 export function MappingsPanel({ onRefresh }: { onRefresh: () => void }) {
   const [pending, setPending] = useState<RequirementSummary[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
@@ -1923,6 +1960,7 @@ export function MappingsPanel({ onRefresh }: { onRefresh: () => void }) {
   return <section className="panel requirements-panel">
     <div className="panel-heading"><div><h2>负责人映射</h2><p>为待匹配负责人逐条选择飞书用户；只影响选中的这一条需求，不会改写同 TB 执行人的其他需求。</p></div><Button onPress={() => { onRefresh(); void load(null); }} variant="secondary" size="small"><RefreshCw size={14} />刷新</Button></div>
     <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
+    {pending.length ? <p className="status-hint"><strong>待匹配 {pending.length}{cursor ? "+" : ""} 条</strong>，按 TB 负责人聚合：{pendingExecutorSummary(pending)}</p> : null}
     {pending.length ? <ArcoTable<RequirementSummary>
       rowKey="id"
       data={pending}
@@ -1930,7 +1968,7 @@ export function MappingsPanel({ onRefresh }: { onRefresh: () => void }) {
       border={false}
       columns={[
         { title: "需求", dataIndex: "title", render: (_value, row) => <div className="requirement-title"><span className="req-id">{requirementDisplayId(row)}</span><strong>{row.title}</strong></div> },
-        { title: "TB 负责人", dataIndex: "executorName", width: 140, render: () => "待匹配" },
+        { title: "TB 负责人", dataIndex: "executorName", width: 140, render: (_value, row) => row.executorName ?? "待匹配" },
         { title: "操作", dataIndex: "id", width: 320, render: (_value, row) => targetId === row.id
             ? <div className="mapping-editor"><FeishuUserPicker disabled={busy} onMap={submit} saveLabel="保存" /><Button onPress={() => setTargetId(null)} isDisabled={busy} variant="secondary" size="small">取消</Button></div>
             : <Button onPress={() => setTargetId(row.id)} variant="secondary" size="small">选择飞书用户</Button> },

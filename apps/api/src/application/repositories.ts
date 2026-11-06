@@ -482,6 +482,10 @@ export interface RequirementQueryRepository {
     analysisState?: AnalysisState;
     ownerState?: OwnerState;
     pushState?: PushState;
+    /** 生效优先级筛选：人工覆盖优先于当前评分版本。 */
+    priority?: PriorityLevel;
+    /** created_desc（默认，游标分页）/ priority_asc（分诊视图，单页最多 100 条，不分页）。 */
+    sort?: "created_desc" | "priority_asc";
     batchId?: string;
     since?: string;
     until?: string;

@@ -83,6 +83,13 @@ describe("workbench API client", () => {
     expect(Object.fromEntries(url.searchParams)).toEqual({ q: "付款", pullState: "synced", pushState: "failed", batchId: "batch-1", since: "2026-01-01T00:00:00Z", until: "2026-01-02T00:00:00Z" });
   });
 
+  it("sends priority triage filters to the server", async () => {
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ items: [], nextCursor: null }));
+    await listRequirements({ priority: "P2", sort: "priority_asc", processingState: "active", fetcher });
+    const url = new URL(fetcher.mock.calls[0]![0] as string, "http://localhost");
+    expect(Object.fromEntries(url.searchParams)).toEqual({ priority: "P2", sort: "priority_asc", processingState: "active" });
+  });
+
   it("sends batch time filters to the server", async () => {
     const fetcher = vi.fn().mockResolvedValue(Response.json({ items: [], nextCursor: null }));
     await listBatches({ status: "failed", since: "2026-01-01T00:00:00Z", until: "2026-01-02T00:00:00Z", fetcher });

@@ -35,6 +35,14 @@ test("OwnerMappingUpdate 与 openapi 对齐：tbUserId/tbDisplayName 可空可�
   );
 });
 
+test("需求池优先级分诊参数：priority 枚举与 sort 分诊模式", () => {
+  assert.ok(RequirementListQuerySchema.safeParse({ priority: "P0" }).success);
+  assert.ok(RequirementListQuerySchema.safeParse({ priority: "P3", sort: "priority_asc" }).success);
+  assert.ok(RequirementListQuerySchema.safeParse({ sort: "created_desc" }).success);
+  assert.ok(!RequirementListQuerySchema.safeParse({ priority: "P4" }).success);
+  assert.ok(!RequirementListQuerySchema.safeParse({ sort: "priority_desc" }).success);
+});
+
 test("分页查询默认 limit 与契约一致（batches 25 / audit 50）", () => {
   assert.equal(BatchListQuerySchema.parse({}).limit, 25);
   assert.equal(AuditListQuerySchema.parse({}).limit, 50);

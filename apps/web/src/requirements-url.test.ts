@@ -37,3 +37,22 @@ describe("requirement processing-state URL contract", () => {
     expect(buildRequirementPoolSearch({ ...emptyRequirementListFilters, processingState: "active" })).toBe("");
   });
 });
+
+describe("requirement priority triage URL contract", () => {
+  it("parses priority/sort and rejects unknown values", () => {
+    const parsed = readRequirementListFilters("?priority=P1&sort=priority_asc");
+    expect(parsed.priority).toBe("P1");
+    expect(parsed.sort).toBe("priority_asc");
+    expect(readRequirementListFilters("?priority=P9&sort=bogus").priority).toBe("");
+    expect(readRequirementListFilters("?priority=P9&sort=bogus").sort).toBe("");
+  });
+
+  it("round-trips the triage view without emitting defaults", () => {
+    const search = buildRequirementPoolSearch({ ...emptyRequirementListFilters, priority: "P0", sort: "priority_asc" });
+    expect(search).toContain("priority=P0");
+    expect(search).toContain("sort=priority_asc");
+    expect(buildRequirementPoolSearch(emptyRequirementListFilters)).toBe("");
+    expect(requirementFilterCount({ ...emptyRequirementListFilters, priority: "P2" })).toBe(1);
+    expect(requirementFilterCount({ ...emptyRequirementListFilters, sort: "priority_asc" })).toBe(1);
+  });
+});

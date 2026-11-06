@@ -291,6 +291,16 @@ paths:
           in: query
           description: Derived duplicate/ignored processing state; omit to include every requirement.
           schema: { type: string, enum: [active, suppressed] }
+        - name: priority
+          in: query
+          description: Effective priority (manual override wins over the current score version). Combine with sort=priority_asc for the triage view.
+          schema: { type: string, enum: [P0, P1, P2, P3] }
+        - name: sort
+          in: query
+          description: >-
+            created_desc (default) keeps created_at keyset pagination. priority_asc sorts by
+            effective priority P0→P3 and returns a single page of up to 100 rows (no cursor).
+          schema: { type: string, enum: [created_desc, priority_asc] }
         - name: batchId
           in: query
           schema: { type: string, format: uuid }
@@ -1422,6 +1432,8 @@ components:
         platformRequirementId: { type: string, nullable: true }
         title: { type: string }
         description: { type: string, nullable: true }
+        # PR-05：TB 执行人原始姓名（未映射时用于待匹配负责人分组；映射后展示仍用 ownerName）。
+        executorName: { type: string, nullable: true }
         sourceVersion: { type: integer }
         updatedAt: { type: string, format: date-time }
         sourceUrl: { type: string, nullable: true }

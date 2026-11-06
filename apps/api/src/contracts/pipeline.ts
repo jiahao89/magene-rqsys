@@ -42,6 +42,9 @@ export const RequirementListQuerySchema = z.object({
   pushState: z.enum(["pending", "running", "pushed", "failed"]).optional(),
   // 重复决策派生的处理状态筛选：active / suppressed（含 duplicate 与 ignored）。
   processingState: z.enum(["active", "suppressed"]).optional(),
+  // 优先级分诊视图（2026-11-06）：按生效优先级筛选；sort=priority_asc 时按 P0→P3 排序且不分页。
+  priority: z.enum(["P0", "P1", "P2", "P3"]).optional(),
+  sort: z.enum(["created_desc", "priority_asc"]).optional(),
   batchId: z.uuid().optional(),
   since: z.iso.datetime({ offset: true }).optional(),
   until: z.iso.datetime({ offset: true }).optional(),

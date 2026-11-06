@@ -373,6 +373,8 @@ export interface RequirementSummary {
   intakeModule: string | null;
   audience: { tags: string[]; confirmed: boolean; version: number };
   title: string;
+  /** PR-05：TB 执行人原始姓名；未映射时用于待匹配分组。 */
+  executorName?: string | null;
   sourceVersion: number;
   pipeline: { pull: string; analysis: string; owner: RequirementOwnerState; push: string };
   /** 处理闸口状态；缺省视为 active（兼容后端未上线时的旧响应）。 */
@@ -502,9 +504,9 @@ function buildSearch(query: Record<string, string | number | undefined>): string
   return suffix ? `?${suffix}` : "";
 }
 
-export async function listRequirements(params: { q?: string; executorName?: string; pullState?: string; ownerState?: string; analysisState?: string; pushState?: string; processingState?: "active" | "suppressed"; batchId?: string; since?: string; until?: string; limit?: number; cursor?: string; fetcher?: typeof fetch } = {}): Promise<{ items: RequirementSummary[]; nextCursor: string | null }> {
-  const { fetcher = fetch, q, executorName, pullState, ownerState, analysisState, pushState, processingState, batchId, since, until, limit, cursor } = params;
-  return requestJson<{ items: RequirementSummary[]; nextCursor: string | null }>(`/api/requirements${buildSearch({ q, executorName, pullState, ownerState, analysisState, pushState, processingState, batchId, since, until, limit, cursor })}`, fetcher);
+export async function listRequirements(params: { q?: string; executorName?: string; pullState?: string; ownerState?: string; analysisState?: string; pushState?: string; processingState?: "active" | "suppressed"; priority?: "P0" | "P1" | "P2" | "P3"; sort?: "created_desc" | "priority_asc"; batchId?: string; since?: string; until?: string; limit?: number; cursor?: string; fetcher?: typeof fetch } = {}): Promise<{ items: RequirementSummary[]; nextCursor: string | null }> {
+  const { fetcher = fetch, q, executorName, pullState, ownerState, analysisState, pushState, processingState, priority, sort, batchId, since, until, limit, cursor } = params;
+  return requestJson<{ items: RequirementSummary[]; nextCursor: string | null }>(`/api/requirements${buildSearch({ q, executorName, pullState, ownerState, analysisState, pushState, processingState, priority, sort, batchId, since, until, limit, cursor })}`, fetcher);
 }
 
 export async function listBatches(params: { status?: string; since?: string; until?: string; limit?: number; cursor?: string; fetcher?: typeof fetch } = {}): Promise<{ items: BatchSummary[]; nextCursor: string | null }> {
