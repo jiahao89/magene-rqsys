@@ -999,7 +999,6 @@ html[data-theme="dark"] .nav-item.is-active::before { background: var(--rq-accen
   .main-area { margin-left: 0; }
   .topbar { padding: 0 20px; }
   .mobile-menu-button { display: inline-grid; }
-  .arco-btn.mobile-menu-button { display: inline-grid !important; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1528,4 +1527,10 @@ html[data-theme="dark"] input[type="datetime-local"] { color-scheme: dark; }
   .req-list-scroll .arco-table-cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .panel .arco-table-td,
   .req-list-scroll .arco-table-td { overflow: hidden; }
+}
+
+/* 移动菜单按钮：桌面隐藏规则在文件末尾（特异性高于旧断点规则），
+ * 因此移动端显示覆盖也必须放在其后，保证同特异性下后者生效（2026-11-06）。 */
+@media (max-width: 860px) {
+  .arco-btn.mobile-menu-button { display: inline-grid !important; }
 }
