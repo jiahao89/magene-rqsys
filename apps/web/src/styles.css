@@ -999,6 +999,7 @@ html[data-theme="dark"] .nav-item.is-active::before { background: var(--rq-accen
   .main-area { margin-left: 0; }
   .topbar { padding: 0 20px; }
   .mobile-menu-button { display: inline-grid; }
+  .arco-btn.mobile-menu-button { display: inline-grid !important; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1442,8 +1443,8 @@ body[arco-theme] h4 { color: var(--color-text-1); font-weight: 500; }
  * background/color/padding 及其 :not() 选择器）优先级高于自定义类。这里用带
  * !important 的受限桥接逐类还原改造前的视觉与盒模型；只作用于这些 legacy 自定义类。
  */
-.arco-btn.icon-button,
-.arco-btn.mobile-menu-button { display: inline-grid !important; width: 30px !important; height: 30px !important; min-width: 0 !important; padding: 0 !important; place-items: center !important; border: 0 !important; border-radius: var(--rq-radius-sm) !important; color: var(--rq-icon-color) !important; background: transparent !important; line-height: 1 !important; }
+.arco-btn.icon-button { display: inline-grid !important; width: 30px !important; height: 30px !important; min-width: 0 !important; padding: 0 !important; place-items: center !important; border: 0 !important; border-radius: var(--rq-radius-sm) !important; color: var(--rq-icon-color) !important; background: transparent !important; line-height: 1 !important; }
+.arco-btn.mobile-menu-button { display: none !important; }
 .arco-btn.icon-button > span { display: inline-flex !important; align-items: center; justify-content: center; }
 .arco-btn.icon-button:hover { color: var(--rq-icon-hover-color) !important; background: var(--rq-surface-muted-hover) !important; }
 .arco-btn.text-link,

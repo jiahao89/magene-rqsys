@@ -2006,7 +2006,7 @@ function opsJobColumns() {
     { title: "作业类型", dataIndex: "jobType", width: 130, render: (_value: unknown, job: OpsJob) => <span className="mono-cell">{job.jobType}</span> },
     { title: "尝试", dataIndex: "attemptCount", width: 90, render: (_value: unknown, job: OpsJob) => `${job.attemptCount} / ${job.maxAttempts}` },
     { title: "需求", dataIndex: "requirementId", width: 140, render: (_value: unknown, job: OpsJob) => job.requirementId ? <span className="mono-cell" title={job.requirementId}>{job.requirementId.slice(0, 8)}</span> : "—" },
-    { title: "错误码", dataIndex: "lastErrorCode", width: 170, render: (_value: unknown, job: OpsJob) => job.lastErrorCode ? <span className="mono-cell">{job.lastErrorCode}</span> : "—" },
+    { title: "错误码", dataIndex: "lastErrorCode", width: 200, render: (_value: unknown, job: OpsJob) => job.lastErrorCode ? <span className="mono-cell" style={{ whiteSpace: "nowrap", wordBreak: "normal" }} title={job.lastErrorCode}>{job.lastErrorCode}</span> : "—" },
     { title: "安全摘要", dataIndex: "lastErrorSummary", render: (_value: unknown, job: OpsJob) => job.lastErrorSummary ?? "—" },
     { title: "更新时间", dataIndex: "updatedAt", width: 180, render: (_value: unknown, job: OpsJob) => timeLabel(job.updatedAt) },
   ];
