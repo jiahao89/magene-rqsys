@@ -90,8 +90,9 @@ test("pool search treats % and _ literally and ships the search indexes", async 
     assert.deepEqual(underscore.items.map((item) => item.title), ["下划线 _ 需求"]);
 
     // 迁移 0024：搜索/分页索引必须随迁移建立（trgm 扩展 + 毫秒截断表达式索引）。
-    const indexes = await ctx.pool.query("SELECT indexname FROM pg_indexes WHERE schemaname = current_schema() AND indexname IN ('requirements_title_trgm_idx','requirements_created_at_ms_id_idx') ORDER BY indexname");
-    assert.deepEqual(indexes.rows.map((row) => row.indexname), ["requirements_created_at_ms_id_idx", "requirements_title_trgm_idx"]);
+    // 0026 把 trgm 索引重建为 v2（线上发布链路需要静态可捕获的 DDL + 全限定 opclass）。
+    const indexes = await ctx.pool.query("SELECT indexname FROM pg_indexes WHERE schemaname = current_schema() AND indexname IN ('requirements_title_trgm_idx_v2','requirements_created_at_ms_id_idx') ORDER BY indexname");
+    assert.deepEqual(indexes.rows.map((row) => row.indexname), ["requirements_created_at_ms_id_idx", "requirements_title_trgm_idx_v2"]);
   } finally { await cleanup(ctx); }
 });
 
