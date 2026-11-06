@@ -545,7 +545,6 @@ export interface OpsJob {
   id: string;
   jobType: string;
   status: string;
-  dedupeKey: string;
   attemptCount: number;
   maxAttempts: number;
   availableAt: string;

@@ -287,6 +287,10 @@ paths:
         - name: pushState
           in: query
           schema: { $ref: '#/components/schemas/PushState' }
+        - name: processingState
+          in: query
+          description: Derived duplicate/ignored processing state; omit to include every requirement.
+          schema: { type: string, enum: [active, suppressed] }
         - name: batchId
           in: query
           schema: { type: string, format: uuid }
@@ -837,7 +841,21 @@ paths:
           in: query
           schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
       responses:
-        '200': { description: Failed jobs plus running jobs whose attempts are exhausted and lease expired }
+        '200':
+          description: Failed jobs plus running jobs whose attempts are exhausted and lease expired
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [now, items]
+                properties:
+                  now: { type: string, format: date-time }
+                  items:
+                    type: object
+                    required: [failed, stuck]
+                    properties:
+                      failed: { type: array, items: { $ref: '#/components/schemas/OpsJob' } }
+                      stuck: { type: array, items: { $ref: '#/components/schemas/OpsJob' } }
   /api/mappings:
     get:
       summary: List active person mappings for the single source
@@ -1238,6 +1256,8 @@ components:
         pushFailed: { type: integer, minimum: 0 }
         pushPending: { type: integer, minimum: 0 }
         failed: { type: integer, minimum: 0 }
+        # 已压制（重复/忽略）需求数；不进入上面的阶段与优先级统计（验收 #27）。
+        suppressed: { type: integer, minimum: 0 }
         priority:
           type: object
           description: 总览优先级分级；人工优先级覆盖优先，其次当前评分版本，无评分时使用最近分析优先级（legacy）。
@@ -1259,7 +1279,24 @@ components:
               type: object
               properties: { p0: { type: number }, p1: { type: number }, p2: { type: number } }
             formulaText: { type: string }
-      required: [total, pullSynced, analysisAnalyzed, ownerResolved, pushPushed, failed, priority, priorityRule]
+      required: [total, pullSynced, analysisAnalyzed, ownerResolved, pushPushed, failed, suppressed, priority, priorityRule]
+    OpsJob:
+      type: object
+      description: Read-only pipeline job metadata; payload and dedupeKey are never returned.
+      properties:
+        id: { type: string, format: uuid }
+        jobType: { type: string }
+        status: { type: string }
+        attemptCount: { type: integer, minimum: 0 }
+        maxAttempts: { type: integer, minimum: 1 }
+        availableAt: { type: string, format: date-time }
+        lockedUntil: { type: [string, 'null'], format: date-time }
+        lastErrorCode: { type: [string, 'null'] }
+        lastErrorSummary: { type: [string, 'null'] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        requirementId: { type: [string, 'null'], format: uuid }
+      required: [id, jobType, status, attemptCount, maxAttempts, availableAt, createdAt, updatedAt]
     BatchStatus:
       type: string
       enum: [running, succeeded, partial_failure, failed]
@@ -1321,6 +1358,16 @@ components:
       properties:
         id: { type: string, format: uuid }
         sourceRequirementId: { type: string, nullable: true }
+        # 重复决策派生的处理状态；active 时 resolution 为 null。
+        processingState: { type: string, enum: [active, suppressed] }
+        resolution:
+          type: [object, 'null']
+          properties:
+            decision: { type: string, enum: [duplicate, ignored] }
+            reviewState: { type: string, enum: [confirmed] }
+            canonicalRequirementId: { type: [string, 'null'], format: uuid }
+            canonicalPlatformRequirementId: { type: [string, 'null'] }
+            reason: { type: [string, 'null'] }
         # V02-T02 加法：来源类型与业务来源渠道；TB 行 sourceRequirementId 必有，手工行为空。
         # （T02 时该段遗漏未落库，2026-10-25 随 T05 补齐。）
         sourceType: { type: string, enum: [teambition, web_manual] }
@@ -1430,7 +1477,7 @@ components:
         baseRecordUrl:
           type: [string, 'null']
           description: Direct https link to the Base record, built from the deployment's RQSYS_BASE_RECORD_URL_TEMPLATE; null when not configured or not yet pushed.
-      required: [id, sourceRequirementId, title, sourceVersion, pipeline, source, analysis, analyses, baseRecordId]
+      required: [id, sourceRequirementId, processingState, title, sourceVersion, pipeline, source, analysis, analyses, baseRecordId]
     ScoringInputs:
       type: object
       required: [user, market, strategy, cost]

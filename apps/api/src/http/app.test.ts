@@ -324,6 +324,7 @@ test("ops job view lists failed and stuck jobs without leaking payload", async (
  assert.equal(body.items.failed[0]?.requirementId, "req-1");
  assert.equal(body.items.stuck[0]?.id, "job-stuck");
  assert.equal("payload" in body.items.failed[0]!, false);
+ assert.equal("dedupeKey" in body.items.failed[0]!, false);
  assert.equal(body.now, "2026-10-08T00:00:00.000Z");
  assert.equal((await handleApiRequest(new Request("http://localhost/api/ops/jobs?limit=0"), d)).status, 400);
  assert.equal((await handleApiRequest(new Request("http://localhost/api/ops/jobs"), unauthenticated)).status, 401);

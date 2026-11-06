@@ -80,10 +80,11 @@ function baseRecordUrl(recordId: string | null): string | null {
   if (!recordId || !template || !template.startsWith("https://") || !template.includes("{recordId}")) return null;
   return template.replaceAll("{recordId}", encodeURIComponent(recordId));
 }
-// 运维视图只回传作业元数据与安全错误摘要；payload 可能含 actorId/hash 等运行细节，不整体透出。
+// 运维视图只回传作业元数据与安全错误摘要；payload 可能含 actorId/hash 等运行细节，
+// dedupeKey 也可能内嵌 owner open_id 等人员标识，两者都不下发。
 function opsJobDto(job: PipelineJobRecord) {
   return {
-    id: job.id, jobType: job.jobType, status: job.status, dedupeKey: job.dedupeKey,
+    id: job.id, jobType: job.jobType, status: job.status,
     attemptCount: job.attemptCount, maxAttempts: job.maxAttempts,
     availableAt: job.availableAt, lockedUntil: job.lockedUntil,
     lastErrorCode: job.lastErrorCode, lastErrorSummary: job.lastErrorSummary,
