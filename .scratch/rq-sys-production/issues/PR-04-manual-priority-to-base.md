@@ -1,7 +1,7 @@
 # PR-04 人工优先级投影 Base
 
 > 批次：2026-11-06 生产就绪（PR）
-> **Status**：`blocked-on-decision`
+> **Status**：`cancelled`（PRD-18）
 > **优先级**：P1
 > **创建**：2026-11-06；基线：root `5490d75`
 
@@ -39,3 +39,7 @@
 - `apps/web/src/panels.tsx:1367`（人工优先级只影响应用内）、`:1404`（不回写 Base）。
 - `apps/api/src/base/push-service.ts:392`（Base 仍用分析版本 priority）。
 - `specs/rq-sys-mvp/OPEN-DECISIONS.md` D-05（Base 字段 schema 与优先级选项）。
+
+## 决策（2026-11-06，PRD-18）
+
+不自动回写 Base：PM 最终优先级在 Base 维护；Web 人工覆盖仅用于应用内排序/预览。本票取消。

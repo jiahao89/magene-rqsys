@@ -1,7 +1,7 @@
 # PR-07 PM 决策闭环与单一入口
 
 > 批次：2026-11-06 生产就绪（PR）
-> **Status**：`blocked-on-decision`
+> **Status**：`closed-by-decision`（PRD-15）
 > **优先级**：P1
 > **创建**：2026-11-06；基线：root `5490d75`
 
@@ -39,3 +39,7 @@ PM 处理状态只在 Base，Web 不回读；Web 没有「待我处理/已处理
 - `specs/rq-sys-mvp/OPEN-DECISIONS.md:8`（D-02）、`:10`（D-04）。
 - `specs/rq-sys-mvp/00-foundation-and-data-contract.md:65`（PM processing in Base only）。
 - `apps/web/src/panels.tsx:1073`（不读 PM 状态）；`docs/2026-10-21-rq-sys-v0.2-prd.md:449`（不回读边界）、`:487`（生命周期 Roadmap）。
+
+## 决策（2026-11-06，PRD-15）
+
+维持 D-02：Base 为唯一 PM 处理面；Web 不读取/回写 PM 状态，仅提供分析/运维视图与深链。本票不再实施；如未来改变需新 ADR。

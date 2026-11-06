@@ -2,6 +2,7 @@
 
 > **创建日期**：2026-11-06
 > **批次性质**：本地 ticket 草稿（tracker 仍为仓库内 Markdown）。把「生产就绪」缺口拆成可领取任务；PRD 增补由 Lead/产品另行编写，不在本批次内。
+> **产品决策**：PRD-13 ~ PRD-20 见 [`docs/2026-11-06-production-readiness-decisions.md`](../../../docs/2026-11-06-production-readiness-decisions.md)。
 > **来源**：
 > - 用户 2026-11-06 确认的 README 级结论：**2 个 P0 / 9 个 P1 / 8 个 P2**（评估报告 `/tmp/rq-verify/pm-gaps.md` 摘要表）。
 > - 运维就绪度评估 `/tmp/rq-verify/ops-readiness-gaps.md`（生产 Base、AI 配额/告警、备份恢复、上线 gate 等 P0 级运维闭环）。
@@ -24,14 +25,14 @@
 
 | ID | 任务 | Status | Blocked by | 优先级 | 涉及仓库文件/范围 |
 |---|---|---|---|---|---|
-| PR-01 | [正式 Base 切换与通知闭环](PR-01-formal-base-and-notification.md) | blocked-on-external | 正式 Base 授权/用户决策（外部）；回退步骤参考 PR-12 | P0 | `deployment/`、`specs/rq-sys-mvp/RELEASE-CLOSEOUT.md`、线上 env；Base 配置 |
-| PR-02 | [优先级阈值/α/业务上下文口径定稿](PR-02-scoring-rule-finalization.md) | blocked-on-decision | 产品定稿；TB 字段映射需 D-03 关闭（部分外部） | P0 | `specs/rq-sys-v0.2/SCORING-RULE-COMPARISON.md`、`06-ai-scoring-and-priority.md`、`apps/api/src/analysis/*`、`database/migrations/` |
-| PR-03 | [需求池优先级分诊](PR-03-requirement-priority-triage.md) | implemented-local（优先级列/筛选/排序/API/URL 已实现，未目标验证） | 剩余：总览下钻、模块/人群筛选、批量确认（依赖 PR-04） | P0 | `apps/web/src/panels.tsx`、`rq-sys-miaoda/client/src/rqsys/panels.tsx`、`apps/api/src/contracts/pipeline.ts`、`http/app.ts`、`openapi.yaml` |
-| PR-04 | [人工优先级投影 Base](PR-04-manual-priority-to-base.md) | blocked-on-decision | PR-02 口径；PR-01 正式表/字段授权 | P1 | `apps/web/src/panels.tsx`、`apps/api/src/base/push-service.ts`、`BASE_FIELDS_JSON`、Base 字段 |
+| PR-01 | [正式 Base 切换与通知闭环](PR-01-formal-base-and-notification.md) | ready-for-agent（执行需正式 Base 授权） | 目标/对账/回退已决策（PRD-13）；平台授权仍待外部 | P0 | `deployment/`、`specs/rq-sys-mvp/RELEASE-CLOSEOUT.md`、线上 env；Base 配置 |
+| PR-02 | [优先级阈值/α/业务上下文口径定稿](PR-02-scoring-rule-finalization.md) | ready-for-agent | 相对分位口径已定（PRD-14）；v3 实施与校准基准待 PM 提供 | P0 | `specs/rq-sys-v0.2/SCORING-RULE-COMPARISON.md`、`06-ai-scoring-and-priority.md`、`apps/api/src/analysis/*`、`database/migrations/` |
+| PR-03 | [需求池优先级分诊](PR-03-requirement-priority-triage.md) | implemented-local（优先级列/筛选/排序/API/URL 已实现；已发布 8d07753） | 剩余：总览下钻、模块/人群筛选；批量确认随 PR-04 取消 | P0 | `apps/web/src/panels.tsx`、`rq-sys-miaoda/client/src/rqsys/panels.tsx`、`apps/api/src/contracts/pipeline.ts`、`http/app.ts`、`openapi.yaml` |
+| PR-04 | [人工优先级投影 Base](PR-04-manual-priority-to-base.md) | cancelled | PRD-18：不自动回写 Base | P1 | `apps/web/src/panels.tsx`、`apps/api/src/base/push-service.ts`、`BASE_FIELDS_JSON`、Base 字段 |
 | PR-05 | [负责人组织维护闭环](PR-05-owner-mapping-closed-loop.md) | ready-for-agent | 离职/外部人员转交部分 blocked-on-decision | P1 | `apps/web/src/panels.tsx`、`apps/api/src/http/app.ts`、`domain/team-directory.ts`、`adapters/postgres/repositories.ts` |
 | PR-06 | [AI 质量校准与反馈闭环](PR-06-ai-quality-calibration.md) | ready-for-agent | PR-02 的 v3 规则/基准作为输入 | P1 | `apps/api/src/analysis/*`、`http/app.ts`、`apps/web/src/panels.tsx`、回归集/文档 |
-| PR-07 | [PM 决策闭环与单一入口](PR-07-pm-decision-loop-and-single-entry.md) | blocked-on-decision | D-02 归属决策（可选 PRD 修订） | P1 | `specs/rq-sys-mvp/OPEN-DECISIONS.md`、`00-foundation-and-data-contract.md`、`apps/web/src/panels.tsx`、Base 视图 |
-| PR-08 | [角色与权限最小集](PR-08-minimal-roles-and-permissions.md) | blocked-on-decision | 角色矩阵决策（修订 D-04） | P1 | `apps/api/src/http/app.ts`、`application/*`、`apps/web/src/App.tsx`、审计 |
+| PR-07 | [PM 决策闭环与单一入口](PR-07-pm-decision-loop-and-single-entry.md) | closed-by-decision | PRD-15：Base 唯一 PM 工作台；Web 不新增决策闭环 | P1 | `specs/rq-sys-mvp/OPEN-DECISIONS.md`、`00-foundation-and-data-contract.md`、`apps/web/src/panels.tsx`、Base 视图 |
+| PR-08 | [角色与权限最小集](PR-08-minimal-roles-and-permissions.md) | ready-for-agent | PRD-16 三角色已定；Admin/Viewer 名单待用户提供 | P1 | `apps/api/src/http/app.ts`、`application/*`、`apps/web/src/App.tsx`、审计 |
 | PR-09 | [通知 digest 与运营提醒](PR-09-notification-digest-and-ops-alerts.md) | ready-for-agent | 收件人清单需用户确认 | P1 | `apps/api/src/base/push-service.ts`、worker/调度、`deployment/` runbook |
 | PR-10 | [运营指标与导出](PR-10-ops-metrics-and-export.md) | ready-for-agent | — | P1 | `apps/api/src/adapters/postgres/repositories.ts`、`http/app.ts`、`apps/web/src/panels.tsx`、`openapi.yaml` |
 | PR-11 | [AI 可靠性/额度告警/降级与切换](PR-11-ai-reliability-quota-and-failover.md) | ready-for-agent | 告警通道可与 PR-09 复用 | P1 | `apps/api/src/analysis/provider.ts`、worker、`scripts/`、env/SOP 文档 |

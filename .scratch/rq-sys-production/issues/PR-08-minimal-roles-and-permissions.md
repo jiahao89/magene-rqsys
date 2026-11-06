@@ -1,7 +1,7 @@
 # PR-08 角色与权限最小集
 
 > 批次：2026-11-06 生产就绪（PR）
-> **Status**：`blocked-on-decision`
+> **Status**：`ready-for-agent`（角色矩阵已决策 PRD-16）
 > **优先级**：P1
 > **创建**：2026-11-06；基线：root `5490d75`
 
@@ -41,3 +41,7 @@
 - `specs/rq-sys-mvp/OPEN-DECISIONS.md:10`（D-04：any signed-in tenant user, no app roles）。
 - `specs/rq-sys-mvp/04-workbench.md:41-43`；`apps/api/src/http/app.ts`（grep role/permission 无命中）。
 - `AGENTS.md`（「Verify the deployed `@NeedLogin()` behavior...」门禁）。
+
+## 决策（2026-11-06，PRD-16）
+
+Admin（配置）/PM（需求操作+重跑）/Viewer（只读+导出）三角色，服务端强制；试点期默认登录=PM，Admin/Viewer 按名单授予。实施前需用户提供名单。

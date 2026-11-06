@@ -13,7 +13,7 @@
 
 - 需求池列表增加优先级、模块、人群列；支持按 `priority`/`module`/`audience` 筛选与排序（按 P、更新时间等）。
 - 总览优先级分级卡可点击下钻到带筛选的需求列表。
-- 批量选择 + 批量确认（确认动作的持久化走 PR-04 的人工优先级接口；本票先做交互与队列/部分失败处理）。
+- ~~批量选择 + 批量确认~~（随 PR-04 取消；PM 终审在 Base 进行，见 PRD-15/18）。
 - API/OpenAPI 扩展：`apps/api/src/contracts/pipeline.ts` 查询参数、`specs/rq-sys-mvp/openapi.yaml`、两端 DTO 对齐。
 - `apps/web/src/panels.tsx` 与 `rq-sys-miaoda/client/src/rqsys/panels.tsx` 行为一致；测试更新。
 
@@ -21,7 +21,7 @@
 
 - [x] 列表展示优先级列与 P0–P3 筛选；`sort=priority_asc` 分诊排序（单页 100 条、不分页）本地实现。
 - [ ] 总览分级卡下钻后列表筛选条件正确、可返回。
-- [ ] 批量确认：选择、确认、部分失败反馈、审计记录；无权限/被压制需求有明确失败原因。
+- ~~批量确认~~（已取消：PM 终审在 Base，Web 不写回；见 PRD-18）。
 - [x] OpenAPI（priority/sort 参数、Requirement.executorName）与 `contracts/pipeline.ts` 更新，Web/Miaoda 两端行为一致（check:alignment 通过）。
 - [x] 本地测试通过：API 552/552、Web 115/115、妙搭路由 116/116；typecheck/build/check:alignment/`git diff --check` 通过。
 - [ ] 目标环境（online）列表/筛选/排序/下钻/批量确认实际可用（未取得证据不得标完成）。
@@ -50,3 +50,11 @@
 - Web/Miaoda：需求池增加「优先级」列（人工覆盖带 `*` 与浮层说明）、更多筛选中的优先级筛选与排序选择；分诊视图提示与「加载更多」抑制；URL 深链支持 `priority`/`sort`。
 - 单元测试：contracts 参数校验、repository SQL/参数、Web URL 契约、Web API 查询串。
 未完成（需保持票打开）：总览分级卡下钻、模块/人群筛选、批量确认（依赖 PR-04 决策）、目标环境验证。
+
+## 目标环境验证（2026-11-06，release `7704997761057361172`，commit `8d07753`）
+
+- 线上需求池表头出现「优先级」列；P2 筛选返回 7 条，全部 `effectivePriority=P2`，URL 为 `?priority=P2`。
+- 深链 `?sort=priority_asc#requirements`：摘要显示「分诊视图：按生效优先级 P0 → P3 排序，单页最多 100 条（不分页）」；首屏 100 条中 P2×7 在前、P3×93 在后，顺序正确。
+- 直接 API 校验：`GET /api/requirements?sort=priority_asc&limit=100` → 200、`nextCursor=null`、优先级有序；`priority=P2` → 7 条全 P2。
+- 发布 `status=finished`、`error_logs=[]`；发布后 10 分钟线上 error=0。
+- 未覆盖：总览分级卡下钻、模块/人群筛选（仍在票内）；批量确认已取消（PRD-18）。

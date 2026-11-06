@@ -1,7 +1,7 @@
 # PR-02 优先级阈值 / α / 业务上下文口径定稿
 
 > 批次：2026-11-06 生产就绪（PR）
-> **Status**：`blocked-on-decision`
+> **Status**：`ready-for-agent`（口径已决策 PRD-14）
 > **优先级**：P0
 > **创建**：2026-11-06；基线：root `5490d75`
 
@@ -43,3 +43,7 @@
 - `/tmp/rq-verify/pm-gaps.md` P0-2（第 75–101 行）；`docs/2026-11-06-rerun-and-adoption.md:7`（P0=0/P1=0/P2=7/P3=314）、`:35`。
 - `specs/rq-sys-mvp/TEAMBITION-LIVE-POC.md:23,31`（custom_fields allowlist 为空/仅标题可用）。
 - `specs/rq-sys-v0.2/06-ai-scoring-and-priority.md:64-83`（现行公式与阈值）、`:263`（阈值以 PRD §4.2.3 为准）。
+
+## 决策（2026-11-06，PRD-14）
+
+AI 优先级改为**相对分位**（活跃池内校正总分排名：P0≈前 5%、P1≈下 15%、P2≈下 30%、其余 P3；安全标记强制 P0）；PM 终审在 Base；发布 v3 前用 20–30 条人工排序校准（Top20 重合 ≥70%）。

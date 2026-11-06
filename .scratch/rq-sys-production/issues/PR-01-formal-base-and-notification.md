@@ -1,7 +1,7 @@
 # PR-01 正式 Base 切换与通知闭环
 
 > 批次：2026-11-06 生产就绪（PR）
-> **Status**：`blocked-on-external`
+> **Status**：`ready-for-agent`（执行仍需正式 Base 授权；决策见 PRD-13）
 > **优先级**：P0
 > **创建**：2026-11-06；基线：root `5490d75`
 
@@ -45,3 +45,7 @@
 - `deployment/EXTERNAL-BLOCKER-RUNBOOK.md:284`：「未授权生产 Base『TB需求池』」。
 - `specs/rq-sys-mvp/FEISHU-BASE-POC.md:10-11`（POC Base token/table）；`specs/rq-sys-mvp/RELEASE-CLOSEOUT.md:115-149`（正式表通知曾通过，当前未回读）。
 - `specs/rq-sys-mvp/OPEN-DECISIONS.md` D-05（POC 与正式 Base 必须分开）。
+
+## 决策（2026-11-06，PRD-13）
+
+正式「TB需求池」为生产目标；切换前按 TB ID/平台键对账 278 条已推送记录；测试 Base 保留只读与回退。平台授权与切换窗口仍需用户/Base owner 提供。
