@@ -32,7 +32,7 @@
 | PR-05 | [负责人组织维护闭环](PR-05-owner-mapping-closed-loop.md) | ready-for-agent | 离职/外部人员转交部分 blocked-on-decision | P1 | `apps/web/src/panels.tsx`、`apps/api/src/http/app.ts`、`domain/team-directory.ts`、`adapters/postgres/repositories.ts` |
 | PR-06 | [AI 质量校准与反馈闭环](PR-06-ai-quality-calibration.md) | ready-for-agent | PR-02 的 v3 规则/基准作为输入 | P1 | `apps/api/src/analysis/*`、`http/app.ts`、`apps/web/src/panels.tsx`、回归集/文档 |
 | PR-07 | [PM 决策闭环与单一入口](PR-07-pm-decision-loop-and-single-entry.md) | closed-by-decision | PRD-15：Base 唯一 PM 工作台；Web 不新增决策闭环 | P1 | `specs/rq-sys-mvp/OPEN-DECISIONS.md`、`00-foundation-and-data-contract.md`、`apps/web/src/panels.tsx`、Base 视图 |
-| PR-08 | [角色与权限最小集](PR-08-minimal-roles-and-permissions.md) | ready-for-agent | PRD-16 三角色已定；Admin/Viewer 名单待用户提供 | P1 | `apps/api/src/http/app.ts`、`application/*`、`apps/web/src/App.tsx`、审计 |
+| PR-08 | [角色与权限最小集](PR-08-minimal-roles-and-permissions.md) | cancelled | 2026-11-09 用户决定现在不需要角色/权限（PRD-16 暂缓） | P1 | `apps/api/src/http/app.ts`、`application/*`、`apps/web/src/App.tsx`、审计 |
 | PR-09 | [通知 digest 与运营提醒](PR-09-notification-digest-and-ops-alerts.md) | ready-for-agent | 收件人清单需用户确认 | P1 | `apps/api/src/base/push-service.ts`、worker/调度、`deployment/` runbook |
 | PR-10 | [运营指标与导出](PR-10-ops-metrics-and-export.md) | ready-for-agent | — | P1 | `apps/api/src/adapters/postgres/repositories.ts`、`http/app.ts`、`apps/web/src/panels.tsx`、`openapi.yaml` |
 | PR-11 | [AI 可靠性/额度告警/降级与切换](PR-11-ai-reliability-quota-and-failover.md) | ready-for-agent | 告警通道可与 PR-09 复用 | P1 | `apps/api/src/analysis/provider.ts`、worker、`scripts/`、env/SOP 文档 |
