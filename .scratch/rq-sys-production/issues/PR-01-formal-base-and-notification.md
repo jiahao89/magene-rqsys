@@ -1,7 +1,7 @@
 # PR-01 正式 Base 切换与通知闭环
 
 > 批次：2026-11-06 生产就绪（PR）
-> **Status**：`ready-for-agent`（执行仍需正式 Base 授权；决策见 PRD-13）
+> **Status**：`target-verified`（切换/推送/对账已完成；通知 IM 实收待试点确认；测试 Base 已删除，回滚目标不可用）
 > **优先级**：P0
 > **创建**：2026-11-06；基线：root `5490d75`
 
@@ -49,3 +49,11 @@
 ## 决策（2026-11-06，PRD-13）
 
 正式「TB需求池」为生产目标；切换前按 TB ID/平台键对账 278 条已推送记录；测试 Base 保留只读与回退。平台授权与切换窗口仍需用户/Base owner 提供。
+
+## 目标环境执行记录（2026-11-09）
+
+- 授权核对：正式 Base 协作者含应用 `cli_aa434b0a8d39dd05`（= 线上 FEISHU_APP_ID），权限 edit；通知工作流 `wkfMnsnvaDS4Auj4` enabled；正式表 30 字段（含 4 通知字段与系统需求链接）。
+- env：dev/online `BASE_APP_TOKEN=GRnEboCIga7Omas8RwgcDmmgnib`、`BASE_TABLE_ID=tbl6Gfi0KJ2a1llK`；release `7706010871122578670`（commit `db82781`）使配置生效。
+- 推送验证：RQ-000022 重推成功（`base_push_runs.status=pushed`）；正式表记录「最后推送时间=2026-11-09T14:19:54+08:00」「推送状态=已推送」「AI分析版本=5」「AI优先级建议=P3」；Web 详情 `baseRecordUrl` 已指向正式 Base（release `7706059711930764577` / commit `b8a4435`）。
+- 对账结果：正式表 319 行、平台 ID 唯一；App 322 条需求中 279 条 pushed 的记录全部与正式表 record_id 对应；40 条 pending_mapping 有历史行；RQ-000048/RQ-000165/RQ-000291 无正式表行且按规则不推送；无重复/孤儿。
+- 未完成：通知 IM 实收演练（建议试点首次人工分配时验证）；回滚演练（测试 Base 已删除，仅能保留正式表只读与代码回退）。

@@ -43,7 +43,15 @@
 - 授权核对：正式 Base 协作者（`lark-cli drive +member-list`）包含应用 `cli_aa434b0a8d39dd05`（= 线上 `FEISHU_APP_ID`），权限 `edit`；因此应用侧 Base 编辑授权已具备，剩余动作为**切换窗口内改 env + 发布并验证**。
 - 字段兼容核对：正式表字段名/类型与 POC 基本一致；差异为正式表 `AI模块建议` 是文本（POC 是单选），而通知字段/推送状态/优先级选项齐备，需在切换后用一条真实需求做推送+通知验证。
 
-## 发布记录（2026-11-06）
+## 正式 Base 切换执行记录（2026-11-09）
+
+- **执行**：online/dev `BASE_APP_TOKEN=GRnEboCIga7Omas8RwgcDmmgnib`、`BASE_TABLE_ID=tbl6Gfi0KJ2a1llK`；发布 release `7706010871122578670`（commit `db82781`，env 生效）。
+- **推送验证**：对 RQ-000022 执行一次重新推送作业（幂等键含 `verify:formal-switch-20261109`），job/`base_push_runs` 均 `pushed`；正式表该记录「最后推送时间」更新为 `2026-11-09T14:19:54+08:00`、推送状态=已推送、AI 分析版本=5、AI 优先级建议=P3、源版本=1，系统需求链接指向 Web 详情。
+- **记录链接修正**：`RQSYS_BASE_RECORD_URL_TEMPLATE` 已改为正式 Base 链接并发布 release `7706059711930764577`（commit `b8a4435`）；生产详情 `baseRecordUrl` 已验证为 `https://aimagene.feishu.cn/base/GRnEbo...?table=tbl6Gfi0...&record=recvxDsIbIzKWF`。
+- **对账**：正式表 319 行，`需求平台ID` 319 个、无重复；App 需求 322 条：279 条 pushed 的 `base_record_id` 全部能在正式表找到（record_id 一一对应）；40 条 pending_mapping 需求已在正式表有历史行；3 条（RQ-000048/165/291）在正式表无行且仍 pending_mapping（按业务规则不推送）。无重复行、无孤儿记录。
+- **通知**：正式表通知工作流 `wkfMnsnvaDS4Auj4` enabled；历史行通知字段已有值（如「AI 重试成功」/收件人）；本次为同版本重推（静默场景），未单独演练 IM 实收，建议试点首次人工分配时确认。
+- **回滚说明**：测试 Base 已被用户删除，无法回退到测试表；回退方案调整为「保留正式表只读 + 如需回退仅能回到此前已发布 commit 且仍指向正式表」。切换前已核对正式表字段/选项；切换后 error=0、队列=0。
+- **发布记录（2026-11-06）**
 
 - 优先级分诊与待匹配负责人姓名显示已随妙搭 release `7704997761057361172`（commit `8d07753`）发布；`status=finished`、`error_logs=[]`。
 - 线上验证：优先级列/筛选/分诊排序可用（P2=7 条；分诊视图 100 条有序）；发布后 10 分钟 error=0。

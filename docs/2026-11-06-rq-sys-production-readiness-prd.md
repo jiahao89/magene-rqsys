@@ -28,7 +28,7 @@
 
 | 决策 | 结论 | 详见 |
 |---|---|---|
-| 生产 Base | 正式「TB需求池」为目标；测试 Base 仅 POC；切换前对账已推送记录 | [决策记录 PRD-13](./2026-11-06-production-readiness-decisions.md) |
+| 生产 Base | **已切换至正式「TB需求池」**（2026-11-09）；测试 Base 已删除；推送/对账已验证 | [决策记录 PRD-13](./2026-11-06-production-readiness-decisions.md) |
 | 优先级 | AI 相对分位（P0≈5%/P1≈15%/P2≈30%）+ PM 终审在 Base | PRD-14 |
 | PM 工作台 | Base 唯一处理面，Web 不读写 PM 状态 | PRD-15 |
 | 角色 | **暂缓**（2026-11-09 用户决定现在不做；维持登录即全权限） | PRD-16 / PR-08 cancelled |

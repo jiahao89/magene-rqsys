@@ -25,7 +25,7 @@
 
 | ID | 任务 | Status | Blocked by | 优先级 | 涉及仓库文件/范围 |
 |---|---|---|---|---|---|
-| PR-01 | [正式 Base 切换与通知闭环](PR-01-formal-base-and-notification.md) | ready-for-agent（执行需正式 Base 授权） | 目标/对账/回退已决策（PRD-13）；平台授权仍待外部 | P0 | `deployment/`、`specs/rq-sys-mvp/RELEASE-CLOSEOUT.md`、线上 env；Base 配置 |
+| PR-01 | [正式 Base 切换与通知闭环](PR-01-formal-base-and-notification.md) | target-verified（切换/推送/对账完成；通知 IM 实收待试点确认） | 测试 Base 已删除，回滚目标不可用；字段已核对 | P0 | `deployment/`、`specs/rq-sys-mvp/RELEASE-CLOSEOUT.md`、线上 env；Base 配置 |
 | PR-02 | [优先级阈值/α/业务上下文口径定稿](PR-02-scoring-rule-finalization.md) | ready-for-agent | 相对分位口径已定（PRD-14）；v3 实施与校准基准待 PM 提供 | P0 | `specs/rq-sys-v0.2/SCORING-RULE-COMPARISON.md`、`06-ai-scoring-and-priority.md`、`apps/api/src/analysis/*`、`database/migrations/` |
 | PR-03 | [需求池优先级分诊](PR-03-requirement-priority-triage.md) | implemented-local（优先级列/筛选/排序/API/URL 已实现；已发布 8d07753） | 剩余：总览下钻、模块/人群筛选；批量确认随 PR-04 取消 | P0 | `apps/web/src/panels.tsx`、`rq-sys-miaoda/client/src/rqsys/panels.tsx`、`apps/api/src/contracts/pipeline.ts`、`http/app.ts`、`openapi.yaml` |
 | PR-04 | [人工优先级投影 Base](PR-04-manual-priority-to-base.md) | cancelled | PRD-18：不自动回写 Base | P1 | `apps/web/src/panels.tsx`、`apps/api/src/base/push-service.ts`、`BASE_FIELDS_JSON`、Base 字段 |
