@@ -46,6 +46,8 @@ export interface ApiDependencies {
   feishuUserSelections?: FeishuUserSelectionResolver;
   enableTestFixtures?: boolean;
   now: (() => Date) | undefined;
+  /** Q2：Base 重复行标记；组合根未注入时判定不触达 Base。 */
+  duplicateMarker?: (input: import("../base/duplicate-marker.js").DuplicateMarkInput) => Promise<import("../base/duplicate-marker.js").DuplicateMarkResult>;
 }
 function json(body: unknown, status = 200): Response { return Response.json(body, { status }); }
 // PostgreSQL 的 uuid 列不接受任意字符串；路径里的非法 ID 必须在进入仓储层前收敛成 404，
@@ -117,6 +119,8 @@ function requirementDto(req: RequirementRecord, analysis: Record<string, unknown
     effectivePriority: req.priorityOverride?.priority ?? currentScorePriority ?? req.currentScorePriority ?? null,
     // V02-T26：人工补充上下文（详情/列表同构返回；不写 Base）。
     analysisContext: req.analysisContext ? { note: req.analysisContext.note, updatedAt: req.analysisContext.updatedAt, updatedBy: req.analysisContext.updatedBy } : null,
+    // Q4：全量同步未再出现该需求的时间；只做提示，不影响处理/推送状态。
+    sourceMissingSince: req.sourceMissingSince ?? null,
     sourceRequirementId: req.teambitionRequirementId,
     // V02-T02 加法：来源类型（teambition/web_manual）与业务渠道；TB 显示不变，手工预留已收录语义。
     sourceType: req.sourceType,
@@ -949,16 +953,15 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
       } catch (cause) {
         return (cause as Error)?.name === "InvalidTransitionError" ? jsonError("CONFLICT") : jsonError("DEPENDENCY_UNAVAILABLE");
       }
-      if (mapping || !hasTbOwner) {
-        // 幂等键按当前分配版本确定：同一次清除请求重试命中同一作业，不再重复入队推送。
+      // Q1：即使 TB 执行人暂无映射也照常入队（空负责人推送），状态保持 pending_mapping；
+      // 映射补齐后由 owner-recheck 用独立 intent 键重推并补负责人。
       const idempotencyKey = basePushIdempotencyKey(req.id, req.sourceVersion, analysisVersion, `owner-reset:v${req.manualOwner?.assignmentVersion ?? 0}:${targetState}`);
-        try {
-          await repositories.jobs.enqueue({ jobType: "base_push", dedupeKey: idempotencyKey, payload: { requirementId: req.id, sourceVersion: req.sourceVersion, analysisVersion, idempotencyKey, actorId: auth.actor.id }, availableAt: now });
-        } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
-      }
+      try {
+        await repositories.jobs.enqueue({ jobType: "base_push", dedupeKey: idempotencyKey, payload: { requirementId: req.id, sourceVersion: req.sourceVersion, analysisVersion, idempotencyKey, actorId: auth.actor.id }, availableAt: now });
+      } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
       const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "owner.manual_cleared", entityType: "requirement", entityId: req.id, result: "succeeded", safeDetails: { sourceVersion: req.sourceVersion }, occurredAt: now });
       if (auditFailure) return auditFailure;
-      return json({ requirementId: req.id, ownerState: targetState, status: mapping || !hasTbOwner ? "queued" : "waiting_mapping" });
+      return json({ requirementId: req.id, ownerState: targetState, status: "queued" });
     }
     const body = OwnerMappingUpdateSchema.safeParse(await readJson(request)); if (!body.success) return jsonError("VALIDATION_FAILED");
     // 逐条负责人：只写需求本身，绝不改写 person_mappings（否则会改掉同 TB 执行人名下全部需求）。
@@ -1012,15 +1015,25 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
       const auditFailure = await appendAudit(repositories, { id: randomUUID(), actorId: auth.actor.id, eventType: "duplicate.revoked", entityType: "requirement", result: "succeeded", entityId: req.id, safeDetails: { previous: req.processingState ?? "active" }, occurredAt: nowIso });
       if (auditFailure) return auditFailure;
       const updated = await repositories.requirements.get(req.id);
+      // Q2：撤销判定后清除 Base 标记；失败只留审计，不影响撤销结果。
+      if (dependencies.duplicateMarker) {
+        try {
+          const marked = await dependencies.duplicateMarker({ recordId: updated?.baseRecordId ?? req.baseRecordId, decision: null });
+          if (marked.outcome === "failed" || marked.outcome === "field_missing") {
+            await appendAudit(repositories, { id: randomUUID(), actorId: auth.actor.id, eventType: "requirement.duplicate_mark_failed", entityType: "requirement", entityId: req.id, result: "failed", safeDetails: { reason: marked.outcome, ...(marked.outcome === "failed" ? { errorClass: marked.errorCode } : {}) }, occurredAt: nowIso });
+          }
+        } catch { /* 标记是附加能力，不能回滚已成功的撤销 */ }
+      }
       return json({ requirementId: req.id, processingState: updated?.processingState ?? "active", decision: null, version: 0 });
     }
     const parsed = DuplicateDecisionSchema.safeParse(await readJson(request));
     if (!parsed.success) return jsonError("VALIDATION_FAILED");
     if (parsed.data.decision === "duplicate" && !parsed.data.canonicalRequirementId) return jsonError("VALIDATION_FAILED");
     if (parsed.data.canonicalRequirementId === req.id) return jsonError("VALIDATION_FAILED");
+    let canonicalRecord: RequirementRecord | null = null;
     if (parsed.data.canonicalRequirementId) {
-      const canonical = await repositories.requirements.get(parsed.data.canonicalRequirementId);
-      if (!canonical || canonical.id === req.id) return jsonError("NOT_FOUND");
+      canonicalRecord = await repositories.requirements.get(parsed.data.canonicalRequirementId);
+      if (!canonicalRecord || canonicalRecord.id === req.id) return jsonError("NOT_FOUND");
     }
     const result = await repositories.requirements.decideResolution({
       requirementId: req.id, decision: parsed.data.decision,
@@ -1032,6 +1045,21 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     if (result.outcome === "not_found") return jsonError("NOT_FOUND");
     const auditFailure = await appendAudit(repositories, { id: randomUUID(), actorId: auth.actor.id, eventType: parsed.data.decision === "duplicate" ? "duplicate.confirmed" : "duplicate.reviewed", entityType: "requirement", result: "succeeded", entityId: req.id, safeDetails: { decision: parsed.data.decision, version: result.version }, occurredAt: nowIso });
     if (auditFailure) return auditFailure;
+    // Q2：把判定写进 Base 的专用标记字段（不通知）；失败只留审计，不影响判定结果。
+    if (dependencies.duplicateMarker) {
+      try {
+        const marked = await dependencies.duplicateMarker({
+          recordId: req.baseRecordId,
+          // confirmed_unique = 确认非重复：清除既有标记，而不是写「重复」
+          decision: parsed.data.decision === "confirmed_unique" ? null : parsed.data.decision,
+          canonicalRequirementId: canonicalRecord?.id ?? null,
+          canonicalPlatformRequirementId: canonicalRecord?.platformRequirementId ?? null,
+        });
+        if (marked.outcome === "failed" || marked.outcome === "field_missing") {
+          await appendAudit(repositories, { id: randomUUID(), actorId: auth.actor.id, eventType: "requirement.duplicate_mark_failed", entityType: "requirement", entityId: req.id, result: "failed", safeDetails: { reason: marked.outcome, ...(marked.outcome === "failed" ? { errorClass: marked.errorCode } : {}) }, occurredAt: nowIso });
+        }
+      } catch { /* 标记是附加能力，不能回滚已成功的判定 */ }
+    }
     const updated = await repositories.requirements.get(req.id);
     return json({ requirementId: req.id, processingState: updated?.processingState ?? "active", decision: parsed.data.decision, reviewState: "confirmed", version: result.version });
   }

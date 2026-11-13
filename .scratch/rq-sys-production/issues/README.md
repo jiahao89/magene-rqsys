@@ -77,3 +77,9 @@
 - Kano 状态流转：用户 2026-11-10 决定暂不开发。
 - 验证：API 558、Web 119、妙搭路由 116、契约 7、alignment（`ops/alerts.ts` 已纳入共用模块）、migrations 全部通过。未提交、未发布。
 
+## 实施进度（2026-11-10 第二轮）
+
+- 用户确认 Q1/Q2/Q4（PRD-21/22/23）：待匹配需求空负责人推送；Base 重复标记用专用字段且不通知；TB 来源移除只提示。
+- 代码（本地、未提交）：`pipeline/advance.ts`、`base/push-service.ts` 不再因未映射阻塞推送，`scheduler/owner-recheck.ts` 补映射后用独立 intent 键重推；新增共享模块 `base/duplicate-marker.ts`（判定/撤销时写 `RQ重复标记`/`RQ主记录链接`，字段缺失不影响判定）；同步完成后标记 `source_missing_since`，再次出现自动清除，需迁移 `0027_source_missing.sql`（开发库已应用）。
+- 验证：API 569、Web 120、妙搭路由 116、契约 7、alignment/migrations 全绿。目标环境未发布；正式 Base 需先建两个文本字段并配置 `BASE_FIELDS_JSON.duplicate`。
+

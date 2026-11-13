@@ -49,11 +49,11 @@ test("metadata-only owner removal resolves to no owner and queues an empty-owner
   assert.ok(h.calls.some((call) => call.startsWith("job:base_push:")));
 });
 
-test("metadata-only update with an unmapped new owner waits for manual mapping", async () => {
+test("metadata-only update with an unmapped new owner still queues an empty-owner push (Q1)", async () => {
   const h = harness(requirement(), null);
   const result = await h.advance("req-1", "operator", 2);
-  assert.equal(result, "waiting_mapping");
-  assert.equal(h.calls.some((call) => call.startsWith("job:base_push:")), false);
+  assert.equal(result, "queued");
+  assert.ok(h.calls.some((call) => call.startsWith("job:base_push:")));
 });
 
 test("metadata-only source update preserves an existing manual owner selection", async () => {

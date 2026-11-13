@@ -18,7 +18,7 @@ export interface AdvanceDeps {
   now?: () => Date;
 }
 
-export type AdvanceOutcome = "queued" | "waiting_mapping" | "not_eligible";
+export type AdvanceOutcome = "queued" | "not_eligible";
 
 export function createAnalysisAdvancer(deps: AdvanceDeps) {
   const now = deps.now ?? (() => new Date());
@@ -29,7 +29,8 @@ export function createAnalysisAdvancer(deps: AdvanceDeps) {
     if (req.pipeline.push === "running" || (req.pipeline.push === "pushed" && analysisStatus !== "analyzed")) return "not_eligible";
 
     const hasTbOwner = Boolean(req.executorUserId || req.executorName);
-    let waitingMapping = false;
+    // Q1：映射尚未建立不再阻断推送；owner 保持 pending_mapping，Base 以空负责人写入。
+    let ownerUnmapped = false;
     if (req.manualOwner) {
       // 单条人工负责人优先：无论 TB 是否有执行人、映射是否存在，都以这一个人为准。
       if (req.pipeline.owner !== "manually_mapped") await deps.requirements.setOwner(req.id, req.manualOwner.feishuUserId, "manually_mapped");
@@ -42,20 +43,12 @@ export function createAnalysisAdvancer(deps: AdvanceDeps) {
       if (mapping) {
         if (req.pipeline.owner === "pending_mapping") await deps.requirements.setOwner(req.id, mapping.feishuUserId, "auto_mapped");
       } else {
-        // TB 有负责人但未匹配：等待人工映射；owner PUT 持久化成功后会入队推送
-        waitingMapping = true;
+        // TB 有负责人但未匹配：以空负责人推送；补映射后 owner-recheck 会再推一次补上负责人。
+        ownerUnmapped = true;
       }
     }
 
     const occurredAt = now().toISOString();
-    if (waitingMapping) {
-      await deps.audit.append({
-        id: randomUUID(), actorId, eventType: "analysis.terminal", entityType: "requirement", entityId: req.id,
-        result: analysisStatus === "analyzed" ? "succeeded" : "failed",
-        safeDetails: { analysisStatus, analysisVersion, push: "waiting_owner_mapping", sourceVersion: req.sourceVersion }, occurredAt,
-      });
-      return "waiting_mapping";
-    }
     await deps.jobs.enqueue({
       jobType: "base_push", dedupeKey: basePushIdempotencyKey(req.id, req.sourceVersion, analysisVersion),
       payload: { requirementId: req.id, actorId, sourceVersion: req.sourceVersion, analysisVersion }, availableAt: occurredAt,
@@ -63,7 +56,7 @@ export function createAnalysisAdvancer(deps: AdvanceDeps) {
     await deps.audit.append({
       id: randomUUID(), actorId, eventType: "analysis.terminal", entityType: "requirement", entityId: req.id,
       result: analysisStatus === "analyzed" ? "succeeded" : "failed",
-      safeDetails: { analysisStatus, analysisVersion, push: "queued", sourceVersion: req.sourceVersion }, occurredAt,
+      safeDetails: { analysisStatus, analysisVersion, push: ownerUnmapped ? "queued_owner_unmapped" : "queued", sourceVersion: req.sourceVersion }, occurredAt,
     });
     return "queued";
   };
@@ -125,7 +118,6 @@ export function createSourceMetadataAdvancer(deps: AdvanceDeps, options: { now?:
       }
     }
 
-    if (ownerState === "pending_mapping") return "waiting_mapping";
     if (req.pipeline.push !== "pending" && req.pipeline.push !== "failed") return "not_eligible";
 
     const occurredAt = now().toISOString();
@@ -137,7 +129,7 @@ export function createSourceMetadataAdvancer(deps: AdvanceDeps, options: { now?:
     });
     await deps.audit.append({
       id: randomUUID(), actorId, eventType: "source.metadata.updated", entityType: "requirement", entityId: req.id,
-      result: "succeeded", safeDetails: { sourceVersion: req.sourceVersion, push: "queued" }, occurredAt,
+      result: "succeeded", safeDetails: { sourceVersion: req.sourceVersion, push: ownerState === "pending_mapping" ? "queued_owner_unmapped" : "queued" }, occurredAt,
     });
     return "queued";
   };

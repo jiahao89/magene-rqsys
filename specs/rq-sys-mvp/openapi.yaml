@@ -1489,6 +1489,9 @@ components:
         baseRecordUrl:
           type: [string, 'null']
           description: Direct https link to the Base record, built from the deployment's RQSYS_BASE_RECORD_URL_TEMPLATE; null when not configured or not yet pushed.
+        sourceMissingSince:
+          type: [string, 'null']
+          description: When the latest successful full sync no longer returned this Teambition requirement. Hint only; processing and push state are unchanged and the flag clears when the record reappears.
       required: [id, sourceRequirementId, processingState, title, sourceVersion, pipeline, source, analysis, analyses, baseRecordId]
     ScoringInputs:
       type: object

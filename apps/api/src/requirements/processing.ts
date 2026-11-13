@@ -28,7 +28,6 @@ import { runAnalysis } from "../analysis/service.js";
 import { createDeepSeekProvider, type AiProvider } from "../analysis/provider.js";
 import { createAnalysisAdvancer, createSourceMetadataAdvancer } from "../pipeline/advance.js";
 import { createBasePushService, type BasePushServiceDeps } from "../base/push-service.js";
-import { JobDeferredError } from "../jobs/deferred.js";
 import { basePushIdempotencyKey } from "../jobs/idempotency.js";
 import { assertFixtureWorkAllowed, isSyntheticFixtureRequirement } from "../sync/test-fixture.js";
 import { KANO_PROMPT_VERSION, buildKanoRequest, createDeepSeekKanoProvider, kanoPrompt, validateKanoReport, KanoProviderError } from "../beta/kano.js";
@@ -284,8 +283,6 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
         }
         throw new Error("Base push failed; retry is available.");
       }
-      // 负责人待映射：不能记成 succeeded，否则映射补齐后 owner-recheck 的同键入队命中已成功作业而无效。
-      if (outcome.kind === "conflict" && outcome.reason === "owner_pending_mapping") throw new JobDeferredError("owner_pending_mapping");
       // Base 行已写成功、仅本地记账失败：作业按成功处理，绝不重推外部（会重复写 Base）。
       if (outcome.kind === "pushed_unrecorded") {
         log(`base push wrote record ${outcome.baseRecordId} but bookkeeping failed: ${outcome.detail}`);

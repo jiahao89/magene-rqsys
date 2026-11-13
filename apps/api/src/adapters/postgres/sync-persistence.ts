@@ -81,6 +81,9 @@ export function createPostgresSyncPersistence(
     async setDuplicateOf(requirementId, canonicalRequirementId) {
       await repositories.requirements.setDuplicateOf(requirementId, canonicalRequirementId);
     },
+    async markSourceMissing(input) {
+      return repositories.requirements.markSourceMissing(input);
+    },
     touchedRequirements() {
       return touched;
     },

@@ -52,8 +52,11 @@ function harness(input: {
   latestAnalysisVersion?: Record<string, number>;
   enqueueErrors?: Set<string>;
   searchError?: Error;
+  /** 模拟仓储的同键去重（默认关闭，避免改变既有用例的计数语义）。 */
+  dedupe?: boolean;
 }) {
   const candidates = input.candidates ?? [];
+  const enqueuedKeys = new Set<string>();
   const state = {
     searchQueries: [] as SearchQuery[],
     resolveCalls: [] as ResolveArgs[],
@@ -67,10 +70,12 @@ function harness(input: {
       async search(query: SearchQuery) {
         state.searchQueries.push(query);
         if (input.searchError) throw input.searchError;
+        // 未提供的条件不过滤：补映射候选只按 pull/push/owner 查询，没有 analysis 条件。
         const items = candidates.filter((item) =>
-          item.pipeline.pull === query.pullState &&
-          item.pipeline.analysis === query.analysisState &&
-          item.pipeline.push === query.pushState
+          (query.pullState === undefined || item.pipeline.pull === query.pullState) &&
+          (query.analysisState === undefined || item.pipeline.analysis === query.analysisState) &&
+          (query.pushState === undefined || item.pipeline.push === query.pushState) &&
+          (query.ownerState === undefined || item.pipeline.owner === query.ownerState)
         );
         return { items: items.slice(0, query.limit), nextCursor: null };
       },
@@ -92,8 +97,13 @@ function harness(input: {
       },
     },
     jobs: {
+      // 模拟仓储的同键去重：入队过的键再次查询返回 queued，让重复扫描跳过。
+      async findByDedupeKey(key: string) {
+        return input.dedupe && enqueuedKeys.has(key) ? { status: "queued" } as never : null;
+      },
       async enqueue(jobInput: EnqueueCall) {
         state.enqueueCalls.push(jobInput);
+        enqueuedKeys.add(jobInput.dedupeKey);
         const requirementId = jobInput.payload["requirementId"];
         if (typeof requirementId === "string" && input.enqueueErrors?.has(requirementId)) {
           throw new Error("enqueue unavailable");
@@ -236,9 +246,9 @@ test("limit 默认 100 且可覆盖，单轮不会全量入队", async () => {
   assert.equal(defaultRun.enqueued, 30);
 
   const limitedRun = await h.run({ limit: 5 });
-  assert.equal(h.state.searchQueries[1]?.limit, 100);
-  assert.equal(h.state.searchQueries[2]?.limit, 5);
-  assert.equal(h.state.searchQueries[3]?.limit, 5);
+  // 每轮 3 个候选查询：analyzed / failed_retryable / 已推送待补映射
+  assert.deepEqual(h.state.searchQueries.slice(0, 3).map((query) => query.limit), [100, 100, 100]);
+  assert.deepEqual(h.state.searchQueries.slice(3, 6).map((query) => query.limit), [5, 5, 5]);
   assert.equal(limitedRun.scanned, 5);
   assert.equal(limitedRun.enqueued, 5);
 });
@@ -317,4 +327,31 @@ test("候选查询失败不抛出，只记录 errors", async () => {
   assert.equal(report.enqueued, 0);
   assert.deepEqual(report.errors, ["search candidates: Error: database unavailable"]);
   assert.equal(h.state.enqueueCalls.length, 0);
+});
+
+test("已按空负责人推送的需求在映射补齐后用独立 intent 键重推", async () => {
+  const h = harness({
+    candidates: [requirement({ pipeline: { pull: "synced", analysis: "analyzed", owner: "pending_mapping", push: "pushed" } })],
+    mappings: { "tb-user-1": mapping() },
+    latestAnalysisVersion: { "req-1": 2 },
+  });
+
+  const report = await h.run();
+
+  assert.deepEqual(report.errors, []);
+  assert.equal(report.enqueued, 1);
+  assert.deepEqual(h.state.setOwnerCalls[0], { id: "req-1", feishuUserId: "ou-1", state: "auto_mapped" });
+  // 独立 intent 键：同 sv/av 的普通推送作业已 succeeded，沿用会直接重放旧结果
+  assert.equal(h.state.enqueueCalls[0]?.dedupeKey, "base-push:req-1:sv3:av2:owner-mapped:ou-1");
+  assert.equal(h.state.enqueueCalls[0]?.payload["idempotencyKey"], "base-push:req-1:sv3:av2:owner-mapped:ou-1");
+  assert.equal(h.state.events[0]?.safeDetails["reason"], "owner_mapped_after_push");
+});
+
+test("补映射重推使用稳定的 intent 键：同一映射重复扫描不会重复入队", async () => {
+  const candidates = [requirement({ pipeline: { pull: "synced", analysis: "analyzed", owner: "pending_mapping", push: "pushed" } })];
+  const h = harness({ candidates, mappings: { "tb-user-1": mapping() }, dedupe: true });
+  await h.run();
+  // 作业已入队时同键查询返回 queued，第二轮跳过
+  await h.run();
+  assert.equal(h.state.enqueueCalls.length, 1);
 });

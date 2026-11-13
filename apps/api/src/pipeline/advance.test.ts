@@ -16,23 +16,26 @@ interface AdvanceFixture extends AdvanceDeps {
   queuedJobs: { dedupeKey: string }[];
   ownerChanges: string[];
   auditResults: string[];
+  auditDetails: Array<Record<string, unknown>>;
 }
 function makeAdvanceFixture(req: RequirementRecord, resolveMapping: boolean): AdvanceFixture {
   const queuedJobs: { dedupeKey: string }[] = [];
   const ownerChanges: string[] = [];
   const auditResults: string[] = [];
+  const auditDetails: Array<Record<string, unknown>> = [];
   const fixture: AdvanceFixture = {
     requirementRow: req,
     queuedJobs,
     ownerChanges,
     auditResults,
+    auditDetails,
     requirements: {
       get: async (_id: string) => fixture.requirementRow,
       setOwner: async (_id: string, owner: string | null, state: "pending_mapping" | "auto_mapped" | "manually_mapped" | "not_required") => { ownerChanges.push(`${owner}:${state}`); fixture.requirementRow = { ...fixture.requirementRow, pipeline: { ...fixture.requirementRow.pipeline, owner: state } }; },
     },
     people: { resolveActive: async () => resolveMapping ? mapping : null },
     jobs: { enqueue: async (p: { dedupeKey: string }) => { queuedJobs.push({ dedupeKey: p.dedupeKey }); return p as never; } },
-    audit: { append: async (e: { result: string }) => { auditResults.push(e.result); } },
+    audit: { append: async (e: { result: string; safeDetails?: Record<string, unknown> }) => { auditResults.push(e.result); auditDetails.push(e.safeDetails ?? {}); } },
     now: () => new Date("2026-10-09T00:00:00.000Z"),
   } as never as AdvanceFixture;
   return fixture;
@@ -67,12 +70,14 @@ test("单条人工负责人优先：TB 执行人未匹配映射也照常推送",
   assert.deepEqual(fixture.queuedJobs.map((j) => j.dedupeKey), ["base-push:req-1:sv1:av1"]);
 });
 
-test("TB 有负责人但未匹配：等待人工映射，不入队推送", async () => {
+test("TB 有负责人但未匹配：仍以空负责人入队推送（Q1）", async () => {
   const fixture = makeAdvanceFixture(requirement({ executorUserId: "tb-user" }), false);
   const advance = createAnalysisAdvancer(fixture);
-  assert.equal(await advance("req-1", "analyzed", "worker", 1), "waiting_mapping");
-  assert.deepEqual(fixture.queuedJobs, []);
+  assert.equal(await advance("req-1", "analyzed", "worker", 1), "queued");
+  assert.deepEqual(fixture.queuedJobs.map((j) => j.dedupeKey), ["base-push:req-1:sv1:av1"]);
+  // owner 状态保持 pending_mapping，不伪造负责人
   assert.deepEqual(fixture.ownerChanges, []);
+  assert.equal(fixture.auditDetails[0]?.push, "queued_owner_unmapped");
 });
 
 test("AI 成功重试可更新已推送需求；失败重试不重复推送，未同步需求不推进", async () => {
@@ -142,13 +147,11 @@ test("推送映射最新 AI 版本：P3 原样传递不丢弃，无分析时不�
   assert.deepEqual(failedAnalysis.pushedInputs[0]!.aiValues, {});
 });
 
-test("TB 有负责人但未匹配：不推送且审计 denied（映射前不误报已推送）", async () => {
+test("TB 有负责人但未匹配：以空负责人推送，不写执行人字段（Q1）", async () => {
   const fixture = makePushFixture(requirement({ executorUserId: "tb-user" }), { resolveMapping: false });
   const outcome = await createBasePushService(fixture.deps).pushRequirement("req-1", "k4");
-  assert.equal(outcome.kind, "conflict");
-  assert.deepEqual(fixture.actions, []);
-  assert.deepEqual(fixture.audits.map((a) => a.result), ["denied"]);
-  assert.equal(fixture.audits[0]!.safeDetails.reason, "owner_pending_mapping");
+  assert.equal(outcome.kind, "pushed");
+  assert.deepEqual(fixture.pushedInputs[0]!.owner, null);
 });
 
 test("TB 无负责人：先 not_required 再空负责人推送，且新源版本才触发 PM 快照", async () => {

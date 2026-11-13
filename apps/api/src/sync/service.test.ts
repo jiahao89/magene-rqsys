@@ -15,6 +15,7 @@ const capturedPayloads: Record<string, unknown>[] = [];
 
 function harness(tasks: ReturnType<typeof task>[], failId?: string, pages?: Array<{ items: ReturnType<typeof task>[]; hasMore: boolean; nextCursor: string | null }>) {
   const calls: string[] = [];
+  const summaries: Array<string | null> = [];
   const rows = new Map<string, { id: string; teambitionRequirementId: string; title: string; sourceCreatedAt: string | null; duplicateOfRequirementId: string | null }>();
   const source: SyncSourceReader = { async listRequirements(_config, cursor) { calls.push(`list:${cursor ?? "first"}`); return pages?.[cursor === "next" ? 1 : 0] ?? { items: tasks, hasMore: false, nextCursor: null }; } };
   const persistence: SyncPersistence = {
@@ -28,7 +29,8 @@ function harness(tasks: ReturnType<typeof task>[], failId?: string, pages?: Arra
     },
     async appendSourceSnapshot(input) { calls.push(`snapshot:${input.requirementId}`); },
     async writeSyncItem(input) { calls.push(`item:${input.teambitionRequirementId}:${input.status}`); },
-    async completeBatch(_batch, input) { calls.push(`complete:${input.status}:${input.totalCount}:${input.succeededCount}:${input.failedCount}`); },
+    async completeBatch(_batch, input) { calls.push(`complete:${input.status}:${input.totalCount}:${input.succeededCount}:${input.failedCount}`); summaries.push(input.errorSummary); },
+    async markSourceMissing(input) { calls.push(`missing:${[...input.seenTeambitionIds].sort().join(",")}`); return 0; },
     async listTitleCandidates() { return [...rows.values()]; },
     async setDuplicateOf(requirementId, canonicalRequirementId) {
       const row = rows.get(requirementId);
@@ -36,7 +38,7 @@ function harness(tasks: ReturnType<typeof task>[], failId?: string, pages?: Arra
       calls.push(`duplicate:${requirementId}->${canonicalRequirementId ?? "none"}`);
     },
   };
-  return { calls, source, persistence, orchestrator: new SyncOrchestrator(source, persistence, { now: () => new Date("2026-10-08T00:00:00.000Z"), id: () => "batch-1" }) };
+  return { calls, summaries, source, persistence, orchestrator: new SyncOrchestrator(source, persistence, { now: () => new Date("2026-10-08T00:00:00.000Z"), id: () => "batch-1" }) };
 }
 
 test("imports every returned task, filters provider fields, and persists snapshots and results", async () => {
@@ -204,4 +206,28 @@ test("classifies a source snapshot write failure without exposing its database e
   assert.equal(result.status, "failed");
   assert.deepEqual(itemWrites, [{ status: "failed", errorCode: "source_snapshot_failed", errorDetail: "Requirement updated, but its source snapshot could not be saved" }]);
   assert.equal(JSON.stringify(itemWrites).includes("private database detail"), false);
+});
+
+test("全量同步成功后标记本次未出现的 TB 需求（Q4）", async () => {
+  const h = harness([task("one", " One "), task("two", "Two")]);
+  await h.orchestrator.run({ batchId: "batch-1", sourceConfigId: config.id, config });
+  assert.ok(h.calls.includes("missing:one,two"));
+});
+
+test("单条重试和失败批次不做「来源已移除」标记（Q4）", async () => {
+  const only = harness([task("one", "One")]);
+  await only.orchestrator.run({ batchId: "batch-1", sourceConfigId: config.id, config, onlyIds: ["one"] });
+  assert.equal(only.calls.some((call) => call.startsWith("missing:")), false);
+
+  const partial = harness([task("good", "Good"), task("bad", "Bad")], "bad");
+  await partial.orchestrator.run({ batchId: "batch-1", sourceConfigId: config.id, config });
+  assert.equal(partial.calls.some((call) => call.startsWith("missing:")), false);
+});
+
+test("标记失败不改变批次状态，但写进批次摘要（Q4）", async () => {
+  const h = harness([task("one", "One")]);
+  h.persistence.markSourceMissing = async () => { throw new Error("mark unavailable"); };
+  const result = await h.orchestrator.run({ batchId: "batch-1", sourceConfigId: config.id, config });
+  assert.equal(result.status, "succeeded");
+  assert.match(h.summaries[0] ?? "", /removed-source hints could not be refreshed/);
 });

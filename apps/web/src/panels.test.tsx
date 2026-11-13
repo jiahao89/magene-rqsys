@@ -396,6 +396,15 @@ describe("RequirementsPanel (ticket 17)", () => {
     return screen.findByRole("heading", { name: title });
   }
 
+  it("marks requirements that disappeared from the latest full sync (Q4)", async () => {
+    const missingRow = { ...row, sourceMissingSince: "2026-11-11T00:00:00.000Z" };
+    mockPanel({ rows: [missingRow], detailBody: detail({ sourceMissingSince: "2026-11-11T00:00:00.000Z" }) });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    expect(await screen.findByText("来源已移除")).toBeInTheDocument();
+    await openFirstRow();
+    expect(screen.getByText(/已不在最近一次全量同步中/)).toBeInTheDocument();
+  });
+
   it("scans a fixed row layout and opens a page-level detail instead of an inline card", async () => {
     mockPanel();
     render(<RequirementsPanel onRefresh={() => undefined} />);

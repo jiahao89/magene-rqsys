@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { createPool } from "./adapters/postgres/pool.js";
 import { PostgresRepositories } from "./adapters/postgres/repositories.js";
 import { createPostgresSyncPersistence } from "./adapters/postgres/sync-persistence.js";
+import { markDuplicateInBase } from "./base/duplicate-marker.js";
 import { type ApiDependencies, handleApiRequest } from "./http/app.js";
 import { errorBody } from "./http/errors.js";
 import { PipelineJobWorker } from "./jobs/worker.js";
@@ -136,6 +137,10 @@ const baseClient = process.env.FEISHU_APP_ID && process.env.FEISHU_APP_SECRET &&
       minIntervalMs: Number(process.env.BASE_MIN_INTERVAL_MS ?? 100),
     })
   : undefined;
+// Q2：重复判定的 Base 标记（不通知）。未配置 Base 时整个能力关闭。
+const duplicateMarker = baseClient
+  ? (input: Parameters<typeof markDuplicateInBase>[1]) => markDuplicateInBase({ base: baseClient, fields: baseFields, webBaseUrl: process.env.RQSYS_WEB_BASE_URL ?? null }, input)
+  : undefined;
 const baseAdapter = baseClient && repositories
   ? new FeishuBasePushAdapter(baseClient, baseFields, {
       async savePmSnapshot(input) { await repositories.pmSnapshots.append({ ...input, capturedAt: new Date().toISOString() }); },
@@ -199,7 +204,7 @@ const server = createServer(async (incoming, outgoing) => {
     const request = new Request(`http://${incoming.headers.host ?? "localhost"}${incoming.url ?? "/"}`, {
       method: incoming.method ?? "GET", headers, ...(body.length > 0 ? { body } : {}),
     });
-    const dependencies: ApiDependencies = { database, repositories, identity, ...(teambitionSourceProjects ? { teambitionSourceProjects } : {}), ...(feishuUserDirectory ? { feishuUsers: feishuUserDirectory } : {}), now: undefined };
+    const dependencies: ApiDependencies = { database, repositories, identity, ...(duplicateMarker ? { duplicateMarker } : {}), ...(teambitionSourceProjects ? { teambitionSourceProjects } : {}), ...(feishuUserDirectory ? { feishuUsers: feishuUserDirectory } : {}), now: undefined };
     const response = await handleApiRequest(request, dependencies);
     outgoing.statusCode = response.status;
     response.headers.forEach((value, key) => outgoing.setHeader(key, value));

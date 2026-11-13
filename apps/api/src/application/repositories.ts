@@ -523,6 +523,11 @@ export interface RequirementQueryRepository {
   markLastPushedOwner(requirementId: string, owner: { feishuUserId: string; feishuIdType: FeishuIdType } | null): Promise<void>;
   // 疑似重复：查询同标题链接（仅详情使用）。
   listDuplicates(requirementId: string): Promise<Array<{ id: string; title: string; teambitionRequirementId: string }>>;
+  /**
+   * Q4：全量同步成功后，把本来源本次未出现的 TB 需求标记为「来源已移除」。
+   * 已标记的行保留首次缺失时间；返回本次新标记的条数。
+   */
+  markSourceMissing(input: { sourceConfigId: string; seenTeambitionIds: string[]; now: string }): Promise<number>;
   // 标题重复检测的输入：当前来源全部需求（含已标记重复项）。
   listTitleCandidates(sourceConfigId: string): Promise<Array<{ id: string; teambitionRequirementId: string; title: string; sourceCreatedAt: string | null; duplicateOfRequirementId: string | null }>>;
   setDuplicateOf(requirementId: string, canonicalRequirementId: string | null): Promise<void>;

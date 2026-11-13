@@ -1689,6 +1689,9 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
 
     <StateBanner loadError={error} notice={notice} onCloseNotice={onCloseNotice} />
 
+    {detail.sourceMissingSince && <div className="notice-banner" role="status">
+      <span>该需求的 Teambition 来源记录已不在最近一次全量同步中（{timeLabel(detail.sourceMissingSince)} 起未出现）。记录与处理状态保留；如来源恢复出现，标记会自动清除。</span>
+    </div>}
     {suppressed && <div className="alert-banner suppressed-detail-banner" role="alert">
       <div>
         <strong>该需求已被压制（{suppressedLabel}）</strong>
@@ -1814,6 +1817,7 @@ function RequirementsTable({ rows, loading, onOpen, onAssign }: { rows: Requirem
           <span className="req-row-title" title={row.title}>{row.title}</span>
           {row.sourceType === "web_manual" ? <span className="source-badge" title={`Web 收录${row.sourceChannel ? ` · ${row.sourceChannel}` : ""}`}>手工</span> : null}
           {badge ? <span className={`status-chip ${badge.className} processing-badge`} title={badge.title}>{badge.label}</span> : null}
+          {row.sourceMissingSince ? <span className="status-chip processing-badge" title={`上次全量同步（${timeLabel(row.sourceMissingSince)}）未再出现该 TB 需求；记录保留，处理与推送状态不变`}>来源已移除</span> : null}
           {suppressed ? <span className="sr-only">（已压制：不进入 AI 分析/Base 推送/通知）</span> : null}
         </div>;
       },

@@ -819,13 +819,16 @@ test("a hand-picked owner keeps precedence after Teambition later provides a map
   assert.ok(!h.calls.includes("manual-owner-cleared"));
 });
 
-test("an unmapped TB owner returns a conflict with the owner_pending_mapping reason and writes nothing to Base", async () => {
+test("an unmapped TB owner still pushes with an empty owner and writes no assignment (Q1)", async () => {
   const req = requirement({ executorUserId: "tb-owner", executorName: "Owner" });
   const h = makeHarness({ req, mapping: null });
   const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
-  assert.deepEqual(result, { kind: "conflict", reason: "owner_pending_mapping" });
-  assert.equal(h.calls.includes("base"), false);
-  assert.equal(h.auditEvents.find((event) => event.result === "denied")?.safeDetails.reason, "owner_pending_mapping");
+  assert.equal(result.kind, "pushed");
+  assert.ok(h.calls.includes("base"));
+  // 不写执行人字段，避免抹掉 Base 上 PM 手工维护的负责人
+  assert.equal(h.baseInput?.owner, null);
+  // 自动匹配不算人工动作：没有通知载荷
+  assert.equal(h.baseInput?.notification, undefined);
 });
 
 test("V02-T03 a Base key conflict stops the push with a denied audit and a failed run", async () => {

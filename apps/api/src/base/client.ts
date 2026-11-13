@@ -65,6 +65,16 @@ export interface BaseFieldMap {
   pm: string[];
   metadata?: Record<string, string>;
   notification?: BaseNotificationFieldMap;
+  /**
+   * Q2：重复行标记（可选）。只有配置了字段名才会写；未配置时判定不触达 Base。
+   * 只写这两个文本字段，不写业务/PM/通知字段，也不触发通知。
+   */
+  duplicate?: {
+    /** 例：重复（主记录 RQ-000123） / 已忽略 / 空字符串=清除。 */
+    mark: string;
+    /** 主记录的 Web 需求深链（可选字段）。 */
+    canonicalLink?: string;
+  };
   /// 字段名 → 该字段是否为「多选」。
   /// 单选（含 PM 状态、推送状态、AI 模块/优先级建议）在飞书 API 中必须写字符串：真实环境实测
   /// bitable v1 对单选的 PUT 会以 1254062 拒绝数组，读回时也返回字符串。

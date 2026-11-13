@@ -148,6 +148,11 @@ export interface RequirementRecord {
   currentScorePriority?: PriorityLevel | null;
   /** V02-T26：人工补充上下文；下一次分析以“补充上下文：<note>”独立段进入模型输入。 */
   analysisContext?: RequirementAnalysisContext | null;
+  /**
+   * Q4：最近一次全量同步未再出现该 TB 需求的时间；只做提示，不改变处理/推送状态。
+   * 需求再次出现时由 upsert 清空。
+   */
+  sourceMissingSince?: string | null;
   firstSeenAt: string;
   lastSeenAt: string;
   createdAt: string;

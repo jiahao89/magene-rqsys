@@ -379,6 +379,8 @@ export interface RequirementSummary {
   pipeline: { pull: string; analysis: string; owner: RequirementOwnerState; push: string };
   /** 处理闸口状态；缺省视为 active（兼容后端未上线时的旧响应）。 */
   processingState?: RequirementProcessingState;
+  /** Q4：上一次全量同步未再出现该需求的时间；只做提示。 */
+  sourceMissingSince?: string | null;
   /** 人工/系统重复判定；未判定或旧响应为 null。 */
   resolution?: RequirementResolution | null;
   /** V02-T26：人工优先级覆盖与当前生效优先级（覆盖 > 当前评分版本）。 */
@@ -466,6 +468,8 @@ export interface RequirementDetail {
   /** V02-T26：人工优先级覆盖与当前生效优先级。 */
   priorityOverride?: PriorityOverrideState | null;
   effectivePriority?: "P0" | "P1" | "P2" | "P3" | null;
+  /** Q4：上一次全量同步未再出现该需求的时间；只做提示。 */
+  sourceMissingSince?: string | null;
   /** V02-T26：人工补充上下文（下一次分析作为独立段发送给模型）。 */
   analysisContext?: AnalysisContextState | null;
   source: Record<string, unknown>;

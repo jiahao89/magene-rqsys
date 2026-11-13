@@ -82,14 +82,13 @@ export type PushOutcome =
   // Base 行已写成功，但本地记账失败。绝不能当成外部写失败重推（会重复写 Base 并误报状态）。
   | { kind: "pushed_unrecorded"; baseRecordId: string; detail: string }
   | { kind: "not_found" }
-  // reason 区分冲突来源：owner_pending_mapping 是"等映射补齐后应再推"，作业层据此记为可重置的终态，
-  // 不能当作已成功（否则 owner-recheck 的同键入队永远命中 succeeded 作业而失效）。
+  // reason 区分冲突来源，作业层据此决定是终态跳过还是可重试。
   | { kind: "conflict"; reason: PushConflictReason }
   // 推送失败（safe error 已记录）。retryable 表示「交给作业重试是否安全」：
   // 网络/429/5xx 等瞬时故障为 true；字段/权限/4xx 等永久错误为 false，作业层据此判终态。
   | { kind: "error"; errorCode?: string; retryable: boolean };
 
-export type PushConflictReason = "intake_incomplete" | "owner_pending_mapping" | "push_in_progress" | "base_key_conflict";
+export type PushConflictReason = "intake_incomplete" | "push_in_progress" | "base_key_conflict";
 
 function safeBaseFailure(error: unknown): { code: string; summary: string; retryable: boolean } {
   if (error instanceof FeishuApiError) {
@@ -141,14 +140,14 @@ function snapshotOwnerLookup(payload: Record<string, unknown> | null | undefined
 }
 
 /** 正式 Web 工作台地址：通知按钮需求深链的默认 base。 */
-const DEFAULT_WEB_BASE_URL = "https://ecn8egz1lhkq.feishu.link/app/app_17fqkjwyx1u";
+export const DEFAULT_WEB_BASE_URL = "https://ecn8egz1lhkq.feishu.link/app/app_17fqkjwyx1u";
 
 /**
  * 需求深链：`<工作台 base>?requirement=<requirements.id>`。
  * 每次推送都写这个字段（不受通知静默影响）——它是给 PM 点击的稳定入口，不是通知事件；
  * 目标 Base 缺该字段时由 client 的 omittedFields 记录省略，不影响推送成功。
  */
-function requirementDeepLink(baseUrl: string, requirementDbId: string): string {
+export function requirementDeepLink(baseUrl: string, requirementDbId: string): string {
   const base = (baseUrl.trim() || DEFAULT_WEB_BASE_URL).replace(/\/+$/, "");
   return `${base}?requirement=${encodeURIComponent(requirementDbId)}`;
 }
@@ -329,15 +328,9 @@ export function createBasePushService(deps: BasePushServiceDeps) {
       ? { userId: owner.feishuUserId, idType: owner.feishuIdType }
       : null;
 
-    // 工单 14：TB 有负责人但未匹配时等待人工映射——映射前不推送、不误报已推送。
-    // 审计结果 denied（result 枚举含 denied），worker 视为终态跳过而非重试。
-    if (!owner && (req.executorUserId || req.executorName)) {
-      await deps.audit.append({
-        id: randomUUID(), actorId: deps.actorId, eventType: "base.push", entityType: "requirement", entityId: req.id,
-        result: "denied", safeDetails: { reason: "owner_pending_mapping", sourceVersion: req.sourceVersion }, occurredAt: now().toISOString(),
-      });
-      return { kind: "conflict", reason: "owner_pending_mapping" };
-    }
+    // Q1（2026-11-10 决策）：TB 有执行人但其映射尚未建立时，仍以空负责人推送，PM 在 Base 能看到全集；
+    // 负责人字段不写（不改写 Base 已有人工值），也不产生通知。补映射后由 owner-recheck 用独立的
+    // intent 幂等键重推这一行并补上负责人。
     // TB 无负责人：先推进 owner 状态再推送（可空负责人推送，不改写 Base 已有人工值）
     if (!owner && !hasTbOwner && req.pipeline.owner === "pending_mapping") {
       await deps.requirements.setOwner(req.id, null, "not_required");

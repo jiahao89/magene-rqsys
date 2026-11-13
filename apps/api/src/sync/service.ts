@@ -16,6 +16,8 @@ export interface SyncPersistence {
   // 疑似重复检测：读取当前来源全部需求，再把同标题后出现的记录指向最早一条。
   listTitleCandidates(sourceConfigId:string):Promise<Array<{id:string;teambitionRequirementId:string;title:string;sourceCreatedAt:string|null;duplicateOfRequirementId:string|null}>>;
   setDuplicateOf(requirementId:string,canonicalRequirementId:string|null):Promise<void>;
+  /** Q4：全量成功后标记本次未出现的 TB 需求（可选；仓储未实现时跳过）。 */
+  markSourceMissing?(input:{sourceConfigId:string;seenTeambitionIds:string[];now:string}):Promise<number>;
 }
 export interface SyncInput { batchId:string;sourceConfigId:string;config:SourceProjectConfig;startedAt?:string;onlyIds?:string[];mode?:SyncExecutionMode }
 // Queue payloads resolve configuration at the application composition seam; the orchestrator stays provider-agnostic.
@@ -140,8 +142,15 @@ export class SyncOrchestrator {
     let duplicateHintsFailed=false;
     try{await markDuplicateTitles(this.persistence,input.sourceConfigId);}
     catch{duplicateHintsFailed=true;}
+    // Q4：全量拉取成功且没有条目失败时，把本次未出现的本来源 TB 需求标记为「来源已移除」。
+    // 单条重试（onlyIds）不是全量视图，绝不能据此判定缺失。标记失败只写批次摘要，不改变批次状态。
+    let missingMarkFailed=false;
+    if(!input.onlyIds?.length && failedCount===0){
+      try{await this.persistence.markSourceMissing?.({sourceConfigId:input.sourceConfigId,seenTeambitionIds:[...seen],now:clock().toISOString()});}
+      catch{missingMarkFailed=true;}
+    }
     const result:SyncResult={batchId:input.batchId,status:failedCount===0?"succeeded":succeededCount===0?"failed":"partial_failure",totalCount:all.length,succeededCount,failedCount,fetchedCount,duplicateIdCount,failedCodes:[...failedCodes]};
-    const errorSummary=failedCount?`${failedCount} item(s) failed; inspect item results.`:duplicateHintsFailed?"All items synced, but duplicate-title hints could not be refreshed; manual retry is available.":null;
+    const errorSummary=failedCount?`${failedCount} item(s) failed; inspect item results.`:duplicateHintsFailed?"All items synced, but duplicate-title hints could not be refreshed; manual retry is available.":missingMarkFailed?"All items synced, but removed-source hints could not be refreshed; the next full sync retries.":null;
     await this.persistence.completeBatch(input.batchId,{...result,errorSummary,completedAt:clock().toISOString(),counts:{fetched:fetchedCount,duplicateIds:duplicateIdCount}});return result;
   }
 }

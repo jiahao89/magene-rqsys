@@ -75,6 +75,28 @@ test("suspected duplicates stay in the pool/counts and keep detail links",async(
 
 test("batch keyset cursor does not skip rows with identical start times and applies inclusive time filters",async()=>{const ctx=await setup();try{const source=await ctx.repos.sources.create(config);const ids:string[]=[];for(let i=0;i<3;i++){const batch=await ctx.repos.batches.create({sourceConfigId:source.id,triggerType:"manual",actorId:null,idempotencyKey:`same-time-batch-${i}`,startedAt:"2026-10-08T00:00:00Z"});ids.push(batch.id);await ctx.repos.batches.complete(batch.id,{status:"succeeded",totalCount:0,succeededCount:0,failedCount:0,errorSummary:null,completedAt:"2026-10-08T00:00:01Z"});}const first=await ctx.repos.batches.list({since:"2026-10-08T00:00:00Z",until:"2026-10-08T00:00:00Z",limit:1});assert.equal(first.items.length,1);assert.ok(first.nextCursor);const {decodeBatchCursor}=await import("../../application/batch-cursor.js");const second=await ctx.repos.batches.list({since:"2026-10-08T00:00:00Z",until:"2026-10-08T00:00:00Z",limit:1,cursor:decodeBatchCursor(first.nextCursor)!});assert.equal(second.items.length,1);assert.notEqual(second.items[0]?.id,first.items[0]?.id);assert.equal(ids.length,3);}finally{await cleanup(ctx);}});
 
+test("source-missing marking flags only unseen TB requirements and clears on reappearance (Q4)", async () => {
+  const ctx = await setup();
+  try {
+    const source = await ctx.repos.sources.create(config);
+    const batch = await ctx.repos.batches.create({ sourceConfigId: source.id, triggerType: "manual", actorId: null, idempotencyKey: "source-missing-0001", startedAt: "2026-11-11T00:00:00Z" });
+    const seen = await ctx.repos.requirements.upsertRequirement(source.id, "seen", requirementWrite(source.id, batch.id, { teambitionRequirementId: "seen" }));
+    const gone = await ctx.repos.requirements.upsertRequirement(source.id, "gone", requirementWrite(source.id, batch.id, { teambitionRequirementId: "gone" }));
+
+    assert.equal(await ctx.repos.requirements.markSourceMissing({ sourceConfigId: source.id, seenTeambitionIds: ["seen"], now: "2026-11-11T00:00:00Z" }), 1);
+    assert.equal((await ctx.repos.requirements.get(seen.id))?.sourceMissingSince, null);
+    assert.equal((await ctx.repos.requirements.get(gone.id))?.sourceMissingSince, "2026-11-11T00:00:00.000Z");
+
+    // 第二次仍未出现：保留首次缺失时间，不重复计数
+    assert.equal(await ctx.repos.requirements.markSourceMissing({ sourceConfigId: source.id, seenTeambitionIds: ["seen"], now: "2026-11-12T00:00:00Z" }), 0);
+    assert.equal((await ctx.repos.requirements.get(gone.id))?.sourceMissingSince, "2026-11-11T00:00:00.000Z");
+
+    // 重新出现：upsert 清空标记
+    await ctx.repos.requirements.upsertRequirement(source.id, "gone", requirementWrite(source.id, batch.id, { teambitionRequirementId: "gone" }));
+    assert.equal((await ctx.repos.requirements.get(gone.id))?.sourceMissingSince, null);
+  } finally { await cleanup(ctx); }
+});
+
 test("pool search treats % and _ literally and ships the search indexes", async () => {
   const ctx = await setup();
   try {

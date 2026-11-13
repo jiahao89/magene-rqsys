@@ -90,8 +90,10 @@ export async function recheckOwnerMappings(
     // analyzed 与 failed_retryable 都可推送：AI 首次失败/可重试失败不得阻断负责人处理与推送。
     const analyzed = await params.requirements.search({ pullState: "synced", analysisState: "analyzed", pushState: "pending", limit });
     const retryable = await params.requirements.search({ pullState: "synced", analysisState: "failed_retryable", pushState: "pending", limit });
+    // Q1：已按空负责人推送、但 TB 执行人仍未映射的需求；映射补齐后需要重推一次补上负责人。
+    const remap = await params.requirements.search({ pullState: "synced", pushState: "pushed", ownerState: "pending_mapping", limit });
     const seen = new Set<string>();
-    candidates = [...analyzed.items, ...retryable.items].filter((row) => (seen.has(row.id) ? false : (seen.add(row.id), true))).slice(0, limit);
+    candidates = [...analyzed.items, ...retryable.items, ...remap.items].filter((row) => (seen.has(row.id) ? false : (seen.add(row.id), true))).slice(0, limit);
   } catch (error) {
     // 查询失败（数据库不可用等）只记录，后续轮次再试；不阻断同轮其它调度阶段。
     report.errors.push(`search candidates: ${safeErrorMessage(error)}`);
@@ -126,7 +128,11 @@ export async function recheckOwnerMappings(
 
       const latestAnalysis = await params.analyses.latest(requirement.id);
       const analysisVersion = latestAnalysis?.analysisVersion ?? 0;
-      const dedupeKey = basePushIdempotencyKey(requirement.id, requirement.sourceVersion, analysisVersion);
+      // 已推送成功、本次是补映射：用独立 intent 键创建新的推送运行，
+      // 否则会命中同 sv/av 的 succeeded 作业（重放直接返回旧结果，负责人永远不会补上）。
+      const remapping = requirement.pipeline.push === "pushed";
+      const intentId = remapping ? `owner-mapped:${mapping.feishuUserId}` : undefined;
+      const dedupeKey = basePushIdempotencyKey(requirement.id, requirement.sourceVersion, analysisVersion, intentId);
       // 已有 queued/running/succeeded 作业时跳过：否则每个 tick 都会重复入队+写审计（噪音/计数失真）；
       // 只有终态失败/取消的作业才需要重新入队（enqueue 的同键 ON CONFLICT 会重置它）。
       const existingJob = await params.jobs.findByDedupeKey?.(dedupeKey);
@@ -141,6 +147,7 @@ export async function recheckOwnerMappings(
         payload: {
           requirementId: requirement.id, actorId: null,
           sourceVersion: requirement.sourceVersion, analysisVersion,
+          ...(remapping ? { idempotencyKey: dedupeKey } : {}),
         },
         availableAt: nowIso,
       });
@@ -151,7 +158,7 @@ export async function recheckOwnerMappings(
         eventType: OWNER_RECHECK_AUDIT_EVENT,
         entityType: "requirement", entityId: requirement.id,
         result: "succeeded",
-        safeDetails: { source: "scheduler", sourceVersion: requirement.sourceVersion, analysisVersion },
+        safeDetails: { source: "scheduler", sourceVersion: requirement.sourceVersion, analysisVersion, ...(remapping ? { reason: "owner_mapped_after_push" } : {}) },
         occurredAt: nowIso,
       });
     } catch (error) {

@@ -99,6 +99,8 @@ function makeDeps(overrides: { stored?: RequirementRecord; score?: typeof scoreV
       markLastPushedOwner: async () => undefined, assignManualOwner: async () => undefined, clearManualOwner: async () => undefined,
       markManualOwnerPushed: async () => undefined,
       getPipelineCounts: async () => ({ total: 1, pullSynced: 1, analysisAnalyzed: 1, ownerResolved: 1, pushPushed: 0, failed: 0, pushFailed: 0, pushPending: 1, suppressed: 0, priority: { P0: 0, P1: 0, P2: 0, P3: 1, scored: 1, legacy: 0, unscored: 0 } }),
+      decideResolution: async () => ({ outcome: "saved", version: 1 }),
+      clearResolution: async () => ({ outcome: "cleared" }),
       setPriorityOverride: async (id: string, input: { priority: "P0" | "P1" | "P2" | "P3" | null; reason: string | null; actorId: string; at: string }) => { recorded.priorityCalls.push({ id, ...input }); return { outcome: "saved", override: input.priority === null ? null : { priority: input.priority, reason: input.reason!, actorId: input.actorId, at: input.at } }; },
       setAnalysisContext: async (id: string, input: { context: string | null; actorId: string; at: string }) => { recorded.contextCalls.push({ id, ...input }); return { outcome: "updated", context: input.context === null ? null : { note: input.context, updatedAt: input.at, updatedBy: input.actorId } }; },
     } as never,
@@ -272,4 +274,42 @@ test("detail exposes a Base record link only when a valid https template is conf
     if (previous === undefined) delete process.env.RQSYS_BASE_RECORD_URL_TEMPLATE;
     else process.env.RQSYS_BASE_RECORD_URL_TEMPLATE = previous;
   }
+});
+
+test("duplicate decisions write the Base duplicate marker without notifications", async () => {
+  const stored: RequirementRecord = { ...requirement, baseRecordId: "rec-1" };
+  const canonical: RequirementRecord = { ...requirement, id: "77777777-7777-4777-8777-777777777777", platformRequirementId: "RQ-000002" };
+  const { deps } = makeDeps({ stored });
+  const get = deps.repositories!.requirements!.get.bind(deps.repositories!.requirements!);
+  deps.repositories!.requirements!.get = async (id: string) => (id === canonical.id ? canonical : get(id));
+  const calls: Array<Record<string, unknown>> = [];
+  deps.duplicateMarker = async (input) => { calls.push(input as unknown as Record<string, unknown>); return { outcome: "marked" }; };
+
+  const confirmed = await handleApiRequest(new Request(`http://localhost/api/requirements/${stored.id}/duplicate-decision`, {
+    method: "PUT", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ decision: "duplicate", canonicalRequirementId: canonical.id, reason: "same request", expectedVersion: 0 }),
+  }), deps);
+  assert.equal(confirmed.status, 200);
+  assert.deepEqual(calls[0]!, {
+    recordId: "rec-1", decision: "duplicate",
+    canonicalRequirementId: canonical.id, canonicalPlatformRequirementId: "RQ-000002",
+  });
+
+  const revoked = await handleApiRequest(new Request(`http://localhost/api/requirements/${stored.id}/duplicate-decision`, {
+    method: "DELETE", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ expectedVersion: 1 }),
+  }), deps);
+  assert.equal(revoked.status, 200);
+  assert.deepEqual(calls[1]!, { recordId: "rec-1", decision: null });
+});
+
+test("a failing duplicate marker does not fail the decision itself", async () => {
+  const stored: RequirementRecord = { ...requirement, baseRecordId: "rec-1" };
+  const { deps } = makeDeps({ stored });
+  deps.duplicateMarker = async () => { throw new Error("base down"); };
+  const response = await handleApiRequest(new Request(`http://localhost/api/requirements/${stored.id}/duplicate-decision`, {
+    method: "PUT", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ decision: "ignored", reason: "known", expectedVersion: 0 }),
+  }), deps);
+  assert.equal(response.status, 200);
 });
