@@ -22,6 +22,14 @@
 | 迁移状态可见（I3-4） | **已实现（本地）**：ready 返回 latest/expected/upToDate，运维页提示落后；未发布 |
 | 验证 | API 570、Web 121、妙搭路由 116、契约 7 全绿；alignment/migrations 通过 |
 
+## 部署记录（2026-11-13）
+
+- 迁移 `0027_source_missing.sql` 已应用到 dev 并 `+db-env-migrate` 发布到 online（`changes_applied=2`，之后 env-diff 为空）；线上 `requirements.source_missing_since` 与 `requirements_source_missing_idx` 已回读存在。
+- 妙搭发布（commit → release）：`c428d41` → `7707521422147276040`；`845d5e3` → `7707523097784470777`；`fc010ac` → `7707525674181758225`。三次均 `finished`、`error_logs=[]`。
+- 目标环境已验证：总览优先级卡片下钻链接（`?priority=PN&sort=priority_asc#requirements`）；作业运维页迁移提示（目标库由平台管理迁移时显示“无法判断”，不误报落后）；需求列表/详情正常；发布后 error=0。
+- Q1 存量：`owner-recheck` 现在会为“已分析、待推送、映射未建立”的需求以空负责人入队一次（owner 状态保持 pending_mapping、first_push 静默不通知）；目标环境的 44 条将在下一次 automation tick 补推（2026-11-13 13:35 发布，trigger 每 30 分钟）。
+- 待配置（不阻塞代码部署）：Q2 需在正式 Base 建 `RQ重复标记`/`RQ主记录链接` 两个文本字段并在 `BASE_FIELDS_JSON.duplicate` 指向它们；作业告警需提供 `RQSYS_ALERT_WEBHOOK_URL`（飞书群机器人 https webhook）。
+
 ## 1. 迭代 1：上线前收口（1 周）
 
 **目标**：把已实现的本地改动送到目标环境，并补齐 G1 剩余证据。
