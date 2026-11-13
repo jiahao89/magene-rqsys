@@ -27,7 +27,8 @@
 - 迁移 `0027_source_missing.sql` 已应用到 dev 并 `+db-env-migrate` 发布到 online（`changes_applied=2`，之后 env-diff 为空）；线上 `requirements.source_missing_since` 与 `requirements_source_missing_idx` 已回读存在。
 - 妙搭发布（commit → release）：`c428d41` → `7707521422147276040`；`845d5e3` → `7707523097784470777`；`fc010ac` → `7707525674181758225`。三次均 `finished`、`error_logs=[]`。
 - 目标环境已验证：总览优先级卡片下钻链接（`?priority=PN&sort=priority_asc#requirements`）；作业运维页迁移提示（目标库由平台管理迁移时显示“无法判断”，不误报落后）；需求列表/详情正常；发布后 error=0。
-- Q1 存量：`owner-recheck` 现在会为“已分析、待推送、映射未建立”的需求以空负责人入队一次（owner 状态保持 pending_mapping、first_push 静默不通知）；目标环境的 44 条将在下一次 automation tick 补推（2026-11-13 13:35 发布，trigger 每 30 分钟）。
+- Q1 存量：`owner-recheck` 现在会为“已分析、待推送、映射未建立”的需求以空负责人入队一次（owner 状态保持 pending_mapping、first_push 静默不通知）。2026-11-13 14:00 automation tick 已补推 **44/44**：其中 43 条一次成功；RQ-000157 首次因飞书过滤接口瞬时错误（1254607）失败，手工重试后成功。正式 Base 对应行「执行人」保持为空、通知字段为空（静默），未覆盖 PM 维护字段。
+- 最终对账：App 323 条需求全部 `push_state=pushed`（pending/failed=0）；正式 Base 323 行、`需求平台ID` 唯一无重复、全部「已推送」；队列 0。
 - 待配置（不阻塞代码部署）：Q2 需在正式 Base 建 `RQ重复标记`/`RQ主记录链接` 两个文本字段并在 `BASE_FIELDS_JSON.duplicate` 指向它们；作业告警需提供 `RQSYS_ALERT_WEBHOOK_URL`（飞书群机器人 https webhook）。
 
 ## 1. 迭代 1：上线前收口（1 周）
@@ -97,4 +98,5 @@
 | 妙搭平台不支持备份演练 | G5 无法取证 | 记录平台限制，改为导出快照 + 恢复脚本演练 |
 | `pg_trgm` 等扩展权限在新环境缺失 | 迁移失败 | 迁移在 dev 先跑；0026 已有修复路径 |
 | 妙搭目标库不暴露应用迁移记录 | `schema_migrations` 不可读，无法在目标环境判断库结构是否落后 | readiness 返回 `upToDate=null`（未知≠落后），运维页显示平台管理说明；上线前以 dev→online `+db-env-diff` 为空作为迁移一致性证据 |
+| 飞书过滤接口偶发 1254607 | 单条 Base 推送被判永久失败（实际稍后重试可成功） | 已在 Q1 补推中观察到 1 例（RQ-000157，手工重试成功）；后续可评估把该码加入可重试分类，并在运维页支持单条重推 |
 | 告警 webhook 被关键词/签名策略拦截 | 告警静默失败 | 实现已把 `code≠0` 记为 `ops.alert_failed`，运维页/审计可查；配置时同步关键词「RQ-Sys」 |
