@@ -9,6 +9,7 @@ import {
   analysisForceDedupeKey,
   analysisRetryDedupeKey,
   analysisRunningJobKeys,
+  enqueueMissingAnalysisJobs,
   recoverAnalysisPipeline,
 } from "./analysis-recovery.js";
 
@@ -437,4 +438,21 @@ test("作业键助手覆盖重试键、上一版本键与首轮同步键", () =>
   ]);
   assert.equal(analysisRetryDedupeKey(req, 2), "analysis:req-1:sv3:after2");
   assert.equal(analysisForceDedupeKey(req, 2), "analysis:req-1:sv3:after2:force");
+});
+
+test("AI 额度暂停期间补排与自动重试直接跳过（I3-3）", async () => {
+  const flags = {
+    async get() { return { value: { until: new Date(NOW.getTime() + 3_600_000).toISOString(), reason: "ai_rate_limited" }, updatedAt: NOW.toISOString() }; },
+    async set() { throw new Error("must not write while paused"); },
+  } as never;
+  const repos = {
+    requirements: { search: async () => { throw new Error("must not query while paused"); } },
+    analyses: { latest: async () => null },
+    jobs: { enqueue: async () => { throw new Error("must not enqueue while paused"); } },
+    audit: { append: async () => undefined, search: async () => [] },
+  };
+  const missing = await enqueueMissingAnalysisJobs({ ...repos, now: NOW, flags } as never);
+  assert.deepEqual(missing, { scanned: 0, enqueued: 0, errors: [] });
+  const recovery = await recoverAnalysisPipeline({ ...repos, now: NOW, flags } as never);
+  assert.deepEqual(recovery, { retried: [], recovered: [], errors: [] });
 });

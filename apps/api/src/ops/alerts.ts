@@ -68,6 +68,56 @@ export function buildOpsAlertText(failed: PipelineJobRecord[], stuck: PipelineJo
   return lines.join("\n");
 }
 
+/**
+ * 发送一条运维文本告警：同签名在冷却期内只发一次，成功/失败都写审计。
+ * 供失败作业摘要与 AI 额度暂停共用；返回值与 runOpsAlert 的 outcome 对齐。
+ */
+export async function sendOpsAlertText(params: {
+  config: OpsAlertConfig;
+  audit: AuditEventRepository;
+  now: Date;
+  signature: string;
+  text: string;
+  safeDetails?: Record<string, unknown>;
+  fetcher?: typeof fetch;
+}): Promise<"sent" | "failed" | "suppressed"> {
+  const { config, audit, now } = params;
+  if (!config.webhookUrl) return "suppressed";
+  const cooldownMs = config.cooldownMs ?? DEFAULT_COOLDOWN_MS;
+  const recent = await audit.search({
+    entityId: params.signature,
+    eventType: OPS_ALERT_EVENT_SENT,
+    since: new Date(now.getTime() - cooldownMs).toISOString(),
+    limit: 1,
+  });
+  if (recent.length > 0) return "suppressed";
+
+  const fetcher = params.fetcher ?? fetch;
+  let ok = false;
+  let httpStatus: number | null = null;
+  try {
+    const response = await fetcher(config.webhookUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ msg_type: "text", content: { text: params.text } }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    httpStatus = response.status;
+    const body = await response.json().catch(() => null) as { code?: number; StatusCode?: number } | null;
+    const code = body?.code ?? body?.StatusCode ?? 0;
+    ok = response.ok && code === 0;
+  } catch {
+    ok = false;
+  }
+  await audit.append({
+    id: randomUUID(), actorId: null, eventType: ok ? OPS_ALERT_EVENT_SENT : OPS_ALERT_EVENT_FAILED,
+    entityType: "ops_alert", entityId: params.signature, result: ok ? "succeeded" : "failed",
+    safeDetails: { ...(params.safeDetails ?? {}), ...(httpStatus === null ? {} : { httpStatus }) },
+    occurredAt: now.toISOString(),
+  });
+  return ok ? "sent" : "failed";
+}
+
 export async function runOpsAlert(params: {
   config: OpsAlertConfig;
   jobs: PipelineJobRepository;
@@ -84,38 +134,10 @@ export async function runOpsAlert(params: {
   if (failed.length === 0 && stuck.length === 0) return { outcome: "healthy", failed: 0, stuck: 0 };
 
   const signature = buildOpsAlertSignature(failed, stuck);
-  const cooldownMs = config.cooldownMs ?? DEFAULT_COOLDOWN_MS;
-  const recent = await audit.search({
-    entityId: signature,
-    eventType: OPS_ALERT_EVENT_SENT,
-    since: new Date(now.getTime() - cooldownMs).toISOString(),
-    limit: 1,
+  const outcome = await sendOpsAlertText({
+    config, audit, now, signature, text: buildOpsAlertText(failed, stuck, now),
+    safeDetails: { failed: failed.length, stuck: stuck.length },
+    ...(params.fetcher ? { fetcher: params.fetcher } : {}),
   });
-  if (recent.length > 0) return { outcome: "suppressed", failed: failed.length, stuck: stuck.length, signature };
-
-  const fetcher = params.fetcher ?? fetch;
-  let ok = false;
-  let httpStatus: number | null = null;
-  try {
-    const response = await fetcher(config.webhookUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ msg_type: "text", content: { text: buildOpsAlertText(failed, stuck, now) } }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    httpStatus = response.status;
-    // 飞书机器人在 HTTP 200 时也可能用 code≠0 表示拒绝（如关键词/签名校验失败）。
-    const body = await response.json().catch(() => null) as { code?: number; StatusCode?: number } | null;
-    const code = body?.code ?? body?.StatusCode ?? 0;
-    ok = response.ok && code === 0;
-  } catch {
-    ok = false;
-  }
-  await audit.append({
-    id: randomUUID(), actorId: null, eventType: ok ? OPS_ALERT_EVENT_SENT : OPS_ALERT_EVENT_FAILED,
-    entityType: "ops_alert", entityId: signature, result: ok ? "succeeded" : "failed",
-    safeDetails: { failed: failed.length, stuck: stuck.length, ...(httpStatus === null ? {} : { httpStatus }) },
-    occurredAt: now.toISOString(),
-  });
-  return { outcome: ok ? "sent" : "failed", failed: failed.length, stuck: stuck.length, signature };
+  return { outcome, failed: failed.length, stuck: stuck.length, signature };
 }

@@ -39,6 +39,7 @@ export interface ApiRepositories {
   directory?: TeamDirectoryRepository;
   scoring?: RequirementScoringRepository;
   ops?: import("../application/repositories.js").OpsMetricsRepository;
+  flags?: import("../application/repositories.js").SystemFlagRepository;
 }
 export interface ApiDependencies {
   database: Pool | null;

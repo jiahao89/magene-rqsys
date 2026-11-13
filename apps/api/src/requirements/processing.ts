@@ -16,6 +16,7 @@ import type {
   RequirementQueryRepository,
   SourceConfigRepository,
   SourceSnapshotRepository,
+  SystemFlagRepository,
 } from "../application/repositories.js";
 import type { RequirementRecord } from "../domain/persistence.js";
 import { randomUUID } from "node:crypto";
@@ -32,6 +33,8 @@ import { basePushIdempotencyKey } from "../jobs/idempotency.js";
 import { assertFixtureWorkAllowed, isSyntheticFixtureRequirement } from "../sync/test-fixture.js";
 import { KANO_PROMPT_VERSION, buildKanoRequest, createDeepSeekKanoProvider, kanoPrompt, validateKanoReport, KanoProviderError } from "../beta/kano.js";
 import type { FeishuBasePushAdapter } from "../base/client.js";
+import { noteAiQuotaFailure, readAiPause } from "../ops/ai-pause.js";
+import type { OpsAlertConfig } from "../ops/alerts.js";
 
 /** 同步批次触及的需求（来自 sync persistence；手工收录在 V02-T04 起复用同一形状）。 */
 export interface TouchedRequirement {
@@ -56,7 +59,13 @@ export interface RequirementWorkflowDeps {
     sourceSnapshots: SourceSnapshotRepository;
     // V02-S02：团队目录花名册——手工需求无来源配置时掩码线索的唯一来源，不得跳过。
     directory?: { listPeople(): Promise<Array<{ name: string }>> };
+    // I3-3：全局开关（AI 额度暂停）。缺省时不做暂停判定（测试/本地无表兼容）。
+    flags?: SystemFlagRepository;
   };
+  /** I3-3：额度暂停告警通道；未配置 webhook 时仍会暂停，只是不发送。 */
+  opsAlerts?: { config: OpsAlertConfig; fetcher?: typeof fetch };
+  /** I3-3：暂停阈值（组合根从环境变量读取）。 */
+  aiPause?: { threshold?: number; windowMinutes?: number; pauseMinutes?: number };
   /** Base 传输与字段映射由组合根按环境装配；缺省（本地无 Base 凭据）时仅推送作业不可用。 */
   base?: FeishuBasePushAdapter | undefined;
   baseFields: BasePushServiceDeps["baseFields"];
@@ -102,6 +111,11 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
     catch { return []; }
   }
 
+  // I3-3：自动分析入队前读取一次暂停状态（按 tick 读一次，避免逐条查库）。
+  async function analysisPausedAt(now: Date): Promise<boolean> {
+    return (await readAiPause(deps.repositories.flags, now)).paused;
+  }
+
   async function loadPublishedDictionary() {
     const published = (await deps.repositories.dictionaries.list()).find((version) => version.status === "published");
     return {
@@ -125,11 +139,14 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
     async dispatchAfterSync(input: { touched: readonly TouchedRequirement[]; actorId: string | null }): Promise<void> {
       const cap = deps.analysisEnqueueCap ?? 0;
       const now = new Date().toISOString();
+      // I3-3：额度暂停期间不自动入队首分析；需求保持 pending，恢复后由补排器接手。
+      const paused = await analysisPausedAt(new Date(now));
       let queued = 0;
       for (const touched of input.touched) {
         const current = await deps.repositories.requirements.get(touched.id);
         if (!current) continue;
         if (touched.analysisRequired) {
+          if (paused) continue;
           if (cap > 0 && queued >= cap) continue;
           queued += 1;
           await deps.repositories.jobs.enqueue({
@@ -194,6 +211,19 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
           });
         } catch (cause) {
           log(`scoring suggestion persistence failed for ${requirement.id}: ${(cause as Error)?.name ?? "unknown"}`);
+        }
+      }
+      // I3-3：额度耗尽（429）在窗口内达到阈值时暂停自动分析入队并告警；失败不影响主链路。
+      if (run.status !== "analyzed" && run.safeErrorCode === "rate_limited") {
+        try {
+          await noteAiQuotaFailure({
+            analyses: deps.repositories.analyses, flags: deps.repositories.flags,
+            audit: deps.repositories.audit, now: new Date(),
+            ...(deps.opsAlerts ? { alerts: deps.opsAlerts } : {}),
+            ...(deps.aiPause ?? {}),
+          });
+        } catch (cause) {
+          log(`ai quota pause check failed: ${(cause as Error)?.name ?? "unknown"}`);
         }
       }
       const current = await deps.repositories.requirements.get(requirement.id);

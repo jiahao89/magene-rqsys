@@ -128,6 +128,14 @@ export interface AnalysisRunRepository {
   ): Promise<AnalysisRunRecord | null>;
   latest(requirementId: string): Promise<AnalysisRunRecord | null>;
   listByRequirement(requirementId: string): Promise<AnalysisRunRecord[]>;
+  /** I3-3：窗口内指定失败码的运行数（AI 额度暂停判定）。可选，内存实现可不提供。 */
+  countRecentFailures?(safeErrorCode: string, since: string): Promise<number>;
+}
+
+/** I3-3：全局运行开关（如 AI 暂停）。value 为扁平 JSON 对象。 */
+export interface SystemFlagRepository {
+  get(name: string): Promise<{ value: Record<string, unknown>; updatedAt: string } | null>;
+  set(name: string, value: Record<string, unknown>, at: string): Promise<void>;
 }
 
 // V02-S06：评分版本。AI 建议、人工确认和历史分表保存；current/confirmed 至多一个。

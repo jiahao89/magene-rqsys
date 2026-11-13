@@ -75,6 +75,19 @@ test("suspected duplicates stay in the pool/counts and keep detail links",async(
 
 test("batch keyset cursor does not skip rows with identical start times and applies inclusive time filters",async()=>{const ctx=await setup();try{const source=await ctx.repos.sources.create(config);const ids:string[]=[];for(let i=0;i<3;i++){const batch=await ctx.repos.batches.create({sourceConfigId:source.id,triggerType:"manual",actorId:null,idempotencyKey:`same-time-batch-${i}`,startedAt:"2026-10-08T00:00:00Z"});ids.push(batch.id);await ctx.repos.batches.complete(batch.id,{status:"succeeded",totalCount:0,succeededCount:0,failedCount:0,errorSummary:null,completedAt:"2026-10-08T00:00:01Z"});}const first=await ctx.repos.batches.list({since:"2026-10-08T00:00:00Z",until:"2026-10-08T00:00:00Z",limit:1});assert.equal(first.items.length,1);assert.ok(first.nextCursor);const {decodeBatchCursor}=await import("../../application/batch-cursor.js");const second=await ctx.repos.batches.list({since:"2026-10-08T00:00:00Z",until:"2026-10-08T00:00:00Z",limit:1,cursor:decodeBatchCursor(first.nextCursor)!});assert.equal(second.items.length,1);assert.notEqual(second.items[0]?.id,first.items[0]?.id);assert.equal(ids.length,3);}finally{await cleanup(ctx);}});
 
+test("system flags persist the AI pause state (I3-3)", async () => {
+  const ctx = await setup();
+  try {
+    assert.equal(await ctx.repos.flags.get("ai_analysis_pause"), null);
+    await ctx.repos.flags.set("ai_analysis_pause", { until: "2026-11-12T09:00:00.000Z", reason: "ai_rate_limited" }, "2026-11-12T08:00:00.000Z");
+    const row = await ctx.repos.flags.get("ai_analysis_pause");
+    assert.deepEqual(row?.value, { until: "2026-11-12T09:00:00.000Z", reason: "ai_rate_limited" });
+    assert.equal(row?.updatedAt, "2026-11-12T08:00:00.000Z");
+    await ctx.repos.flags.set("ai_analysis_pause", { until: "2026-11-12T10:00:00.000Z", reason: "ai_rate_limited" }, "2026-11-12T09:30:00.000Z");
+    assert.equal((await ctx.repos.flags.get("ai_analysis_pause"))?.updatedAt, "2026-11-12T09:30:00.000Z");
+  } finally { await cleanup(ctx); }
+});
+
 test("ops metrics aggregate completed sync batches in the window (PRD 10)", async () => {
   const ctx = await setup();
   try {

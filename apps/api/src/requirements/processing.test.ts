@@ -5,6 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { analysisPiiMarkers, createRequirementWorkflow, type RequirementWorkflowDeps, type TouchedRequirement } from "./processing.js";
 import { FeishuApiError } from "../base/transport.js";
+import { AiProviderError } from "../analysis/provider.js";
 import { isIntakeComplete } from "../domain/workflow.js";
 import type { RequirementRecord } from "../domain/persistence.js";
 import type { AiProvider, ProviderAnalysisInput } from "../analysis/provider.js";
@@ -271,4 +272,32 @@ test("V02-T14 handleKanoRunJob fails safely on invalid provider output without r
   await workflow.handleKanoRunJob({ payload: { kanoRunId: "run-2" } });
   assert.equal(statuses.get("run-2"), "failed");
   // 作业本身按成功结算（不抛错 → worker 不自动重试）
+});
+
+test("AI 额度暂停期间 dispatchAfterSync 不入队首分析（I3-3）", async () => {
+  const h = harness();
+  const flags = {
+    async get() { return { value: { until: new Date(Date.now() + 3_600_000).toISOString() }, updatedAt: new Date().toISOString() }; },
+    async set() {},
+  } as never;
+  (h.deps.repositories as { flags?: unknown }).flags = flags;
+  const workflow = createRequirementWorkflow(h.deps);
+  await workflow.dispatchAfterSync({
+    touched: [{ id: "req-1", sourceVersion: 1, substantiveHash: "s", analysisRequired: true }],
+    actorId: "operator",
+  });
+  assert.equal(h.enqueued.filter((job) => job.jobType === "analysis").length, 0);
+});
+
+test("rate_limited 失败达到阈值时写入 AI 暂停标记（I3-3）", async () => {
+  const h = harness({ providerResult: new AiProviderError("rate_limited", "HTTP 429") });
+  let stored: Record<string, unknown> | null = null;
+  const flags = {
+    async get() { return stored ? { value: stored, updatedAt: new Date().toISOString() } : null; },
+    async set(_name: string, value: Record<string, unknown>) { stored = value; },
+  } as never;
+  (h.deps.repositories as { flags?: unknown }).flags = flags;
+  (h.deps.repositories.analyses as unknown as { countRecentFailures?: () => Promise<number> }).countRecentFailures = async () => 3;
+  await createRequirementWorkflow(h.deps).handleAnalysisJob({ payload: { requirementId: "req-1" } });
+  assert.equal((stored as Record<string, unknown> | null)?.["reason"], "ai_rate_limited");
 });

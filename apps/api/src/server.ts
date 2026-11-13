@@ -11,6 +11,7 @@ import { TeambitionClient } from "./adapters/teambition/client.js";
 import { createRequirementWorkflow } from "./requirements/processing.js";
 import { createDueSyncJobs } from "./scheduler/due-jobs.js";
 import { readOpsAlertConfig, runOpsAlert } from "./ops/alerts.js";
+import { readAiPauseConfig } from "./ops/ai-pause.js";
 import { reapExhaustedJobs, reapOrphanedBatches } from "./scheduler/reap.js";
 import { enqueueMissingAnalysisJobs, recoverAnalysisPipeline } from "./scheduler/analysis-recovery.js";
 import { recheckOwnerMappings } from "./scheduler/owner-recheck.js";
@@ -155,6 +156,9 @@ const requirementWorkflow = repositories
       fixtureEnvironment,
       // 本地开发专用上限：只限制「入队分析」的数量，不同步范围。默认 0 = 不限制；目标环境不要设置。
       ...(Number(process.env.RQSYS_MAX_ANALYSIS_PER_SYNC ?? 0) > 0 ? { analysisEnqueueCap: Number(process.env.RQSYS_MAX_ANALYSIS_PER_SYNC) } : {}),
+      // I3-3：额度暂停告警与失败作业告警共用同一 webhook/冷却。
+      opsAlerts: { config: readOpsAlertConfig(process.env) },
+      aiPause: readAiPauseConfig(process.env),
     })
   : undefined;
 const basePushJobHandler: ((job: { payload: Record<string, unknown> }) => Promise<void>) | undefined = repositories && baseAdapter ? async (job) => {
@@ -275,7 +279,7 @@ if (worker && repositories && workerPollMs > 0) {
       try {
         const recovery = await recoverAnalysisPipeline({
           requirements: repositories.requirements, analyses: repositories.analyses,
-          jobs: repositories.jobs, audit: repositories.audit, now,
+          jobs: repositories.jobs, audit: repositories.audit, now, flags: repositories.flags,
         });
         const retried = recovery.retried.filter((row) => row.action === "enqueued");
         const reverted = recovery.recovered.filter((row) => row.action === "reverted");
@@ -293,7 +297,7 @@ if (worker && repositories && workerPollMs > 0) {
       try {
         const missing = await enqueueMissingAnalysisJobs({
           requirements: repositories.requirements, analyses: repositories.analyses,
-          jobs: repositories.jobs, audit: repositories.audit, now,
+          jobs: repositories.jobs, audit: repositories.audit, now, flags: repositories.flags,
         });
         if (missing.enqueued > 0) process.stdout.write(`enqueued ${missing.enqueued} pending analysis job(s) with no live job\n`);
         for (const error of missing.errors) process.stderr.write(`pending analysis recovery item failed: ${error}\n`);

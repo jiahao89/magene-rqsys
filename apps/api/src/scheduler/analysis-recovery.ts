@@ -17,10 +17,12 @@
 //   - 同一需求同一源版本累计自动调度重试上限 MAX_SCHEDULER_ANALYSIS_RETRIES；达到上限后写一条
 //     result='failed' 的审计（reason='retry_budget_exhausted'）并停止自动重试，避免无限循环。
 //   - 单条需求或单个阶段失败只进入 report.errors，绝不向调用方抛错，保证 poll 继续执行。
+import { readAiPause } from "../ops/ai-pause.js";
 
 import { randomUUID } from "node:crypto";
 import type {
   AnalysisRunRepository, AuditEventRepository, PipelineJobRepository, RequirementQueryRepository,
+  SystemFlagRepository,
 } from "../application/repositories.js";
 import type { PipelineJobRecord, RequirementRecord } from "../domain/persistence.js";
 
@@ -383,9 +385,11 @@ export interface MissingAnalysisReport { scanned: number; enqueued: number; erro
  * 只补排缺作业或作业已终态失败的需求；queued/running/succeeded 一律不动，避免与正常链路重复。
  */
 export async function enqueueMissingAnalysisJobs(
-  params: AnalysisRecoveryRepositories & { now: Date; limit?: number },
+  params: AnalysisRecoveryRepositories & { now: Date; limit?: number; flags?: SystemFlagRepository },
 ): Promise<MissingAnalysisReport> {
   const report: MissingAnalysisReport = { scanned: 0, enqueued: 0, errors: [] };
+  // I3-3：AI 额度暂停期间不补排首分析；恢复后由下一轮接管。
+  if ((await readAiPause(params.flags, params.now)).paused) return report;
   let items: RequirementRecord[];
   try {
     const page = await params.requirements.search({ analysisState: "pending", limit: params.limit ?? ANALYSIS_RECOVERY_SCAN_LIMIT });
@@ -415,11 +419,13 @@ export async function enqueueMissingAnalysisJobs(
 }
 
 export async function recoverAnalysisPipeline(
-  params: AnalysisRecoveryRepositories & { now: Date; limit?: number; maxRetries?: number },
+  params: AnalysisRecoveryRepositories & { now: Date; limit?: number; maxRetries?: number; flags?: SystemFlagRepository },
 ): Promise<AnalysisRecoveryReport> {
   const limit = params.limit ?? ANALYSIS_RECOVERY_SCAN_LIMIT;
   const maxRetries = params.maxRetries ?? MAX_SCHEDULER_ANALYSIS_RETRIES;
   const report: AnalysisRecoveryReport = { retried: [], recovered: [], errors: [] };
+  // I3-3：额度暂停期间不自动重试/补排；手动重试不受影响。
+  if ((await readAiPause(params.flags, params.now)).paused) return report;
   const recoveredThisRound = new Set<string>();
 
   try {

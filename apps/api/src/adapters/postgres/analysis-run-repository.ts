@@ -22,6 +22,7 @@ export class PostgresAnalysisRunRepository implements AnalysisRunRepository{
     const{rows}=await this.pool.query("SELECT * FROM analysis_runs WHERE requirement_id=$1 ORDER BY analysis_version DESC LIMIT 1",[id]);
     return rows[0]?from(rows[0]):null;
   }
+  async countRecentFailures(code:string,since:string){const{rows}=await this.pool.query("SELECT count(*)::int AS count FROM analysis_runs WHERE status='failed_retryable' AND safe_error_code=$1 AND started_at>=$2::timestamptz",[code,since]);return Number(rows[0]?.count??0);}
   async listByRequirement(id:string){
     const{rows}=await this.pool.query("SELECT * FROM analysis_runs WHERE requirement_id=$1 ORDER BY analysis_version",[id]);
     return rows.map(from);

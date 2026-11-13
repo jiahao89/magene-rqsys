@@ -5,6 +5,7 @@ import type { AuditEventRecord, RequirementRecord, SourceConfigRecord, SyncBatch
 import type { ApiDependencies, ApiRepositories } from "./app.js";
 import { handleApiRequest } from "./app.js";
 import { encodeBatchCursor } from "../application/batch-cursor.js";
+import { EXPECTED_LATEST_MIGRATION } from "../db/expected-migration.js";
 
 const source: SourceConfigRecord = { id: "11111111-1111-4111-8111-111111111111", provider: "teambition", externalProjectId: "p1", externalProjectName: "Project", requirementTypeId: "type1", enabled: true, scheduleEnabled: false, scheduleWeekday: null, scheduleLocalTime: null, scheduleTimezone: null, ownerNames: ["Lee"], fieldMap: { title: "name" }, createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z" };
 const batch: SyncBatchRecord = { id: "22222222-2222-4222-8222-222222222222", sourceConfigId: source.id, triggerType: "manual", actorId: "actor-1", idempotencyKey: "request-key-0001", status: "running", startedAt: "2026-10-08T00:00:00.000Z", completedAt: null, totalCount: 0, succeededCount: 0, failedCount: 0, errorSummary: null, createdAt: "2026-10-08T00:00:00.000Z" };
@@ -71,13 +72,13 @@ test("readiness reports the applied migration without failing when it lags", asy
   } as never;
   return d;
  };
- const current = await handleApiRequest(new Request("http://localhost/api/health/ready"), makeReady([{ filename: "0027_source_missing.sql" }]));
+ const current = await handleApiRequest(new Request("http://localhost/api/health/ready"), makeReady([{ filename: EXPECTED_LATEST_MIGRATION }]));
  assert.equal(current.status, 200);
- assert.deepEqual((await current.json() as Record<string, unknown>).migrations, { latest: "0027_source_missing.sql", expected: "0027_source_missing.sql", upToDate: true });
+ assert.deepEqual((await current.json() as Record<string, unknown>).migrations, { latest: EXPECTED_LATEST_MIGRATION, expected: EXPECTED_LATEST_MIGRATION, upToDate: true });
 
  const lagging = await handleApiRequest(new Request("http://localhost/api/health/ready"), makeReady([{ filename: "0019_scoring_v2.sql" }]));
  assert.equal(lagging.status, 200);
- assert.deepEqual((await lagging.json() as Record<string, unknown>).migrations, { latest: "0019_scoring_v2.sql", expected: "0027_source_missing.sql", upToDate: false });
+ assert.deepEqual((await lagging.json() as Record<string, unknown>).migrations, { latest: "0019_scoring_v2.sql", expected: EXPECTED_LATEST_MIGRATION, upToDate: false });
 
  const unknown = await handleApiRequest(new Request("http://localhost/api/health/ready"), makeReady(new Error("no schema_migrations")));
  assert.equal(unknown.status, 200);
