@@ -508,6 +508,14 @@ function buildSearch(query: Record<string, string | number | undefined>): string
   return suffix ? `?${suffix}` : "";
 }
 
+/** I3-2：按当前筛选导出需求池 CSV（服务端上限 5000 条）。 */
+export async function exportRequirementsCsv(params: { q?: string; executorName?: string; pullState?: string; ownerState?: string; analysisState?: string; pushState?: string; processingState?: "active" | "suppressed"; priority?: string; sort?: string; batchId?: string; since?: string; until?: string; fetcher?: typeof fetch } = {}): Promise<{ csv: string; truncated: boolean }> {
+  const { fetcher = fetch, ...rest } = params;
+  const response = await (fetcher as typeof fetch)(`/api/requirements/export${buildSearch(rest)}`);
+  if (!response.ok) throw new ApiError("导出失败，请重试。", response.status, "EXPORT_FAILED");
+  return { csv: await response.text(), truncated: response.headers.get("x-rq-truncated") === "true" };
+}
+
 export async function listRequirements(params: { q?: string; executorName?: string; pullState?: string; ownerState?: string; analysisState?: string; pushState?: string; processingState?: "active" | "suppressed"; priority?: "P0" | "P1" | "P2" | "P3"; sort?: "created_desc" | "priority_asc"; batchId?: string; since?: string; until?: string; limit?: number; cursor?: string; fetcher?: typeof fetch } = {}): Promise<{ items: RequirementSummary[]; nextCursor: string | null }> {
   const { fetcher = fetch, q, executorName, pullState, ownerState, analysisState, pushState, processingState, priority, sort, batchId, since, until, limit, cursor } = params;
   return requestJson<{ items: RequirementSummary[]; nextCursor: string | null }>(`/api/requirements${buildSearch({ q, executorName, pullState, ownerState, analysisState, pushState, processingState, priority, sort, batchId, since, until, limit, cursor })}`, fetcher);
@@ -573,6 +581,22 @@ export interface Readiness {
 /** 健康检查：数据库可用性与迁移对齐状态（不要求认证）。 */
 export function getReadiness(fetcher: typeof fetch = fetch): Promise<Readiness> {
   return requestJson<Readiness>("/api/health/ready", fetcher);
+}
+
+export interface OpsMetrics {
+  window: { days: number; since: string };
+  sync: { total: number; succeeded: number; partialFailure: number; failed: number; successRate: number | null; avgDurationSeconds: number | null; lastCompletedAt: string | null };
+  analysis: { total: number; analyzed: number; failedRetryable: number; running: number; successRate: number | null; avgDurationSeconds: number | null; lowConfidence: number; lowConfidenceRate: number | null; failureCodes: Array<{ code: string; count: number }> };
+  owner: { autoMapped: number; manuallyMapped: number; pendingMapping: number; notRequired: number };
+  push: { total: number; pushed: number; failed: number; successRate: number | null; avgDurationSeconds: number | null };
+  duplicate: { confirmedSuppressed: number; suspected: number };
+  scoring: { aiSuggested: number; manual: number; aiApplied: number; adoptionRate: number | null };
+}
+
+/** 运营指标（PRD §10）：窗口内成功率/耗时 + 当前快照。 */
+export function getOpsMetrics(params: { days?: number; fetcher?: typeof fetch } = {}): Promise<OpsMetrics> {
+  const { fetcher = fetch, days } = params;
+  return requestJson<{ metrics: OpsMetrics }>(`/api/ops/metrics${buildSearch({ days })}`, fetcher as typeof fetch).then((result) => result.metrics);
 }
 
 export function getOpsJobs(params: { limit?: number; fetcher?: typeof fetch } = {}): Promise<{ now: string; items: { failed: OpsJob[]; stuck: OpsJob[] } }> {

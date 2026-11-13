@@ -1543,3 +1543,13 @@ html[data-theme="dark"] input[type="datetime-local"] { color-scheme: dark; }
 .priority-chip.priority-p1 { color: #b54708; background: #fffaeb; border-color: #fedf89; }
 .priority-chip.priority-p2 { color: #175cd3; background: #eff8ff; border-color: #b2ddff; }
 .priority-chip.priority-p3 { color: var(--rq-text-muted); background: var(--rq-surface-muted); border-color: var(--rq-card-border); }
+
+.ops-metrics { margin: 6px 0 14px; }
+.ops-metrics-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.ops-window-switch { display: inline-flex; gap: 4px; }
+.ops-metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.ops-metric { display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border: 1px solid var(--rq-border); border-radius: var(--rq-radius-md); background: var(--rq-surface); }
+.ops-metric span { color: var(--rq-text-muted); font-size: var(--rq-font-caption); }
+.ops-metric strong { color: var(--rq-text-strong); font-size: 22px; font-variant-numeric: tabular-nums; }
+.ops-metric small { color: var(--rq-text-muted); font-size: var(--rq-font-caption); }
+.ops-failures { color: var(--rq-text-muted); }

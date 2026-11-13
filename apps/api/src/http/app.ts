@@ -8,10 +8,11 @@ import { RICE_CONFIG_VERSION, RICE_EFFORT_UNIT, RICE_IMPACT_LEVELS, RICE_REACH_U
 import type { AuditEventRepository, AnalysisRunRepository, PipelineJobRepository, SourceConfigRepository, SyncBatchRepository, SyncItemRepository, PersonMappingRepository, RequirementQueryRepository, BasePushRunRepository, ModuleDictionaryRepository, PriorityRuleRepository, SourceSnapshotRepository, TeamDirectoryRepository, RequirementScoringRepository } from "../application/repositories.js";
 import type { PersonMappingRecord, AnalysisRunRecord, ModuleDictionaryVersionRecord, PriorityRuleVersionRecord, RequirementRecord, SourceConfigRecord, SyncBatchRecord, PipelineJobRecord } from "../domain/persistence.js";
 import type { TeamPersonRecord } from "../domain/team-directory.js";
-import { AnalysisContextUpdateSchema, AuditListQuerySchema, OpsJobsQuerySchema, ClearDuplicateDecisionSchema, DuplicateDecisionSchema, PriorityOverrideUpdateSchema, RetryAnalysisRequestSchema, KanoEvidenceImportSchema, KanoRunRequestSchema, AudienceUpdateSchema, BatchListQuerySchema, RiceDraftUpdateSchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementIntakeEditSchema, RequirementIntakeSchema, RequirementListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
+import { AnalysisContextUpdateSchema, AuditListQuerySchema, OpsJobsQuerySchema, OpsMetricsQuerySchema, RequirementExportQuerySchema, ClearDuplicateDecisionSchema, DuplicateDecisionSchema, PriorityOverrideUpdateSchema, RetryAnalysisRequestSchema, KanoEvidenceImportSchema, KanoRunRequestSchema, AudienceUpdateSchema, BatchListQuerySchema, RiceDraftUpdateSchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementIntakeEditSchema, RequirementIntakeSchema, RequirementListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
 import { createHash, randomUUID } from "node:crypto";
 import { ApplyAiScoringSchema, ManualScoringUpdateSchema, SCORING_FORMULA_TEXT, SCORING_THRESHOLDS, computeUmcScore } from "../analysis/scoring.js";
 import { maskPii } from "../analysis/contract.js";
+import { toCsv } from "../application/csv.js";
 import { SourceConfigUpdateSchema, normalizeSourceSchedule, type ResolvedSourceConfigUpdate } from "../contracts/source.js";
 import { DictionaryCreateSchema, PriorityRuleCreateSchema, TeamModulesSaveSchema, TeamPersonCreateSchema, TeamPersonFeishuBindSchema, TeamPersonRenameSchema } from "../contracts/rules.js";
 import { DEFAULT_TEAM_MEMBERS } from "../domain/team-directory.js";
@@ -37,6 +38,7 @@ export interface ApiRepositories {
   priorityRules?: PriorityRuleRepository;
   directory?: TeamDirectoryRepository;
   scoring?: RequirementScoringRepository;
+  ops?: import("../application/repositories.js").OpsMetricsRepository;
 }
 export interface ApiDependencies {
   database: Pool | null;
@@ -363,6 +365,15 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     ]);
     return json({ now, items: { failed: failed.map(opsJobDto), stuck: stuck.map(opsJobDto) } });
   }
+  // 运营指标（PRD §10）：窗口内的同步/分析/推送成功率与耗时 + 当前快照；只读。
+  if (method === "GET" && url.pathname === "/api/ops/metrics") {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.ops) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const query = Object.fromEntries(url.searchParams.entries());
+    const parsed = OpsMetricsQuerySchema.safeParse(query); if (!parsed.success) return jsonError("VALIDATION_FAILED");
+    const now = (dependencies.now ?? (() => new Date()))().toISOString();
+    return json({ metrics: await repositories.ops.getOpsMetrics({ days: parsed.data.days, now }) });
+  }
   if (method === "GET" && url.pathname === "/api/rules/dictionary") {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.dictionaries) return jsonError("DEPENDENCY_UNAVAILABLE");
@@ -602,6 +613,44 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     return json({
       items: page.items.map((item) => ({ ...requirementSearchDto(item), ownerName: manualOwnerName(item) ?? (item.executorUserId && item.sourceConfigId ? nameByTbUser.get(`${item.sourceConfigId}:${item.executorUserId}`) ?? null : null) })),
       nextCursor: page.nextCursor,
+    });
+  }
+  // I3-2：需求池 CSV 导出。复用列表筛选（q/负责人/状态/优先级/批次/时间），忽略分页，上限 5000 条。
+  if (method === "GET" && url.pathname === "/api/requirements/export") {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const query = Object.fromEntries(url.searchParams.entries());
+    const parsed = RequirementExportQuerySchema.safeParse(query); if (!parsed.success) return jsonError("VALIDATION_FAILED");
+    const exportLimit = 5000;
+    const page = await repositories.requirements.search({
+      ...(parsed.data.q === undefined ? {} : { q: parsed.data.q }), ...(parsed.data.executorName === undefined ? {} : { executorName: parsed.data.executorName }),
+      ...(parsed.data.pullState === undefined ? {} : { pullState: parsed.data.pullState }), ...(parsed.data.analysisState === undefined ? {} : { analysisState: parsed.data.analysisState }),
+      ...(parsed.data.ownerState === undefined ? {} : { ownerState: parsed.data.ownerState }), ...(parsed.data.pushState === undefined ? {} : { pushState: parsed.data.pushState }),
+      ...(parsed.data.processingState === undefined ? {} : { processingState: parsed.data.processingState }), ...(parsed.data.priority === undefined ? {} : { priority: parsed.data.priority }),
+      ...(parsed.data.sort === undefined ? {} : { sort: parsed.data.sort }), ...(parsed.data.batchId === undefined ? {} : { batchId: parsed.data.batchId }),
+      ...(parsed.data.since === undefined ? {} : { since: parsed.data.since }), ...(parsed.data.until === undefined ? {} : { until: parsed.data.until }),
+      limit: exportLimit + 1,
+    });
+    const truncated = page.items.length > exportLimit;
+    const rows = page.items.slice(0, exportLimit);
+    const header = ["平台ID", "TB需求ID", "标题", "负责人", "生效优先级", "处理状态", "拉取", "分析", "负责人状态", "推送", "来源类型", "源版本", "Base记录ID", "来源已移除", "创建时间", "更新时间"];
+    const body = rows.map((item) => [
+      item.platformRequirementId, item.teambitionRequirementId ?? "", item.title,
+      item.executorName ?? item.manualOwner?.name ?? "",
+      item.priorityOverride?.priority ?? item.currentScorePriority ?? "",
+      item.processingState ?? "active",
+      item.pipeline.pull, item.pipeline.analysis, item.pipeline.owner, item.pipeline.push,
+      item.sourceType, item.sourceVersion, item.baseRecordId ?? "", item.sourceMissingSince ?? "",
+      item.createdAt, item.updatedAt,
+    ]);
+    const nowIso = (dependencies.now ?? (() => new Date()))().toISOString();
+    return new Response("\uFEFF" + toCsv([header, ...body]), {
+      status: 200,
+      headers: {
+        "content-type": "text/csv; charset=utf-8",
+        "content-disposition": `attachment; filename="rq-sys-requirements-${nowIso.slice(0, 10)}.csv"`,
+        ...(truncated ? { "x-rq-truncated": "true" } : {}),
+      },
     });
   }
   if (url.pathname === "/api/kano/evidence" && method === "GET") {

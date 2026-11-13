@@ -13,7 +13,7 @@ import { checkScheduleHealth } from "./schedule";
 import { readRequirementDeepLink } from "./deep-link";
 import { emptyRequirementListFilters, readRequirementListFilters, requirementFilterCount, requirementPoolUrl, type RequirementListFilters, type RequirementProcessingView } from "./requirements-url";
 import { formatDateTime, requirementDisplayId, requirementOwnerView, requirementSourceFacts, requirementTime, sortRequirementsForAttention } from "./requirement-view";
-import { AUDIT_PAGE_LIMIT, ApiError, addTeamPerson, applyRequirementAiScore, bindTeamPersonFeishu, createSource, deleteTeamPerson, getBatch, getFunctionModules, getRequirement, getOpsJobs, getReadiness, listAudit, listBatches, listDictionaryVersions, listMappings, listRequirements, listTeamPeople, pushRequirement, renameTeamPerson, revokeDuplicateDecision, saveAnalysisContext, saveFunctionModules, retryAnalysis, setPriorityOverride, retrySyncItem, saveRequirementScore, searchFeishuUsers, setDuplicateDecision, setOwner, unbindTeamPersonFeishu, updateSource, type AnalysisVersionSummary, type AuditEvent, type OpsJob, type BatchDetail, type BatchSummary, type DictionaryVersion, type DuplicateDecision, type PersonMapping, type PublishStatus, type FeishuUserSelection, type FeishuUserCandidate, type FunctionModuleEntry, type RequirementDetail, type RequirementProcessingState, type RequirementResolution, type RequirementScoreVersion, type RequirementSummary, type ScoringInputs, type SourceConfig, type SourceConfigUpdate, type TeamPerson, clearOwner } from "./api";
+import { AUDIT_PAGE_LIMIT, ApiError, addTeamPerson, applyRequirementAiScore, bindTeamPersonFeishu, createSource, deleteTeamPerson, getBatch, getFunctionModules, getRequirement, exportRequirementsCsv, getOpsJobs, getOpsMetrics, getReadiness, listAudit, listBatches, listDictionaryVersions, listMappings, listRequirements, listTeamPeople, pushRequirement, renameTeamPerson, revokeDuplicateDecision, saveAnalysisContext, saveFunctionModules, retryAnalysis, setPriorityOverride, retrySyncItem, saveRequirementScore, searchFeishuUsers, setDuplicateDecision, setOwner, unbindTeamPersonFeishu, updateSource, type AnalysisVersionSummary, type AuditEvent, type OpsJob, type OpsMetrics, type BatchDetail, type BatchSummary, type DictionaryVersion, type DuplicateDecision, type PersonMapping, type PublishStatus, type FeishuUserSelection, type FeishuUserCandidate, type FunctionModuleEntry, type RequirementDetail, type RequirementProcessingState, type RequirementResolution, type RequirementScoreVersion, type RequirementSummary, type ScoringInputs, type SourceConfig, type SourceConfigUpdate, type TeamPerson, clearOwner } from "./api";
 import type { WorkbenchTab } from "./workbench-routing";
 
 export type LoadState = "loading" | "ready" | "error";
@@ -820,6 +820,8 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
   const activeFilterCount = requirementFilterCount(filters);
   // 已生效 = 上一次真正发给服务端的条件；草稿输入不算，否则还没点筛选就显示"已生效"。
   const [appliedFilterCount, setAppliedFilterCount] = useState(0);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportNotice, setExportNotice] = useState<string | null>(null);
   const dateFilterCount = [since, until].filter(Boolean).length;
 
   const load = useCallback(async (filter: RequirementListFilters, nextCursor: string | null) => {
@@ -960,6 +962,23 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
     onRefresh();
   };
 
+  // I3-2：导出使用「已生效」筛选，而不是尚未点筛选的草稿输入。
+  const exportCsv = async () => {
+    setExportBusy(true); setExportNotice(null);
+    try {
+      const { csv, truncated } = await exportRequirementsCsv(requirementListQuery(appliedFiltersRef.current));
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `rq-sys-requirements-${new Date().toISOString().slice(0, 10)}.csv`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setExportNotice(truncated ? "导出已截断为前 5000 条，请缩小筛选范围。" : "已导出当前筛选结果。");
+    } catch (cause) { setExportNotice(errorText(cause)); }
+    finally { setExportBusy(false); }
+  };
+
   // 服务端已按优先级排序时不重排；默认视图保持“注意力排序”（仅作用于已加载记录）。
   const sortedRows = prioritySort === "priority_asc" ? rows : sortRequirementsForAttention(rows);
 
@@ -1050,6 +1069,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
       <div className="toolbar-actions">
         {appliedFilterCount > 0 && <span className="toolbar-active-count" role="status">{appliedFilterCount} 个筛选已生效</span>}
         {activeFilterCount > 0 && <ArcoButton type="text" className="link-button" onClick={clearFilters} htmlType="button">清除筛选</ArcoButton>}
+        <ArcoButton htmlType="button" size="small" onClick={() => void exportCsv()} disabled={exportBusy}>{exportBusy ? "导出中…" : "导出 CSV"}</ArcoButton>
         <ArcoButton htmlType="button" size="small" onClick={refresh}><RefreshCw size={14} />刷新</ArcoButton>
         <ArcoButton type="primary" htmlType="button" size="small" onClick={applyFilters}>筛选</ArcoButton>
       </div>
@@ -1062,6 +1082,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
     </p>
     <StateBanner loadError={loadError ?? peopleError} notice={notice} onCloseNotice={() => setNotice(null)} />
     <div className="list-summary" role="status">
+      {exportNotice && <span className="status-hint" role="status">{exportNotice}</span>}
       <span className="list-summary-count">已加载 {sortedRows.length} 条{cursor ? "，还有更多" : ""}{activeFilterCount > 0 ? `（已应用 ${activeFilterCount} 个筛选）` : ""}</span>
       <span className="list-summary-sort">{prioritySort === "priority_asc" ? "分诊视图：按生效优先级 P0 → P3 排序，单页最多 100 条（不分页）" : "排序仅作用于已加载的记录：待分配 → 推送失败 → 待推送 → 已推送"}</span>
     </div>
@@ -2044,6 +2065,8 @@ export function AuditPanel() {
 
 // ---------- 运维视图：失败 / 卡住的作业（只读） ----------
 
+const opsRate = (value: number | null): string => value === null ? "—" : `${value}%`;
+
 function opsJobColumns() {
   return [
     { title: "作业类型", dataIndex: "jobType", width: 130, render: (_value: unknown, job: OpsJob) => <span className="mono-cell">{job.jobType}</span> },
@@ -2064,17 +2087,20 @@ function OpsJobTable({ jobs, emptyTitle, emptyHint }: { jobs: OpsJob[]; emptyTit
 export function OpsPanel() {
   const [items, setItems] = useState<{ failed: OpsJob[]; stuck: OpsJob[] } | null>(null);
   const [migrations, setMigrations] = useState<Awaited<ReturnType<typeof getReadiness>>["migrations"] | null>(null);
+  const [metrics, setMetrics] = useState<OpsMetrics | null>(null);
+  const [days, setDays] = useState(7);
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoadState("loading"); setLoadError(null);
-    // 迁移状态是辅助信息：读取失败不影响作业列表。
-    const [jobsResult, readyResult] = await Promise.allSettled([getOpsJobs({ limit: 50 }), getReadiness()]);
+    // 迁移与指标是辅助信息：读取失败不影响作业列表。
+    const [jobsResult, readyResult, metricsResult] = await Promise.allSettled([getOpsJobs({ limit: 50 }), getReadiness(), getOpsMetrics({ days })]);
     if (jobsResult.status === "fulfilled") { setItems(jobsResult.value.items); setLoadState("ready"); }
     else { setLoadError(errorText(jobsResult.reason)); setLoadState("error"); }
     setMigrations(readyResult.status === "fulfilled" ? readyResult.value.migrations ?? null : null);
-  }, []);
+    setMetrics(metricsResult.status === "fulfilled" ? metricsResult.value : null);
+  }, [days]);
   useEffect(() => { void load(); }, [load]);
 
   return <section className="panel requirements-panel">
@@ -2091,6 +2117,30 @@ export function OpsPanel() {
             : `迁移：无法读取应用迁移记录（目标环境由平台管理迁移）；代码期望 ${migrations.expected}，无法判断是否落后`
         : "迁移状态：不可用"}
     </p>
+    <div className="ops-metrics">
+      <div className="ops-metrics-head">
+        <strong>运营指标</strong>
+        <span className="ops-window-switch">
+          {[7, 30].map((value) => <ArcoButton key={value} size="mini" type={days === value ? "primary" : "text"} onClick={() => setDays(value)} htmlType="button">{`近 ${value} 天`}</ArcoButton>)}
+        </span>
+      </div>
+      {metrics ? <>
+        <div className="ops-metric-grid">
+          {[
+            { label: "同步成功率", value: opsRate(metrics.sync.successRate), detail: `${metrics.sync.succeeded}/${metrics.sync.total} 批` },
+            { label: "分析成功率", value: opsRate(metrics.analysis.successRate), detail: `${metrics.analysis.analyzed}/${metrics.analysis.total} 次` },
+            { label: "推送成功率", value: opsRate(metrics.push.successRate), detail: `${metrics.push.pushed}/${metrics.push.total} 次` },
+            { label: "低置信度占比", value: opsRate(metrics.analysis.lowConfidenceRate), detail: `${metrics.analysis.lowConfidence}/${metrics.analysis.analyzed} 条分析` },
+          ].map((card) => <div className="ops-metric" key={card.label}><span>{card.label}</span><strong>{card.value}</strong><small>{card.detail}</small></div>)}
+        </div>
+        <p className="status-hint">
+          负责人：自动 {metrics.owner.autoMapped} · 手工 {metrics.owner.manuallyMapped} · 待匹配 {metrics.owner.pendingMapping} · 无需 {metrics.owner.notRequired}；
+          重复：已压制 {metrics.duplicate.confirmedSuppressed} · 疑似 {metrics.duplicate.suspected}；
+          评分：AI 建议 {metrics.scoring.aiSuggested} · 人工修改 {metrics.scoring.manual} · 采用 AI {metrics.scoring.aiApplied}（采纳率 {opsRate(metrics.scoring.adoptionRate)}）
+        </p>
+        {metrics.analysis.failureCodes.length > 0 && <p className="status-hint ops-failures">分析失败码：{metrics.analysis.failureCodes.map((item) => `${item.code}×${item.count}`).join("、")}</p>}
+      </> : <p className="status-hint">运营指标暂不可用。</p>}
+    </div>
     <div className="subsection">
       <div className="panel-heading"><div><h3>失败作业</h3><p>恢复由各自的重试入口或恢复器完成；本页不提供写入操作。</p></div></div>
       {items ? <OpsJobTable jobs={items.failed} emptyTitle="没有失败作业" emptyHint="最近没有处于 failed 状态的作业。" /> : <SkeletonTableRows rows={3} columns={6} />}

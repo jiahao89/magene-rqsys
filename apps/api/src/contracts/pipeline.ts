@@ -51,8 +51,16 @@ export const RequirementListQuerySchema = z.object({
   limit: LimitSchema.default(25),
   cursor: CursorSchema.optional(),
 });
+// I3-2：CSV 导出复用列表筛选，但不接受分页参数（服务端固定上限 5000 条）。
+export const RequirementExportQuerySchema = RequirementListQuerySchema.omit({ limit: true, cursor: true });
+
 
 // GET /api/audit 查询参数（date-time 允许 "+08:00" 等偏移，offset: true 对齐 RFC 3339）
+// GET /api/ops/metrics — 运营指标窗口（天）。
+export const OpsMetricsQuerySchema = z.object({
+  days: z.coerce.number().int().min(1).max(90).default(7),
+});
+
 // GET /api/ops/jobs — 只读运维视图：失败作业与卡住的运行中作业。
 export const OpsJobsQuerySchema = z.object({
   limit: LimitSchema.default(50),

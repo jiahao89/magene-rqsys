@@ -342,6 +342,56 @@ test("audit list forwards an event-type filter and rejects malformed event types
  }
  assert.equal(seen.length, 2);
 });
+test("exports the filtered requirement pool as CSV with escaping and a 5000-row cap", async () => {
+ const base = { platformRequirementId: "RQ-000001", teambitionRequirementId: "tb-1", title: '=HYPERLINK("x,y")', executorName: "张三", currentScorePriority: "P1", priorityOverride: null, processingState: "active", pipeline: { pull: "synced", analysis: "analyzed", owner: "auto_mapped", push: "pushed" }, sourceType: "teambition", sourceVersion: 2, baseRecordId: "rec-1", sourceMissingSince: null, createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-09T00:00:00.000Z" };
+ const seen: Array<Record<string, unknown>> = [];
+ const d = makeDependencies();
+ const requirementsRepo = d.repositories!.requirements!;
+ requirementsRepo.search = (async (query: Parameters<typeof requirementsRepo.search>[0]) => {
+  seen.push(query as unknown as Record<string, unknown>);
+  const rows = Array.from({ length: 2 }, () => ({ ...base }));
+  return { items: rows, nextCursor: null };
+ }) as unknown as typeof requirementsRepo.search;
+ const response = await handleApiRequest(new Request("http://localhost/api/requirements/export?q=报表&priority=P1"), d);
+ assert.equal(response.status, 200);
+ assert.match(response.headers.get("content-type") ?? "", /text\/csv/);
+ assert.match(response.headers.get("content-disposition") ?? "", /rq-sys-requirements-2026-10-08\.csv/);
+ // TextDecoder 默认会吞掉 BOM；用原始字节确认 Excel 兼容的 UTF-8 BOM。
+ const bytes = new Uint8Array(await response.arrayBuffer());
+ assert.deepEqual([...bytes.slice(0, 3)], [0xef, 0xbb, 0xbf]);
+ const text = new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
+ assert.match(text, /平台ID,TB需求ID,标题/);
+ assert.match(text, /'"'=HYPERLINK\(""x,y""\)"|"'=HYPERLINK/);
+ assert.equal(seen[0]?.q, "报表");
+ assert.equal(seen[0]?.priority, "P1");
+ assert.equal(response.headers.get("x-rq-truncated"), null);
+
+ const big = makeDependencies();
+ const bigRepo = big.repositories!.requirements!;
+ bigRepo.search = (async () => ({ items: Array.from({ length: 5001 }, () => ({ ...base })), nextCursor: null })) as unknown as typeof bigRepo.search;
+ const truncated = await handleApiRequest(new Request("http://localhost/api/requirements/export"), big);
+ assert.equal(truncated.status, 200);
+ assert.equal(truncated.headers.get("x-rq-truncated"), "true");
+ assert.equal((await truncated.text()).split("\r\n").length, 5001);
+
+ assert.equal((await handleApiRequest(new Request("http://localhost/api/requirements/export"), unauthenticated)).status, 401);
+});
+
+test("ops metrics default to a 7-day window and validate the range", async () => {
+ const d = makeDependencies();
+ const seen: Array<{ days: number; now: string }> = [];
+ d.repositories!.ops = { getOpsMetrics: async (input) => { seen.push(input); return { window: { days: input.days, since: input.now } } as never; } };
+ const ok = await handleApiRequest(new Request("http://localhost/api/ops/metrics"), d);
+ assert.equal(ok.status, 200);
+ assert.equal(seen[0]?.days, 7);
+ const custom = await handleApiRequest(new Request("http://localhost/api/ops/metrics?days=30"), d);
+ assert.equal(custom.status, 200);
+ assert.equal(seen[1]?.days, 30);
+ assert.equal((await handleApiRequest(new Request("http://localhost/api/ops/metrics?days=0"), d)).status, 400);
+ assert.equal((await handleApiRequest(new Request("http://localhost/api/ops/metrics?days=91"), d)).status, 400);
+ assert.equal((await handleApiRequest(new Request("http://localhost/api/ops/metrics"), unauthenticated)).status, 401);
+});
+
 test("ops job view lists failed and stuck jobs without leaking payload", async () => {
  const base = { jobType: "base_push", dedupeKey: "base-push:req-1", payload: { requirementId: "req-1", actorId: "actor-1", substantiveHash: "secret-ish" }, attemptCount: 5, maxAttempts: 5, availableAt: "2026-10-08T00:00:00.000Z", lockedUntil: null, lastErrorCode: "BASE_TIMEOUT", lastErrorSummary: "upstream timed out", createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T01:00:00.000Z" };
  const d = makeDependencies();

@@ -303,6 +303,19 @@ export interface PipelineJobRepository {
 }
 
 // audit_events（追加只读；safe_details 为白名单字段）
+/** 运营指标（PRD §10）：窗口内的同步/分析/推送成功率与耗时，以及当前快照。 */
+export interface OpsMetricsRepository {
+  getOpsMetrics(input: { days: number; now: string }): Promise<{
+    window: { days: number; since: string };
+    sync: { total: number; succeeded: number; partialFailure: number; failed: number; successRate: number | null; avgDurationSeconds: number | null; lastCompletedAt: string | null };
+    analysis: { total: number; analyzed: number; failedRetryable: number; running: number; successRate: number | null; avgDurationSeconds: number | null; lowConfidence: number; lowConfidenceRate: number | null; failureCodes: Array<{ code: string; count: number }> };
+    owner: { autoMapped: number; manuallyMapped: number; pendingMapping: number; notRequired: number };
+    push: { total: number; pushed: number; failed: number; successRate: number | null; avgDurationSeconds: number | null };
+    duplicate: { confirmedSuppressed: number; suspected: number };
+    scoring: { aiSuggested: number; manual: number; aiApplied: number; adoptionRate: number | null };
+  }>;
+}
+
 export interface AuditEventRepository {
   append(record: AuditEventRecord): Promise<void>;
   search(query: {

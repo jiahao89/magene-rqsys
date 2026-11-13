@@ -368,6 +368,18 @@ test("base push repository looks up a run by idempotency key", async()=>{
   assert.match(calls[0]!.sql,/FROM base_push_runs WHERE idempotency_key=\$1/);assert.deepEqual(calls[0]!.values,["push:key"]);
 });
 
+test("ops metrics query uses the computed window and returns a stable shape on empty data", async()=>{
+  const {pool,calls}=recordingPool();const store=new PostgresRepositories(pool);
+  const metrics=await store.ops.getOpsMetrics({days:7,now:"2026-11-10T00:00:00.000Z"});
+  assert.equal(calls.length,2);
+  assert.equal(calls[0]!.values![0],"2026-11-03T00:00:00.000Z");
+  assert.match(calls[0]!.sql,/sync_batches/);
+  assert.match(calls[1]!.sql,/safe_error_code/);
+  assert.deepEqual(metrics.sync,{total:0,succeeded:0,partialFailure:0,failed:0,successRate:null,avgDurationSeconds:null,lastCompletedAt:null});
+  assert.deepEqual(metrics.analysis.failureCodes,[]);
+  assert.equal(metrics.scoring.adoptionRate,null);
+});
+
 test("ops view lists failed jobs with a bounded parameterized query", async()=>{
   const {pool,calls}=recordingPool();const store=new PostgresRepositories(pool);
   await store.jobs.listFailed(25);

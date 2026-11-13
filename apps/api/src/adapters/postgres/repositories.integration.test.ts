@@ -75,6 +75,22 @@ test("suspected duplicates stay in the pool/counts and keep detail links",async(
 
 test("batch keyset cursor does not skip rows with identical start times and applies inclusive time filters",async()=>{const ctx=await setup();try{const source=await ctx.repos.sources.create(config);const ids:string[]=[];for(let i=0;i<3;i++){const batch=await ctx.repos.batches.create({sourceConfigId:source.id,triggerType:"manual",actorId:null,idempotencyKey:`same-time-batch-${i}`,startedAt:"2026-10-08T00:00:00Z"});ids.push(batch.id);await ctx.repos.batches.complete(batch.id,{status:"succeeded",totalCount:0,succeededCount:0,failedCount:0,errorSummary:null,completedAt:"2026-10-08T00:00:01Z"});}const first=await ctx.repos.batches.list({since:"2026-10-08T00:00:00Z",until:"2026-10-08T00:00:00Z",limit:1});assert.equal(first.items.length,1);assert.ok(first.nextCursor);const {decodeBatchCursor}=await import("../../application/batch-cursor.js");const second=await ctx.repos.batches.list({since:"2026-10-08T00:00:00Z",until:"2026-10-08T00:00:00Z",limit:1,cursor:decodeBatchCursor(first.nextCursor)!});assert.equal(second.items.length,1);assert.notEqual(second.items[0]?.id,first.items[0]?.id);assert.equal(ids.length,3);}finally{await cleanup(ctx);}});
 
+test("ops metrics aggregate completed sync batches in the window (PRD 10)", async () => {
+  const ctx = await setup();
+  try {
+    const source = await ctx.repos.sources.create(config);
+    const batch = await ctx.repos.batches.create({ sourceConfigId: source.id, triggerType: "manual", actorId: null, idempotencyKey: "ops-metrics-0001", startedAt: new Date().toISOString() });
+    await ctx.repos.batches.complete(batch.id, { status: "succeeded", totalCount: 3, succeededCount: 3, failedCount: 0, errorSummary: null, completedAt: new Date().toISOString() });
+    const metrics = await ctx.repos.ops.getOpsMetrics({ days: 7, now: new Date().toISOString() });
+    assert.equal(metrics.sync.total, 1);
+    assert.equal(metrics.sync.succeeded, 1);
+    assert.equal(metrics.sync.successRate, 100);
+    assert.equal(metrics.analysis.failureCodes.length, 0);
+    assert.equal(typeof metrics.owner.pendingMapping, "number");
+    assert.equal(typeof metrics.duplicate.confirmedSuppressed, "number");
+  } finally { await cleanup(ctx); }
+});
+
 test("source-missing marking flags only unseen TB requirements and clears on reappearance (Q4)", async () => {
   const ctx = await setup();
   try {

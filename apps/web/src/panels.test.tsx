@@ -384,6 +384,9 @@ describe("RequirementsPanel (ticket 17)", () => {
     fetchMock.mockImplementation(async (input) => {
       const path = typeof input === "string" ? input : new Request(input).url;
       if (path === "/api/people") return jsonOk({ items: options.people ?? [] });
+      if (path.startsWith("/api/requirements/export")) {
+        return new Response("\uFEFF平台ID,TB需求ID\r\nRQ-000001,tb-1", { status: 200, headers: { "content-type": "text/csv; charset=utf-8", "x-rq-truncated": "false" } });
+      }
       if (path.startsWith("/api/requirements/")) {
         return options.onDetail ? options.onDetail(path) : jsonOk(options.detailBody ?? detail());
       }
@@ -395,6 +398,33 @@ describe("RequirementsPanel (ticket 17)", () => {
     fireEvent.click(await screen.findByText(title));
     return screen.findByRole("heading", { name: title });
   }
+
+  it("exports the applied filters as a CSV download", async () => {
+    mockPanel();
+    const createObjectURL = vi.fn(() => "blob:mock");
+    const revokeObjectURL = vi.fn();
+    const originalCreate = URL.createObjectURL;
+    const originalRevoke = URL.revokeObjectURL;
+    URL.createObjectURL = createObjectURL as never;
+    URL.revokeObjectURL = revokeObjectURL as never;
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    try {
+      render(<RequirementsPanel onRefresh={() => undefined} />);
+      await screen.findByText("需要报表");
+      fireEvent.change(screen.getByLabelText("搜索需求标题"), { target: { value: "报表" } });
+      fireEvent.click(screen.getByRole("button", { name: "筛选" }));
+      fireEvent.click(screen.getByRole("button", { name: "导出 CSV" }));
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/api/requirements/export?q=%E6%8A%A5%E8%A1%A8")));
+      await waitFor(() => expect(createObjectURL).toHaveBeenCalledTimes(1));
+      expect(revokeObjectURL).toHaveBeenCalledWith("blob:mock");
+      expect(click).toHaveBeenCalled();
+      expect(await screen.findByText("已导出当前筛选结果。")).toBeInTheDocument();
+    } finally {
+      click.mockRestore();
+      URL.createObjectURL = originalCreate;
+      URL.revokeObjectURL = originalRevoke;
+    }
+  });
 
   it("marks requirements that disappeared from the latest full sync (Q4)", async () => {
     const missingRow = { ...row, sourceMissingSince: "2026-11-11T00:00:00.000Z" };
@@ -1304,12 +1334,22 @@ describe("AuditPanel event-type filter", () => {
 });
 
 describe("OpsPanel", () => {
+  const metricsBody = () => ({
+    window: { days: 7, since: "2026-11-03T00:00:00.000Z" },
+    sync: { total: 4, succeeded: 4, partialFailure: 0, failed: 0, successRate: 100, avgDurationSeconds: 1.2, lastCompletedAt: "2026-11-03T01:00:00.000Z" },
+    analysis: { total: 5, analyzed: 4, failedRetryable: 1, running: 0, successRate: 80, avgDurationSeconds: 2.5, lowConfidence: 1, lowConfidenceRate: 25, failureCodes: [{ code: "AI_TIMEOUT", count: 2 }] },
+    owner: { autoMapped: 10, manuallyMapped: 2, pendingMapping: 1, notRequired: 3 },
+    push: { total: 6, pushed: 6, failed: 0, successRate: 100, avgDurationSeconds: 0.8 },
+    duplicate: { confirmedSuppressed: 2, suspected: 1 },
+    scoring: { aiSuggested: 5, manual: 1, aiApplied: 2, adoptionRate: 66.7 },
+  });
   const job = { id: "job-1", jobType: "base_push", status: "failed", dedupeKey: "base-push:req-1", attemptCount: 5, maxAttempts: 5, availableAt: "2026-11-03T00:00:00.000Z", lockedUntil: null, lastErrorCode: "BASE_TIMEOUT", lastErrorSummary: "upstream timed out", createdAt: "2026-11-03T00:00:00.000Z", updatedAt: "2026-11-03T01:00:00.000Z", requirementId: "req-12345678" };
 
   it("renders failed and stuck jobs from the read-only endpoint", async () => {
     fetchMock.mockImplementation(async (input) => {
       const path = typeof input === "string" ? input : new Request(input).url;
       if (path === "/api/health/ready") return jsonOk({ status: "ready", database: "connected", migrations: { latest: "0027_source_missing.sql", expected: "0027_source_missing.sql", upToDate: true } });
+      if (path.startsWith("/api/ops/metrics")) return jsonOk({ metrics: metricsBody() });
       return jsonOk({ now: "2026-11-03T02:00:00.000Z", items: { failed: [job], stuck: [{ ...job, id: "job-2", status: "running" }] } });
     });
     render(<OpsPanel />);
@@ -1320,6 +1360,21 @@ describe("OpsPanel", () => {
     expect(screen.getAllByText("upstream timed out").length).toBe(2);
     expect(screen.getAllByText("5 / 5").length).toBe(2);
     expect(screen.getByText(/迁移：已应用 0027_source_missing.sql，与代码一致/)).toBeInTheDocument();
+    expect(screen.getByText("同步成功率")).toBeInTheDocument();
+    expect(screen.getAllByText("100%").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText(/分析失败码：AI_TIMEOUT×2/)).toBeInTheDocument();
+  });
+
+  it("switches the metrics window to 30 days", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/health/ready") return jsonOk({ status: "ready" });
+      if (path.startsWith("/api/ops/metrics")) return jsonOk({ metrics: metricsBody() });
+      return jsonOk({ now: "2026-11-03T02:00:00.000Z", items: { failed: [], stuck: [] } });
+    });
+    render(<OpsPanel />);
+    fireEvent.click(await screen.findByRole("button", { name: "近 30 天" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/api/ops/metrics?days=30"), expect.anything()));
   });
 
   it("warns when the database migration lags behind the code", async () => {

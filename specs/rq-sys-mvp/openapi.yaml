@@ -284,6 +284,29 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: The version is PII-flagged; re-import a de-identified snapshot. }
+  /api/requirements/export:
+    get:
+      summary: Export the filtered requirement pool as CSV (max 5000 rows)
+      description: Reuses the list filters and ignores pagination. Cells are RFC 4180 escaped and formula-injection neutralized; UTF-8 BOM for Excel.
+      parameters:
+        - { name: q, in: query, schema: { type: string, maxLength: 200 } }
+        - { name: executorName, in: query, schema: { type: string } }
+        - { name: pullState, in: query, schema: { type: string } }
+        - { name: analysisState, in: query, schema: { type: string } }
+        - { name: ownerState, in: query, schema: { type: string } }
+        - { name: pushState, in: query, schema: { type: string } }
+        - { name: processingState, in: query, schema: { type: string, enum: [active, suppressed] } }
+        - { name: priority, in: query, schema: { type: string, enum: [P0, P1, P2, P3] } }
+        - { name: sort, in: query, schema: { type: string, enum: [created_desc, priority_asc] } }
+        - { name: batchId, in: query, schema: { type: string, format: uuid } }
+        - { name: since, in: query, schema: { type: string, format: date-time } }
+        - { name: until, in: query, schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: CSV file (X-RQ-Truncated=true when the 5000-row cap was hit)
+          content:
+            text/csv:
+              schema: { type: string }
   /api/requirements:
     get:
       summary: Search requirements by source and pipeline state

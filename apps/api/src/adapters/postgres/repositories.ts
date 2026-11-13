@@ -16,7 +16,7 @@ import { normalizeOwnerName } from "../../owner/mapping.js";
 import type {
   AnalysisRunRepository, AuditEventInput, AuditEventRepository, BasePushRunRepository,
   ModuleDictionaryRepository, PersonMappingRepository, PmSnapshotRepository,
-  PipelineJobRepository, PriorityRuleRepository, RequirementQueryRepository,
+  PipelineJobRepository, PriorityRuleRepository, RequirementQueryRepository, OpsMetricsRepository,
   RequirementSearchCursor, SourceConfigRepository, SourceSnapshotRepository, SyncBatchRepository, SyncItemRepository, TeamDirectoryRepository,
   RequirementScoringRepository,
 } from "../../application/repositories.js";
@@ -937,4 +937,49 @@ export class PostgresRequirementScoringRepository implements RequirementScoringR
     }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}
   }
 }
-export class PostgresRepositories{readonly sources:PostgresSourceConfigRepository;readonly batches:PostgresSyncBatchRepository;readonly items:PostgresSyncItemRepository;readonly audit:PostgresAuditEventRepository;readonly jobs:PostgresPipelineJobRepository;readonly sourceSnapshots:PostgresSourceSnapshotRepository;readonly requirements:PostgresRequirementRepository;readonly analyses:PostgresAnalysisRunRepository;readonly people:PostgresPersonMappingRepository;readonly pmSnapshots:PostgresPmSnapshotRepository;readonly basePushes:PostgresBasePushRunRepository;readonly dictionaries:PostgresModuleDictionaryRepository;readonly directory:PostgresTeamDirectoryRepository;readonly priorityRules:PostgresPriorityRuleRepository;readonly scoring:PostgresRequirementScoringRepository;constructor(pool:Pool){this.sources=new PostgresSourceConfigRepository(pool);this.batches=new PostgresSyncBatchRepository(pool);this.items=new PostgresSyncItemRepository(pool);this.audit=new PostgresAuditEventRepository(pool);this.jobs=new PostgresPipelineJobRepository(pool);this.sourceSnapshots=new PostgresSourceSnapshotRepository(pool);this.requirements=new PostgresRequirementRepository(pool);this.analyses=new PostgresAnalysisRunRepository(pool);this.people=new PostgresPersonMappingRepository(pool);this.pmSnapshots=new PostgresPmSnapshotRepository(pool);this.basePushes=new PostgresBasePushRunRepository(pool);this.dictionaries=new PostgresModuleDictionaryRepository(pool);this.directory=new PostgresTeamDirectoryRepository(pool);this.priorityRules=new PostgresPriorityRuleRepository(pool);this.scoring=new PostgresRequirementScoringRepository(pool);}}
+export class PostgresOpsMetricsRepository implements OpsMetricsRepository{constructor(private readonly pool:Pool){}async getOpsMetrics(p:{days:number;now:string}){
+  const since=new Date(new Date(p.now).getTime()-p.days*24*60*60*1000).toISOString();
+  const{rows}=await this.pool.query(`WITH w AS (SELECT $1::timestamptz AS since)
+  SELECT
+    (SELECT count(*) FROM sync_batches b, w WHERE b.created_at>=w.since)::int AS sync_total,
+    (SELECT count(*) FROM sync_batches b, w WHERE b.created_at>=w.since AND b.status='succeeded')::int AS sync_succeeded,
+    (SELECT count(*) FROM sync_batches b, w WHERE b.created_at>=w.since AND b.status='partial_failure')::int AS sync_partial,
+    (SELECT count(*) FROM sync_batches b, w WHERE b.created_at>=w.since AND b.status='failed')::int AS sync_failed,
+    (SELECT avg(EXTRACT(EPOCH FROM (b.completed_at-b.started_at))) FROM sync_batches b, w WHERE b.created_at>=w.since AND b.completed_at IS NOT NULL)::float AS sync_avg_seconds,
+    (SELECT max(b.completed_at) FROM sync_batches b) AS sync_last_completed_at,
+    (SELECT count(*) FROM analysis_runs r, w WHERE r.started_at>=w.since)::int AS analysis_total,
+    (SELECT count(*) FROM analysis_runs r, w WHERE r.started_at>=w.since AND r.status='analyzed')::int AS analysis_analyzed,
+    (SELECT count(*) FROM analysis_runs r, w WHERE r.started_at>=w.since AND r.status='failed_retryable')::int AS analysis_failed,
+    (SELECT count(*) FROM analysis_runs r, w WHERE r.started_at>=w.since AND r.status='running')::int AS analysis_running,
+    (SELECT avg(EXTRACT(EPOCH FROM (r.completed_at-r.started_at))) FROM analysis_runs r, w WHERE r.started_at>=w.since AND r.completed_at IS NOT NULL)::float AS analysis_avg_seconds,
+    (SELECT count(*) FROM analysis_runs r, w WHERE r.started_at>=w.since AND r.status='analyzed' AND r.confidence='low')::int AS analysis_low_confidence,
+    (SELECT count(*) FROM requirements WHERE processing_state='active' AND owner_state='auto_mapped')::int AS owner_auto,
+    (SELECT count(*) FROM requirements WHERE processing_state='active' AND owner_state='manually_mapped')::int AS owner_manual,
+    (SELECT count(*) FROM requirements WHERE processing_state='active' AND owner_state='pending_mapping')::int AS owner_pending,
+    (SELECT count(*) FROM requirements WHERE processing_state='active' AND owner_state='not_required')::int AS owner_not_required,
+    (SELECT count(*) FROM base_push_runs r, w WHERE r.started_at>=w.since)::int AS push_total,
+    (SELECT count(*) FROM base_push_runs r, w WHERE r.started_at>=w.since AND r.status='pushed')::int AS push_pushed,
+    (SELECT count(*) FROM base_push_runs r, w WHERE r.started_at>=w.since AND r.status='failed')::int AS push_failed,
+    (SELECT avg(EXTRACT(EPOCH FROM (r.completed_at-r.started_at))) FROM base_push_runs r, w WHERE r.started_at>=w.since AND r.completed_at IS NOT NULL)::float AS push_avg_seconds,
+    (SELECT count(*) FROM requirement_resolutions WHERE review_state='confirmed' AND decision IN ('duplicate','ignored'))::int AS duplicate_confirmed,
+    (SELECT count(*) FROM requirement_resolutions WHERE review_state='suspected')::int AS duplicate_suspected,
+    (SELECT count(*) FROM requirement_score_versions v, w WHERE v.created_at>=w.since AND v.origin='ai')::int AS score_ai,
+    (SELECT count(*) FROM requirement_score_versions v, w WHERE v.created_at>=w.since AND v.origin='manual')::int AS score_manual,
+    (SELECT count(*) FROM requirement_score_versions v, w WHERE v.created_at>=w.since AND v.origin='ai_applied')::int AS score_ai_applied`,[since]);
+  const failures=await this.pool.query("SELECT COALESCE(safe_error_code,'unknown') AS code,count(*)::int AS count FROM analysis_runs WHERE started_at>=$1::timestamptz AND status='failed_retryable' GROUP BY 1 ORDER BY 2 DESC,1 LIMIT 5",[since]);
+  const row=rows[0]??{};const n=(v:unknown)=>Number(v??0);
+  const rate=(num:number,den:number)=>den>0?Math.round((num/den)*1000)/10:null;
+  const syncTotal=n(row.sync_total),analysisTotal=n(row.analysis_total),pushTotal=n(row.push_total);
+  const scoreAi=n(row.score_ai),scoreManual=n(row.score_manual),scoreApplied=n(row.score_ai_applied);
+  return{
+    window:{days:p.days,since},
+    sync:{total:syncTotal,succeeded:n(row.sync_succeeded),partialFailure:n(row.sync_partial),failed:n(row.sync_failed),successRate:rate(n(row.sync_succeeded),syncTotal),avgDurationSeconds:row.sync_avg_seconds==null?null:Math.round(Number(row.sync_avg_seconds)*10)/10,lastCompletedAt:row.sync_last_completed_at?new Date(row.sync_last_completed_at).toISOString():null},
+    analysis:{total:analysisTotal,analyzed:n(row.analysis_analyzed),failedRetryable:n(row.analysis_failed),running:n(row.analysis_running),successRate:rate(n(row.analysis_analyzed),analysisTotal),avgDurationSeconds:row.analysis_avg_seconds==null?null:Math.round(Number(row.analysis_avg_seconds)*10)/10,lowConfidence:n(row.analysis_low_confidence),lowConfidenceRate:rate(n(row.analysis_low_confidence),n(row.analysis_analyzed)),failureCodes:failures.rows.map((r:any)=>({code:String(r.code),count:Number(r.count)}))},
+    owner:{autoMapped:n(row.owner_auto),manuallyMapped:n(row.owner_manual),pendingMapping:n(row.owner_pending),notRequired:n(row.owner_not_required)},
+    push:{total:pushTotal,pushed:n(row.push_pushed),failed:n(row.push_failed),successRate:rate(n(row.push_pushed),pushTotal),avgDurationSeconds:row.push_avg_seconds==null?null:Math.round(Number(row.push_avg_seconds)*10)/10},
+    duplicate:{confirmedSuppressed:n(row.duplicate_confirmed),suspected:n(row.duplicate_suspected)},
+    scoring:{aiSuggested:scoreAi,manual:scoreManual,aiApplied:scoreApplied,adoptionRate:rate(scoreApplied,scoreApplied+scoreManual)},
+  };
+}}
+
+export class PostgresRepositories{readonly sources:PostgresSourceConfigRepository;readonly batches:PostgresSyncBatchRepository;readonly items:PostgresSyncItemRepository;readonly audit:PostgresAuditEventRepository;readonly jobs:PostgresPipelineJobRepository;readonly sourceSnapshots:PostgresSourceSnapshotRepository;readonly requirements:PostgresRequirementRepository;readonly analyses:PostgresAnalysisRunRepository;readonly people:PostgresPersonMappingRepository;readonly pmSnapshots:PostgresPmSnapshotRepository;readonly basePushes:PostgresBasePushRunRepository;readonly dictionaries:PostgresModuleDictionaryRepository;readonly directory:PostgresTeamDirectoryRepository;readonly priorityRules:PostgresPriorityRuleRepository;readonly scoring:PostgresRequirementScoringRepository;readonly ops:PostgresOpsMetricsRepository;constructor(pool:Pool){this.sources=new PostgresSourceConfigRepository(pool);this.batches=new PostgresSyncBatchRepository(pool);this.items=new PostgresSyncItemRepository(pool);this.audit=new PostgresAuditEventRepository(pool);this.jobs=new PostgresPipelineJobRepository(pool);this.sourceSnapshots=new PostgresSourceSnapshotRepository(pool);this.requirements=new PostgresRequirementRepository(pool);this.analyses=new PostgresAnalysisRunRepository(pool);this.people=new PostgresPersonMappingRepository(pool);this.pmSnapshots=new PostgresPmSnapshotRepository(pool);this.basePushes=new PostgresBasePushRunRepository(pool);this.dictionaries=new PostgresModuleDictionaryRepository(pool);this.directory=new PostgresTeamDirectoryRepository(pool);this.priorityRules=new PostgresPriorityRuleRepository(pool);this.scoring=new PostgresRequirementScoringRepository(pool);this.ops=new PostgresOpsMetricsRepository(pool);}}
