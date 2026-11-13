@@ -51,14 +51,15 @@ export interface ApiDependencies {
   duplicateMarker?: (input: import("../base/duplicate-marker.js").DuplicateMarkInput) => Promise<import("../base/duplicate-marker.js").DuplicateMarkResult>;
 }
 function json(body: unknown, status = 200): Response { return Response.json(body, { status }); }
-async function readMigrationStatus(database: Pool | null): Promise<{ latest: string | null; expected: string; upToDate: boolean; error?: string }> {
+async function readMigrationStatus(database: Pool | null): Promise<{ latest: string | null; expected: string; upToDate: boolean | null; error?: string }> {
   try {
     const { rows } = await database!.query("SELECT filename FROM schema_migrations ORDER BY filename DESC LIMIT 1");
     const latest = typeof rows[0]?.filename === "string" ? rows[0].filename : null;
     return { latest, expected: EXPECTED_LATEST_MIGRATION, upToDate: latest === EXPECTED_LATEST_MIGRATION };
   } catch {
-    // 空库/无 schema_migrations 表时不能判定，明确标错而不是假装已对齐。
-    return { latest: null, expected: EXPECTED_LATEST_MIGRATION, upToDate: false, error: "migration_state_unavailable" };
+    // 空库、或目标平台不暴露应用迁移记录（Miaoda 迁移由平台回放，不写 schema_migrations）时不能判定。
+    // upToDate=null 表示「未知」，不是「落后」；调用方不得据此提示用户去执行迁移。
+    return { latest: null, expected: EXPECTED_LATEST_MIGRATION, upToDate: null, error: "migration_state_unavailable" };
   }
 }
 // PostgreSQL 的 uuid 列不接受任意字符串；路径里的非法 ID 必须在进入仓储层前收敛成 404，

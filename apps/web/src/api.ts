@@ -566,7 +566,8 @@ export interface OpsJob {
 export interface Readiness {
   status: string;
   database?: string;
-  migrations?: { latest: string | null; expected: string; upToDate: boolean; error?: string };
+  /** upToDate=null 表示目标环境不提供应用迁移记录（未知），不得当作“落后”处理。 */
+  migrations?: { latest: string | null; expected: string; upToDate: boolean | null; error?: string };
 }
 
 /** 健康检查：数据库可用性与迁移对齐状态（不要求认证）。 */

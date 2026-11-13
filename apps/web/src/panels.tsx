@@ -2082,11 +2082,13 @@ export function OpsPanel() {
       <ArcoButton size="small" onClick={() => void load()} disabled={loadState === "loading"} htmlType="button"><RefreshCw size={14} />刷新</ArcoButton>
     </div>
     <StateBanner loadError={loadError} notice={null} onCloseNotice={() => undefined} />
-    <p className={`status-hint${migrations && !migrations.upToDate ? " field-error" : ""}`} role="status">
+    <p className={`status-hint${migrations?.upToDate === false ? " field-error" : ""}`} role="status">
       {migrations
-        ? migrations.upToDate
+        ? migrations.upToDate === true
           ? `迁移：已应用 ${migrations.latest ?? "未知"}，与代码一致`
-          : `迁移：库中最新 ${migrations.latest ?? "未知"}，代码期望 ${migrations.expected}；请先应用待执行迁移${migrations.error ? `（${migrations.error}）` : ""}`
+          : migrations.upToDate === false
+            ? `迁移：库中最新 ${migrations.latest ?? "未知"}，代码期望 ${migrations.expected}；请先应用待执行迁移`
+            : `迁移：无法读取应用迁移记录（目标环境由平台管理迁移）；代码期望 ${migrations.expected}，无法判断是否落后`
         : "迁移状态：不可用"}
     </p>
     <div className="subsection">

@@ -43,7 +43,11 @@ paths:
                     properties:
                       latest: { type: [string, 'null'] }
                       expected: { type: string }
-                      upToDate: { type: boolean }
+                      upToDate:
+                        type: [boolean, 'null']
+                        description: >-
+                          true = applied migration matches the expected file; false = lagging;
+                          null = migration state unavailable (e.g. platform-managed target DB), not a lag signal.
                       error: { type: string }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /api/overview/metrics:

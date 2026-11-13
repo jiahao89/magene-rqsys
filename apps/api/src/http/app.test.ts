@@ -81,7 +81,10 @@ test("readiness reports the applied migration without failing when it lags", asy
 
  const unknown = await handleApiRequest(new Request("http://localhost/api/health/ready"), makeReady(new Error("no schema_migrations")));
  assert.equal(unknown.status, 200);
- assert.equal(((await unknown.json() as { migrations: Record<string, unknown> }).migrations)["error"], "migration_state_unavailable");
+ const unknownMigrations = (await unknown.json() as { migrations: Record<string, unknown> }).migrations;
+ assert.equal(unknownMigrations["error"], "migration_state_unavailable");
+ // 未知 ≠ 落后：upToDate 必须为 null，避免目标环境误报“请先应用迁移”。
+ assert.equal(unknownMigrations["upToDate"], null);
 });
 
 test("readiness reports unavailable when no database is configured", async () => { const r = await handleApiRequest(new Request("http://localhost/api/health/ready"), unauthenticated); assert.equal(r.status, 503); assert.deepEqual(await r.json(), { status: "not_ready", reason: "database_unavailable_or_not_configured" }); });
