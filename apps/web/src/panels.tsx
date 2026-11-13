@@ -1420,6 +1420,7 @@ export function PriorityOverrideSection({ detail, onSaved }: { detail: Requireme
       <div><dt>时间</dt><dd>{timeLabel(override.at)}</dd></div>
     </dl>}
     <p className="detail-note">人工优先级只影响应用内列表/详情/总览统计，不回写 Base；清除后恢复当前评分版本优先级。</p>
+    {override && detail.scoring?.current && detail.scoring.current.priority !== override.priority && <p className="detail-note" role="note">Base 的「AI优先级建议」仍是评分结果 {detail.scoring.current.priority}，不会随人工覆盖（{override.priority}）变化；PM 终审优先级请在 Base 中维护。</p>}
     <StateBanner loadError={error} notice={notice} onCloseNotice={() => setNotice(null)} />
     {mode === null ? <div className="req-summary-actions">
       <ArcoButton htmlType="button" size="small" onClick={() => { setMode("edit"); setReason(""); setError(null); setNotice(null); }} disabled={busy || suppressed} title={suppressed ? "已压制需求不能设置人工优先级；请先撤销判定" : "设置人工优先级覆盖"}>{override ? "修改人工优先级" : "设置人工优先级"}</ArcoButton>

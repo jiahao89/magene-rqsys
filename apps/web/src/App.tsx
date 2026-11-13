@@ -196,6 +196,19 @@ function App() {
     setPage(target);
   };
 
+  // 总览优先级卡片 → 需求池分诊视图。与侧栏链接一致：普通左键走应用内导航，修饰键/中键保留浏览器默认行为。
+  const priorityLinkProps = (priority: string) => {
+    const filters = { priority, sort: "priority_asc" };
+    return {
+      href: workbenchUrl(window.location.pathname, window.location.search, "Requirements", filters),
+      onClick: (event: ReactMouseEvent<HTMLAnchorElement>) => {
+        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        setPage("Requirements", filters);
+      },
+    };
+  };
+
   useEffect(() => {
     const onPopState = () => {
       const route = readWorkbenchRoute(window.location.hash, window.location.search);
@@ -388,11 +401,18 @@ function App() {
             <section className="panel priority-grade-panel" aria-labelledby="priority-grade-heading">
               <div className="panel-heading"><div><h2 id="priority-grade-heading">优先级分级</h2><p>按当前综合评分统计需求数量；未评分需求单列</p></div><span className="priority-grade-total">{priority ? `${priorityGraded} / ${total} 已分级` : "统计暂不可用"}</span></div>
               <div className="priority-grade-grid" role="group" aria-label="优先级分级统计">
-                {priorityCards.map((card) => <div className={`priority-grade-card is-${card.tone}`} key={card.key}>
-                  <div className="priority-grade-head"><span className={`priority-pill priority-${card.tone}`}>{card.key}</span><small>{card.range}</small></div>
-                  <strong>{priority ? card.value : health === "loading" ? <SkeletonBlock className="skeleton-num" /> : "—"}</strong>
-                  <span>条需求</span>
-                </div>)}
+                {priorityCards.map((card) => {
+                  const className = `priority-grade-card is-${card.tone}`;
+                  const body = <>
+                    <div className="priority-grade-head"><span className={`priority-pill priority-${card.tone}`}>{card.key}</span><small>{card.range}</small></div>
+                    <strong>{priority ? card.value : health === "loading" ? <SkeletonBlock className="skeleton-num" /> : "—"}</strong>
+                    <span>条需求</span>
+                  </>;
+                  // 统计可用时下钻到需求池的分诊视图（priority 筛选 + P0→P3 排序）；统计缺失时只展示，不给假链接。
+                  return priority
+                    ? <a key={card.key} className={`${className} is-link`} aria-label={`查看 ${card.key} 需求，共 ${card.value} 条`} {...priorityLinkProps(card.key)}>{body}</a>
+                    : <div key={card.key} className={className}>{body}</div>;
+                })}
                 <div className="priority-grade-card is-unscored">
                   <div className="priority-grade-head"><span className="priority-pill priority-unscored">待评分</span><small>无评分/无历史优先级</small></div>
                   <strong>{priority ? priority.unscored : health === "loading" ? <SkeletonBlock className="skeleton-num" /> : "—"}</strong>

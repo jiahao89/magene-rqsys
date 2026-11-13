@@ -1179,6 +1179,30 @@ describe("PriorityOverrideSection (V02-T26)", () => {
     await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
   });
 
+  it("warns that Base keeps the scored priority when the manual override differs", () => {
+    const detail = {
+      ...baseDetail,
+      effectivePriority: "P0",
+      priorityOverride: { priority: "P0", reason: "老板要求", actorId: "pm-1", at: "2026-11-03T00:00:00.000Z" },
+      scoring: { current: { version: 2, priority: "P3" }, aiSuggestion: null, history: [], formula: { text: "formula", thresholds: { p0: 45, p1: 25, p2: 10 } } },
+    } as unknown as RequirementDetail;
+    render(<PriorityOverrideSection detail={detail} onSaved={() => undefined} />);
+    expect(screen.getByRole("note")).toHaveTextContent("Base 的「AI优先级建议」仍是评分结果 P3");
+  });
+
+  it("does not warn when there is no override or it matches the scored priority", () => {
+    render(<PriorityOverrideSection detail={baseDetail} onSaved={() => undefined} />);
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
+    cleanup();
+    const same = {
+      ...baseDetail,
+      priorityOverride: { priority: "P3", reason: "确认", actorId: "pm-1", at: "2026-11-03T00:00:00.000Z" },
+      scoring: { current: { version: 2, priority: "P3" }, aiSuggestion: null, history: [], formula: { text: "formula", thresholds: { p0: 45, p1: 25, p2: 10 } } },
+    } as unknown as RequirementDetail;
+    render(<PriorityOverrideSection detail={same} onSaved={() => undefined} />);
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
+  });
+
   it("clears an existing override (priority: null) and shows who/when/why", async () => {
     let body: Record<string, unknown> | undefined;
     const detail = {

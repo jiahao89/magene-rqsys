@@ -67,3 +67,13 @@
 - PR-03（P0 代码部分）：`implemented-local`。需求池优先级列 + P0–P3 筛选 + `sort=priority_asc` 分诊排序（单页 100 条、不分页）+ URL 深链 + openapi/DTO + 两端一致性 + 测试（API 552、Web 115、妙搭路由 116）。
 - PR-05（部分）：待匹配负责人列表显示 TB 真实姓名并按执行人聚合（`姓名×数量`）；DTO 增加 `executorName`。逐条处置/批量/离职转交仍待决策。
 - 其余票保持原状态；目标环境验证与发布均未执行。
+
+## 实施进度（2026-11-10）
+
+- 需求文档：PRD 增补修订 §1/§3/§5/§6/§9，新增 §13 待决口径（Q1 待匹配需求去向、Q2 Base 重复标记字段、Q3 v3 校准基准、Q4 TB 删除提示）；新增迭代计划 [`docs/2026-11-10-rq-sys-iteration-plan.md`](../../../docs/2026-11-10-rq-sys-iteration-plan.md)。上线 Gate 改为 G1–G8 表格，移除已取消的权限/负责人维护项。
+- PR-03：总览优先级卡片下钻到 `priority=Px&sort=priority_asc`（两端），统计不可用时不渲染链接 —— `implemented-local`。
+- PR-09 / PR-11：失败/卡住作业飞书机器人告警（共享模块 `ops/alerts.ts`，`RQSYS_ALERT_WEBHOOK_URL` 仅 https，同签名冷却默认 360 分钟，`ops.alert_sent/failed` 审计；文本不含需求标题/负责人/payload）—— `implemented-local`，待配置 webhook 后取目标环境证据。额度专项、暂停队列、provider 切换未做。
+- 人工优先级（PRD-18 配套）：覆盖值与评分结果不一致时，详情页提示「Base 仍是评分结果」—— `implemented-local`。
+- Kano 状态流转：用户 2026-11-10 决定暂不开发。
+- 验证：API 558、Web 119、妙搭路由 116、契约 7、alignment（`ops/alerts.ts` 已纳入共用模块）、migrations 全部通过。未提交、未发布。
+

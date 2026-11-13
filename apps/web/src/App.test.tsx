@@ -59,6 +59,43 @@ describe("RQ-Sys local workbench", () => {
     expect(screen.getByText(/其中/)).toHaveTextContent("8");
   });
 
+  it("drills a priority card down into the requirement pool triage view", async () => {
+    fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/sources") return Response.json({ items: [] });
+      if (path.startsWith("/api/batches")) return Response.json({ items: [] });
+      if (path === "/api/overview/metrics") return Response.json({ counts: { total: 315, pullSynced: 315, analysisAnalyzed: 315, ownerResolved: 315, pushPushed: 312, pushFailed: 0, pushPending: 3, failed: 0, priority: { P0: 2, P1: 3, P2: 4, P3: 5, scored: 6, legacy: 8, unscored: 301 }, priorityRule: { version: 2, thresholds: { p0: 45, p1: 25, p2: 10 }, formulaText: "U=pain×frequency; ..." } } });
+      return Response.json({ items: [], nextCursor: null });
+    });
+    render(<App />);
+
+    const group = await screen.findByRole("group", { name: "优先级分级统计" });
+    const link = await within(group).findByRole("link", { name: /查看 P0 需求，共 2 条/ });
+    fireEvent.click(link);
+
+    expect(window.location.hash).toBe("#requirements");
+    const params = new URLSearchParams(window.location.search);
+    expect(params.get("priority")).toBe("P0");
+    expect(params.get("sort")).toBe("priority_asc");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("priority=P0"), expect.anything()));
+  });
+
+  it("does not render priority cards as links when grade statistics are unavailable", async () => {
+    fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/sources") return Response.json({ items: [] });
+      if (path.startsWith("/api/batches")) return Response.json({ items: [] });
+      if (path === "/api/overview/metrics") return Response.json({ counts: { total: 12, pullSynced: 12, analysisAnalyzed: 8, ownerResolved: 9, pushPushed: 6, failed: 2 } });
+      return Response.json({ items: [], nextCursor: null });
+    });
+    render(<App />);
+
+    const group = await screen.findByRole("group", { name: "优先级分级统计" });
+    expect(within(group).queryAllByRole("link")).toHaveLength(0);
+  });
+
   it("shows a recoverable service error instead of claiming the API is configured", async () => {
     fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
 

@@ -9,6 +9,7 @@ import { SyncOrchestrator, shouldProcessSyncDownstream, type SyncJobRunner } fro
 import { TeambitionClient } from "./adapters/teambition/client.js";
 import { createRequirementWorkflow } from "./requirements/processing.js";
 import { createDueSyncJobs } from "./scheduler/due-jobs.js";
+import { readOpsAlertConfig, runOpsAlert } from "./ops/alerts.js";
 import { reapExhaustedJobs, reapOrphanedBatches } from "./scheduler/reap.js";
 import { enqueueMissingAnalysisJobs, recoverAnalysisPipeline } from "./scheduler/analysis-recovery.js";
 import { recheckOwnerMappings } from "./scheduler/owner-recheck.js";
@@ -306,6 +307,15 @@ if (worker && repositories && workerPollMs > 0) {
         for (const error of recheck.errors) process.stderr.write(`owner mapping recheck item failed: ${error}\n`);
       } catch (error) {
         process.stderr.write(`owner mapping recheck failed: ${String(error)}\n`);
+      }
+      // 运维告警：失败/卡住作业摘要推送到飞书群机器人（未配置 webhook 时关闭）。
+      // 放在 worker 之前：本轮新产生的失败下一轮再报，避免同一 tick 内抖动。失败不阻断调度。
+      try {
+        const alert = await runOpsAlert({ config: readOpsAlertConfig(process.env), jobs: repositories.jobs, audit: repositories.audit, now });
+        if (alert.outcome === "sent") process.stdout.write(`ops alert sent: failed=${alert.failed} stuck=${alert.stuck}\n`);
+        if (alert.outcome === "failed") process.stderr.write(`ops alert delivery failed: failed=${alert.failed} stuck=${alert.stuck}\n`);
+      } catch (error) {
+        process.stderr.write(`ops alert failed: ${String(error)}\n`);
       }
       await worker.runOnce();
     })().catch((error) => process.stderr.write(`worker tick failed: ${String(error)}\n`));
