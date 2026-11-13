@@ -8,10 +8,11 @@ import { RICE_CONFIG_VERSION, RICE_EFFORT_UNIT, RICE_IMPACT_LEVELS, RICE_REACH_U
 import type { AuditEventRepository, AnalysisRunRepository, PipelineJobRepository, SourceConfigRepository, SyncBatchRepository, SyncItemRepository, PersonMappingRepository, RequirementQueryRepository, BasePushRunRepository, ModuleDictionaryRepository, PriorityRuleRepository, SourceSnapshotRepository, TeamDirectoryRepository, RequirementScoringRepository } from "../application/repositories.js";
 import type { PersonMappingRecord, AnalysisRunRecord, ModuleDictionaryVersionRecord, PriorityRuleVersionRecord, RequirementRecord, SourceConfigRecord, SyncBatchRecord, PipelineJobRecord } from "../domain/persistence.js";
 import type { TeamPersonRecord } from "../domain/team-directory.js";
-import { AnalysisContextUpdateSchema, AuditListQuerySchema, OpsJobsQuerySchema, OpsMetricsQuerySchema, RequirementExportQuerySchema, ClearDuplicateDecisionSchema, DuplicateDecisionSchema, PriorityOverrideUpdateSchema, RetryAnalysisRequestSchema, KanoEvidenceImportSchema, KanoRunRequestSchema, AudienceUpdateSchema, BatchListQuerySchema, RiceDraftUpdateSchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementIntakeEditSchema, RequirementIntakeSchema, RequirementListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
+import { AnalysisContextUpdateSchema, AuditListQuerySchema, GateConfirmSchema, OpsJobsQuerySchema, OpsMetricsQuerySchema, RequirementExportQuerySchema, ClearDuplicateDecisionSchema, DuplicateDecisionSchema, PriorityOverrideUpdateSchema, RetryAnalysisRequestSchema, KanoEvidenceImportSchema, KanoRunRequestSchema, AudienceUpdateSchema, BatchListQuerySchema, RiceDraftUpdateSchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementIntakeEditSchema, RequirementIntakeSchema, RequirementListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
 import { createHash, randomUUID } from "node:crypto";
 import { ApplyAiScoringSchema, ManualScoringUpdateSchema, SCORING_FORMULA_TEXT, SCORING_THRESHOLDS, computeUmcScore } from "../analysis/scoring.js";
 import { maskPii } from "../analysis/contract.js";
+import { confirmGate, evaluateGates } from "../ops/gates.js";
 import { toCsv } from "../application/csv.js";
 import { SourceConfigUpdateSchema, normalizeSourceSchedule, type ResolvedSourceConfigUpdate } from "../contracts/source.js";
 import { DictionaryCreateSchema, PriorityRuleCreateSchema, TeamModulesSaveSchema, TeamPersonCreateSchema, TeamPersonFeishuBindSchema, TeamPersonRenameSchema } from "../contracts/rules.js";
@@ -351,6 +352,32 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const query = Object.fromEntries(url.searchParams.entries()); if (query.limit !== undefined) query.limit = String(Number(query.limit));
     const parsed = AuditListQuerySchema.safeParse(query); if (!parsed.success) return jsonError("VALIDATION_FAILED");
     return json({ items: await repositories.audit.search({ limit: parsed.data.limit, ...(parsed.data.entityId === undefined ? {} : { entityId: parsed.data.entityId }), ...(parsed.data.eventType === undefined ? {} : { eventType: parsed.data.eventType }), ...(parsed.data.since === undefined ? {} : { since: parsed.data.since }), ...(parsed.data.until === undefined ? {} : { until: parsed.data.until }) }) });
+  }
+  // PR-15：上线 Gate 当前状态（自动检查 + 人工确认），供状态页与发布判断使用。
+  if (method === "GET" && url.pathname === "/api/ops/gates") {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    const now = (dependencies.now ?? (() => new Date()))();
+    return json(await evaluateGates({
+      flags: repositories?.flags, requirements: repositories?.requirements,
+      priorityRules: repositories?.priorityRules, env: process.env, now,
+    }));
+  }
+  const opsGateMatch = url.pathname.match(/^\/api\/ops\/gates\/([A-Za-z0-9]+)$/);
+  if (method === "PUT" && opsGateMatch) {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.flags || !repositories.audit) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const parsed = GateConfirmSchema.safeParse(await readJson(request).catch(() => null));
+    if (!parsed.success) return jsonError("VALIDATION_FAILED");
+    if (parsed.data.confirmed && !parsed.data.evidence) return jsonError("VALIDATION_FAILED", "确认通过时必须填写证据。");
+    const now = (dependencies.now ?? (() => new Date()))();
+    const result = await confirmGate({
+      flags: repositories.flags, audit: repositories.audit, id: opsGateMatch[1]!,
+      confirmed: parsed.data.confirmed, ...(parsed.data.evidence ? { evidence: parsed.data.evidence } : {}),
+      actorId: auth.actor.id, now,
+    });
+    if (result.outcome === "invalid") return jsonError("NOT_FOUND");
+    if (result.outcome === "unavailable") return jsonError("DEPENDENCY_UNAVAILABLE");
+    return json({ gateId: opsGateMatch[1], confirmed: parsed.data.confirmed });
   }
   // 只读运维视图：失败的作业 + 尝试次数用尽且租约过期的运行中作业。
   // 不提供重试/清理动作，避免绕过状态机；修复由各自的恢复器/人工重试完成。

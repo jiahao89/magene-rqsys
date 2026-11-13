@@ -39,7 +39,7 @@
 | PR-12 | [备份恢复/环境隔离/数据治理](PR-12-backup-recovery-and-data-governance.md) | blocked-on-external | Miaoda 备份/保留能力与平台权限；其余子项 ready-for-agent | P1 | `deployment/`、`scripts/check-migrations.mjs`、`database/migrations/`、env 清单、保留/清理策略 |
 | PR-13 | [P2 路线：生命周期/多来源/协作/文档治理](PR-13-p2-roadmap.md) | draft | 产品 Roadmap + D-01/D-02 决策 | P2 | 路线条目（实施前另建票）；`docs/`、`specs/` |
 | PR-14 | [上线培训、角色 SOP 与文档同步](PR-14-training-sop-and-docs.md) | ready-for-agent | 需用户/试点团队配合 | P1 | `deployment/`、`docs/`、`specs/`、App 使用指南 |
-| PR-15 | [唯一上线 Gate 与当前状态页](PR-15-go-live-gate-and-current-status.md) | ready-for-agent | 用户/产品确认 gate 为唯一判据 | P0 | `deployment/`、`specs/rq-sys-mvp/`、PRD 增补 §9 |
+| PR-15 | [唯一上线 Gate 与当前状态页](PR-15-go-live-gate-and-current-status.md) | implemented-local | 用户/产品确认 gate 为唯一判据；状态页已实现，待发布取证 | P0 | `deployment/`、`specs/rq-sys-mvp/`、PRD 增补 §9 |
 
 ## 与评估报告的覆盖映射
 
@@ -82,4 +82,9 @@
 - 用户确认 Q1/Q2/Q4（PRD-21/22/23）：待匹配需求空负责人推送；Base 重复标记用专用字段且不通知；TB 来源移除只提示。
 - 代码（本地、未提交）：`pipeline/advance.ts`、`base/push-service.ts` 不再因未映射阻塞推送，`scheduler/owner-recheck.ts` 补映射后用独立 intent 键重推；新增共享模块 `base/duplicate-marker.ts`（判定/撤销时写 `RQ重复标记`/`RQ主记录链接`，字段缺失不影响判定）；同步完成后标记 `source_missing_since`，再次出现自动清除，需迁移 `0027_source_missing.sql`（开发库已应用）。
 - 验证：API 569、Web 120、妙搭路由 116、契约 7、alignment/migrations 全绿。目标环境未发布；正式 Base 需先建两个文本字段并配置 `BASE_FIELDS_JSON.duplicate`。
+
+## 实施进度（2026-11-13）
+
+- PR-15：上线 Gate 状态页已实现（本地）：`GET /api/ops/gates` + 运维页区块；自动项读取正式 Base 配置/已推送数、已发布规则、待匹配未推送、告警通道；人工项需填写证据并写 `system_flags`/审计。未发布。
+- 验证：API 591、Web 124、妙搭路由 116、契约 7、alignment/migrations 全绿。
 

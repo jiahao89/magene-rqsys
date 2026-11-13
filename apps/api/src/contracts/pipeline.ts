@@ -56,6 +56,12 @@ export const RequirementExportQuerySchema = RequirementListQuerySchema.omit({ li
 
 
 // GET /api/audit 查询参数（date-time 允许 "+08:00" 等偏移，offset: true 对齐 RFC 3339）
+// PUT /api/ops/gates/:id — 人工确认上线 Gate（需证据）。
+export const GateConfirmSchema = z.strictObject({
+  confirmed: z.boolean(),
+  evidence: z.string().trim().min(1).max(500).optional(),
+});
+
 // GET /api/ops/metrics — 运营指标窗口（天）。
 export const OpsMetricsQuerySchema = z.object({
   days: z.coerce.number().int().min(1).max(90).default(7),

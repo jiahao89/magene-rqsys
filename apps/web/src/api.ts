@@ -583,6 +583,27 @@ export function getReadiness(fetcher: typeof fetch = fetch): Promise<Readiness> 
   return requestJson<Readiness>("/api/health/ready", fetcher);
 }
 
+export interface GateStatus {
+  id: string;
+  title: string;
+  requirement: string;
+  auto: { status: "pass" | "fail" | "na"; detail: string };
+  manual: { required: boolean; confirmed: boolean; evidence?: string; by?: string; at?: string };
+  status: "pass" | "fail" | "pending";
+}
+
+export interface GatesResponse { ready: boolean; gates: GateStatus[] }
+
+/** PR-15：上线 Gate 当前状态（自动检查 + 人工确认）。 */
+export function getGates(fetcher: typeof fetch = fetch): Promise<GatesResponse> {
+  return requestJson<GatesResponse>("/api/ops/gates", fetcher as typeof fetch);
+}
+
+/** PR-15：人工确认/撤销某个 Gate（通过时必须提供证据）。 */
+export function setGate(id: string, input: { confirmed: boolean; evidence?: string }, fetcher: typeof fetch = fetch): Promise<{ gateId: string; confirmed: boolean }> {
+  return putJson(`/api/ops/gates/${id}`, input, fetcher as typeof fetch);
+}
+
 export interface OpsMetrics {
   window: { days: number; since: string };
   sync: { total: number; succeeded: number; partialFailure: number; failed: number; successRate: number | null; avgDurationSeconds: number | null; lastCompletedAt: string | null };

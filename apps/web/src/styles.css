@@ -1553,3 +1553,14 @@ html[data-theme="dark"] input[type="datetime-local"] { color-scheme: dark; }
 .ops-metric strong { color: var(--rq-text-strong); font-size: 22px; font-variant-numeric: tabular-nums; }
 .ops-metric small { color: var(--rq-text-muted); font-size: var(--rq-font-caption); }
 .ops-failures { color: var(--rq-text-muted); }
+
+.ops-gates { margin: 6px 0 14px; }
+.gate-list { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.gate-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 9px 11px; border: 1px solid var(--rq-border); border-radius: var(--rq-radius-md); background: var(--rq-surface); flex-wrap: wrap; }
+.gate-row.is-fail { border-color: var(--rq-danger-accent, #e5484d); }
+.gate-main { display: flex; min-width: 240px; flex: 1; flex-direction: column; gap: 2px; }
+.gate-main span, .gate-main small { color: var(--rq-text-muted); font-size: var(--rq-font-caption); }
+.gate-side { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.gate-evidence { display: inline-flex; align-items: center; gap: 6px; color: var(--rq-text-muted); font-size: var(--rq-font-caption); }
+.gate-form { flex-basis: 100%; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.gate-form input { flex: 1; min-width: 240px; }

@@ -378,6 +378,40 @@ test("exports the filtered requirement pool as CSV with escaping and a 5000-row 
  assert.equal((await handleApiRequest(new Request("http://localhost/api/requirements/export"), unauthenticated)).status, 401);
 });
 
+test("ops gate status evaluates automatic checks and records manual evidence", async () => {
+ const d = makeDependencies();
+ const stored = new Map<string, Record<string, unknown>>();
+ d.repositories!.flags = { get: async (name: string) => stored.has(name) ? { value: stored.get(name)!, updatedAt: "2026-10-08T00:00:00.000Z" } : null, set: async (name: string, value: Record<string, unknown>) => { stored.set(name, value); } } as never;
+ d.repositories!.priorityRules = { getPublished: async () => ({ version: 2, rules: { formulaType: "umsc_weighted_v2" } }) } as never;
+ const requirements = d.repositories!.requirements as unknown as { getPipelineCounts: () => Promise<unknown>; search: () => Promise<unknown> };
+ requirements.getPipelineCounts = async () => ({ pushPushed: 279, total: 284 });
+ requirements.search = async () => ({ items: [], nextCursor: null });
+ const previous = { ...process.env };
+ process.env.BASE_APP_TOKEN = "app"; process.env.BASE_TABLE_ID = "tbl"; process.env.RQSYS_ALERT_WEBHOOK_URL = "https://hook";
+ try {
+  const response = await handleApiRequest(new Request("http://localhost/api/ops/gates"), d);
+  assert.equal(response.status, 200);
+  const body = await response.json() as { ready: boolean; gates: Array<{ id: string; status: string; auto: { status: string } }> };
+  assert.equal(body.gates.length, 8);
+  assert.equal(body.gates.find((gate) => gate.id === "G1")?.auto.status, "pass");
+  assert.equal(body.gates.find((gate) => gate.id === "G2")?.status, "fail");
+
+  const confirmed = await handleApiRequest(new Request("http://localhost/api/ops/gates/G1", {
+   method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirmed: true, evidence: "通知截图 2026-11-12" }),
+  }), d);
+  assert.equal(confirmed.status, 200);
+  assert.equal((stored.get("gate:G1") as Record<string, unknown>)["confirmed"], true);
+
+  assert.equal((await handleApiRequest(new Request("http://localhost/api/ops/gates/G1", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirmed: true }) }), d)).status, 400);
+  assert.equal((await handleApiRequest(new Request("http://localhost/api/ops/gates/G3", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirmed: true, evidence: "x" }) }), d)).status, 404);
+  assert.equal((await handleApiRequest(new Request("http://localhost/api/ops/gates"), unauthenticated)).status, 401);
+ } finally {
+  for (const key of ["BASE_APP_TOKEN", "BASE_TABLE_ID", "RQSYS_ALERT_WEBHOOK_URL"]) {
+   if (previous[key] === undefined) delete process.env[key]; else process.env[key] = previous[key];
+  }
+ }
+});
+
 test("ops metrics default to a 7-day window and validate the range", async () => {
  const d = makeDependencies();
  const seen: Array<{ days: number; now: string }> = [];

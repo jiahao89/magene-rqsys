@@ -13,7 +13,7 @@ import { checkScheduleHealth } from "./schedule";
 import { readRequirementDeepLink } from "./deep-link";
 import { emptyRequirementListFilters, readRequirementListFilters, requirementFilterCount, requirementPoolUrl, type RequirementListFilters, type RequirementProcessingView } from "./requirements-url";
 import { formatDateTime, requirementDisplayId, requirementOwnerView, requirementSourceFacts, requirementTime, sortRequirementsForAttention } from "./requirement-view";
-import { AUDIT_PAGE_LIMIT, ApiError, addTeamPerson, applyRequirementAiScore, bindTeamPersonFeishu, createSource, deleteTeamPerson, getBatch, getFunctionModules, getRequirement, exportRequirementsCsv, getOpsJobs, getOpsMetrics, getReadiness, listAudit, listBatches, listDictionaryVersions, listMappings, listRequirements, listTeamPeople, pushRequirement, renameTeamPerson, revokeDuplicateDecision, saveAnalysisContext, saveFunctionModules, retryAnalysis, setPriorityOverride, retrySyncItem, saveRequirementScore, searchFeishuUsers, setDuplicateDecision, setOwner, unbindTeamPersonFeishu, updateSource, type AnalysisVersionSummary, type AuditEvent, type OpsJob, type OpsMetrics, type BatchDetail, type BatchSummary, type DictionaryVersion, type DuplicateDecision, type PersonMapping, type PublishStatus, type FeishuUserSelection, type FeishuUserCandidate, type FunctionModuleEntry, type RequirementDetail, type RequirementProcessingState, type RequirementResolution, type RequirementScoreVersion, type RequirementSummary, type ScoringInputs, type SourceConfig, type SourceConfigUpdate, type TeamPerson, clearOwner } from "./api";
+import { AUDIT_PAGE_LIMIT, ApiError, addTeamPerson, applyRequirementAiScore, bindTeamPersonFeishu, createSource, deleteTeamPerson, getBatch, getFunctionModules, getRequirement, exportRequirementsCsv, getGates, getOpsJobs, getOpsMetrics, getReadiness, setGate, listAudit, listBatches, listDictionaryVersions, listMappings, listRequirements, listTeamPeople, pushRequirement, renameTeamPerson, revokeDuplicateDecision, saveAnalysisContext, saveFunctionModules, retryAnalysis, setPriorityOverride, retrySyncItem, saveRequirementScore, searchFeishuUsers, setDuplicateDecision, setOwner, unbindTeamPersonFeishu, updateSource, type AnalysisVersionSummary, type AuditEvent, type OpsJob, type OpsMetrics, type GatesResponse, type BatchDetail, type BatchSummary, type DictionaryVersion, type DuplicateDecision, type PersonMapping, type PublishStatus, type FeishuUserSelection, type FeishuUserCandidate, type FunctionModuleEntry, type RequirementDetail, type RequirementProcessingState, type RequirementResolution, type RequirementScoreVersion, type RequirementSummary, type ScoringInputs, type SourceConfig, type SourceConfigUpdate, type TeamPerson, clearOwner } from "./api";
 import type { WorkbenchTab } from "./workbench-routing";
 
 export type LoadState = "loading" | "ready" | "error";
@@ -2088,6 +2088,10 @@ export function OpsPanel() {
   const [items, setItems] = useState<{ failed: OpsJob[]; stuck: OpsJob[] } | null>(null);
   const [migrations, setMigrations] = useState<Awaited<ReturnType<typeof getReadiness>>["migrations"] | null>(null);
   const [metrics, setMetrics] = useState<OpsMetrics | null>(null);
+  const [gates, setGates] = useState<GatesResponse | null>(null);
+  const [gateEditing, setGateEditing] = useState<string | null>(null);
+  const [gateEvidence, setGateEvidence] = useState("");
+  const [gateError, setGateError] = useState<string | null>(null);
   const [days, setDays] = useState(7);
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -2095,12 +2099,29 @@ export function OpsPanel() {
   const load = useCallback(async () => {
     setLoadState("loading"); setLoadError(null);
     // 迁移与指标是辅助信息：读取失败不影响作业列表。
-    const [jobsResult, readyResult, metricsResult] = await Promise.allSettled([getOpsJobs({ limit: 50 }), getReadiness(), getOpsMetrics({ days })]);
+    const [jobsResult, readyResult, metricsResult, gatesResult] = await Promise.allSettled([getOpsJobs({ limit: 50 }), getReadiness(), getOpsMetrics({ days }), getGates()]);
     if (jobsResult.status === "fulfilled") { setItems(jobsResult.value.items); setLoadState("ready"); }
     else { setLoadError(errorText(jobsResult.reason)); setLoadState("error"); }
     setMigrations(readyResult.status === "fulfilled" ? readyResult.value.migrations ?? null : null);
     setMetrics(metricsResult.status === "fulfilled" ? metricsResult.value : null);
+    setGates(gatesResult.status === "fulfilled" && Array.isArray(gatesResult.value.gates) ? gatesResult.value : null);
   }, [days]);
+
+  const confirmGateAction = async (id: string) => {
+    const evidence = gateEvidence.trim();
+    if (!evidence) { setGateError("请填写证据（截图/记录链接/日期）。"); return; }
+    setGateError(null);
+    try {
+      await setGate(id, { confirmed: true, evidence });
+      setGateEditing(null); setGateEvidence("");
+      setGates(await getGates());
+    } catch (cause) { setGateError(errorText(cause)); }
+  };
+  const revokeGate = async (id: string) => {
+    setGateError(null);
+    try { await setGate(id, { confirmed: false }); setGates(await getGates()); }
+    catch (cause) { setGateError(errorText(cause)); }
+  };
   useEffect(() => { void load(); }, [load]);
 
   return <section className="panel requirements-panel">
@@ -2140,6 +2161,33 @@ export function OpsPanel() {
         </p>
         {metrics.analysis.failureCodes.length > 0 && <p className="status-hint ops-failures">分析失败码：{metrics.analysis.failureCodes.map((item) => `${item.code}×${item.count}`).join("、")}</p>}
       </> : <p className="status-hint">运营指标暂不可用。</p>}
+    </div>
+    <div className="ops-gates">
+      <div className="ops-metrics-head">
+        <strong>上线 Gate</strong>
+        <span className={`status-chip gate-overall is-${gates?.ready ? "pass" : "pending"}`}>{gates ? (gates.ready ? "已满足" : "未满足") : "加载中"}</span>
+      </div>
+      {gates ? <ul className="gate-list">
+        {gates.gates.map((gate) => <li key={gate.id} className={`gate-row is-${gate.status}`}>
+          <div className="gate-main">
+            <strong>{gate.id} · {gate.title}</strong>
+            <span>{gate.requirement}</span>
+            <small>自动：{gate.auto.detail}</small>
+          </div>
+          <div className="gate-side">
+            <span className={`status-chip gate-status is-${gate.status}`}>{gate.status === "pass" ? "通过" : gate.status === "fail" ? "未通过" : "待确认"}</span>
+            {gate.manual.required && (gate.manual.confirmed
+              ? <span className="gate-evidence" title={gate.manual.evidence}>{`已确认 · ${gate.manual.by ?? "—"} · ${timeLabel(gate.manual.at)}`}<ArcoButton type="text" size="mini" onClick={() => void revokeGate(gate.id)} htmlType="button">撤销</ArcoButton></span>
+              : <ArcoButton size="mini" onClick={() => { setGateEditing(gate.id); setGateEvidence(""); setGateError(null); }} htmlType="button">记录证据</ArcoButton>)}
+          </div>
+          {gateEditing === gate.id && <div className="rules-form gate-form">
+            <input aria-label={`${gate.id} 证据`} value={gateEvidence} onChange={(event) => setGateEvidence(event.target.value)} placeholder="截图/记录链接/日期等可核对证据" />
+            <ArcoButton type="primary" size="small" onClick={() => void confirmGateAction(gate.id)} htmlType="button">确认通过</ArcoButton>
+            <ArcoButton size="small" onClick={() => { setGateEditing(null); setGateError(null); }} htmlType="button">取消</ArcoButton>
+          </div>}
+        </li>)}
+      </ul> : <p className="status-hint">Gate 状态暂不可用。</p>}
+      {gateError && <p className="field-error" role="alert">{gateError}</p>}
     </div>
     <div className="subsection">
       <div className="panel-heading"><div><h3>失败作业</h3><p>恢复由各自的重试入口或恢复器完成；本页不提供写入操作。</p></div></div>

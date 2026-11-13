@@ -1334,6 +1334,13 @@ describe("AuditPanel event-type filter", () => {
 });
 
 describe("OpsPanel", () => {
+  const gatesBody = () => ({
+    ready: false,
+    gates: [
+      { id: "G1", title: "正式 Base 全链路", requirement: "通知实收与回退演练", auto: { status: "pass", detail: "已推送 279 条" }, manual: { required: true, confirmed: false }, status: "pending" },
+      { id: "G3", title: "待匹配需求有确定去向", requirement: "无待匹配且未推送", auto: { status: "pass", detail: "没有待匹配且未推送的活跃需求" }, manual: { required: false, confirmed: false }, status: "pass" },
+    ],
+  });
   const metricsBody = () => ({
     window: { days: 7, since: "2026-11-03T00:00:00.000Z" },
     sync: { total: 4, succeeded: 4, partialFailure: 0, failed: 0, successRate: 100, avgDurationSeconds: 1.2, lastCompletedAt: "2026-11-03T01:00:00.000Z" },
@@ -1350,6 +1357,7 @@ describe("OpsPanel", () => {
       const path = typeof input === "string" ? input : new Request(input).url;
       if (path === "/api/health/ready") return jsonOk({ status: "ready", database: "connected", migrations: { latest: "0027_source_missing.sql", expected: "0027_source_missing.sql", upToDate: true } });
       if (path.startsWith("/api/ops/metrics")) return jsonOk({ metrics: metricsBody() });
+      if (path === "/api/ops/gates") return jsonOk(gatesBody());
       return jsonOk({ now: "2026-11-03T02:00:00.000Z", items: { failed: [job], stuck: [{ ...job, id: "job-2", status: "running" }] } });
     });
     render(<OpsPanel />);
@@ -1363,6 +1371,29 @@ describe("OpsPanel", () => {
     expect(screen.getByText("同步成功率")).toBeInTheDocument();
     expect(screen.getAllByText("100%").length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText(/分析失败码：AI_TIMEOUT×2/)).toBeInTheDocument();
+    expect(screen.getByText("G1 · 正式 Base 全链路")).toBeInTheDocument();
+    expect(screen.getByText("记录证据")).toBeInTheDocument();
+  });
+
+  it("records evidence for a manual gate", async () => {
+    const calls: Array<{ url: string; method?: string; body?: unknown }> = [];
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/health/ready") return jsonOk({ status: "ready" });
+      if (path.startsWith("/api/ops/metrics")) return jsonOk({ metrics: metricsBody() });
+      if (path === "/api/ops/gates") return jsonOk(gatesBody());
+      if (path.startsWith("/api/ops/gates/")) {
+        calls.push({ url: path, method: init?.method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+        return jsonOk({ gateId: "G1", confirmed: true });
+      }
+      return jsonOk({ now: "2026-11-03T02:00:00.000Z", items: { failed: [], stuck: [] } });
+    });
+    render(<OpsPanel />);
+    fireEvent.click(await screen.findByRole("button", { name: "记录证据" }));
+    fireEvent.change(screen.getByLabelText("G1 证据"), { target: { value: "通知截图 2026-11-12" } });
+    fireEvent.click(screen.getByRole("button", { name: "确认通过" }));
+    await waitFor(() => expect(calls.length).toBeGreaterThan(0));
+    expect(calls[0]).toEqual({ url: "/api/ops/gates/G1", method: "PUT", body: { confirmed: true, evidence: "通知截图 2026-11-12" } });
   });
 
   it("switches the metrics window to 30 days", async () => {
