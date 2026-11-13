@@ -36,6 +36,17 @@
 - 最终对账：App 323 条需求全部 `push_state=pushed`（pending/failed=0）；正式 Base 323 行、`需求平台ID` 唯一无重复、全部「已推送」；队列 0。
 - 待配置（不阻塞代码部署）：Q2 需在正式 Base 建 `RQ重复标记`/`RQ主记录链接` 两个文本字段并在 `BASE_FIELDS_JSON.duplicate` 指向它们；作业告警需提供 `RQSYS_ALERT_WEBHOOK_URL`（飞书群机器人 https webhook）。
 
+### 2026-11-13 下午增量部署
+
+- 迁移 `0028_system_flags.sql`：dev 执行 → `+db-env-migrate` 到 online（`changes_applied=4`）；线上 `system_flags` 表存在，之后 env-diff 为空。
+- 发布 release `7707561640783072506`（commit `665c7c3`，`finished`、`error_logs=[]`）。
+- 目标环境验证：
+  - 运营指标页（近 7 天）：同步成功率 100%（5/5）、分析成功率 100%（1/1）、推送成功率 100%（46/46）；负责人快照与评分快照可见。
+  - 需求池「导出 CSV」可用：`GET /api/requirements/export` 返回 UTF-8 BOM + RFC 4180 CSV，首行 323 条（上限 5000），列含平台ID/优先级/状态/Base记录ID、来源已移除；已加公式注入防护。
+  - 上线 Gate 页：G1 待人工证据、G2 未通过（当前规则 v2）、G3 通过（无待匹配未推送）、G4 未通过（未配置 webhook）、G5–G8 待确认；人工确认写入 `system_flags` 并留审计。
+  - 迁移状态仍按平台限制显示“无法判断”（最新/期望：未知 / `0028_system_flags.sql`）；`system_flags` 为空、队列 0、323 条需求全部已推送、发布后 error=0。
+- 新增的备份/恢复脚本（`scripts/rqsys-backup.mjs`、`scripts/rqsys-restore.mjs`）与 runbook 属本地/运维工具，不随妙搭运行时部署；快照含业务数据，`backups/` 已加入 `.gitignore`。
+
 ## 1. 迭代 1：上线前收口（1 周）
 
 **目标**：把已实现的本地改动送到目标环境，并补齐 G1 剩余证据。
@@ -76,7 +87,7 @@
 | I3-2 | CSV 导出（需求池当前筛选） | **已实现（本地）**：复用已生效筛选、上限 5000、公式注入防护、UTF-8 BOM；指标导出未做 |
 | I3-3 | AI 额度专项：识别 429/额度耗尽 → 告警 + 暂停分析入队；到期自动恢复补跑 | **已实现（本地）**：`system_flags` 暂停标记（阈值/窗口/时长可配）、`ops/ai-pause`、复用告警 webhook；手动重试不拦；待目标环境演练 |
 | I3-4 | 迁移状态可见：`/api/health/ready` 返回最新/期望迁移，作业运维页展示 | **已实现并发布**（2026-11-13）；`check:migrations` 校验期望常量。目标环境（妙搭）不暴露应用迁移记录：readiness 返回 `upToDate=null` 并在运维页显示“无法判断”，不误报落后；本地/dev 可正常追踪。 |
-| I3-5 | TB 删除提示（按 Q4 结论） | 只标记、不删除、不改 Base |
+| I3-5 | TB 删除提示（按 Q4 结论） | 已实现并发布（迁移 0027）；标记列/索引在线可用，真实缺失样本观察待下次全量同步 |
 | I3-6 | 备份/恢复演练（受平台能力限制，PR-12） | **已实现（本地）**：`rqsys-backup`（导出+校验）/`rqsys-restore`（隔离 schema 演练）+ runbook；本地演练 21 表/2315 行、0.4s 恢复全部一致；目标环境待平台权限 |
 
 ## 4. 迭代 4：试点（2–4 周）
