@@ -57,6 +57,33 @@ test("malformed percent-encoding in a path segment returns 4xx instead of throwi
 });
 test("liveness reports the API service", async () => { const r = await handleApiRequest(new Request("http://localhost/api/health"), unauthenticated); assert.equal(r.status, 200); assert.deepEqual(await r.json(), { status: "ok", service: "rq-sys-api" }); });
 
+test("readiness reports the applied migration without failing when it lags", async () => {
+ const makeReady = (rows: Array<{ filename?: string }> | Error) => {
+  const d = makeDependencies();
+  d.database = {
+   query: async (sql: string) => {
+    if (sql.includes("schema_migrations")) {
+     if (rows instanceof Error) throw rows;
+     return { rows, rowCount: rows.length };
+    }
+    return { rows: [{}], rowCount: 1 };
+   },
+  } as never;
+  return d;
+ };
+ const current = await handleApiRequest(new Request("http://localhost/api/health/ready"), makeReady([{ filename: "0027_source_missing.sql" }]));
+ assert.equal(current.status, 200);
+ assert.deepEqual((await current.json() as Record<string, unknown>).migrations, { latest: "0027_source_missing.sql", expected: "0027_source_missing.sql", upToDate: true });
+
+ const lagging = await handleApiRequest(new Request("http://localhost/api/health/ready"), makeReady([{ filename: "0019_scoring_v2.sql" }]));
+ assert.equal(lagging.status, 200);
+ assert.deepEqual((await lagging.json() as Record<string, unknown>).migrations, { latest: "0019_scoring_v2.sql", expected: "0027_source_missing.sql", upToDate: false });
+
+ const unknown = await handleApiRequest(new Request("http://localhost/api/health/ready"), makeReady(new Error("no schema_migrations")));
+ assert.equal(unknown.status, 200);
+ assert.equal(((await unknown.json() as { migrations: Record<string, unknown> }).migrations)["error"], "migration_state_unavailable");
+});
+
 test("readiness reports unavailable when no database is configured", async () => { const r = await handleApiRequest(new Request("http://localhost/api/health/ready"), unauthenticated); assert.equal(r.status, 503); assert.deepEqual(await r.json(), { status: "not_ready", reason: "database_unavailable_or_not_configured" }); });
 test("overview metrics return full pipeline counts and require an authenticated actor", async () => {
  const protectedResponse = await handleApiRequest(new Request("http://localhost/api/overview/metrics"), unauthenticated);

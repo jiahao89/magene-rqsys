@@ -563,6 +563,17 @@ export interface OpsJob {
 }
 
 /** 只读运维视图：失败的作业 + 尝试次数用尽且租约过期的运行中作业。 */
+export interface Readiness {
+  status: string;
+  database?: string;
+  migrations?: { latest: string | null; expected: string; upToDate: boolean; error?: string };
+}
+
+/** 健康检查：数据库可用性与迁移对齐状态（不要求认证）。 */
+export function getReadiness(fetcher: typeof fetch = fetch): Promise<Readiness> {
+  return requestJson<Readiness>("/api/health/ready", fetcher);
+}
+
 export function getOpsJobs(params: { limit?: number; fetcher?: typeof fetch } = {}): Promise<{ now: string; items: { failed: OpsJob[]; stuck: OpsJob[] } }> {
   const { fetcher = fetch, limit } = params;
   return requestJson<{ now: string; items: { failed: OpsJob[]; stuck: OpsJob[] } }>(`/api/ops/jobs${buildSearch({ limit })}`, fetcher);

@@ -7,7 +7,7 @@
 //
 // 退出码：0 = 通过；1 = 出现未白名单的重复前缀，或白名单与仓库现状不一致。
 
-import { readdir } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -81,10 +81,20 @@ for (const [prefix, names] of duplicates.filter(([prefix]) => !APPLIED_DUPLICATE
 }
 if (gaps.length) console.log(`  已登记的前缀缺口：${gaps.join("、")}`);
 
+// 期望迁移常量必须与磁盘上的最后一个迁移一致（健康检查/运维页据此判断库结构是否落后）。
+{
+  const expectedFile = resolve(rootDir, "apps/api/src/db/expected-migration.ts");
+  const source = await readFile(expectedFile, "utf8").catch(() => "");
+  const match = source.match(/EXPECTED_LATEST_MIGRATION\s*=\s*"([^"]+)"/);
+  const latest = files.at(-1);
+  if (!match) failures.push("无法读取 apps/api/src/db/expected-migration.ts 的 EXPECTED_LATEST_MIGRATION。");
+  else if (match[1] !== latest) failures.push(`EXPECTED_LATEST_MIGRATION=${match[1]} 与最新迁移 ${latest} 不一致；新增迁移后请同步更新。`);
+}
+
 if (failures.length) {
   console.log(`\n未通过（${failures.length}）：`);
   for (const failure of failures) console.log(`  - ${failure}`);
   process.exitCode = 1;
 } else {
-  console.log("\n通过：没有新增重复迁移前缀。");
+  console.log("\n通过：没有新增重复迁移前缀；EXPECTED_LATEST_MIGRATION 已对齐。");
 }

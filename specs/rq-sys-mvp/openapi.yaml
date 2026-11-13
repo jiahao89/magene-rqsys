@@ -28,7 +28,23 @@ paths:
       security: []
       summary: Database readiness probe
       responses:
-        '200': { description: Database is reachable }
+        '200':
+          description: Database is reachable; includes applied-vs-expected migration state (lag is reported but does not fail readiness)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, database]
+                properties:
+                  status: { type: string, enum: [ready, not_ready] }
+                  database: { type: string }
+                  migrations:
+                    type: object
+                    properties:
+                      latest: { type: [string, 'null'] }
+                      expected: { type: string }
+                      upToDate: { type: boolean }
+                      error: { type: string }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /api/overview/metrics:
     get:

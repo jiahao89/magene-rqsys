@@ -16,6 +16,7 @@ import { SourceConfigUpdateSchema, normalizeSourceSchedule, type ResolvedSourceC
 import { DictionaryCreateSchema, PriorityRuleCreateSchema, TeamModulesSaveSchema, TeamPersonCreateSchema, TeamPersonFeishuBindSchema, TeamPersonRenameSchema } from "../contracts/rules.js";
 import { DEFAULT_TEAM_MEMBERS } from "../domain/team-directory.js";
 import { isDatabaseReady } from "../adapters/postgres/health.js";
+import { EXPECTED_LATEST_MIGRATION } from "../db/expected-migration.js";
 import { jsonError } from "./errors.js";
 import { decodeRequirementCursor } from "../application/requirement-cursor.js";
 import { decodeBatchCursor } from "../application/batch-cursor.js";
@@ -50,6 +51,16 @@ export interface ApiDependencies {
   duplicateMarker?: (input: import("../base/duplicate-marker.js").DuplicateMarkInput) => Promise<import("../base/duplicate-marker.js").DuplicateMarkResult>;
 }
 function json(body: unknown, status = 200): Response { return Response.json(body, { status }); }
+async function readMigrationStatus(database: Pool | null): Promise<{ latest: string | null; expected: string; upToDate: boolean; error?: string }> {
+  try {
+    const { rows } = await database!.query("SELECT filename FROM schema_migrations ORDER BY filename DESC LIMIT 1");
+    const latest = typeof rows[0]?.filename === "string" ? rows[0].filename : null;
+    return { latest, expected: EXPECTED_LATEST_MIGRATION, upToDate: latest === EXPECTED_LATEST_MIGRATION };
+  } catch {
+    // 空库/无 schema_migrations 表时不能判定，明确标错而不是假装已对齐。
+    return { latest: null, expected: EXPECTED_LATEST_MIGRATION, upToDate: false, error: "migration_state_unavailable" };
+  }
+}
 // PostgreSQL 的 uuid 列不接受任意字符串；路径里的非法 ID 必须在进入仓储层前收敛成 404，
 // 否则查询会抛 22P02 并被兜底成 500（PRD 8.5 EQ-02）。只有真实数据库组合根强制 UUID；
 // HTTP 单测使用短 ID 夹具，仓储替身不做 uuid 转换。
@@ -215,7 +226,9 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
   const url = new URL(request.url), method = request.method.toUpperCase(), repositories = dependencies.repositories;
   if (method === "GET" && url.pathname === "/api/health") return json({ status: "ok", service: "rq-sys-api" });
   if (method === "GET" && url.pathname === "/api/health/ready") {
-    return await isDatabaseReady(dependencies.database) ? json({ status: "ready", database: "connected" }) : json({ status: "not_ready", reason: "database_unavailable_or_not_configured" }, 503);
+    if (!(await isDatabaseReady(dependencies.database))) return json({ status: "not_ready", reason: "database_unavailable_or_not_configured" }, 503);
+    // 迁移滞后只提示，不把服务判死：数据库可用即 ready，运维页据此提醒先跑迁移。
+    return json({ status: "ready", database: "connected", migrations: await readMigrationStatus(dependencies.database) });
   }
   if (method === "GET" && url.pathname === "/api/overview/metrics") {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;

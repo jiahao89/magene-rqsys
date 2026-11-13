@@ -13,7 +13,7 @@ import { checkScheduleHealth } from "./schedule";
 import { readRequirementDeepLink } from "./deep-link";
 import { emptyRequirementListFilters, readRequirementListFilters, requirementFilterCount, requirementPoolUrl, type RequirementListFilters, type RequirementProcessingView } from "./requirements-url";
 import { formatDateTime, requirementDisplayId, requirementOwnerView, requirementSourceFacts, requirementTime, sortRequirementsForAttention } from "./requirement-view";
-import { AUDIT_PAGE_LIMIT, ApiError, addTeamPerson, applyRequirementAiScore, bindTeamPersonFeishu, createSource, deleteTeamPerson, getBatch, getFunctionModules, getRequirement, getOpsJobs, listAudit, listBatches, listDictionaryVersions, listMappings, listRequirements, listTeamPeople, pushRequirement, renameTeamPerson, revokeDuplicateDecision, saveAnalysisContext, saveFunctionModules, retryAnalysis, setPriorityOverride, retrySyncItem, saveRequirementScore, searchFeishuUsers, setDuplicateDecision, setOwner, unbindTeamPersonFeishu, updateSource, type AnalysisVersionSummary, type AuditEvent, type OpsJob, type BatchDetail, type BatchSummary, type DictionaryVersion, type DuplicateDecision, type PersonMapping, type PublishStatus, type FeishuUserSelection, type FeishuUserCandidate, type FunctionModuleEntry, type RequirementDetail, type RequirementProcessingState, type RequirementResolution, type RequirementScoreVersion, type RequirementSummary, type ScoringInputs, type SourceConfig, type SourceConfigUpdate, type TeamPerson, clearOwner } from "./api";
+import { AUDIT_PAGE_LIMIT, ApiError, addTeamPerson, applyRequirementAiScore, bindTeamPersonFeishu, createSource, deleteTeamPerson, getBatch, getFunctionModules, getRequirement, getOpsJobs, getReadiness, listAudit, listBatches, listDictionaryVersions, listMappings, listRequirements, listTeamPeople, pushRequirement, renameTeamPerson, revokeDuplicateDecision, saveAnalysisContext, saveFunctionModules, retryAnalysis, setPriorityOverride, retrySyncItem, saveRequirementScore, searchFeishuUsers, setDuplicateDecision, setOwner, unbindTeamPersonFeishu, updateSource, type AnalysisVersionSummary, type AuditEvent, type OpsJob, type BatchDetail, type BatchSummary, type DictionaryVersion, type DuplicateDecision, type PersonMapping, type PublishStatus, type FeishuUserSelection, type FeishuUserCandidate, type FunctionModuleEntry, type RequirementDetail, type RequirementProcessingState, type RequirementResolution, type RequirementScoreVersion, type RequirementSummary, type ScoringInputs, type SourceConfig, type SourceConfigUpdate, type TeamPerson, clearOwner } from "./api";
 import type { WorkbenchTab } from "./workbench-routing";
 
 export type LoadState = "loading" | "ready" | "error";
@@ -2063,16 +2063,17 @@ function OpsJobTable({ jobs, emptyTitle, emptyHint }: { jobs: OpsJob[]; emptyTit
 
 export function OpsPanel() {
   const [items, setItems] = useState<{ failed: OpsJob[]; stuck: OpsJob[] } | null>(null);
+  const [migrations, setMigrations] = useState<Awaited<ReturnType<typeof getReadiness>>["migrations"] | null>(null);
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoadState("loading"); setLoadError(null);
-    try {
-      const result = await getOpsJobs({ limit: 50 });
-      setItems(result.items);
-      setLoadState("ready");
-    } catch (cause) { setLoadError(errorText(cause)); setLoadState("error"); }
+    // 迁移状态是辅助信息：读取失败不影响作业列表。
+    const [jobsResult, readyResult] = await Promise.allSettled([getOpsJobs({ limit: 50 }), getReadiness()]);
+    if (jobsResult.status === "fulfilled") { setItems(jobsResult.value.items); setLoadState("ready"); }
+    else { setLoadError(errorText(jobsResult.reason)); setLoadState("error"); }
+    setMigrations(readyResult.status === "fulfilled" ? readyResult.value.migrations ?? null : null);
   }, []);
   useEffect(() => { void load(); }, [load]);
 
@@ -2081,6 +2082,13 @@ export function OpsPanel() {
       <ArcoButton size="small" onClick={() => void load()} disabled={loadState === "loading"} htmlType="button"><RefreshCw size={14} />刷新</ArcoButton>
     </div>
     <StateBanner loadError={loadError} notice={null} onCloseNotice={() => undefined} />
+    <p className={`status-hint${migrations && !migrations.upToDate ? " field-error" : ""}`} role="status">
+      {migrations
+        ? migrations.upToDate
+          ? `迁移：已应用 ${migrations.latest ?? "未知"}，与代码一致`
+          : `迁移：库中最新 ${migrations.latest ?? "未知"}，代码期望 ${migrations.expected}；请先应用待执行迁移${migrations.error ? `（${migrations.error}）` : ""}`
+        : "迁移状态：不可用"}
+    </p>
     <div className="subsection">
       <div className="panel-heading"><div><h3>失败作业</h3><p>恢复由各自的重试入口或恢复器完成；本页不提供写入操作。</p></div></div>
       {items ? <OpsJobTable jobs={items.failed} emptyTitle="没有失败作业" emptyHint="最近没有处于 failed 状态的作业。" /> : <SkeletonTableRows rows={3} columns={6} />}

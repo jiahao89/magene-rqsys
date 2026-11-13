@@ -1307,7 +1307,11 @@ describe("OpsPanel", () => {
   const job = { id: "job-1", jobType: "base_push", status: "failed", dedupeKey: "base-push:req-1", attemptCount: 5, maxAttempts: 5, availableAt: "2026-11-03T00:00:00.000Z", lockedUntil: null, lastErrorCode: "BASE_TIMEOUT", lastErrorSummary: "upstream timed out", createdAt: "2026-11-03T00:00:00.000Z", updatedAt: "2026-11-03T01:00:00.000Z", requirementId: "req-12345678" };
 
   it("renders failed and stuck jobs from the read-only endpoint", async () => {
-    fetchMock.mockImplementation(async () => jsonOk({ now: "2026-11-03T02:00:00.000Z", items: { failed: [job], stuck: [{ ...job, id: "job-2", status: "running" }] } }));
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/health/ready") return jsonOk({ status: "ready", database: "connected", migrations: { latest: "0027_source_missing.sql", expected: "0027_source_missing.sql", upToDate: true } });
+      return jsonOk({ now: "2026-11-03T02:00:00.000Z", items: { failed: [job], stuck: [{ ...job, id: "job-2", status: "running" }] } });
+    });
     render(<OpsPanel />);
     expect(await screen.findByRole("heading", { name: "作业运维" })).toBeInTheDocument();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/ops/jobs?limit=50", expect.anything()));
@@ -1315,6 +1319,17 @@ describe("OpsPanel", () => {
     expect(screen.getAllByText("BASE_TIMEOUT").length).toBe(2);
     expect(screen.getAllByText("upstream timed out").length).toBe(2);
     expect(screen.getAllByText("5 / 5").length).toBe(2);
+    expect(screen.getByText(/迁移：已应用 0027_source_missing.sql，与代码一致/)).toBeInTheDocument();
+  });
+
+  it("warns when the database migration lags behind the code", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/health/ready") return jsonOk({ status: "ready", migrations: { latest: "0019_scoring_v2.sql", expected: "0027_source_missing.sql", upToDate: false } });
+      return jsonOk({ now: "2026-11-03T02:00:00.000Z", items: { failed: [], stuck: [] } });
+    });
+    render(<OpsPanel />);
+    expect(await screen.findByText(/代码期望 0027_source_missing.sql/)).toBeInTheDocument();
   });
 
   it("shows empty states and keeps the refresh action", async () => {

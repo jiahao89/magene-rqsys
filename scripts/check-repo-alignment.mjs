@@ -50,6 +50,7 @@ const SHARED = [
   "beta/rice.ts",
   "ops/alerts.ts",
   "base/duplicate-marker.ts",
+  "db/expected-migration.ts",
 ];
 
 // 平台适配：允许不同，但必须在 DECLARED 里给出理由，避免"漂移了却没人知道"。
