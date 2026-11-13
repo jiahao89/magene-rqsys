@@ -126,8 +126,14 @@ async function exportSnapshot() {
     migrations: null,
   };
   try {
-    const migrationRows = await reader.rows("SELECT filename FROM schema_migrations ORDER BY filename DESC LIMIT 1");
-    manifest.migrations = migrationRows[0]?.filename ?? null;
+    // 目标平台（妙搭）由平台回放迁移，不创建应用自有的 schema_migrations；读取失败不等于备份失败。
+    try {
+      const migrationRows = await reader.rows("SELECT filename FROM schema_migrations ORDER BY filename DESC LIMIT 1");
+      manifest.migrations = migrationRows[0]?.filename ?? null;
+    } catch {
+      manifest.migrations = null;
+      manifest.migrationState = "unavailable";
+    }
     for (const table of tables) {
       process.stdout.write(`exporting ${table}... `);
       const entry = await exportTable(reader, dir, table);

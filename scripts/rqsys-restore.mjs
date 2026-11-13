@@ -72,7 +72,14 @@ async function main() {
     const truncateTargets = manifest.tables.map((entry) => `"${entry.table}"`).join(", ");
     if (truncateTargets) await pool.query(`TRUNCATE TABLE ${truncateTargets} CASCADE`);
 
+    // 需求表与评分版本表存在循环外键（requirements.current_score_version_id ↔
+    // requirement_score_versions.requirement_id），按任何单表顺序插入都会触发 FK。
+    // 演练恢复阶段关闭外键触发器（session_replication_role=replica），完成后恢复；
+    // 该操作需要超级用户权限，仅用于本地隔离 schema 的恢复演练。
+    const client = await pool.connect();
     const report = [];
+    try {
+      await client.query("SET session_replication_role = replica");
     for (const entry of manifest.tables) {
       const rows = await readJsonl(resolve(dir, `${entry.table}.jsonl`));
       if (rows.length === 0) {
@@ -81,7 +88,7 @@ async function main() {
       }
       // pg 驱动会把 JS 数组当成 PostgreSQL 数组字面量；jsonb 列必须先序列化为 JSON 字符串，
       // 否则 {"a","b"} 这种数组字面量会以 22P02 被拒绝。按目标列类型决定参数形态。
-      const typeRows = await pool.query(
+      const typeRows = await client.query(
         "SELECT column_name, data_type FROM information_schema.columns WHERE table_schema=$1 AND table_name=$2",
         [schema, entry.table],
       );
@@ -102,14 +109,14 @@ async function main() {
           if ((type === "jsonb" || type === "json") && value !== null && typeof value !== "string") return JSON.stringify(value);
           return value;
         });
-        const result = await pool.query(insert, values);
+        const result = await client.query(insert, values);
         restored += result.rowCount ?? 0;
       }
       report.push({ table: entry.table, expected: entry.rows, restored });
       console.log(`restored ${entry.table}: ${restored}/${entry.rows}`);
     }
 
-    const counts = await pool.query(`SELECT
+    const counts = await client.query(`SELECT
       (SELECT count(*)::int FROM requirements) AS requirements,
       (SELECT count(*)::int FROM requirements WHERE push_state='pushed') AS pushed,
       (SELECT count(*)::int FROM requirements WHERE analysis_state='analyzed') AS analyzed,
@@ -124,6 +131,10 @@ async function main() {
       console.log("all table row counts match the snapshot manifest");
     }
     console.log(`cleanup: DROP SCHEMA "${schema}" CASCADE;`);
+    } finally {
+      await client.query("SET session_replication_role = origin").catch(() => undefined);
+      client.release();
+    }
   } finally {
     await pool.end().catch(() => undefined);
     await admin.end().catch(() => undefined);

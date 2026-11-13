@@ -47,6 +47,17 @@
   - 迁移状态仍按平台限制显示“无法判断”（最新/期望：未知 / `0028_system_flags.sql`）；`system_flags` 为空、队列 0、323 条需求全部已推送、发布后 error=0。
 - 新增的备份/恢复脚本（`scripts/rqsys-backup.mjs`、`scripts/rqsys-restore.mjs`）与 runbook 属本地/运维工具，不随妙搭运行时部署；快照含业务数据，`backups/` 已加入 `.gitignore`。
 
+### 2026-11-13 傍晚：Q2 配置、G5 备份演练与 G1 通知验证
+
+- **Q2 重复标记配置**：正式 Base 新增文本字段 `RQ重复标记`（fldyhDQ0xo）与 `RQ主记录链接`（fldAY4bPPb）；`BASE_FIELDS_JSON.duplicate` 已写入 dev+online 并随 release `7707576227033795828`（commit `7d43e20`，`finished`、`error_logs=[]`）生效。尚无真实重复判定，字段实际写入待首次业务判定验证。
+- **G5 备份/恢复演练（通过）**：生产只读快照 21 表 / 9649 行（manifest `2026-11-13T08:53:11Z`；目标平台无 `schema_migrations`，manifest 记录 `migrationState=unavailable`）；在本地隔离 schema `rq_restore_drill_20261113` 重建 28 个迁移并恢复：21 表行数全部与 manifest 一致（requirements 323/323、base_push_runs 602/602、pipeline_jobs 2485/2485），RTO 实测 1.1s；演练 schema 已删除，生产库未修改。G5 已在 Gate 页人工确认并写审计（`ops.gate_confirmed`）。
+  - 备份脚本修复：目标平台无 `schema_migrations` 时改为记录 `migrationState=unavailable` 而不是导出失败；恢复脚本在隔离 schema 加载阶段使用 `session_replication_role=replica` 处理 `requirements ↔ requirement_score_versions` 循环外键。
+- **G1 通知验证（未通过，待修）**：对 RQ-000323 做受控人工分配并回退：
+  - 以 `open_id`（贾浩）分配 → Base 更新失败 `FEISHU_RECORD_UPDATE_CODE_1254066`（UserFieldConvFail）；正式 Base 现有人员映射以 `user_id` 为主（16/18），open_id 写入不兼容；
+  - 改用 `user_id`（99f56141）分配 → 推送成功且 Base `执行人` 写入贾浩、`最后推送时间` 更新，但 **四个通知字段仍为空、记录历史无通知字段变更**，即人工分配未产生通知事件。测试后需求 owner 状态与 Base 执行人均已恢复。
+  - 结论：G1（通知实收）与回退演练仍未完成；需排查人工分配通知路径（为何 `computeNotification` 未落通知字段）并确认 Base 自动化触发方式，再补测试。
+- **Gate 当前状态**：G3 pass、G5 pass；G1 待修/待人工证据；G2 未通过（仍 v2 规则）；G4 未通过（无 webhook）；G6–G8 待确认。
+
 ## 1. 迭代 1：上线前收口（1 周）
 
 **目标**：把已实现的本地改动送到目标环境，并补齐 G1 剩余证据。
@@ -116,5 +127,7 @@
 | 妙搭平台不支持备份演练 | G5 无法取证 | 记录平台限制，改为导出快照 + 恢复脚本演练 |
 | `pg_trgm` 等扩展权限在新环境缺失 | 迁移失败 | 迁移在 dev 先跑；0026 已有修复路径 |
 | 妙搭目标库不暴露应用迁移记录 | `schema_migrations` 不可读，无法在目标环境判断库结构是否落后 | readiness 返回 `upToDate=null`（未知≠落后），运维页显示平台管理说明；上线前以 dev→online `+db-env-diff` 为空作为迁移一致性证据 |
+| 人工分配通知未落字段（2026-11-13 观察到） | 负责人分配后 Base 四个通知字段为空、无通知事件；G1 无法通过 | 已在 RQ-000323 复现并恢复数据；需排查 computeNotification/Base 字段映射与自动化触发，修复后重测 |
+| Base 人员字段 open_id 写入失败（1254066） | 用 open_id 人工分配时推送失败；正式 Base 现有映射以 user_id 为主 | 短期人工分配使用 user_id 类型；长期统一映射 id 类型或做 open_id→user_id 转换 |
 | 飞书过滤接口偶发 1254607 | 单条 Base 推送被判永久失败（实际稍后重试可成功） | 已在 Q1 补推中观察到 1 例（RQ-000157，手工重试成功）；后续可评估把该码加入可重试分类，并在运维页支持单条重推 |
 | 告警 webhook 被关键词/签名策略拦截 | 告警静默失败 | 实现已把 `code≠0` 记为 `ops.alert_failed`，运维页/审计可查；配置时同步关键词「RQ-Sys」 |
