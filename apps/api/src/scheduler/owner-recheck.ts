@@ -8,7 +8,8 @@
 // 本模块每个调度轮扫描候选需求（pull=synced、analysis=analyzed、push=pending，limit 25）：
 //   - 能解析出活跃人员映射 → 按状态机允许的迁移落 owner 状态，并用与正常链路相同的
 //     base_push 幂等键入队，写一条 base.push.recheck_queued 审计（actorId=null）；
-//   - 解析不到 → 跳过且不写审计（否则每一轮都会刷噪音）；
+//   - 解析不到 → 按 Q1 以空负责人入队一次（owner 状态保持 pending_mapping、不通知），
+//     写 reason=q1_empty_owner_push 审计；补映射后由下方 remap 分支重推补负责人；
 //   - 单条异常只进 report.errors，绝不向调用方抛出。
 //
 // 不手写作业、不清理历史失败作业：enqueue 的 Postgres 实现为
@@ -110,14 +111,13 @@ export async function recheckOwnerMappings(
       }
 
       const mapping = requirement.sourceConfigId ? await params.people.resolveActive(requirement.sourceConfigId, lookup) : null;
-      if (!mapping) {
-        // 尚未补映射：等待下一轮或人工映射。不写审计，避免每轮重复刷噪音。
-        report.skipped += 1;
-        continue;
-      }
+      // Q1（PRD-21）：TB 有执行人但映射未建立时，不再等待映射，直接以空负责人推送一次，
+      // 让 PM 在 Base 看到全集；owner_state 保持 pending_mapping，映射补齐后由下方 remap 分支重推补负责人。
+      // 空负责人首推在 push-service 中属于 first_push 静默路径，不会产生通知。
+      const emptyOwnerPush = !mapping;
 
       const currentState = requirement.pipeline.owner;
-      if (currentState !== "auto_mapped" && currentState !== "manually_mapped") {
+      if (mapping && currentState !== "auto_mapped" && currentState !== "manually_mapped") {
         const targetState = mappedOwnerState(mapping);
         // 状态机不允许的迁移（如 not_required → auto_mapped）不写状态，但仍入队：
         // 推送不应因历史 owner 状态滞后而多等一轮，状态收敛由后续同步/分析推进负责。
@@ -131,7 +131,8 @@ export async function recheckOwnerMappings(
       // 已推送成功、本次是补映射：用独立 intent 键创建新的推送运行，
       // 否则会命中同 sv/av 的 succeeded 作业（重放直接返回旧结果，负责人永远不会补上）。
       const remapping = requirement.pipeline.push === "pushed";
-      const intentId = remapping ? `owner-mapped:${mapping.feishuUserId}` : undefined;
+      // 补映射重推才使用独立 intent 键；空负责人首推走普通键，与正常推进链路一致。
+      const intentId = remapping && mapping ? `owner-mapped:${mapping.feishuUserId}` : undefined;
       const dedupeKey = basePushIdempotencyKey(requirement.id, requirement.sourceVersion, analysisVersion, intentId);
       // 已有 queued/running/succeeded 作业时跳过：否则每个 tick 都会重复入队+写审计（噪音/计数失真）；
       // 只有终态失败/取消的作业才需要重新入队（enqueue 的同键 ON CONFLICT 会重置它）。
@@ -158,7 +159,10 @@ export async function recheckOwnerMappings(
         eventType: OWNER_RECHECK_AUDIT_EVENT,
         entityType: "requirement", entityId: requirement.id,
         result: "succeeded",
-        safeDetails: { source: "scheduler", sourceVersion: requirement.sourceVersion, analysisVersion, ...(remapping ? { reason: "owner_mapped_after_push" } : {}) },
+        safeDetails: {
+          source: "scheduler", sourceVersion: requirement.sourceVersion, analysisVersion,
+          ...(remapping && mapping ? { reason: "owner_mapped_after_push" } : emptyOwnerPush ? { reason: "q1_empty_owner_push" } : {}),
+        },
         occurredAt: nowIso,
       });
     } catch (error) {

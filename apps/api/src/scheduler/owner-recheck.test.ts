@@ -165,20 +165,27 @@ test("解析到映射的需求会入队 base_push 并写 recheck 审计", async 
   assert.deepEqual(redactSafeDetails(event.safeDetails), event.safeDetails);
 });
 
-test("解析不到映射时跳过且不写审计", async () => {
+test("解析不到映射时按 Q1 以空负责人入队，不改 owner 状态且不通知", async () => {
   const h = harness({ candidates: [requirement()], mappings: {} });
 
   const report = await h.run();
 
   assert.equal(report.scanned, 1);
-  assert.equal(report.skipped, 1);
-  assert.equal(report.enqueued, 0);
+  assert.equal(report.skipped, 0);
+  assert.equal(report.enqueued, 1);
   assert.deepEqual(report.errors, []);
   assert.equal(h.state.resolveCalls.length, 1);
+  // 不伪造映射状态：owner_state 保持 pending_mapping，等映射补齐后由 remap 分支重推。
   assert.equal(h.state.setOwnerCalls.length, 0);
-  assert.equal(h.state.enqueueCalls.length, 0);
-  // 避免每轮扫描都留下噪音审计
-  assert.equal(h.state.events.length, 0);
+  assert.equal(h.state.enqueueCalls.length, 1);
+  assert.equal(h.state.enqueueCalls[0]?.dedupeKey, "base-push:req-1:sv3:av0");
+  assert.deepEqual(h.state.enqueueCalls[0]?.payload, {
+    requirementId: "req-1", actorId: null, sourceVersion: 3, analysisVersion: 0,
+  });
+  const event = h.state.events.find((row) => row.eventType === OWNER_RECHECK_AUDIT_EVENT);
+  assert.ok(event);
+  assert.equal(event.safeDetails["reason"], "q1_empty_owner_push");
+  assert.deepEqual(redactSafeDetails(event.safeDetails), event.safeDetails);
 });
 
 test("analysisVersion 取最新分析版本，缺失版本时用 0", async () => {
