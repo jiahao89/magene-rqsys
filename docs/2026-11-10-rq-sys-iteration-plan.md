@@ -59,6 +59,13 @@
   - 结论：G1（通知实收）与回退演练仍未完成；需排查人工分配通知路径（为何 `computeNotification` 未落通知字段）、修复目标环境用户搜索接线、并确认 Base 自动化触发方式，再补测试。
 - **Gate 当前状态**：G3 pass、G5 pass；G1 待修/待人工证据；G2 未通过（仍 v2 规则）；G4 未通过（无 webhook）；G6–G8 待确认。
 
+### 2026-11-13 傍晚：G4 告警通道完成
+
+- `RQSYS_ALERT_WEBHOOK_URL` 已写入 dev+online（飞书群自定义机器人，关键词校验 `RQ-Sys`，冷却默认 360 分钟）；release `7707584858529336566`（commit `16b9143`，`finished`、`error_logs=[]`）使配置生效。
+- 验证：17:38 直连 webhook → HTTP 200 / `code=0`；17:44:46 系统自动告警实发成功（审计 `ops.alert_sent`，entity `4d89d7dcc8f06798`，failed=2 / stuck=0，httpStatus=200），飞书群收到【RQ-Sys 运维提醒】消息。
+- G4 已在 Gate 页人工确认并写审计 → **G4 pass**。
+- 当前 Gate：G1 待修/待演练；G2 未通过（仍 v2）；**G3/G4/G5 pass**；G6–G8 待用户提供试点/培训/公告信息。
+
 ## 1. 迭代 1：上线前收口（1 周）
 
 **目标**：把已实现的本地改动送到目标环境，并补齐 G1 剩余证据。
