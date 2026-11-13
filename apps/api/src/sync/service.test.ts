@@ -224,6 +224,13 @@ test("单条重试和失败批次不做「来源已移除」标记（Q4）", asy
   assert.equal(partial.calls.some((call) => call.startsWith("missing:")), false);
 });
 
+test("空来源成功返回时不标记「来源已移除」，避免误标全部需求（Q4）", async () => {
+  const h = harness([]);
+  const result = await h.orchestrator.run({ batchId: "batch-1", sourceConfigId: config.id, config });
+  assert.equal(result.totalCount, 0);
+  assert.equal(h.calls.some((call) => call.startsWith("missing:")), false);
+});
+
 test("标记失败不改变批次状态，但写进批次摘要（Q4）", async () => {
   const h = harness([task("one", "One")]);
   h.persistence.markSourceMissing = async () => { throw new Error("mark unavailable"); };

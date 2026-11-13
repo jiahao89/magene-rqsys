@@ -145,7 +145,9 @@ export class SyncOrchestrator {
     // Q4：全量拉取成功且没有条目失败时，把本次未出现的本来源 TB 需求标记为「来源已移除」。
     // 单条重试（onlyIds）不是全量视图，绝不能据此判定缺失。标记失败只写批次摘要，不改变批次状态。
     let missingMarkFailed=false;
-    if(!input.onlyIds?.length && failedCount===0){
+    // seen.size>0 防误标：空来源（项目被删/权限变化导致成功返回空列表）不是「全部删除」的证据，
+    // 否则一次异常空同步会把本来源所有需求标成“来源已移除”。真正的全量删除需要未来专门的确认流程。
+    if(!input.onlyIds?.length && failedCount===0 && seen.size>0){
       try{await this.persistence.markSourceMissing?.({sourceConfigId:input.sourceConfigId,seenTeambitionIds:[...seen],now:clock().toISOString()});}
       catch{missingMarkFailed=true;}
     }
