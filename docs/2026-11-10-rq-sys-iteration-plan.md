@@ -73,6 +73,15 @@
 - 报告与明细：`docs/2026-11-13-priority-calibration-baseline.md`、`docs/evidence/rq-priority-calibration-2026-11-13.csv`。
 - **G2 尚未勾选**：需先实现并发布 `umsc_weighted_v3` 规则、重算现有池 AI 建议，并经真实 PM 复核（或确认沿用模拟基准）。
 
+### 2026-11-16 v3 优先级规则落地
+
+- 代码：根仓 `ba8bbde`、妙搭 `98b6921`（v2.3.7）；release **`7708593523218664684`**，`finished`、`error_logs=[]`。
+- 规则：发布 `umsc_weighted_v3` v3（id `5fd4bbe2-d41f-4287-bc62-25d2319252b6`），阈值 `p0=10 / p1=7.8 / p2=6`，v2 retired；规则携带模拟基准校验证据。
+- 重算：330 条活跃需求生成 v3 评分版本并采纳（新版本，不改历史），分布 P0 7 / P1 40 / P2 128 / P3 155；`/api/requirements?priority=P0` 7 条、详情返回 v3 阈值。
+- **G2 已通过**（人工证据：v3 规则、分布、模拟基准 Top20 16/20=80%、筛选/下钻验证）。
+- 备注：模拟基准非真实 PM 亲排，待 PM 复核；Base `AI优先级建议` 本次未批量回写，需后续确认是否调整推送取值。
+- 当前 Gate：G1 pending（通知/搜索缺陷待修）、**G2 pass**、G3 pass、G4 pass、G5 pass、G6–G8 pending。
+
 ## 1. 迭代 1：上线前收口（1 周）
 
 **目标**：把已实现的本地改动送到目标环境，并补齐 G1 剩余证据。
