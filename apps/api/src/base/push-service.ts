@@ -281,12 +281,7 @@ export function createBasePushService(deps: BasePushServiceDeps) {
             id: randomUUID(), actorId: deps.actorId, eventType: "base.push.notification_skipped", entityType: "requirement", entityId: input.req.id,
             result: "succeeded",
             safeDetails: {
-              reason: "no_matching_event",
-              hadSuccessfulPush: input.hadSuccessfulPush,
-              previousOwnerKind: previousOwner.kind,
-              substantiveChanged: input.substantiveChanged,
-              willWriteOwner: input.willWriteOwner,
-              manualOwner: Boolean(input.req.manualOwner),
+              reason: `no_matching_event:hadSuccessful=${input.hadSuccessfulPush ? 1 : 0}:previous=${previousOwner.kind}:substantive=${input.substantiveChanged ? 1 : 0}:willWriteOwner=${input.willWriteOwner ? 1 : 0}:manual=${input.req.manualOwner ? 1 : 0}`,
             },
             occurredAt: now().toISOString(),
           });
@@ -444,7 +439,7 @@ export function createBasePushService(deps: BasePushServiceDeps) {
           await deps.audit.append({
             id: randomUUID(), actorId: deps.actorId, eventType: "base.push.notification_debug", entityType: "requirement", entityId: req.id,
             result: "succeeded",
-            safeDetails: { fieldsConfigured: Boolean(notificationFields), recipientIdType: notification.recipientIdType },
+            safeDetails: { reason: `notification_computed:fieldsConfigured=${notificationFields ? 1 : 0}:recipientType=${notification.recipientIdType}` },
             occurredAt: now().toISOString(),
           });
         } catch { /* diagnostics must not affect push */ }
