@@ -86,6 +86,9 @@ export const FEISHU_PERMANENT_CODES = new Set([
  * 避免重复写 Base，也避免把配置错误伪装成偶发失败。
  */
 export function isRetryableFeishuFailure(error: FeishuApiError): boolean {
+  // 1254607：飞书 bitable 记录过滤接口的已知瞬时失败（同一请求稍后重试可成功），
+  // 不能按普通 4xx 判永久失败，否则批量推送会留下大量可自愈的失败行。
+  if (error.apiCode === 1254607) return true;
   if (error.kind === "api" && error.apiCode !== undefined) return !FEISHU_PERMANENT_CODES.has(error.apiCode);
   if (error.kind === "invalid_response" || error.kind === "ambiguous_response") return false;
   const status = error.httpStatus;

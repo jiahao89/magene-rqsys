@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { BaseKeyConflictError, FeishuBitableClient } from "./transport.js";
+import { BaseKeyConflictError, FeishuApiError, FeishuBitableClient, isRetryableFeishuFailure } from "./transport.js";
 import { FeishuBasePushAdapter } from "./client.js";
 import { RateLimitedBaseClient } from "./rate-limit.js";
 
@@ -219,4 +219,10 @@ test("Feishu 业务错误（code != 0）抛错且不泄露 appSecret", async () 
     }, []),
   });
   await assert.rejects(() => client.findByRequirementKey({ projectId: "p", requirementId: "r" }), /code 1254043/);
+});
+
+test("records-filter 1254607 is treated as transient, not a permanent validation failure", () => {
+  const error = new FeishuApiError("http", "records filter", 400, 1254607);
+  assert.equal(isRetryableFeishuFailure(error), true);
+  assert.equal(isRetryableFeishuFailure(new FeishuApiError("http", "records filter", 400, 1254045)), false);
 });
