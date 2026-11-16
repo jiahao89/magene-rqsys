@@ -117,7 +117,7 @@ function parseBaseFields(raw: string | undefined): typeof DEFAULT_BASE_FIELDS {
       metadata: { ...DEFAULT_BASE_FIELDS.metadata, ...(parsed.metadata ?? {}) },
       // 缺省回落默认值：notification 整段缺失（或部分缺失）时仍指向 POC 验证过的四个通知字段与需求链接字段。
       notification: { ...DEFAULT_BASE_FIELDS.notification, ...(parsed.notification ?? {}) },
-      selectOptions: { ...DEFAULT_BASE_FIELDS.selectOptions, ...(parsed.selectOptions ?? {}) },
+      selectOptions: { ...DEFAULT_BASE_FIELDS.selectOptions, ...(parsed.selectOptions ?? {}), priority: ["P0", "P1", "P2", "P3"] },
     };
   } catch {
     return DEFAULT_BASE_FIELDS;
