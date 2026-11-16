@@ -25,7 +25,7 @@ export interface GateDefinition {
 
 export const GATE_DEFINITIONS: readonly GateDefinition[] = [
   { id: "G1", title: "正式 Base 全链路", requirement: "正式 Base 配置与已推送；IM 通知实收 1 次；回退演练记录", manual: true },
-  { id: "G2", title: "优先级可用", requirement: "v3 相对分位规则已发布；20–30 条 PM 基准校准（Top20 ≥70%）；分诊视图含下钻", manual: true },
+  { id: "G2", title: "优先级可用", requirement: "v3 相对分位规则已发布；20–30 条人工排序基准校准（Top20 ≥70%，模拟基准已获确认 PRD-24）；分诊视图含下钻", manual: true },
   { id: "G3", title: "待匹配需求有确定去向", requirement: "不存在「待匹配且未推送」的活跃需求（Q1 空负责人推送口径）", manual: false },
   { id: "G4", title: "运营闭环", requirement: "告警通道已配置并实收 1 次；运营指标与导出可用；额度耗尽有暂停", manual: true },
   { id: "G5", title: "备份与恢复", requirement: "完成一次恢复演练并记录 RPO/RTO", manual: true },

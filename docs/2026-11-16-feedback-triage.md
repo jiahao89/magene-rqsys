@@ -25,7 +25,7 @@
 
 - Miaoda controller 只注入 `feishuUserSelections`，没有 `feishuUsers`，因此该端点返回 503；
 - 该端点是根 Web/本地（`FEISHU_USER_ACCESS_TOKEN` 通讯录搜索）使用的路径；妙搭客户端的绑定组件使用平台通讯录 + `/api/feishu/users/resolve`，已核实 `rq-sys-miaoda/client/src/rqsys/panels.tsx` 使用 `PlatformFeishuBinder`。
-- 结论：对当前生产 UI 无影响；若要让妙搭也暴露 `/api/feishu/users`，需平台侧提供按关键字搜索用户的 server SDK（当前 `AuthNPaasService` 只有按 ID 查询/转换）。
+- 结论：对当前生产 UI 无影响；用户已确认妙搭使用平台通讯录（PRD-25），不再追求暴露 `/api/feishu/users`。若将来要暴露，需平台侧提供按关键字搜索用户的 server SDK（当前 `AuthNPaasService` 只有按 ID 查询/转换）。
 
 ## 4. v3 规则：当前代码已实现（阈值可配置），但并非严格排名分位
 
