@@ -273,7 +273,27 @@ export function createBasePushService(deps: BasePushServiceDeps) {
       }
     }
     if (!eventType && aiRetrySuccess) eventType = "ai_retry_success";
-    if (!eventType) return undefined;
+    if (!eventType) {
+      if (input.owner) {
+        // 诊断：有当前负责人却没有通知事件（历史 G1 缺口排查用）；不含姓名/ID 等敏感值。
+        try {
+          await deps.audit.append({
+            id: randomUUID(), actorId: deps.actorId, eventType: "base.push.notification_skipped", entityType: "requirement", entityId: input.req.id,
+            result: "succeeded",
+            safeDetails: {
+              reason: "no_matching_event",
+              hadSuccessfulPush: input.hadSuccessfulPush,
+              previousOwnerKind: previousOwner.kind,
+              substantiveChanged: input.substantiveChanged,
+              willWriteOwner: input.willWriteOwner,
+              manualOwner: Boolean(input.req.manualOwner),
+            },
+            occurredAt: now().toISOString(),
+          });
+        } catch { /* diagnostics must not affect push */ }
+      }
+      return undefined;
+    }
     // 首次推送静默（产品确认）：新需求入场不逐条通知 PM Leader。
     // 151 条需求一起推时会变成 151 条消息，把真正需要动作的"分配后通知负责人"淹没；
     // Base 表格本身就是 PM Leader 的工作台。归属变化仍按下方规则逐条通知。
