@@ -7,12 +7,12 @@ test("uses the documented user-authenticated GET search and users response", asy
   const fetcher: FetchLike = async (input, init) => {
     calls.push({ url: new URL(String(input)), ...(init ? { init } : {}) });
     return Response.json({ code: 0, data: { users: [
-      { open_id: "ou_1", name: "张三", email: "private@example.com" },
+      { open_id: "ou_1", user_id: "u_1", name: "张三", email: "private@example.com" },
       { name: "Malformed result" },
     ] } });
   };
   const client = new FeishuUserDirectoryClient({ userAccessToken: async () => "user-token", fetch: fetcher });
-  assert.deepEqual(await client.search(" 张三 "), [{ openId: "ou_1", name: "张三" }]);
+  assert.deepEqual(await client.search(" 张三 "), [{ openId: "ou_1", userId: "u_1", name: "张三" }]);
   assert.equal(calls.length, 1);
   assert.equal(calls[0]!.url.pathname, "/open-apis/search/v1/user");
   assert.equal(calls[0]!.url.searchParams.get("query"), "张三");

@@ -452,6 +452,35 @@ test("an owner appearing for the first time produces owner_assigned for the new 
   });
 });
 
+test("manual assignment after an empty-owner push still notifies when the old TB executor has no mapping", async () => {
+  // 回归：Q1 空负责人推送后 lastPushedOwner 为空；旧快照里的 TB 执行人没有映射时
+  // resolvePreviousPushOwner 曾返回 unknown，既不匹配 none 也不匹配 known，通知被静默吞掉。
+  const req = requirement({
+    executorUserId: "tb-unmapped",
+    executorName: "Unmapped Owner",
+    manualOwner: manualOwner(),
+    pipeline: { pull: "synced", analysis: "analyzed", owner: "manually_mapped", push: "pending" },
+  });
+  const h = makeHarness({
+    req,
+    mapping: null,
+    pmLeaderUserId: PM_LEADER_USER_ID,
+    lastSuccessful: pushRun({ sourceVersion: 1 }),
+    // 上一次成功推送是空负责人推送；Base 行当前没有负责人
+    baseOwner: null,
+    sourceSnapshot: sourceSnapshot({
+      substantiveHash: req.substantiveHash,
+      payload: { sourceExecutorId: "tb-unmapped", mappedFields: { executorName: "Unmapped Owner" } },
+    }),
+  });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.equal(h.baseInput?.substantiveChanged, false);
+  assert.equal(h.baseInput?.notification?.eventType, "已分配负责人");
+  assert.equal(h.baseInput?.notification?.recipientUserId, "u-assignee");
+  assert.equal(h.baseInput?.notification?.recipientIdType, "user_id");
+});
+
 test("an owner A→B change produces owner_changed with the previous and new user ids in the event id", async () => {
   const req = requirement({ executorUserId: "tb-owner", executorName: "Owner" });
   const h = makeHarness({

@@ -35,6 +35,8 @@ export interface IdentityProvider {
 
 export interface FeishuUserCandidate {
   openId: string;
+  /** 飞书 user_id（search API 新旧版本都可能返回）；Base 人员字段优先使用它。 */
+  userId?: string;
   name: string;
   enName?: string;
 }

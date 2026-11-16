@@ -35,6 +35,6 @@ export class FeishuUserDirectoryClient implements FeishuUserDirectory {
     // The documented API excludes external and departed users. It does not return is_cross_tenant.
     return payload.data.users.slice(0, 20).flatMap((user): FeishuUserCandidate[] =>
       typeof user?.open_id === "string" && user.open_id && typeof user.name === "string" && user.name
-        ? [{ openId: user.open_id, name: user.name }] : []);
+        ? [{ openId: user.open_id, ...(typeof user.user_id === "string" && user.user_id ? { userId: user.user_id } : {}), name: user.name }] : []);
   }
 }

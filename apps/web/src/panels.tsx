@@ -281,7 +281,9 @@ function FeishuAccountBinder({ personName, disabled, onSave, onCancel }: {
   const save = async () => {
     if (!selected) return;
     setSaving(true); setError(null);
-    try { await onSave({ feishuUserId: selected.openId, feishuIdType: "open_id", name: selected.name }); }
+    // 正式 Base 人员字段需要 user_id；search 返回 user_id 时优先使用，缺失才回落 open_id（本地 POC）。
+    const feishuUserId = selected.userId ?? selected.openId;
+    try { await onSave({ feishuUserId, feishuIdType: selected.userId ? "user_id" : "open_id", name: selected.name }); }
     catch (cause) { setError(cause instanceof ApiError ? errorText(cause) : "保存绑定失败，请重试。"); }
     finally { setSaving(false); }
   };

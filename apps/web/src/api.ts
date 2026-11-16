@@ -35,6 +35,7 @@ export type SyncExecutionMode = "full_pipeline" | "source_only";
 
 export interface FeishuUserCandidate {
   openId: string;
+  userId?: string;
   name: string;
   enName?: string;
 }

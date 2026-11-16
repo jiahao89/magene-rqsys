@@ -224,7 +224,22 @@ export function createBasePushService(deps: BasePushServiceDeps) {
     resolveBaseOwner: () => Promise<{ userId: string; idType: FeishuIdType } | null>;
   }): Promise<PushNotification | undefined> => {
     const currentOwnerUserId = input.owner?.feishuUserId ?? null;
-    const previousOwner = await resolvePreviousPushOwner(input.req, input.owner, input.previousSource, input.hadSuccessfulPush);
+    let previousOwner = await resolvePreviousPushOwner(input.req, input.owner, input.previousSource, input.hadSuccessfulPush);
+    // 快照无法证明「上次推送到底有没有负责人」（典型：Q1 空负责人推送写入了空负责人，
+    // 随后人工分配时旧快照的执行人没有映射 → unknown）。unknown 既不算空→有人，也不算 A→B，
+    // 通知会被静默吞掉。此时以 Base 行当前负责人兜底：读不到才算 unknown。
+    let baseOwnerForEvent: { userId: string; idType: FeishuIdType } | null = null;
+    let baseOwnerForEventRead = false;
+    const readBaseOwnerForEvent = async (): Promise<{ userId: string; idType: FeishuIdType } | null> => {
+      if (baseOwnerForEventRead) return baseOwnerForEvent;
+      baseOwnerForEventRead = true;
+      try { baseOwnerForEvent = await input.resolveBaseOwner(); } catch { baseOwnerForEvent = null; }
+      return baseOwnerForEvent;
+    };
+    if (currentOwnerUserId && previousOwner.kind === "unknown") {
+      const baseOwner = await readBaseOwnerForEvent();
+      previousOwner = baseOwner ? { kind: "known", userId: baseOwner.userId } : { kind: "none" };
+    }
 
     // AI 重试成功只在同一源版本内比较：旧源版本失败、新源版本成功不算同一次重试。
     let aiRetrySuccess = false;
@@ -266,10 +281,10 @@ export function createBasePushService(deps: BasePushServiceDeps) {
 
     const ownerEvent = eventType === "owner_assigned" || eventType === "owner_changed";
     // Base 行里的负责人可能是 PM 直接改的；读取失败不阻断推送，只回落到应用侧负责人/PM Leader。
-    let baseOwner: { userId: string; idType: FeishuIdType } | null = null;
+    let baseOwner: { userId: string; idType: FeishuIdType } | null = baseOwnerForEvent;
     // 只在本次不覆盖 Base 负责人时读取旧值；会覆盖时以应用负责人为准，避免通知一个即将被替换的人。
     if (!ownerEvent && !input.willWriteOwner) {
-      try { baseOwner = await input.resolveBaseOwner(); } catch { baseOwner = null; }
+      baseOwner = await readBaseOwnerForEvent();
     }
     // 产品最终确认的收件人规则：
     //   first_push → 静默（不写通知字段）；
