@@ -13,7 +13,7 @@
 //   substantive_update / ai_retry_success → Base 当前负责人 / 应用当前负责人，均无时 PM Leader；提出人不通知。
 
 import { randomUUID } from "node:crypto";
-import type { RequirementQueryRepository, PersonMappingRepository, BasePushRunRepository, AuditEventRepository, AnalysisRunRepository, SourceSnapshotRepository } from "../application/repositories.js";
+import type { RequirementQueryRepository, PersonMappingRepository, BasePushRunRepository, AuditEventRepository, AnalysisRunRepository, SourceSnapshotRepository, RequirementScoringRepository } from "../application/repositories.js";
 import type { AnalysisRunRecord, FeishuIdType, PersonMappingRecord, RequirementRecord, SourceSnapshotRecord } from "../domain/persistence.js";
 import type { FeishuBasePushAdapter, OmittedField } from "./client.js";
 import { BaseKeyConflictError, FeishuApiError, isRetryableFeishuFailure } from "./transport.js";
@@ -26,6 +26,8 @@ export interface BasePushServiceDeps {
   basePushes: BasePushRunRepository;
   audit: AuditEventRepository;
   analyses?: AnalysisRunRepository;
+  /** AI 建议来源：优先使用最新 AI 建议版本的优先级（v3 分位规则），避免 Base 停留在旧分析优先级。 */
+  scoring?: RequirementScoringRepository;
   sourceSnapshots: SourceSnapshotRepository;
   base: FeishuBasePushAdapter;
   sourceProjectId: string;
@@ -377,13 +379,18 @@ export function createBasePushService(deps: BasePushServiceDeps) {
     if (req.pipeline.push !== "running") await deps.requirements.setPushState(req.id, "running");
     let pushedResult: { recordId: string; created: boolean; omittedFields: OmittedField[] };
     try {
-      // 最新已分析版本映射 AI 字段：P0–P3 原样传递（不丢弃 P3）；无分析版本时不写 AI 字段
+      // AI 字段：优先级优先取最新 AI 建议版本（v3 分位阈值重算后随规则更新），
+      // 无建议时回落到最新分析记录；模块仍取分析记录。P0–P3 原样传递（不丢弃 P3）。
       const latestAnalysis = await deps.analyses?.latest(req.id) ?? null;
-      const ai = latestAnalysis && latestAnalysis.status === "analyzed"
+      const aiSuggestion = deps.scoring ? await deps.scoring.aiSuggestion(req.id).catch(() => null) : null;
+      const aiSuggestionCurrent = aiSuggestion && aiSuggestion.sourceVersion === req.sourceVersion ? aiSuggestion : null;
+      const aiPriority = aiSuggestionCurrent?.priority ?? latestAnalysis?.priority ?? null;
+      const aiAnalysisVersion = aiSuggestionCurrent?.analysisVersion ?? latestAnalysis?.analysisVersion ?? null;
+      const ai = (latestAnalysis && latestAnalysis.status === "analyzed") || aiSuggestionCurrent
         ? {
-            ...(latestAnalysis.moduleSuggestion ? { module: latestAnalysis.moduleSuggestion } : {}),
-            ...(latestAnalysis.priority === null ? {} : { priority: latestAnalysis.priority }),
-            analysisVersion: latestAnalysis.analysisVersion,
+            ...(latestAnalysis?.moduleSuggestion ? { module: latestAnalysis.moduleSuggestion } : {}),
+            ...(aiPriority === null ? {} : { priority: aiPriority }),
+            ...(aiAnalysisVersion === null ? {} : { analysisVersion: aiAnalysisVersion }),
           }
         : {};
       // 通知事件在成败判定前计算：只有 Base 写成功，四个通知字段才会真正落库。

@@ -54,6 +54,7 @@ interface CapturedPushInput {
   substantiveChanged: boolean;
   requirementLink?: string;
   notification?: { eventId: string; eventType: string; recipientUserId: string | null; recipientIdType: "open_id" | "user_id" | "union_id"; ownerMergeUserId: string | null };
+  aiValues?: { module?: string; priority?: "P0" | "P1" | "P2" | "P3"; analysisVersion?: number };
 }
 
 function makeHarness(options: {
@@ -68,6 +69,7 @@ function makeHarness(options: {
   previousMapping?: PersonMappingRecord | null;
   analysisHistory?: AnalysisRunRecord[];
   latestAnalysis?: AnalysisRunRecord | null;
+  aiScore?: { priority: "P0" | "P1" | "P2" | "P3"; analysisVersion: number; sourceVersion: number } | null;
   pmLeaderUserId?: string | null;
   webBaseUrl?: string;
   baseOwner?: { userId: string; idType: "open_id" | "user_id" | "union_id" } | null;
@@ -121,6 +123,9 @@ function makeHarness(options: {
       latest: async () => latestAnalysis,
       listByRequirement: async () => options.analysisHistory ?? (latestAnalysis ? [latestAnalysis] : []),
     } as never,
+    scoring: {
+      aiSuggestion: async () => options.aiScore ?? null,
+    } as never,
     basePushes: {
       findByIdempotencyKey: async () => existing,
       append: async () => { calls.push("append"); existing = currentRun; return currentRun; },
@@ -161,6 +166,21 @@ test("substantive source updates snapshot against the last successful push and p
   assert.equal(result.kind, "pushed");
   assert.equal(h.baseInput?.substantiveChanged, true);
   assert.equal(h.savedBaseRecord, "record-2");
+});
+
+test("uses the latest AI scoring suggestion priority for the Base AI field", async () => {
+  const h = makeHarness({ aiScore: { priority: "P0", analysisVersion: 3, sourceVersion: 2 } });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.equal(h.baseInput?.aiValues?.priority, "P0");
+  assert.equal(h.baseInput?.aiValues?.analysisVersion, 3);
+});
+
+test("falls back to the analysis priority when no AI scoring suggestion exists", async () => {
+  const h = makeHarness({ latestAnalysis: analysisRun({ priority: "P2" }), aiScore: null });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.equal(h.baseInput?.aiValues?.priority, "P2");
 });
 
 test("uses the configured Teambition source project ID as the Base project key", async () => {

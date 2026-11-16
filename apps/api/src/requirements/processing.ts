@@ -296,7 +296,7 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
       if (typeof expectedAnalysisVersion === "number" && expectedAnalysisVersion !== (latestAnalysis?.analysisVersion ?? 0)) return;
       const service = createBasePushService({
         requirements: deps.repositories.requirements, people: deps.repositories.people, basePushes: deps.repositories.basePushes,
-        audit: deps.repositories.audit, analyses: deps.repositories.analyses, sourceSnapshots: deps.repositories.sourceSnapshots,
+        audit: deps.repositories.audit, analyses: deps.repositories.analyses, ...(deps.repositories.scoring ? { scoring: deps.repositories.scoring } : {}), sourceSnapshots: deps.repositories.sourceSnapshots,
         base: deps.base, sourceProjectId: source?.externalProjectId ?? "", baseFields: deps.baseFields, actorId: typeof job.payload.actorId === "string" ? job.payload.actorId : null,
       });
       const idempotencyKey = typeof job.payload.idempotencyKey === "string"
