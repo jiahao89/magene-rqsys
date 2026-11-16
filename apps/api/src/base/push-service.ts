@@ -438,6 +438,17 @@ export function createBasePushService(deps: BasePushServiceDeps) {
           ? (await deps.base.findCurrentOwner?.({ platformRequirementId: req.platformRequirementId, requirementId: req.teambitionRequirementId })) ?? null
           : null,
       });
+      if (notification) {
+        try {
+          const notificationFields = (deps.baseFields as { notification?: unknown }).notification;
+          await deps.audit.append({
+            id: randomUUID(), actorId: deps.actorId, eventType: "base.push.notification_debug", entityType: "requirement", entityId: req.id,
+            result: "succeeded",
+            safeDetails: { fieldsConfigured: Boolean(notificationFields), recipientIdType: notification.recipientIdType },
+            occurredAt: now().toISOString(),
+          });
+        } catch { /* diagnostics must not affect push */ }
+      }
       const sourceCreatedAt = req.sourceCreatedAt ? Date.parse(req.sourceCreatedAt) : Number.NaN;
       pushedResult = await deps.base.push({
         projectId: deps.sourceProjectId, requirementId: req.teambitionRequirementId, platformRequirementId: req.platformRequirementId, requirementDbId: req.id,
