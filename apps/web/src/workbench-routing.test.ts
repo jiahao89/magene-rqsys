@@ -17,6 +17,7 @@ describe("workbench routes", () => {
     expect(readWorkbenchRoute("#team", "")).toEqual({ page: "Team", tab: null });
     expect(readWorkbenchRoute("#sync-records", "")).toEqual({ page: "SyncRecords", tab: null });
     expect(readWorkbenchRoute("#ops", "")).toEqual({ page: "Ops", tab: null });
+    expect(readWorkbenchRoute("#sop", "")).toEqual({ page: "Sop", tab: null });
   });
 
   it("keeps notification deep links on the requirement page", () => {
@@ -38,5 +39,6 @@ describe("workbench routes", () => {
   it("builds merged-page routes without the legacy fragments", () => {
     expect(workbenchUrl("/app/app-id", "", "Team")).toBe("/app/app-id#team");
     expect(workbenchUrl("/app/app-id", "", "SyncRecords")).toBe("/app/app-id#sync-records");
+    expect(workbenchUrl("/app/app-id", "", "Sop")).toBe("/app/app-id#sop");
   });
 });

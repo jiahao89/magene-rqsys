@@ -105,6 +105,23 @@ describe("RQ-Sys local workbench", () => {
     expect(screen.getByRole("button", { name: "重试连接" })).toBeInTheDocument();
   });
 
+  it("opens the SOP page from the left menu and renders role checklists", async () => {
+    fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/overview/metrics") return Response.json({ counts: { total: 0, pullSynced: 0, analysisAnalyzed: 0, ownerResolved: 0, pushPushed: 0, failed: 0 } });
+      return Response.json({ items: [], nextCursor: null });
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("link", { name: "SOP 与培训" }));
+
+    expect(await screen.findByRole("heading", { level: 2, name: "SOP 与培训" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 3, name: /30 分钟培训议程/ })).toBeInTheDocument();
+    expect(screen.getByText(/PM Leader · 每日 \/ 每周 SOP/)).toBeInTheDocument();
+    expect(window.location.hash).toBe("#sop");
+  });
+
   it("loads source configuration from the API and can request a manual sync", async () => {
     fetchMock
       .mockResolvedValueOnce(Response.json({ status: "ok", service: "rq-sys-api" }))

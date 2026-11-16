@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
-import { Activity, ArrowDownToLine, ArrowRight, Blocks, Check, CircleAlert, CircleHelp, Clock3, Database, FolderSync, Gauge, GitBranch, Layers3, ListChecks, LoaderCircle, Menu, Moon, Play, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Sun, Users, X } from "lucide-react";
+import { Activity, ArrowDownToLine, ArrowRight, Blocks, BookOpen, Check, CircleAlert, CircleHelp, Clock3, Database, FolderSync, Gauge, GitBranch, Layers3, ListChecks, LoaderCircle, Menu, Moon, Play, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Sun, Users, X } from "lucide-react";
 import { ApiError, createPriorityRuleDraft, getHealth, getOverviewMetrics, listPriorityRules, listSources, publishPriorityRule, runSync, type OverviewMetrics, type PriorityRuleVersion, type RequirementSummary, type SourceConfig, type SyncExecutionMode } from "./api";
 import { GuidePanel, ModulesPanel, OpsPanel, PanelErrorBoundary, PublishStatusChip, RequirementsPanel, SourcesPanel, SyncRecordsPanel, TeamPanel } from "./panels";
+import { SopPanel } from "./sop";
 import { SkeletonBlock, SkeletonCards, SkeletonTableRows } from "./skeleton";
 import { Button as ArcoButton, Dropdown as ArcoDropdown, Input as ArcoInput, InputNumber as ArcoInputNumber, Menu as ArcoMenu, Table as ArcoTable } from "@arco-design/web-react";
 import { readRequirementDeepLink } from "./deep-link";
@@ -30,13 +31,13 @@ const navigationGroups: { title: string; items: { label: Page; icon: typeof Gaug
     { label: "Overview", icon: Gauge }, { label: "Requirements", icon: ListChecks }, { label: "SyncRecords", icon: FolderSync },
   ] },
   { title: "管理", items: [
-    { label: "Team", icon: Users }, { label: "Modules", icon: Blocks },
+    { label: "Team", icon: Users }, { label: "Modules", icon: Blocks }, { label: "Sop", icon: BookOpen },
   ] },
   { title: "设置", items: [
     { label: "Sources", icon: Database }, { label: "Rules", icon: Settings2 }, { label: "Ops", icon: Activity },
   ] },
 ];
-const pageTitles: Record<Page, string> = { Overview: "总览", Requirements: "需求池", Team: "团队管理", Modules: "功能模块", SyncRecords: "同步记录", Sources: "数据源与计划", Rules: "优先级规则", Ops: "作业运维", Guide: "使用指南" };
+const pageTitles: Record<Page, string> = { Overview: "总览", Requirements: "需求池", Team: "团队管理", Modules: "功能模块", SyncRecords: "同步记录", Sources: "数据源与计划", Rules: "优先级规则", Ops: "作业运维", Guide: "使用指南", Sop: "SOP 与培训" };
 
 const API_ERROR_TEXT: Record<string, string> = {
   INTERNAL: "服务暂时不可用，请稍后重试。",
@@ -486,6 +487,7 @@ function SecondaryContent({ page, tab, sources, loadState, deepLinkRequirementId
   if (page === "Rules") return <RulesPanel />;
   if (page === "Ops") return <OpsPanel />;
   if (page === "Guide") return <GuidePanel />;
+  if (page === "Sop") return <SopPanel />;
   return <section className="panel placeholder-panel"><div className="placeholder-illustration"><span><Users size={23} /></span><i /><i /><i /></div><div className="eyebrow"><span className="eyebrow-line" />API 契约待实现</div><h2>页面未实现</h2><p>该页面尚未提供 API 契约。</p><ArcoButton htmlType="button" onClick={() => onNavigate("Overview" as Page)}>返回总览<ArrowRight size={15} /></ArcoButton></section>;
 }
 
@@ -583,7 +585,7 @@ function EmptyPanel({ loading, title, description }: { loading: boolean; title: 
 }
 
 function pageDescription(page: Page): string {
-  const descriptions: Record<Page, string> = { Overview: "同步流程的当前健康状态与执行概况。", Requirements: "按需求标题、TB负责人和处理状态检索需求；负责人分配在需求详情页完成。", Team: "维护组内人员、飞书账号绑定和 Teambition 负责人映射。", Modules: "维护 AI 分类使用的功能模块、责任人员及词典版本历史。", SyncRecords: "检查同步批次、失败项与可追踪的审计操作。", Sources: "单项目的数据源与周计划设置。", Rules: "管理已校准的优先级规则；评分映射与校准证据在高级设置中维护。", Ops: "只读查看失败与卡住的作业，辅助定位同步、分析和推送中断。", Guide: "系统工作流、状态含义与日常操作说明。" };
+  const descriptions: Record<Page, string> = { Overview: "同步流程的当前健康状态与执行概况。", Requirements: "按需求标题、TB负责人和处理状态检索需求；负责人分配在需求详情页完成。", Team: "维护组内人员、飞书账号绑定和 Teambition 负责人映射。", Modules: "维护 AI 分类使用的功能模块、责任人员及词典版本历史。", SyncRecords: "检查同步批次、失败项与可追踪的审计操作。", Sources: "单项目的数据源与周计划设置。", Rules: "管理已校准的优先级规则；评分映射与校准证据在高级设置中维护。", Ops: "只读查看失败与卡住的作业，辅助定位同步、分析和推送中断。", Guide: "系统工作流、状态含义与日常操作说明。", Sop: "按角色整理的试点标准作业流程（SOP）与 30 分钟培训议程。" };
   return descriptions[page];
 }
 
