@@ -13,6 +13,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { ApplyAiScoringSchema, ManualScoringUpdateSchema, SCORING_FORMULA_TEXT, SCORING_THRESHOLDS, computeUmcScore } from "../analysis/scoring.js";
 import { maskPii } from "../analysis/contract.js";
 import { confirmGate, evaluateGates } from "../ops/gates.js";
+import { priorityRuleThresholds } from "../analysis/priority-rule.js";
 import { toCsv } from "../application/csv.js";
 import { SourceConfigUpdateSchema, normalizeSourceSchedule, type ResolvedSourceConfigUpdate } from "../contracts/source.js";
 import { DictionaryCreateSchema, PriorityRuleCreateSchema, TeamModulesSaveSchema, TeamPersonCreateSchema, TeamPersonFeishuBindSchema, TeamPersonRenameSchema } from "../contracts/rules.js";
@@ -901,7 +902,7 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
         current: currentScore,
         aiSuggestion: aiScore,
         history: scoreHistory,
-        formula: { text: SCORING_FORMULA_TEXT, thresholds: SCORING_THRESHOLDS },
+        formula: { text: SCORING_FORMULA_TEXT, thresholds: priorityRuleThresholds(await repositories.priorityRules?.getPublished()) ?? SCORING_THRESHOLDS },
       },
     });
   }

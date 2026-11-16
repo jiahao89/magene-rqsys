@@ -14,7 +14,7 @@
 
 import type { AnalysisPriorityRule, ValidatedAnalysis } from "./contract.js";
 import type { PriorityLevel, PriorityRuleVersionRecord } from "../domain/persistence.js";
-import { computeUmcScore, type ScoringInputs } from "./scoring.js";
+import { computeUmcScore, computeUmcScoreWithThresholds, type PriorityThresholds, type ScoringInputs } from "./scoring.js";
 
 type ScoringMap = Record<string, number>;
 type RulePayload = {
@@ -45,6 +45,23 @@ export function buildPriorityRule(record: PriorityRuleVersionRecord): AnalysisPr
       version: record.version,
       compute: () => null,
       computeScore: (inputs: ScoringInputs, alpha: number) => computeUmcScore(inputs, alpha),
+    };
+  }
+  if (rules?.formulaType === "umsc_weighted_v3") {
+    if (!Array.isArray(record.validationEvidence) || record.validationEvidence.length === 0) return null;
+    const t = rules.thresholds;
+    const p0 = typeof t?.p0 === "number" ? t.p0 : undefined;
+    const p1 = typeof t?.p1 === "number" ? t.p1 : undefined;
+    const p2 = typeof t?.p2 === "number" ? t.p2 : undefined;
+    if (p0 === undefined || p1 === undefined || p2 === undefined) return null;
+    if (![p0, p1, p2].every((value) => Number.isFinite(value) && value >= 0)) return null;
+    if (!(p0 >= p1 && p1 >= p2)) return null;
+    const thresholds: PriorityThresholds = { p0, p1, p2 };
+    return {
+      id: record.id,
+      version: record.version,
+      compute: () => null,
+      computeScore: (inputs: ScoringInputs, alpha: number) => computeUmcScoreWithThresholds(inputs, alpha, thresholds),
     };
   }
   const scoring = rules?.scoring;
@@ -91,4 +108,17 @@ export function buildPriorityRule(record: PriorityRuleVersionRecord): AnalysisPr
       return total >= p0 ? "P0" : total >= p1 ? "P1" : total >= p2 ? "P2" : "P3";
     },
   };
+}
+
+/** 已发布 v3 规则的分位阈值；v2/旧规则返回 null（调用方回落到固定阈值展示）。 */
+export function priorityRuleThresholds(record: PriorityRuleVersionRecord | null | undefined): PriorityThresholds | null {
+  const rules = record?.rules as RulePayload | null;
+  if (rules?.formulaType !== "umsc_weighted_v3") return null;
+  const t = rules.thresholds;
+  const p0 = typeof t?.p0 === "number" ? t.p0 : undefined;
+  const p1 = typeof t?.p1 === "number" ? t.p1 : undefined;
+  const p2 = typeof t?.p2 === "number" ? t.p2 : undefined;
+  if (p0 === undefined || p1 === undefined || p2 === undefined) return null;
+  if (!(p0 >= p1 && p1 >= p2)) return null;
+  return { p0, p1, p2 };
 }

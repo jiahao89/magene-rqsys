@@ -82,6 +82,29 @@ test("buildPriorityRule：评分 v2 规则用九项输入与 α 计算，且不�
   assert.equal(buildPriorityRule({ ...ruleRecord, rules: { formulaType: "umsc_weighted_v2", thresholds: { p0: 45, p1: 25, p2: 10 } }, validationEvidence: [] }), null);
 });
 
+test("buildPriorityRule：v3 分位规则按发布阈值计算优先级（P0/P1/P2/P3）", () => {
+  const withThresholds = (p0: number, p1: number, p2: number) => buildPriorityRule({
+    ...ruleRecord,
+    version: 3,
+    rules: { formulaType: "umsc_weighted_v3", thresholds: { p0, p1, p2 } },
+  });
+  const rule = withThresholds(10, 7.8, 6);
+  assert.ok(rule);
+  assert.equal(rule.compute?.({ user: "高", market: "高", business: "高", technology: "高" }), null);
+  const input = {
+    user: { pain: 4, frequency: 5 },
+    market: { sellingPoint: 2, competitor: 2 },
+    strategy: { roadmap: 1, dependency: 1 },
+    cost: { workload: 4, technicalRisk: 4, resource: 4 },
+  };
+  assert.equal(rule.computeScore?.(input, 0.8)?.priority, "P0");
+  assert.equal(withThresholds(20, 15, 10)?.computeScore?.(input, 0.8)?.priority, "P1");
+  assert.equal(withThresholds(30, 25, 20)?.computeScore?.(input, 0.8)?.priority, "P3");
+  // 阈值必须单调，且必须有校准证据
+  assert.equal(withThresholds(6, 7.8, 10), null);
+  assert.equal(buildPriorityRule({ ...ruleRecord, version: 3, rules: { formulaType: "umsc_weighted_v3", thresholds: { p0: 10, p1: 7.8, p2: 6 } }, validationEvidence: [] }), null);
+});
+
 //
 test("buildPriorityRule：规则缺少评分映射、阈值或校准证据时不得用于计算（priority 留空）", () => {
   assert.equal(buildPriorityRule({ ...ruleRecord, rules: { thresholds: { p0: 11, p1: 8, p2: 5 } } }), null);

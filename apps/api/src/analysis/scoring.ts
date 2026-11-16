@@ -81,6 +81,7 @@ export interface ComputedScore {
 
 export const SCORING_FORMULA_TEXT = "U=pain×frequency; M=sellingPoint×competitor; S=roadmap×dependency; C=MAX(workload,technicalRisk,resource); score=round2(U×alpha×(1+0.6M+0.4S)/C)";
 export const SCORING_THRESHOLDS = { p0: 45, p1: 25, p2: 10 } as const;
+export type PriorityThresholds = { p0: number; p1: number; p2: number };
 
 export const ManualScoringUpdateSchema = z.strictObject({
   expectedVersion: z.number().int().min(0),
@@ -107,9 +108,14 @@ export class ScoringValidationError extends Error {
 }
 
 export function scorePriority(score: number): ComputedScore["priority"] {
-  if (score >= 45) return "P0";
-  if (score >= 25) return "P1";
-  if (score >= 10) return "P2";
+  return scorePriorityWithThresholds(score, SCORING_THRESHOLDS);
+}
+
+/** v3 相对分位规则：阈值由当前池的分数分位校准后随规则发布，分析时按发布阈值为 P0–P3。 */
+export function scorePriorityWithThresholds(score: number, thresholds: PriorityThresholds): ComputedScore["priority"] {
+  if (score >= thresholds.p0) return "P0";
+  if (score >= thresholds.p1) return "P1";
+  if (score >= thresholds.p2) return "P2";
   return "P3";
 }
 
@@ -127,6 +133,11 @@ export function resolveScoringAlpha(scoring: { safetyFlag: boolean }): number {
 
 /** 固定评分 v2 公式；只接受已校验范围的值。 */
 export function computeUmcScore(inputs: ScoringInputs, alpha: number): ComputedScore {
+  return computeUmcScoreWithThresholds(inputs, alpha, SCORING_THRESHOLDS);
+}
+
+/** 同一评分公式，按规则版本阈值映射优先级（v2 固定阈值 / v3 分位校准阈值）。 */
+export function computeUmcScoreWithThresholds(inputs: ScoringInputs, alpha: number, thresholds: PriorityThresholds): ComputedScore {
   if (!Number.isFinite(alpha) || alpha < 0.5 || alpha > 2) throw new ScoringValidationError("alpha is out of range");
   const user = inputs.user.pain * inputs.user.frequency;
   const market = inputs.market.sellingPoint * inputs.market.competitor;
@@ -139,7 +150,7 @@ export function computeUmcScore(inputs: ScoringInputs, alpha: number): ComputedS
   const score = Math.round(raw * 100) / 100;
   return {
     score,
-    priority: scorePriority(score),
+    priority: scorePriorityWithThresholds(score, thresholds),
     breakdown: { user, market, strategy, cost, userAdjusted },
   };
 }
