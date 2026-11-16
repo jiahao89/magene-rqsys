@@ -274,19 +274,6 @@ export function createBasePushService(deps: BasePushServiceDeps) {
     }
     if (!eventType && aiRetrySuccess) eventType = "ai_retry_success";
     if (!eventType) {
-      if (input.owner) {
-        // 诊断：有当前负责人却没有通知事件（历史 G1 缺口排查用）；不含姓名/ID 等敏感值。
-        try {
-          await deps.audit.append({
-            id: randomUUID(), actorId: deps.actorId, eventType: "base.push.notification_skipped", entityType: "requirement", entityId: input.req.id,
-            result: "succeeded",
-            safeDetails: {
-              reason: `no_matching_event:hadSuccessful=${input.hadSuccessfulPush ? 1 : 0}:previous=${previousOwner.kind}:substantive=${input.substantiveChanged ? 1 : 0}:willWriteOwner=${input.willWriteOwner ? 1 : 0}:manual=${input.req.manualOwner ? 1 : 0}`,
-            },
-            occurredAt: now().toISOString(),
-          });
-        } catch { /* diagnostics must not affect push */ }
-      }
       return undefined;
     }
     // 首次推送静默（产品确认）：新需求入场不逐条通知 PM Leader。
@@ -433,17 +420,6 @@ export function createBasePushService(deps: BasePushServiceDeps) {
           ? (await deps.base.findCurrentOwner?.({ platformRequirementId: req.platformRequirementId, requirementId: req.teambitionRequirementId })) ?? null
           : null,
       });
-      if (notification) {
-        try {
-          const notificationFields = (deps.baseFields as { notification?: unknown }).notification;
-          await deps.audit.append({
-            id: randomUUID(), actorId: deps.actorId, eventType: "base.push.notification_debug", entityType: "requirement", entityId: req.id,
-            result: "succeeded",
-            safeDetails: { reason: `notification_computed:fieldsConfigured=${notificationFields ? 1 : 0}:recipientType=${notification.recipientIdType}` },
-            occurredAt: now().toISOString(),
-          });
-        } catch { /* diagnostics must not affect push */ }
-      }
       const sourceCreatedAt = req.sourceCreatedAt ? Date.parse(req.sourceCreatedAt) : Number.NaN;
       pushedResult = await deps.base.push({
         projectId: deps.sourceProjectId, requirementId: req.teambitionRequirementId, platformRequirementId: req.platformRequirementId, requirementDbId: req.id,
