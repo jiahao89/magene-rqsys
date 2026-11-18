@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { AnalysisContextSection, AuditPanel, OpsPanel, BatchesPanel, MappingsPanel, ModulesPanel, PeoplePanel, PriorityOverrideSection, RequirementsPanel, ScoringPanel, SourcesPanel } from "./panels";
-import { AudienceEditor } from "./intake-form";
+import { AudienceEditor, IntakeForm } from "./intake-form";
 import type { RequirementDetail, SourceConfig, TeamPerson } from "./api";
 
 /** 原生 select 已替换为 Arco Select：等待控件可用后点开下拉并按选项文字选择。 */
@@ -1451,6 +1451,59 @@ describe("RequirementsPanel intake (V02-T04)", () => {
     await waitFor(() => expect(detailOpened).toBe(true));
     expect(keys).toHaveLength(2);
     expect(keys[0]).not.toBe(keys[1]);
+  });
+
+  // E1 后续：重新整理或抽取失败时，上一次的相似需求提示不能继续挂着配新错误。
+  it("clears the previous similar-requirement hints when a re-extraction fails", async () => {
+    let calls = 0;
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/requirements/intake-draft" && init?.method === "POST") {
+        calls += 1;
+        if (calls === 1) return Response.json({
+          draft: { title: "导出骑行报表", description: "售后反馈用户希望导出报表", sourceChannel: "售后", requirementType: null, productModel: null, constraintNotes: null, intakeModule: null, proposer: null, aiFilled: ["title", "description", "sourceChannel"] },
+          similar: [{ id: "req-9", platformRequirementId: "RQ-000009", title: "导出报表", sourceType: "teambition" }],
+          fallback: false, aiFilledCount: 3,
+        });
+        return Response.json({ error: { code: "DEPENDENCY_UNAVAILABLE", message: "AI 暂时无法整理聊天内容，请手工填写需求。" } }, { status: 503 });
+      }
+      if (path === "/api/function-modules") return Response.json({ items: [] });
+      return Response.json({ items: [] });
+    });
+    render(<IntakeForm onCreated={() => undefined} />);
+    fireEvent.click(screen.getByRole("button", { name: "从聊天粘贴" }));
+    fireEvent.change(screen.getByLabelText("聊天内容"), { target: { value: "客户想导出报表" } });
+    fireEvent.click(screen.getByRole("button", { name: "整理成需求草稿" }));
+    expect(await screen.findByText(/RQ-000009 · 导出报表/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "整理成需求草稿" }));
+    expect(await screen.findByText("AI 暂时无法整理聊天内容，请手工填写需求。")).toBeInTheDocument();
+    expect(screen.queryByText(/RQ-000009/)).not.toBeInTheDocument();
+  });
+
+  // 客户端 30 秒超时：中断请求、给明确文案、按钮恢复可点。
+  it("times out an extraction after 30 seconds and re-enables the button", async () => {
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/requirements/intake-draft" && init?.method === "POST") {
+        return new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () => reject(new DOMException("The operation was aborted.", "AbortError")));
+        });
+      }
+      if (path === "/api/function-modules") return Response.json({ items: [] });
+      return Response.json({ items: [] });
+    });
+    render(<IntakeForm onCreated={() => undefined} />);
+    fireEvent.click(screen.getByRole("button", { name: "从聊天粘贴" }));
+    fireEvent.change(screen.getByLabelText("聊天内容"), { target: { value: "客户想导出报表" } });
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "整理成需求草稿" }));
+      await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+      expect(screen.getByText("整理超时，请重试或手工填写。")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "整理成需求草稿" })).toBeEnabled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

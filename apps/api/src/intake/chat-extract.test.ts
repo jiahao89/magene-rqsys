@@ -21,11 +21,14 @@ function extractor(respond: (init: RequestInit | undefined) => Response | Promis
   return { instance, calls };
 }
 
-test("request schema rejects empty text and text over the description limit", () => {
+test("request schema rejects empty text and counts the limit in code points", () => {
   assert.equal(ChatDraftRequestSchema.safeParse({ text: "   " }).success, false);
   assert.equal(ChatDraftRequestSchema.safeParse({ text: "x".repeat(CHAT_TEXT_MAX_LENGTH + 1) }).success, false);
   assert.equal(ChatDraftRequestSchema.safeParse({ text: "x".repeat(CHAT_TEXT_MAX_LENGTH) }).success, true);
   assert.equal(ChatDraftRequestSchema.safeParse({ text: "ok", extra: 1 }).success, false);
+  // 20,000 个 emoji 是 40,000 个 UTF-16 码元，但只有 20,000 个码点：按 openapi 的 maxLength 口径应当接受。
+  assert.equal(ChatDraftRequestSchema.safeParse({ text: "😀".repeat(CHAT_TEXT_MAX_LENGTH) }).success, true);
+  assert.equal(ChatDraftRequestSchema.safeParse({ text: "😀".repeat(CHAT_TEXT_MAX_LENGTH + 1) }).success, false);
 });
 
 test("sanitize keeps valid fields and drops out-of-range enums and unknown modules", () => {
@@ -96,19 +99,35 @@ test("extract accepts fenced JSON and reports provider failures with stable code
   const fenced = extractor(() => envelope("```json\n{\"title\":\"围栏\",\"description\":\"d\"}\n```"));
   assert.equal((await fenced.instance.extract({ text: "x", modules: MODULES })).draft.title, "围栏");
 
-  const cases: [() => Response, string][] = [
-    [() => new Response("no", { status: 429 }), "rate_limited"],
-    [() => new Response("no", { status: 401 }), "auth_error"],
-    [() => new Response("no", { status: 503 }), "provider_error"],
-    [() => new Response("no", { status: 400 }), "request_error"],
-    [() => envelope(""), "analysis_failure"],
-    [() => envelope("not json"), "analysis_failure"],
-    [() => Response.json({ unexpected: true }), "analysis_failure"],
+  // 非 2xx 时既要保留错误类，也要把状态码带给调用方；供应商正文不读会被丢，但连接必须读完。
+  const cases: [() => Response, string, number | undefined][] = [
+    [() => new Response("no", { status: 429 }), "rate_limited", 429],
+    [() => new Response("no", { status: 401 }), "auth_error", 401],
+    [() => new Response("no", { status: 503 }), "provider_error", 503],
+    [() => new Response("no", { status: 400 }), "request_error", 400],
+    [() => envelope(""), "analysis_failure", undefined],
+    [() => envelope("not json"), "analysis_failure", undefined],
+    [() => Response.json({ unexpected: true }), "analysis_failure", undefined],
   ];
-  for (const [respond, code] of cases) {
+  for (const [respond, code, httpStatus] of cases) {
     const { instance } = extractor(respond);
-    await assert.rejects(() => instance.extract({ text: "x", modules: MODULES }), (error: unknown) => error instanceof AiProviderError && error.code === code, code);
+    await assert.rejects(
+      () => instance.extract({ text: "x", modules: MODULES }),
+      (error: unknown) => error instanceof AiProviderError && error.code === code && error.httpStatus === httpStatus,
+      code,
+    );
   }
+});
+
+test("provider error bodies are drained but never echoed into the error", async () => {
+  const response = new Response("upstream said sk-secret-key-1234567890", { status: 429 });
+  const { instance } = extractor(() => response);
+  await assert.rejects(
+    () => instance.extract({ text: "x", modules: MODULES }),
+    (error: unknown) => error instanceof AiProviderError && error.code === "rate_limited" && error.httpStatus === 429 && error.message.includes("sk-secret") === false,
+  );
+  // 不读 body 会拖住连接复用；错误里仍然只有状态码。
+  assert.equal(response.bodyUsed, true);
 });
 
 test("extract fails closed without a credential and on network errors", async () => {

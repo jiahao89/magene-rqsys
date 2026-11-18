@@ -3,7 +3,8 @@ import { createHash as createHashForTest } from "node:crypto";
 import test from "node:test";
 import type { AuditEventRecord, RequirementRecord, SourceConfigRecord, SyncBatchRecord, SyncItemRecord } from "../domain/persistence.js";
 import type { ApiDependencies, ApiRepositories } from "./app.js";
-import { handleApiRequest } from "./app.js";
+import { handleApiRequest, MAX_JSON_BODY_BYTES } from "./app.js";
+import { AiProviderError } from "../analysis/provider.js";
 import { encodeBatchCursor } from "../application/batch-cursor.js";
 import { EXPECTED_LATEST_MIGRATION } from "../db/expected-migration.js";
 
@@ -545,6 +546,32 @@ test("PRD-26 chat-paste origin and proposer name reach the manual create path wi
   assert.equal(createdInputs.length, 1);
 });
 
+test("web manual intake returns 503 instead of 500 when the dictionary or the receipt read fails", async () => {
+  const body = JSON.stringify({ title: "t", description: "d", sourceChannel: "售后", intakeModule: "报表分析" });
+  const post = (d: ReturnType<typeof makeDependencies>) => handleApiRequest(new Request("http://localhost/api/requirements", { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": "intake-key-811" }, body }), d);
+
+  const dictionaryDown = makeDependencies();
+  (dictionaryDown.repositories as unknown as Record<string, unknown>).dictionaries = { list: async () => { throw new Error("db down"); } };
+  assert.equal((await post(dictionaryDown)).status, 503);
+
+  const receiptDown = makeDependencies();
+  (receiptDown.repositories as unknown as Record<string, unknown>).dictionaries = { list: async () => [{ version: 3, status: "published", entries: [{ name: "报表分析" }] }] };
+  (receiptDown.repositories!.requirements as unknown as Record<string, unknown>).findIntakeReceipt = async () => { throw new Error("db down"); };
+  assert.equal((await post(receiptDown)).status, 503);
+});
+
+test("oversized request bodies are rejected with 413 before any route logic runs", async () => {
+  const d = makeDependencies();
+  (d.repositories as unknown as Record<string, unknown>).dictionaries = { list: async () => [{ version: 3, status: "published", entries: [] }] };
+  (d.repositories!.requirements as unknown as Record<string, unknown>).findIntakeReceipt = async () => { throw new Error("must not reach the receipt lookup"); };
+  const oversized = JSON.stringify({ title: "t", description: "x".repeat(MAX_JSON_BODY_BYTES), sourceChannel: "售后" });
+  const streamed = await handleApiRequest(new Request("http://localhost/api/requirements", { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": "intake-key-801" }, body: oversized }), d);
+  assert.equal(streamed.status, 413);
+  // Content-Length 预检：声明就超限时连 body 都不读。
+  const declared = await handleApiRequest(new Request("http://localhost/api/requirements", { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": "intake-key-802", "content-length": String(MAX_JSON_BODY_BYTES + 1) }, body: "{}" }), d);
+  assert.equal(declared.status, 413);
+});
+
 test("V02-T04 intake rejects a missing idempotency key, an unknown channel, or an empty description", async () => {
   const d = makeDependencies();
   const requirements = d.repositories!.requirements as unknown as Record<string, unknown>;
@@ -685,7 +712,7 @@ type DraftExtractor = NonNullable<ApiDependencies["chatIntake"]>["extractor"];
 function draftDependencies(extract: DraftExtractor["extract"], options: { limit?: { perMinute: number; perDay: number } } = {}) {
   const d = makeDependencies();
   (d.repositories as unknown as Record<string, unknown>).dictionaries = { list: async () => [{ version: 3, status: "published", entries: [{ name: "报表分析" }, "导航"] }] };
-  const audits: { eventType: string; result: string; safeDetails: Record<string, unknown> }[] = [];
+  const audits: { eventType: string; result: string; entityId: string; safeDetails: Record<string, unknown> }[] = [];
   d.repositories!.audit.append = async (event) => { audits.push(event as never); };
   const created: unknown[] = [];
   (d.repositories!.requirements as unknown as Record<string, unknown>).createManualRequirement = async (input: unknown) => { created.push(input); return { requirementId: requirement.id, platformRequirementId: "RQ-000001", replay: false }; };
@@ -716,6 +743,10 @@ test("intake-draft returns a draft without creating a requirement and audits onl
   assert.equal(audits[0]!.safeDetails.textLength, Array.from(chat).length);
   assert.equal(audits[0]!.safeDetails.fallback, false);
   assert.equal(audits[0]!.safeDetails.aiFilledCount, 5);
+  // 一次抽取的审计要能串联：请求号既在 safeDetails 也做 entityId，并带提示词版本。
+  assert.match(String(audits[0]!.safeDetails.requestId), /^[0-9a-f-]{36}$/);
+  assert.equal(audits[0]!.safeDetails.promptVersion, "rq-chat-intake-v1");
+  assert.equal(audits[0]!.entityId, audits[0]!.safeDetails.requestId);
   assert.equal(JSON.stringify(audits[0]).includes("13812345678"), false);
   assert.equal(JSON.stringify(audits[0]).includes("小王"), false);
 });
@@ -772,15 +803,23 @@ test("intake-draft maps provider rate limiting to 429 with Retry-After and audit
 
 test("intake-draft maps provider config errors to 500 and reports them to diagnostics without leaking secrets", async () => {
   const reported: Array<{ event: string; details: Record<string, unknown> }> = [];
-  const { d, audits } = draftDependencies(async () => { throw Object.assign(new Error("sk-secret-key-1234567890"), { code: "auth_error" }); });
+  const { d, audits } = draftDependencies(async () => { throw new AiProviderError("auth_error", "AI provider authentication failed (HTTP 401).", 401); });
   d.diagnostics = { error: (event, details) => { reported.push({ event, details }); } };
   const response = await handleApiRequest(draftRequest("需要导出"), d);
   assert.equal(response.status, 500);
   const text = await response.text();
   assert.equal(text.includes("sk-secret"), false);
   assert.equal(audits[0]!.safeDetails.errorClass, "auth_error");
-  assert.deepEqual(reported, [{ event: "intake_draft_failed", details: { errorClass: "auth_error", textLength: 4 } }]);
+  assert.equal(audits[0]!.safeDetails.httpStatus, 401);
+  assert.equal(reported.length, 1);
+  assert.equal(reported[0]!.event, "intake_draft_failed");
+  assert.equal(reported[0]!.details.errorClass, "auth_error");
+  assert.equal(reported[0]!.details.textLength, 4);
+  // 供应商状态码可以进诊断，供应商正文和密钥不行。
+  assert.equal(reported[0]!.details.httpStatus, 401);
+  assert.match(String(reported[0]!.details.requestId), /^[0-9a-f-]{36}$/);
   assert.equal(JSON.stringify(reported).includes("sk-secret"), false);
+  assert.equal(JSON.stringify(reported).includes("upstream"), false);
 });
 
 test("intake-draft maps timeouts and unusable model output to a retryable 503", async () => {
@@ -790,6 +829,28 @@ test("intake-draft maps timeouts and unusable model output to a retryable 503", 
     assert.equal(response.status, 503, code);
     assert.equal(audits[0]!.safeDetails.errorClass, code);
   }
+});
+
+test("intake-draft ties every attempt to one requestId and records the prompt version on failure too", async () => {
+  const ok = draftDependencies(async () => extraction(sampleDraft));
+  assert.equal((await handleApiRequest(draftRequest("需要导出"), ok.d)).status, 200);
+  const failed = draftDependencies(async () => { throw new AiProviderError("timeout", "AI provider request timed out."); });
+  assert.equal((await handleApiRequest(draftRequest("需要导出"), failed.d)).status, 503);
+  for (const attempt of [ok, failed]) {
+    assert.match(String(attempt.audits[0]!.safeDetails.requestId), /^[0-9a-f-]{36}$/);
+    assert.equal(attempt.audits[0]!.safeDetails.promptVersion, "rq-chat-intake-v1");
+    assert.equal(attempt.audits[0]!.entityId, attempt.audits[0]!.safeDetails.requestId);
+  }
+  assert.notEqual(ok.audits[0]!.entityId, failed.audits[0]!.entityId);
+});
+
+test("intake-draft returns 503 instead of 500 when the module dictionary cannot be read", async () => {
+  let calls = 0;
+  const { d } = draftDependencies(async () => { calls += 1; return extraction(sampleDraft); });
+  (d.repositories as unknown as Record<string, unknown>).dictionaries = { list: async () => { throw new Error("db down"); } };
+  const response = await handleApiRequest(draftRequest("需要导出"), d);
+  assert.equal(response.status, 503);
+  assert.equal(calls, 0);
 });
 
 test("intake-draft reports the fallback draft honestly in the response and the audit", async () => {

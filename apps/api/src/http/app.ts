@@ -21,7 +21,7 @@ import { DEFAULT_TEAM_MEMBERS } from "../domain/team-directory.js";
 import { isDatabaseReady } from "../adapters/postgres/health.js";
 import { EXPECTED_LATEST_MIGRATION } from "../db/expected-migration.js";
 import { jsonError } from "./errors.js";
-import { ChatDraftRequestSchema, createDraftRateLimiter, type ChatIntakeExtractor, type DraftRateLimit } from "../intake/chat-extract.js";
+import { CHAT_PROMPT_VERSION, ChatDraftRequestSchema, createDraftRateLimiter, type ChatIntakeExtractor, type DraftRateLimit } from "../intake/chat-extract.js";
 import { readAiPause } from "../ops/ai-pause.js";
 import { decodeRequirementCursor } from "../application/requirement-cursor.js";
 import { decodeBatchCursor } from "../application/batch-cursor.js";
@@ -58,9 +58,9 @@ export interface ApiDependencies {
   duplicateMarker?: (input: import("../base/duplicate-marker.js").DuplicateMarkInput) => Promise<import("../base/duplicate-marker.js").DuplicateMarkResult>;
   /** PRD-26：聊天一键复制的草稿抽取；未注入时接口返回 503，用户仍可手工填写。 */
   chatIntake?: { extractor: ChatIntakeExtractor; limit?: DraftRateLimit };
-  /** 目标环境的脱敏诊断通道；未注入时 `intake_draft_failed` 落 stderr。只写错误类与字符数，不写聊天正文。 */
+  /** 目标环境的脱敏诊断通道；未注入时 `intake_draft_failed` 落 stderr。只写错误类、状态码、字符数与请求号，不写聊天正文。 */
   diagnostics?: {
-    error(event: "intake_draft_failed", details: { errorClass: string; textLength: number }): void;
+    error(event: "intake_draft_failed", details: { errorClass: string; textLength: number; httpStatus?: number; requestId?: string }): void;
   };
 }
 // 限流器随 chatIntake 对象缓存：妙搭每次请求展开新的依赖对象，但 chatIntake 引用稳定。
@@ -78,13 +78,13 @@ function rateLimited(waitSeconds: number, message: string): Response {
   limited.headers.set("Retry-After", String(waitSeconds));
   return limited;
 }
-/** PRD-26：AI 配置类错误要进日志（只写错误类与字符数），否则密钥缺失这类事故永远表现为「暂时不可用」。 */
-function reportIntakeFailure(dependencies: ApiDependencies, details: { errorClass: string; textLength: number }): void {
+/** PRD-26：AI 配置类错误要进日志（只写错误类、状态码、字符数与请求号），否则密钥缺失这类事故永远表现为「暂时不可用」。 */
+function reportIntakeFailure(dependencies: ApiDependencies, details: { errorClass: string; textLength: number; httpStatus?: number; requestId?: string }): void {
   if (dependencies.diagnostics) {
     try { dependencies.diagnostics.error("intake_draft_failed", details); } catch { /* 诊断失败不影响响应 */ }
     return;
   }
-  process.stderr.write(`intake draft failed errorClass=${details.errorClass} textLength=${details.textLength}\n`);
+  process.stderr.write(`intake draft failed ${JSON.stringify(details)}\n`);
 }
 async function readMigrationStatus(database: Pool | null): Promise<{ latest: string | null; expected: string; upToDate: boolean | null; error?: string }> {
   try {
@@ -227,7 +227,35 @@ async function appendAudit(repositories: ApiRepositories, event: Parameters<ApiR
   try { await repositories.audit.append(event); return null; }
   catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
 }
-async function readJson(request: Request): Promise<unknown> { try { return await request.json(); } catch { return undefined; } }
+// 请求体传输上限：比任何合法 schema 都宽（最重的 Kano 资料导入约 1.3 MB），又不让我们无限缓冲。
+// 超限在读取阶段就中断，不再把剩余字节拉进内存；schema 级上限（如 20,000 字）在校验阶段仍然生效。
+export const MAX_JSON_BODY_BYTES = 2 * 1024 * 1024;
+class PayloadTooLargeError extends Error {
+  constructor() { super("request body too large"); this.name = "PayloadTooLargeError"; }
+}
+async function readBodyText(request: Request): Promise<string> {
+  const declared = request.headers.get("content-length");
+  if (declared !== null && Number(declared) > MAX_JSON_BODY_BYTES) throw new PayloadTooLargeError();
+  if (!request.body) return "";
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_JSON_BODY_BYTES) throw new PayloadTooLargeError();
+      chunks.push(value);
+    }
+  } finally { try { await reader.cancel(); } catch { /* 已读完或已取消 */ } }
+  if (chunks.length === 0) return "";
+  return new TextDecoder().decode(Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))));
+}
+async function readJson(request: Request): Promise<unknown> {
+  try { const text = await readBodyText(request); return text ? JSON.parse(text) : undefined; }
+  catch (error) { if (error instanceof PayloadTooLargeError) throw error; return undefined; }
+}
 // 人员/模块目录的冲突语义统一：业务冲突 409，其余按依赖不可用处理（不伪装成功）。
 function directoryError(cause: unknown): Response {
   return (cause as Error)?.name === "TeamDirectoryConflict" ? jsonError("CONFLICT", (cause as Error).message) : jsonError("DEPENDENCY_UNAVAILABLE");
@@ -259,6 +287,14 @@ async function resolveSourceConfig(
 }
 
 export async function handleApiRequest(request: Request, dependencies: ApiDependencies): Promise<Response> {
+  try { return await routeApiRequest(request, dependencies); }
+  catch (error) {
+    // 请求体超限是客户端可控的输入问题，回 413，不要漏成 500。
+    if (error instanceof PayloadTooLargeError) return jsonError("PAYLOAD_TOO_LARGE", "请求体过大，请缩短后重试。");
+    throw error;
+  }
+}
+async function routeApiRequest(request: Request, dependencies: ApiDependencies): Promise<Response> {
   const url = new URL(request.url), method = request.method.toUpperCase(), repositories = dependencies.repositories;
   if (method === "GET" && url.pathname === "/api/health") return json({ status: "ok", service: "rq-sys-api" });
   if (method === "GET" && url.pathname === "/api/health/ready") {
@@ -598,27 +634,35 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     if (!repositories?.requirements || !repositories.audit || !repositories.dictionaries) return jsonError("DEPENDENCY_UNAVAILABLE");
     if (!dependencies.chatIntake) return jsonError("DEPENDENCY_UNAVAILABLE", "聊天抽取暂不可用，请手工填写需求。");
     const draftBody = ChatDraftRequestSchema.safeParse(await readJson(request)); if (!draftBody.success) return jsonError("VALIDATION_FAILED");
+    // 一次抽取一个请求号：成功与失败事件共用它，排障时能把两条审计串成一次操作。
+    const requestId = randomUUID();
     const draftNow = (dependencies.now ?? (() => new Date()))();
     if ((await readAiPause(repositories.flags, draftNow)).paused) return jsonError("DEPENDENCY_UNAVAILABLE", "AI 额度暂时受限，请手工填写需求。");
     const wait = draftRateLimiterFor(dependencies.chatIntake).take(auth.actor.id, draftNow.getTime());
     if (wait !== null) return rateLimited(wait, "操作太频繁，请稍后再试。");
-    const publishedModules = (await repositories.dictionaries.list()).find((version) => version.status === "published");
-    const draftModules = (publishedModules?.entries ?? []).map((entry) => typeof entry === "string" ? entry : String((entry as { name?: unknown }).name ?? entry));
-    // 审计只记发起动作与字符数，不记聊天内容；写失败不阻断草稿（草稿不改变业务状态）。
+    // 词典是模型提示的一部分：读不到就回 503，不要把 DB 抖动漏成 500，也不要先花钱调一次模型。
+    let draftModules: string[];
+    try {
+      const publishedModules = (await repositories.dictionaries.list()).find((version) => version.status === "published");
+      draftModules = (publishedModules?.entries ?? []).map((entry) => typeof entry === "string" ? entry : String((entry as { name?: unknown }).name ?? entry));
+    } catch { return jsonError("DEPENDENCY_UNAVAILABLE", "功能模块词典暂时不可用，请稍后重试。"); }
+    // 审计只记发起动作、字符数与请求号，不记聊天内容；写失败不阻断草稿（草稿不改变业务状态）。
     const auditDraft = async (result: "succeeded" | "failed", details: Record<string, unknown>) => {
-      try { await repositories.audit.append({ id: randomUUID(), actorId: auth.actor.id, eventType: result === "succeeded" ? "intake.draft_extracted" : "intake.draft_failed", entityType: "intake", entityId: randomUUID(), result, safeDetails: { textLength: Array.from(draftBody.data.text).length, ...details }, occurredAt: draftNow.toISOString() }); }
+      try { await repositories.audit.append({ id: randomUUID(), actorId: auth.actor.id, eventType: result === "succeeded" ? "intake.draft_extracted" : "intake.draft_failed", entityType: "intake", entityId: requestId, result, safeDetails: { requestId, promptVersion: CHAT_PROMPT_VERSION, textLength: Array.from(draftBody.data.text).length, ...details }, occurredAt: draftNow.toISOString() }); }
       catch { /* best effort */ }
     };
     let extraction: Awaited<ReturnType<ChatIntakeExtractor["extract"]>>;
     try { extraction = await dependencies.chatIntake.extractor.extract({ text: draftBody.data.text, modules: draftModules }); }
     catch (cause) {
       const errorClass = String((cause as { code?: unknown })?.code ?? "unknown");
-      await auditDraft("failed", { errorClass });
+      const rawStatus = (cause as { httpStatus?: unknown })?.httpStatus;
+      const httpStatus = typeof rawStatus === "number" ? rawStatus : undefined;
+      await auditDraft("failed", { errorClass, ...(httpStatus === undefined ? {} : { httpStatus }) });
       // 供应商限流可重试：给 429 + Retry-After，和「每用户限流」共用状态码但文案区分。
       if (errorClass === "rate_limited") return rateLimited(PROVIDER_RATE_LIMIT_RETRY_AFTER_SECONDS, "AI 服务当前限流，请稍后重试或手工填写需求。");
-      // 密钥缺失/请求被拒是配置事故，不是临时故障：回 500 并落一条脱敏日志，由运维修配置。
+      // 密钥缺失/请求被拒是配置事故，不是临时故障：回 500 并落一条脱敏日志（错误类＋状态码，不含正文）。
       if (errorClass === "auth_error" || errorClass === "request_error") {
-        reportIntakeFailure(dependencies, { errorClass, textLength: Array.from(draftBody.data.text).length });
+        reportIntakeFailure(dependencies, { errorClass, textLength: Array.from(draftBody.data.text).length, requestId, ...(httpStatus === undefined ? {} : { httpStatus }) });
         return jsonError("INTERNAL", "AI 整理服务异常，请手工填写需求。");
       }
       // timeout / network_error / analysis_failure：依赖暂不可用，可稍后重试。
@@ -643,23 +687,30 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.requirements || !repositories.audit || !repositories.dictionaries) return jsonError("DEPENDENCY_UNAVAILABLE");
     const key = SyncIdempotencyHeaderSchema.safeParse(request.headers.get("Idempotency-Key")); if (!key.success) return jsonError("VALIDATION_FAILED");
-    const parsedBody = RequirementIntakeSchema.safeParse(await request.json().catch(() => null)); if (!parsedBody.success) return jsonError("VALIDATION_FAILED");
+    const parsedBody = RequirementIntakeSchema.safeParse(await readJson(request)); if (!parsedBody.success) return jsonError("VALIDATION_FAILED");
     // 录入模块必须来自已发布词典（G-MODULE：Web 录入模块与 AI 建议分开，但同源受控）。
     if (parsedBody.data.intakeModule) {
-      const published = (await repositories.dictionaries.list()).find((version) => version.status === "published");
-      const names = (published?.entries ?? []).map((entry) => typeof entry === "string" ? entry : String((entry as { name?: unknown }).name ?? entry));
+      let names: string[];
+      try {
+        const published = (await repositories.dictionaries.list()).find((version) => version.status === "published");
+        names = (published?.entries ?? []).map((entry) => typeof entry === "string" ? entry : String((entry as { name?: unknown }).name ?? entry));
+      } catch { return jsonError("DEPENDENCY_UNAVAILABLE", "功能模块词典暂时不可用，请稍后重试。"); }
       if (!names.includes(parsedBody.data.intakeModule)) return jsonError("VALIDATION_FAILED", "功能模块不在已发布词典中。");
     }
     // POST 语义中可选字段 null 与省略等价（下方展开只保留真值）：哈希前归一化，
 // 客户端重试时序列化差异（null vs 缺省）不会被误判为“同键不同内容”（复查 #8）。
     const canonicalBody = Object.fromEntries(Object.entries(parsedBody.data).filter(([, value]) => value !== null && value !== undefined));
     const requestHash = createHash("sha256").update(stableJson(canonicalBody)).digest("hex");
-    const receipt = await repositories.requirements.findIntakeReceipt(key.data);
+    let receipt: { requirementId: string; requestHash: string; actorId: string } | null;
+    try { receipt = await repositories.requirements.findIntakeReceipt(key.data); }
+    catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
     if (receipt) {
       if (receipt.requestHash !== requestHash) return jsonError("CONFLICT", "该幂等键已用于不同的提交内容。");
-      const existing = await repositories.requirements.get(receipt.requirementId);
-      if (!existing) return jsonError("DEPENDENCY_UNAVAILABLE");
-      return json({ requirementId: existing.id, platformRequirementId: existing.platformRequirementId, sourceType: "web_manual", status: "collected" }, 200);
+      try {
+        const existing = await repositories.requirements.get(receipt.requirementId);
+        if (!existing) return jsonError("DEPENDENCY_UNAVAILABLE");
+        return json({ requirementId: existing.id, platformRequirementId: existing.platformRequirementId, sourceType: "web_manual", status: "collected" }, 200);
+      } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
     }
     try {
       const created = await repositories.requirements.createManualRequirement({ idempotencyKey: key.data, actorId: auth.actor.id, requestHash, title: parsedBody.data.title, description: parsedBody.data.description, sourceChannel: parsedBody.data.sourceChannel, ...(parsedBody.data.productModel ? { productModel: parsedBody.data.productModel } : {}), ...(parsedBody.data.requirementType ? { requirementType: parsedBody.data.requirementType } : {}), ...(parsedBody.data.constraintNotes ? { constraintNotes: parsedBody.data.constraintNotes } : {}), ...(parsedBody.data.supplementUrl ? { supplementUrl: parsedBody.data.supplementUrl } : {}), ...(parsedBody.data.intakeModule ? { intakeModule: parsedBody.data.intakeModule } : {}), ...(parsedBody.data.intakeOrigin ? { intakeOrigin: parsedBody.data.intakeOrigin } : {}), ...(parsedBody.data.proposerName ? { proposerName: parsedBody.data.proposerName } : {}), ...(parsedBody.data.owner ? { owner: { feishuUserId: parsedBody.data.owner.feishuUserId, feishuIdType: parsedBody.data.owner.feishuIdType, ...(parsedBody.data.owner.tbDisplayName ? { name: parsedBody.data.owner.tbDisplayName } : {}) } } : {}) });
@@ -674,7 +725,7 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
     const requirementId = pathUuid(intakeEditMatch[1]!, dependencies); if (!requirementId) return jsonError("NOT_FOUND");
     const key = SyncIdempotencyHeaderSchema.safeParse(request.headers.get("Idempotency-Key")); if (!key.success) return jsonError("VALIDATION_FAILED");
-    const parsedBody = RequirementIntakeEditSchema.safeParse(await request.json().catch(() => null)); if (!parsedBody.success) return jsonError("VALIDATION_FAILED");
+    const parsedBody = RequirementIntakeEditSchema.safeParse(await readJson(request)); if (!parsedBody.success) return jsonError("VALIDATION_FAILED");
     const requestHash = createHash("sha256").update(stableJson(parsedBody.data)).digest("hex");
     const body = parsedBody.data;
     try {
@@ -767,7 +818,7 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
   if (url.pathname === "/api/kano/evidence" && method === "POST") {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const parsed = KanoEvidenceImportSchema.safeParse(await request.json().catch(() => null)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
+    const parsed = KanoEvidenceImportSchema.safeParse(await readJson(request)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
     try {
       const created = await repositories.requirements.createKanoEvidence({ ...parsed.data, createdBy: auth.actor.id } as Parameters<NonNullable<typeof repositories.requirements.createKanoEvidence>>[0]);
       return json({ id: created.id, version: created.version, status: created.status, piiFlagged: created.piiFlagged }, 201);
@@ -800,7 +851,7 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
       const latestEvidence = ((await repositories.requirements.listKanoEvidence?.() ?? []).filter((v) => v.status === "approved").sort((a, b) => b.version - a.version)[0]?.version) ?? null;
       return json({ items: runs.map((run) => ({ ...run, staleInputs: run.sourceVersion !== requirement.sourceVersion || (latestEvidence !== null && run.evidenceVersion !== latestEvidence) })) });
     }
-    const parsed = KanoRunRequestSchema.safeParse(await request.json().catch(() => null)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
+    const parsed = KanoRunRequestSchema.safeParse(await readJson(request)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
     const evidence = ((await repositories.requirements.listKanoEvidence?.() ?? []).find((version) => version.version === parsed.data.evidenceVersion)) ?? null;
     if (!evidence || evidence.status !== "approved" || evidence.piiFlagged) return jsonError("CONFLICT", "资料版本未批准或包含未脱敏内容，不能作为 Kano 输入。");
     try {
@@ -829,7 +880,7 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
       const scored = computeRiceScore(inputs);
       return json({ requirementId: requirement.id, inputs, notes: draft?.notes ?? null, sourceVersion: draft?.sourceVersion ?? requirement.sourceVersion, editVersion: draft?.editVersion ?? 0, updatedBy: draft?.updatedBy ?? null, updatedAt: draft?.updatedAt ?? null, status: scored.status === "computed" ? "已计算" : "待补充", score: scored.score, configVersion: RICE_CONFIG_VERSION, units: { reach: RICE_REACH_UNIT, effort: RICE_EFFORT_UNIT }, impactLevels: RICE_IMPACT_LEVELS });
     }
-    const parsed = RiceDraftUpdateSchema.safeParse(await request.json().catch(() => null)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
+    const parsed = RiceDraftUpdateSchema.safeParse(await readJson(request)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
     try {
       const result = await repositories.requirements.saveRiceDraft({
         requirementId: requirement.id, expectedEditVersion: parsed.data.expectedEditVersion, actorId: auth.actor.id, sourceVersion: requirement.sourceVersion,
@@ -852,7 +903,7 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     // V02-T09：人工人群标签。只落库与审计：不改优先级、不重置 Base PM 状态、不触发 AI/推送/通知。
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const parsed = AudienceUpdateSchema.safeParse(await request.json().catch(() => null)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
+    const parsed = AudienceUpdateSchema.safeParse(await readJson(request)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
     try {
       const audienceRequirementId = pathUuid(audienceMatch[1]!, dependencies); if (!audienceRequirementId) return jsonError("NOT_FOUND");
       const result = await repositories.requirements.setAudienceTags(audienceRequirementId, { tags: parsed.data.tags, expectedVersion: parsed.data.expectedVersion, actorId: auth.actor.id });

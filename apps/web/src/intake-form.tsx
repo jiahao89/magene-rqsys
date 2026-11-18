@@ -8,6 +8,8 @@ import { ConfirmModal } from "./confirm-modal";
 
 /** PRD-26 5a 补丁：服务端与客户端共用同一组上限，提交前拦截，避免落到英文通用校验错误。 */
 const INTAKE_LIMITS = { title: 200, description: 20_000, productModel: 100, constraintNotes: 2_000, supplementUrl: 500, proposerName: 100 } as const;
+/** 聊天抽取的客户端超时：服务端 AI 超时 20 秒，留 10 秒给网络与网关。 */
+const INTAKE_EXTRACT_TIMEOUT_MS = 30_000;
 
 /** 聊天文本先过 PII 掩码；「（姓名已掩码）」这类占位不是真实提出人，不展示也不提交。 */
 function isMaskedPlaceholder(value: string | null): boolean {
@@ -120,15 +122,20 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
   const extract = async () => {
     if (!chatText.trim()) { setChatError("请先粘贴聊天内容。"); return; }
     setExtracting(true); setChatError(null); setConflict(false);
+    // 重新整理就是新的一次抽取：旧的相似需求提示必须清空，不能配着新错误继续展示。
+    setSimilar([]);
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, INTAKE_EXTRACT_TIMEOUT_MS);
     try {
-      const result = await extractIntakeDraft(chatText);
+      const result = await extractIntakeDraft(chatText, undefined, controller.signal);
       setFallbackDraft(result.fallback === true);
       const conflicts = draftConflicts(result.draft);
       if (conflicts.length > 0) setPendingDraft({ draft: result.draft, similar: result.similar, conflicts });
       else { applyDraft(result.draft, "merge"); setSimilar(result.similar); }
     } catch (cause) {
-      setChatError(intakeErrorMessage(cause, "整理", "无法整理聊天内容，请手工填写。"));
-    } finally { setExtracting(false); }
+      setChatError(timedOut ? "整理超时，请重试或手工填写。" : intakeErrorMessage(cause, "整理", "无法整理聊天内容，请手工填写。"));
+    } finally { clearTimeout(timer); setExtracting(false); }
   };
   const aiMark = (field: string) => aiFilled.includes(field) ? <small className="ai-filled-tag" title="由 AI 根据聊天内容填充，请核对后再提交"> AI 填充</small> : null;
 

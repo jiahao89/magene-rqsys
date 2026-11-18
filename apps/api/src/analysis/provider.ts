@@ -39,7 +39,8 @@ export interface AiProvider {
 }
 
 export class AiProviderError extends Error {
-  constructor(public readonly code: "auth_error" | "rate_limited" | "provider_error" | "request_error" | "timeout" | "network_error" | "analysis_failure", message: string) {
+  /** httpStatus 只在供应商回非 2xx 时带上：调用方据此把状态码写进脱敏诊断，不回显正文。 */
+  constructor(public readonly code: "auth_error" | "rate_limited" | "provider_error" | "request_error" | "timeout" | "network_error" | "analysis_failure", message: string, public readonly httpStatus?: number) {
     super(message);
     this.name = "AiProviderError";
   }

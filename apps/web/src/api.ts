@@ -100,11 +100,12 @@ async function requestJson<T>(path: string, fetcher: typeof fetch): Promise<T> {
   return parseJsonResponse<T>(response);
 }
 
-async function postJson<T>(path: string, body: unknown, fetcher: typeof fetch, headers: Record<string, string> = {}): Promise<T> {
+async function postJson<T>(path: string, body: unknown, fetcher: typeof fetch, headers: Record<string, string> = {}, signal?: AbortSignal): Promise<T> {
   const response = await fetcher(path, {
     method: "POST",
     headers: { accept: "application/json", "content-type": "application/json", ...headers },
     ...(body === null ? {} : { body: JSON.stringify(body) }),
+    ...(signal ? { signal } : {}),
   });
   return parseJsonResponse<T>(response);
 }
@@ -669,8 +670,9 @@ export interface ChatIntakeDraftResult {
   /** 实际由 AI 填充的字段数；fallback 时应为 0。 */
   aiFilledCount: number;
 }
-export function extractIntakeDraft(text: string, fetcher: typeof fetch = fetch): Promise<ChatIntakeDraftResult> {
-  return postJson("/api/requirements/intake-draft", { text }, fetcher);
+export function extractIntakeDraft(text: string, fetcher: typeof fetch = fetch, signal?: AbortSignal): Promise<ChatIntakeDraftResult> {
+  // 客户端 30 秒超时用 AbortSignal；中断后 fetch 以 AbortError 拒绝，由表单显示「整理超时」。
+  return postJson("/api/requirements/intake-draft", { text }, fetcher, {}, signal);
 }
 
 async function patchJson<T>(path: string, body: unknown, fetcher: typeof fetch, headers: Record<string, string> = {}): Promise<T> {

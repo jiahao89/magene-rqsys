@@ -431,6 +431,7 @@ paths:
         '400': { $ref: '#/components/responses/Validation' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { description: The idempotency key was already used with a different payload. }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
         '503': { $ref: '#/components/responses/DependencyUnavailable' }
     patch:
       summary: Edit a web-manual requirement with optimistic versioning (V02-T07)
@@ -480,6 +481,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: Stale expectedSourceVersion (message carries the current version), TB-source requirement, or idempotency-key payload conflict. }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
         '503': { $ref: '#/components/responses/DependencyUnavailable' }
   /api/requirements/intake-draft:
     post:
@@ -495,7 +497,10 @@ paths:
         only the text length, the fallback flag and the number of AI-filled fields, never the
         chat content. When the model returns unusable output, the response is still 200 but
         fallback is true and title/description come from the masked chat text, so the client
-        must ask the user to review or rewrite them.
+        must ask the user to review or rewrite them. `text` is measured in Unicode code points,
+        matching maxLength. Each attempt gets a requestId that appears on both the success and
+        failure audit events together with the prompt version. Bodies larger than 2 MiB are
+        rejected with 413 before parsing.
       requestBody:
         required: true
         content:
@@ -549,6 +554,7 @@ paths:
                         sourceType: { type: string }
         '400': { $ref: '#/components/responses/Validation' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
         '429':
           description: >-
             Rate limited: either the per-actor draft limit or the AI provider itself. Retry-After
@@ -1364,6 +1370,14 @@ components:
           schema: { $ref: '#/components/schemas/Error' }
     Conflict:
       description: Conflicting concurrent operation
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    PayloadTooLarge:
+      description: >-
+        Request body exceeds the transport limit (2 MiB by default). The body is rejected while it
+        is being read, before any route logic or schema validation runs. Per-field limits such as
+        the 20,000-character chat text are still enforced afterwards by schema validation.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }

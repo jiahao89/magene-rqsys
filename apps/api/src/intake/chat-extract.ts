@@ -15,8 +15,13 @@ export const CHAT_TEXT_MAX_LENGTH = 20_000;
 export const CHAT_PROMPT_VERSION = "rq-chat-intake-v1";
 const ENDPOINT = "/chat/completions";
 
+// 长度按 Unicode 码点计（与 openapi 的 maxLength 口径一致）：zod 的 .max() 数 UTF-16 码元，
+// emoji 密集的粘贴会被提前拒掉，和文档承诺的上限对不上。
 export const ChatDraftRequestSchema = z.strictObject({
-  text: z.string().trim().min(1).max(CHAT_TEXT_MAX_LENGTH),
+  text: z.string().trim().min(1).refine(
+    (value) => Array.from(value).length <= CHAT_TEXT_MAX_LENGTH,
+    { message: `text must be at most ${CHAT_TEXT_MAX_LENGTH} characters` },
+  ),
 });
 
 export const CHAT_DRAFT_FIELDS = ["title", "description", "sourceChannel", "requirementType", "productModel", "constraintNotes", "intakeModule", "proposer"] as const;
@@ -118,11 +123,30 @@ const EnvelopeSchema = z.object({
   choices: z.array(z.object({ message: z.object({ content: z.string().nullable().optional() }).passthrough() }).passthrough()).min(1),
 }).passthrough();
 
-function httpError(status: number): AiProviderError {
-  if (status === 401 || status === 403) return new AiProviderError("auth_error", `AI provider authentication failed (HTTP ${status}).`);
-  if (status === 429) return new AiProviderError("rate_limited", `AI provider rate limit reached (HTTP ${status}).`);
-  if (status >= 500) return new AiProviderError("provider_error", `AI provider request failed (HTTP ${status}).`);
-  return new AiProviderError("request_error", `AI provider rejected the request (HTTP ${status}).`);
+// 非 2xx 时先把响应体读掉（最多 4 KB）再抛错：不读会拖住连接复用，全读又可能是一大段供应商正文。
+// 正文既不回显也不进日志；错误只带错误类与状态码。
+const ERROR_BODY_DRAIN_BYTES = 4_096;
+async function drainErrorBody(response: Response): Promise<void> {
+  const body = response.body;
+  if (!body) return;
+  const reader = body.getReader();
+  let read = 0;
+  try {
+    while (read < ERROR_BODY_DRAIN_BYTES) {
+      const { done, value } = await reader.read();
+      if (done) return;
+      read += value?.byteLength ?? 0;
+    }
+  } catch { /* 读不动也不改变错误分类 */ }
+  finally { try { await reader.cancel(); } catch { /* 已关闭 */ } }
+}
+async function httpError(response: Response): Promise<AiProviderError> {
+  await drainErrorBody(response);
+  const status = response.status;
+  if (status === 401 || status === 403) return new AiProviderError("auth_error", `AI provider authentication failed (HTTP ${status}).`, status);
+  if (status === 429) return new AiProviderError("rate_limited", `AI provider rate limit reached (HTTP ${status}).`, status);
+  if (status >= 500) return new AiProviderError("provider_error", `AI provider request failed (HTTP ${status}).`, status);
+  return new AiProviderError("request_error", `AI provider rejected the request (HTTP ${status}).`, status);
 }
 
 export function createChatIntakeExtractor(options: Partial<AiProviderConfig> & { fetch?: FetchLike } = {}): ChatIntakeExtractor {
@@ -157,7 +181,7 @@ export function createChatIntakeExtractor(options: Partial<AiProviderConfig> & {
       }
       let content: string | null | undefined;
       try {
-        if (!response.ok) throw httpError(response.status);
+        if (!response.ok) throw await httpError(response);
         content = EnvelopeSchema.parse(await response.json()).choices[0]?.message.content;
       } catch (error) {
         if (error instanceof AiProviderError) throw error;

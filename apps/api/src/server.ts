@@ -4,7 +4,7 @@ import { PostgresRepositories } from "./adapters/postgres/repositories.js";
 import { createPostgresSyncPersistence } from "./adapters/postgres/sync-persistence.js";
 import { markDuplicateInBase } from "./base/duplicate-marker.js";
 import { createChatIntakeExtractor } from "./intake/chat-extract.js";
-import { type ApiDependencies, handleApiRequest } from "./http/app.js";
+import { MAX_JSON_BODY_BYTES, type ApiDependencies, handleApiRequest } from "./http/app.js";
 import { errorBody } from "./http/errors.js";
 import { PipelineJobWorker } from "./jobs/worker.js";
 import { SyncOrchestrator, shouldProcessSyncDownstream, type SyncJobRunner } from "./sync/service.js";
@@ -191,7 +191,7 @@ const server = createServer(async (incoming, outgoing) => {
     let bodyBytes = 0;
     for await (const chunk of incoming) {
       bodyBytes += chunk.length;
-      if (bodyBytes > 1_048_576) {
+      if (bodyBytes > MAX_JSON_BODY_BYTES) {
         outgoing.statusCode = 413;
         outgoing.setHeader("content-type", "application/json; charset=utf-8");
         outgoing.end(JSON.stringify(errorBody("PAYLOAD_TOO_LARGE")));
