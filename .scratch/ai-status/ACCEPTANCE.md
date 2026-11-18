@@ -18,15 +18,16 @@
 | 降级（E） | 4 | E1–E4 | 待填 |
 | 性能与索引（F） | 3 | F1 | 待填 |
 | 清理（L） | 5 | 全部 | 待填 |
+| 线上复验·统计修复（V，2026-11-18） | 8 | V1–V6 | 待填 |
 | 目标不可构造（K） | 8 | 必须有本地证据 | 待填 |
 
-**通过条件**：A、B、D、E、F1、L 全 PASS，K 每项有对应本地用例证据；任一 P0 失败即整体不通过；L 不通过不得判「通过」。
+**通过条件**：A、B、D、E、F1、L 全 PASS，K 每项有对应本地用例证据；**若本轮是「统计暂不可用」修复后的版本，另须 V1–V6 全 PASS**。任一 P0 失败即整体不通过；L 不通过不得判「通过」。
 
 ---
 
 ## 1. 契约与计数口径（先钉死，避免「数字对不上」各说各话）
 
-接口：`GET /api/overview/metrics` 增加 `ai` 块（**具体是 `{counts:{...}, ai:{...}}` 并列还是放进 `counts` 内，以最终 openapi 为准**；验收时记录实际位置并核对字段名一致）。
+接口：`GET /api/overview/metrics` 增加 `ai` 块（**契约定为顶层并列：`{counts:{...}, ai:{...}}`，`ai` 不在 `counts` 内**；见 `apps/web/src/api.ts` 的 `getOverviewMetrics` 与 openapi。字段名以下方为准）。
 
 ```
 ai: {
@@ -188,6 +189,8 @@ SELECT job_type, status, count(*) FROM pipeline_jobs WHERE job_type='analysis' G
 | E4 | 卡片对 `unavailable` 的降级展示 | `status==="unavailable"` 或 `statsAvailable===false` → 卡片显示「状态不可用（统计暂不可用）」类文案；其他指标照常渲染；不显示「0 次」当成真实用量 | | |
 
 > E1 可在目标环境用 Chromium DevTools「Block request URL」只挡这个接口；E2/E3/E4 目标不可构造，用后端/组件测试证据（E4 也可在本地用 `ai` stub 验证）。E3 与 E4 必须成对：服务端契约对、客户端不把 0 当真实值。
+>
+> **2026-11-18 线上已实际触发过一次降级**：release `7709454179102362905` / `63f2b1b` 的卡片显示「统计不可用」，但直接用 `+db-execute` 跑统计 SQL 正常（分析 1422/今日 2/最近 analyzed；聊天抽取 0/0/0）——说明是运行时适配层抛错，`aiOverview` 的 catch 把异常吞了。修复后按 §13 复验；E3 的「注入失败」仍以单测为准，线上只验修复后的正常路径与诊断日志。
 
 ---
 
@@ -245,6 +248,7 @@ WHERE entity_type = 'intake'
 
 - [ ] `ai.status` 四态：正常 / 暂停未到期 / 暂停已到期（`until == now` 视为恢复）/ 未配置（优先于正常；与暂停同时存在时按 openapi 定）/ 统计失败（`unavailable`）。
 - [ ] `statsAvailable`：正常为 true；注入统计聚合异常时为 false，`status="unavailable"`、四个计数为 0、`pausedUntil/pauseReason/lastCall` 为 null，且整个接口仍 **200 + counts 完整**；不得吞异常返回「ok + 0」。
+- [ ] **2026-11-18 线上事故回归**：统计查询不依赖 `ANY($n::text[])` 数组绑定与 `FILTER` 子查询（或有一条适配层等价测试证明妙搭 drizzle 能正确绑定）；聚合抛错时平台日志有脱敏 `errorClass`（不含 SQL 参数/聊天正文），接口仍 200 + counts + `unavailable`。
 - [ ] `analysis.total/today` 与 `chatIntake.total/today` 的 SQL 计数正确；今日按 Asia/Shanghai 固定时区（固定 `now` 跨日用例）。
 - [ ] `lastCall` 取两边最新：analysis 最新、intake 最新、只有一边有数据、都没有（null）；running 的取舍与 openapi 一致。
 - [ ] 429/400/413 不产生 `intake.*` 审计、不增加 chatIntake 计数（与既有用例对齐）。
@@ -276,7 +280,65 @@ cd rq-sys-miaoda && npm run test:rqsys-route && npm run test:rqsys-client
 
 ---
 
-## 13. 执行记录
+## 13. 线上复验：统计不可用修复后（V，2026-11-18）
+
+> 触发：release `7709454179102362905` / `63f2b1b` 线上卡片显示「统计不可用（统计暂不可用）」，但直接 `+db-execute` 跑两条统计 SQL 正常（分析 1422 / 今日 2 / 最近 analyzed；聊天抽取 0/0/0）→ 运行时报错被 `aiOverview` 的 catch 吞掉。修复 = 补脱敏错误日志 + 简化统计查询（不依赖数组参数/FILTER 子查询），不加迁移。
+> **本轮约束**：只读复验。不粘贴聊天、不创建需求、不写 `system_flags`、不删任何数据；不跑 E1/E2/E5/E6（会产生审计或需求）。若期间有正常同步导致 `analysis_runs` 增长，记录并解释，不算失败。
+
+### 13.1 前置（P0）
+
+| 项 | 要求 | 实际 |
+| --- | --- | --- |
+| 版本 | 新 release `finished`、`error_logs: []`，绑定修复提交；确认线上已不是 `7709454179102362905` | |
+| 契约 | 响应 `ai` 块存在，含 `status`、`statsAvailable`、两组计数、`lastCall` | |
+| 参数 | 记录复验开始/结束时间（Asia/Shanghai），用于同窗口对账 | |
+| 环境 | 线上登录态；DevTools 可复制 `/api/overview/metrics` 响应；有 `+db-execute` 只读权限 | |
+
+### 13.2 对账 SQL（只读；今日=Asia/Shanghai 自然日）
+
+```sql
+-- 分析调用：total / today / 最近一次状态与时间
+SELECT count(*)::int AS total,
+       count(*) FILTER (WHERE started_at >= (date_trunc('day', now() AT TIME ZONE 'Asia/Shanghai') AT TIME ZONE 'Asia/Shanghai'))::int AS today,
+       max(started_at) AS last_at,
+       (SELECT status FROM analysis_runs ORDER BY started_at DESC, id DESC LIMIT 1) AS last_status
+FROM analysis_runs;
+
+-- 聊天抽取：total / today / 最近一次事件
+SELECT count(*)::int AS total,
+       count(*) FILTER (WHERE occurred_at >= (date_trunc('day', now() AT TIME ZONE 'Asia/Shanghai') AT TIME ZONE 'Asia/Shanghai'))::int AS today,
+       max(occurred_at) AS last_at,
+       (SELECT event_type FROM audit_events
+         WHERE entity_type='intake' AND event_type IN ('intake.draft_extracted','intake.draft_failed')
+         ORDER BY occurred_at DESC, id DESC LIMIT 1) AS last_event_type
+FROM audit_events
+WHERE entity_type='intake' AND event_type IN ('intake.draft_extracted','intake.draft_failed');
+```
+
+事故时的参考值（复验以现场同窗口 SQL 为准，不能直接把 1422/2 当断言）：分析 total **1422**、today **2**、last status **analyzed**；聊天抽取 **0/0/0**。
+
+### 13.3 用例
+
+| ID | 用例 | 预期 | 实际 | 结论 |
+| --- | --- | --- | --- | --- |
+| V1 | 版本与字段 | 新 release；`ai.statsAvailable` 为 true；`status` 为 `ok`（无暂停、密钥正常）；字段类型正确 | | |
+| V2 | 分析计数对账 | `ai.analysis.total` / `today` 与 SQL **同窗口**完全相等；误差 0 | | |
+| V3 | 聊天抽取对账 | `ai.chatIntake.total` / `today` 与 SQL 相等；**0 是合法值**（`statsAvailable=true`），不是降级 | | |
+| V4 | lastCall 对账 | `at/kind/result` = 两边最新的那条；分析 `analyzed→succeeded`、`failed_retryable→failed`、`running→result=null` 且 `at=started_at` | | |
+| V5 | 卡片展示 | 显示真实数字（如「分析 1422 次 · 聊天抽取 0 次」，今日 2）；**不再出现「统计暂不可用」**；无 NaN/undefined；其他指标卡正常 | | |
+| V6 | 数据副作用 | 需求总数不变（未造需求）；`intake.*` 审计数不变（未抽取）；`system_flags.ai_analysis_pause` 不变；无需清理 | | |
+| V7 | 诊断（条件） | 若仍降级：接口必须 200 + counts 完整 + `statsAvailable=false`；服务端日志出现脱敏 `errorClass`（不含 SQL 参数/聊天正文）。修复成功则本项记 `OBS/不适用` | | |
+| V8 | 无回归 | 总览其他数字、作业运维、需求池加载正常；发布后 ERROR 日志 0 条（复验窗口） | | |
+
+### 13.4 判定
+
+- **V1–V5 全 PASS 才算修复通过**；V6 必须核对（防止为了验证而造数据）；V7 仅在仍降级时适用；V8 作为回归观察。
+- 证据：DevTools 响应 JSON、卡片截图、两条 SQL 的输出与时间戳，存 `.scratch/ai-status/evidence/<YYYYMMDD>/`。
+- 若数字仍对不上：先核对 `since` 是否按 Asia/Shanghai、计数是否含 `running`、`intake` 是否带 `entity_type='intake'`、以及 release 是否真的换成修复版；不要先改口径。
+
+---
+
+## 14. 执行记录
 
 | ID | 结果（PASS/FAIL/BLOCKED/OBS） | 实际现象 | 证据（截图/JSON 路径） | 执行人 | 时间 |
 | --- | --- | --- | --- | --- | --- |
@@ -285,7 +347,7 @@ cd rq-sys-miaoda && npm run test:rqsys-route && npm run test:rqsys-client
 
 证据目录：`.scratch/ai-status/evidence/<YYYYMMDD>/`，命名 `<用例ID>-<简述>.png|json|txt`。
 
-### 13.1 暂停态与清理登记
+### 14.1 暂停态与清理登记
 
 | 项 | 值 |
 | --- | --- |
@@ -298,7 +360,7 @@ cd rq-sys-miaoda && npm run test:rqsys-route && npm run test:rqsys-client
 
 ---
 
-## 14. 签字
+## 15. 签字
 
 - 执行人：____________　日期：____________
 - 清理复核（flag、审计、需求、Base 均回基线）：____________　日期：____________

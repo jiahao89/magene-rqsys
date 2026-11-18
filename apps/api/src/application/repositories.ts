@@ -439,7 +439,7 @@ export interface RequirementQueryRepository {
     confidenceInput?: string | null;
     effortInput?: string | null;
     notes?: string | null;
-  }): Promise<{ outcome: "saved"; editVersion: number } | { outcome: "unchanged"; editVersion: number } | { outcome: "version_conflict"; currentEditVersion: number }>;
+  }): Promise<{ outcome: "saved"; editVersion: number } | { outcome: "unchanged"; editVersion: number } | { outcome: "version_conflict"; currentEditVersion: number } | { outcome: "source_version_conflict"; currentSourceVersion: number }>;
   // V02-T09：人工人群标签（多选/空集，确认语义）。乐观版本；修改只落库与审计，不触发任何主流程。
   setAudienceTags(requirementId: string, input: { tags: AudienceLevel[]; expectedVersion: number; actorId: string }): Promise<
     | { outcome: "updated"; version: number }

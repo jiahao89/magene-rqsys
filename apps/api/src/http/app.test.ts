@@ -173,6 +173,43 @@ test("overview AI block degrades to unavailable when the statistics aggregation 
   });
 });
 
+test("overview AI stats failure reports a sanitized error class instead of leaking the query", async () => {
+  const d = overviewDependencies();
+  const reports: Array<{ event: string; details: Record<string, unknown> }> = [];
+  d.diagnostics = { error: (event, details) => { reports.push({ event, details: details as Record<string, unknown> }); } };
+  const failure = Object.assign(new Error("SELECT title FROM requirements -- 需求正文"), { code: "42809" });
+  (d.repositories!.analyses as unknown as Record<string, unknown>).aiCallStats = async () => { throw failure; };
+  await withAiKey("sk-test", async () => {
+    const response = await handleApiRequest(new Request("http://localhost/api/overview/metrics"), d);
+    assert.equal(response.status, 200);
+    const body = await response.json() as { ai: { status: string; statsAvailable: boolean } };
+    assert.equal(body.ai.status, "unavailable");
+    assert.equal(body.ai.statsAvailable, false);
+  });
+  assert.deepEqual(reports, [{
+    event: "overview_ai_stats_failed",
+    details: { phase: "overview_ai_stats", stat: "analysis", errorType: "Error", databaseCode: "42809", causeType: "unknown" },
+  }]);
+  // 诊断只允许脱敏字段：原始异常消息（可能含 SQL 片段/正文）不得出现在日志里。
+  assert.equal(JSON.stringify(reports).includes("需求正文"), false);
+});
+
+test("overview AI stats failure in the intake count is attributed to the intake stat", async () => {
+  const d = overviewDependencies();
+  const reports: string[] = [];
+  d.diagnostics = { error: (event, details) => { reports.push(`${event}:${String((details as { stat?: string }).stat)}`); } };
+  (d.repositories!.analyses as unknown as Record<string, unknown>).aiCallStats = async () => ({ total: 4, today: 1, lastAt: null, lastStatus: null });
+  d.repositories!.audit.countByEntityType = async () => { throw Object.assign(new Error("op ANY/ALL (array) requires array on right side"), { code: "42809" }); };
+  await withAiKey("sk-test", async () => {
+    const response = await handleApiRequest(new Request("http://localhost/api/overview/metrics"), d);
+    assert.equal(response.status, 200);
+    const body = await response.json() as { ai: { status: string; statsAvailable: boolean; analysis: { total: number; today: number } } };
+    assert.equal(body.ai.status, "unavailable");
+    assert.deepEqual(body.ai.analysis, { total: 0, today: 0 });
+  });
+  assert.deepEqual(reports, ["overview_ai_stats_failed:intake"]);
+});
+
 test("overview AI block reports paused state with the reason and recovery time", async () => {
   const d = overviewDependencies();
   d.repositories!.flags = { get: async () => ({ value: { until: "2026-10-08T01:00:00.000Z", reason: "ai_rate_limited" }, updatedAt: "2026-10-08T00:00:00.000Z" }), set: async () => undefined };
@@ -774,6 +811,16 @@ test("V02-T11 RICE draft routes: read defaults, save with optimistic version, co
   assert.equal(readBody.configVersion, "rice-v1");
   const stale = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/rice-draft`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ reach: "x", expectedEditVersion: 0 }) }), d);
   assert.equal(stale.status, 409);
+});
+
+test("V02-T11 RICE draft save reports a stale source baseline as a conflict", async () => {
+  const d = makeDependencies();
+  const requirements = d.repositories!.requirements as unknown as Record<string, unknown>;
+  // 仓储判定草稿基线源版本（3）落后于当前需求源版本（5）：返回 source_version_conflict。
+  requirements.saveRiceDraft = async () => ({ outcome: "source_version_conflict", currentSourceVersion: 3 });
+  const res = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/rice-draft`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ reach: "200", expectedEditVersion: 2 }) }), d);
+  assert.equal(res.status, 409);
+  assert.match(await res.text(), /源版本 3/);
 });
 
 test("V02-T13 Kano evidence routes: import validates, approve rejects flagged material", async () => {

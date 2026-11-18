@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { PostgresRepositories } from "./repositories.js";
+import { PostgresRepositories, PostgresAuditEventRepository } from "./repositories.js";
 import { substantiveHash } from "../../sync/hashes.js";
 import { DEFAULT_TEAM_MEMBERS } from "../../domain/team-directory.js";
 
@@ -34,6 +34,32 @@ test("team directory CRUD survives a transport that cannot serialize PostgreSQL 
   const saved = await store.saveModules(3, [{ name: "导航", personName: null }], "test-actor", event.occurredAt, event);
   assert.equal(saved.version, 4);
   assert.deepEqual(saved.items, [{ name: "导航", personName: null }]);
+});
+
+test("audit intake counts avoid array parameters and FILTER so the target transport can bind them", async () => {
+  const queries: Array<{ text: string; values: unknown[] | undefined }> = [];
+  const pool = {
+    // 妙搭 Drizzle 传输层会把数组参数展开成元组（ANY(($2,$3)::text[]) 报 42809），所以这里断言 SQL 形状。
+    query: async (text: string, values?: unknown[]) => {
+      queries.push({ text, values });
+      if (text.includes("AS today")) return { rows: [{ today: 2 }], rowCount: 1 };
+      if (text.includes("LIMIT 1")) return { rows: [{ event_type: "intake.draft_failed", occurred_at: "2026-11-18T09:00:00.000Z" }], rowCount: 1 };
+      return { rows: [{ total: 5 }], rowCount: 1 };
+    },
+  };
+  const repository = new PostgresAuditEventRepository(pool as never);
+  const stats = await repository.countByEntityType({ entityType: "intake", eventTypes: ["intake.draft_extracted", "intake.draft_failed"], since: "2026-11-17T16:00:00.000Z" });
+  assert.deepEqual(stats, { total: 5, today: 2, lastAt: "2026-11-18T09:00:00.000Z", lastEventType: "intake.draft_failed" });
+  assert.equal(queries.length, 3);
+  for (const query of queries) {
+    assert.equal(query.text.includes("ANY("), false, query.text);
+    assert.equal(query.text.includes("FILTER"), false, query.text);
+    assert.match(query.text, /entity_type=\$1/);
+  }
+  assert.deepEqual(queries[0]!.values, ["intake", "intake.draft_extracted", "intake.draft_failed"]);
+  assert.match(queries[1]!.text, /occurred_at>=\$4::timestamptz/);
+  assert.deepEqual(queries[1]!.values, ["intake", "intake.draft_extracted", "intake.draft_failed", "2026-11-17T16:00:00.000Z"]);
+  assert.match(queries[2]!.text, /ORDER BY occurred_at DESC,id DESC LIMIT 1/);
 });
 
 type DirectoryMapping = { normalized_name: string | null; teambition_user_id: string | null; display_name: string | null; feishu_user_id: string; feishu_id_type: string; updated_at: string; active: boolean; match_method?: string };
@@ -342,6 +368,19 @@ test("RICE draft save returns unchanged without a new version when merged inputs
   const store = new PostgresRepositories(pool);
   const result = await store.requirements.saveRiceDraft({ requirementId:"req-1",expectedEditVersion:4,actorId:"u",sourceVersion:3,reachInput:"1000",impactInput:"2",confidenceInput:"80",effortInput:"5",notes:"n" });
   assert.deepEqual(result,{outcome:"unchanged",editVersion:4});
+  assert.equal(calls.some((call)=>call.sql.startsWith("UPDATE rice_drafts")),false);
+  assert.equal(calls.some((call)=>call.sql.includes("INSERT INTO rice_draft_history")),false);
+});
+
+test("RICE draft save rejects a stale source baseline instead of editing over a newer requirement", async()=>{
+  const calls: Array<{sql:string;values:unknown[]|undefined}> = [];
+  // 草稿上次基于源版本 3 保存；需求已被同步推进到源版本 5，编辑者仍拿旧基线的编辑版本提交。
+  const existing = { requirement_id:"req-1",reach_input:"1000",impact_input:"2",confidence_input:"80",effort_input:"5",notes:"n",source_version:3,edit_version:4,updated_by:"u",updated_at:new Date(0) };
+  const pool = { query: async()=>({rows:[],rowCount:0}), connect: async()=>({ query: async(sql:string,values:unknown[])=>{ calls.push({sql,values}); return sql.includes("SELECT * FROM rice_drafts")?{rows:[existing],rowCount:1}:{rows:[],rowCount:0}; }, release(){} }) } as never;
+  const store = new PostgresRepositories(pool);
+  // expectedEditVersion 匹配（4==4）但请求的 sourceVersion 是 5，与草稿基线 3 不符。
+  const result = await store.requirements.saveRiceDraft({ requirementId:"req-1",expectedEditVersion:4,actorId:"u",sourceVersion:5,reachInput:"2000",impactInput:"2",confidenceInput:"80",effortInput:"5",notes:"n" });
+  assert.deepEqual(result,{outcome:"source_version_conflict",currentSourceVersion:3});
   assert.equal(calls.some((call)=>call.sql.startsWith("UPDATE rice_drafts")),false);
   assert.equal(calls.some((call)=>call.sql.includes("INSERT INTO rice_draft_history")),false);
 });

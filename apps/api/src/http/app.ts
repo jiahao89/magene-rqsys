@@ -58,9 +58,12 @@ export interface ApiDependencies {
   duplicateMarker?: (input: import("../base/duplicate-marker.js").DuplicateMarkInput) => Promise<import("../base/duplicate-marker.js").DuplicateMarkResult>;
   /** PRD-26：聊天一键复制的草稿抽取；未注入时接口返回 503，用户仍可手工填写。 */
   chatIntake?: { extractor: ChatIntakeExtractor; limit?: DraftRateLimit };
-  /** 目标环境的脱敏诊断通道；未注入时 `intake_draft_failed` 落 stderr。只写错误类、状态码、字符数与请求号，不写聊天正文。 */
+  /** 目标环境的脱敏诊断通道；未注入时诊断落 stderr。只写错误类、SQLSTATE、状态码、字符数与请求号，不写 SQL、参数或聊天正文。 */
   diagnostics?: {
-    error(event: "intake_draft_failed", details: { errorClass: string; textLength: number; httpStatus?: number; requestId?: string }): void;
+    error(event: "intake_draft_failed" | "overview_ai_stats_failed", details: {
+      errorClass?: string; textLength?: number; httpStatus?: number; requestId?: string;
+      phase?: string; stat?: "analysis" | "intake"; errorType?: string; databaseCode?: string; causeType?: string;
+    }): void;
   };
 }
 // 限流器随 chatIntake 对象缓存：妙搭每次请求展开新的依赖对象，但 chatIntake 引用稳定。
@@ -86,6 +89,45 @@ function reportIntakeFailure(dependencies: ApiDependencies, details: { errorClas
   }
   process.stderr.write(`intake draft failed ${JSON.stringify(details)}\n`);
 }
+/** 统计失败诊断只取错误类型与 SQLSTATE（沿 cause 链）；SQL 文本、参数和正文一律不落日志——它们可能含需求正文或 ID。 */
+function safeErrorType(error: unknown): string {
+  if (typeof error !== "object" || error === null || !("constructor" in error)) return "unknown";
+  const name = (error as { constructor?: { name?: unknown } }).constructor?.name;
+  return typeof name === "string" && /^[A-Za-z][A-Za-z0-9_$]{0,63}$/.test(name) ? name : "unknown";
+}
+function safeDatabaseCode(error: unknown): string {
+  let current = error;
+  const seen = new Set<object>();
+  for (let depth = 0; depth < 6 && typeof current === "object" && current !== null && !seen.has(current); depth += 1) {
+    seen.add(current);
+    const candidate = current as { code?: unknown; cause?: unknown; originalError?: unknown };
+    if (typeof candidate.code === "string" && /^[A-Z0-9]{5}$/.test(candidate.code)) return candidate.code;
+    current = candidate.cause ?? candidate.originalError;
+  }
+  return "unknown";
+}
+function safeCauseType(error: unknown): string {
+  let current = error;
+  const seen = new Set<object>();
+  let causeType = "unknown";
+  for (let depth = 0; depth < 6 && typeof current === "object" && current !== null && !seen.has(current); depth += 1) {
+    seen.add(current);
+    const candidate = current as { cause?: unknown; originalError?: unknown };
+    const cause = candidate.cause ?? candidate.originalError;
+    if (cause === undefined) break;
+    causeType = safeErrorType(cause);
+    current = cause;
+  }
+  return causeType;
+}
+function reportAiStatsFailure(dependencies: ApiDependencies, stat: "analysis" | "intake", error: unknown): void {
+  const details = { phase: "overview_ai_stats", stat, errorType: safeErrorType(error), databaseCode: safeDatabaseCode(error), causeType: safeCauseType(error) };
+  if (dependencies.diagnostics) {
+    try { dependencies.diagnostics.error("overview_ai_stats_failed", details); } catch { /* 诊断失败不影响响应 */ }
+    return;
+  }
+  process.stderr.write(`overview ai stats failed ${JSON.stringify(details)}\n`);
+}
 // 总览 AI 区：今日按 Asia/Shanghai 自然日切分（UTC+8，无夏令时）。计数口径是「调用次数」，不含 token。
 const SHANGHAI_OFFSET_MS = 8 * 3_600_000;
 function shanghaiDayStart(now: Date): Date {
@@ -105,12 +147,18 @@ async function aiOverview(dependencies: ApiDependencies, repositories: ApiReposi
   let statsAvailable = true;
   try {
     analysis = (await repositories.analyses?.aiCallStats?.(since)) ?? EMPTY_AI_ANALYSIS;
-    intake = (await repositories.audit?.countByEntityType?.({ entityType: "intake", eventTypes: ["intake.draft_extracted", "intake.draft_failed"], since })) ?? EMPTY_AI_INTAKE;
-  } catch {
-    // 统计聚合失败只降级 AI 卡片：接口仍回 200 和 counts，不让整页总览跟着挂。
+  } catch (error) {
+    // 统计失败只降级 AI 卡片：接口仍回 200 和 counts，不让整页总览跟着挂；错误类型与 SQLSTATE 进诊断日志。
     statsAvailable = false;
-    analysis = EMPTY_AI_ANALYSIS;
-    intake = EMPTY_AI_INTAKE;
+    reportAiStatsFailure(dependencies, "analysis", error);
+  }
+  if (statsAvailable) {
+    try {
+      intake = (await repositories.audit?.countByEntityType?.({ entityType: "intake", eventTypes: ["intake.draft_extracted", "intake.draft_failed"], since })) ?? EMPTY_AI_INTAKE;
+    } catch (error) {
+      statsAvailable = false;
+      reportAiStatsFailure(dependencies, "intake", error);
+    }
   }
   if (!statsAvailable) {
     return {
@@ -947,6 +995,8 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
         ...(parsed.data.notes !== undefined ? { notes: parsed.data.notes } : {}),
       });
       if (result.outcome === "version_conflict") return jsonError("CONFLICT", `草稿已被他人更新到版本 ${result.currentEditVersion}，请刷新后重试。`);
+      // 需求源内容在编辑期间前进：草稿基于过期基线，拒绝以免按旧输入出分；提示刷新后按当前源重填。
+      if (result.outcome === "source_version_conflict") return jsonError("CONFLICT", `需求内容已更新到源版本 ${result.currentSourceVersion}，请刷新后重试。`);
       // 保存后按落库结果重算状态，避免响应写死“待配置”而紧接着的 GET 显示“已计算”。
       const savedDraft = await repositories.requirements.getRiceDraft?.(requirement.id) ?? null;
       const savedInputs = savedDraft ? { reach: savedDraft.reachInput, impact: savedDraft.impactInput, confidence: savedDraft.confidenceInput, effort: savedDraft.effortInput } : { reach: null, impact: null, confidence: null, effort: null };

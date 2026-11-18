@@ -23,9 +23,18 @@ export class PostgresAnalysisRunRepository implements AnalysisRunRepository{
     return rows[0]?from(rows[0]):null;
   }
   async countRecentFailures(code:string,since:string){const{rows}=await this.pool.query("SELECT count(*)::int AS count FROM analysis_runs WHERE status='failed_retryable' AND safe_error_code=$1 AND started_at>=$2::timestamptz",[code,since]);return Number(rows[0]?.count??0);}
-  // 总览 AI 区：一次查询拿全量/今日/最近一次。analysis_runs 没有 started_at 索引（加索引要迁移，暂不做），
-  // 当前量级下 count(*) 是全表扫描，可接受；最近一次走 ORDER BY started_at DESC 的排序取首行。
-  async aiCallStats(since:string){const{rows}=await this.pool.query("SELECT count(*)::int AS total,(count(*) FILTER (WHERE started_at>=$1::timestamptz))::int AS today,max(started_at) AS last_at,(SELECT status FROM analysis_runs ORDER BY started_at DESC,id DESC LIMIT 1) AS last_status FROM analysis_runs",[since]);const row=rows[0]??{};return{total:Number(row.total??0),today:Number(row.today??0),lastAt:row.last_at?new Date(row.last_at).toISOString():null,lastStatus:row.last_status===null||row.last_status===undefined?null:String(row.last_status)};}
+  // 总览 AI 区：拆成三条最简查询（全量/今日/最近一次）。不用 FILTER、标量子查询或数组参数——
+  // 妙搭的 Drizzle 传输层会把数组参数按 chunk 展开（ANY(($2,$3)::text[]) 报 42809，2026-11-18 线上事故）。
+  // analysis_runs 没有 started_at 索引（加索引要迁移，暂不做），当前量级下 count(*) 是全表扫描，可接受。
+  async aiCallStats(since:string){
+    const[total,today,last]=await Promise.all([
+      this.pool.query("SELECT count(*)::int AS total FROM analysis_runs"),
+      this.pool.query("SELECT count(*)::int AS today FROM analysis_runs WHERE started_at>=$1::timestamptz",[since]),
+      this.pool.query("SELECT status,started_at FROM analysis_runs ORDER BY started_at DESC,id DESC LIMIT 1"),
+    ]);
+    const lastRow=last.rows[0];
+    return{total:Number(total.rows[0]?.total??0),today:Number(today.rows[0]?.today??0),lastAt:lastRow?.started_at?new Date(lastRow.started_at).toISOString():null,lastStatus:lastRow?.status===null||lastRow?.status===undefined?null:String(lastRow.status)};
+  }
   async listByRequirement(id:string){
     const{rows}=await this.pool.query("SELECT * FROM analysis_runs WHERE requirement_id=$1 ORDER BY analysis_version",[id]);
     return rows.map(from);

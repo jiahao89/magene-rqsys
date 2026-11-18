@@ -800,7 +800,7 @@ paths:
         '400': { $ref: '#/components/responses/Validation' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { description: Stale expectedEditVersion; the message carries the current version. }
+        '409': { description: Stale expectedEditVersion (message carries the current edit version) or the requirement source advanced past the draft's baseline source version (message carries the current source version). }
         '503': { $ref: '#/components/responses/DependencyUnavailable' }
   /api/requirements/{id}:
     get:
