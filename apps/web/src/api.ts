@@ -3,6 +3,18 @@ export interface HealthResponse {
   service: string;
 }
 
+/** 总览 AI 状态块（GET /api/overview/metrics 的 ai）：调用次数按 Asia/Shanghai 自然日统计，不含 token。 */
+export interface OverviewAiStatus {
+  status: "ok" | "paused" | "unconfigured" | "unavailable";
+  /** 统计聚合失败时为 false：计数归零、详情为 null，界面只降级 AI 卡片。 */
+  statsAvailable: boolean;
+  pausedUntil: string | null;
+  pauseReason: string | null;
+  analysis: { total: number; today: number };
+  chatIntake: { total: number; today: number };
+  lastCall: { at: string | null; kind: "analysis" | "chat_intake" | null; result: "succeeded" | "failed" | null };
+}
+
 export interface OverviewMetrics {
   total: number;
   pullSynced: number;
@@ -18,6 +30,8 @@ export interface OverviewMetrics {
   priority?: { P0: number; P1: number; P2: number; P3: number; scored: number; legacy: number; unscored: number } | null;
   /** 当前已发布评分规则；规则未发布时为 null。 */
   priorityRule?: { version: number; thresholds: { p0: number; p1: number; p2: number } | null; formulaText: string } | null;
+  /** AI 状态与调用次数；缺失或格式异常时只降级总览的 AI 卡片，不影响其他指标。 */
+  ai?: OverviewAiStatus | null;
 }
 
 export interface SourceConfig {
@@ -133,13 +147,15 @@ export function getHealth(fetcher: typeof fetch = fetch): Promise<HealthResponse
 }
 
 export async function getOverviewMetrics(fetcher: typeof fetch = fetch): Promise<OverviewMetrics> {
-  const result = await requestJson<{ counts: OverviewMetrics }>("/api/overview/metrics", fetcher);
+  // 契约：GET /api/overview/metrics 返回 { counts, ai }；ai 在顶层，不在 counts 里。
+  // 这里把它合并进返回对象；ai 缺失或格式异常不影响计数校验（总览卡片自行降级）。
+  const result = await requestJson<{ counts: OverviewMetrics; ai?: OverviewAiStatus | null }>("/api/overview/metrics", fetcher);
   const keys = ["total", "pullSynced", "analysisAnalyzed", "ownerResolved", "pushPushed", "failed"] as const;
   const rawCounts = result.counts as unknown as Record<string, unknown> | undefined;
   if (!result.counts || !rawCounts || keys.some((key) => !Number.isInteger(rawCounts[key]) || Number(rawCounts[key]) < 0)) {
     throw new ApiError("Overview metrics response is invalid", 502, "INVALID_METRICS_RESPONSE");
   }
-  return result.counts;
+  return { ...result.counts, ai: result.ai ?? result.counts.ai ?? null };
 }
 
 export async function runSync(

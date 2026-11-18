@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { PostgresRepositories } from "./repositories.js";
+import { substantiveHash } from "../../sync/hashes.js";
 import { DEFAULT_TEAM_MEMBERS } from "../../domain/team-directory.js";
 
 test("team directory CRUD survives a transport that cannot serialize PostgreSQL void", async () => {
@@ -315,6 +316,34 @@ test("audit search uses parameterized filters and limit", async()=>{
   assert.match(calls[0]!.sql,/WHERE \(\$1::text IS NULL/);assert.deepEqual(calls[0]!.values,["e1","2026-01-01T00:00:00Z",null,10,null]);
   await store.audit.search({eventType:"analysis.retry_requested",limit:10});
   assert.match(calls[1]!.sql,/event_type=\$5/);assert.deepEqual(calls[1]!.values,[null,null,null,10,"analysis.retry_requested"]);
+});
+
+test("manual metadata edit enqueues a deterministic base-push key and requeues a finished job", async()=>{
+  const calls: Array<{sql:string;values:unknown[]|undefined}> = [];
+  const sub = substantiveHash({ title: "t", description: "d", scope: null, acceptanceCriteria: null, attachmentRefs: [] });
+  const row = { id:"req-1",source_type:"web_manual",source_version:1,title:"t",description:"d",source_channel:"售后",product_model:null,requirement_type:null,constraint_notes:null,supplement_url:null,intake_module:null,source_payload:{},proposer_name:"小王",source_hash:"h1",substantive_hash:sub };
+  const pool = { query: async()=>({rows:[],rowCount:0}), connect: async()=>({ query: async(sql:string,values:unknown[])=>{ calls.push({sql,values}); if(sql.startsWith("SELECT id,source_type")) return {rows:[row],rowCount:1}; if(sql.startsWith("SELECT requirement_id,request_hash")) return {rows:[],rowCount:0}; if(sql.startsWith("SELECT COALESCE(MAX(analysis_version)")) return {rows:[{v:2}],rowCount:1}; return {rows:[],rowCount:0}; }, release(){} }) } as never;
+  const store = new PostgresRepositories(pool);
+  const requestHash = "a".repeat(64);
+  const result = await store.requirements.updateManualRequirement({ requirementId:"req-1",expectedSourceVersion:1,idempotencyKey:"edit-key-0001",actorId:"operator",requestHash,sourceChannel:"销售" });
+  assert.equal(result.outcome,"updated");
+  const job = calls.find((call)=>call.sql.includes("INSERT INTO pipeline_jobs"));
+  assert.ok(job,"metadata edit must enqueue a base_push job");
+  assert.equal(job!.values![1],`base-push:req-1:sv1:av2:meta:${"a".repeat(16)}`);
+  // 确定性键必须能重新排队已结束的同键作业，否则 X→Y→X 的第三次推送会被去重吞掉。
+  assert.match(job!.sql,/ON CONFLICT\(dedupe_key\) DO UPDATE/);
+  assert.match(job!.sql,/WHERE pipeline_jobs\.status IN \('succeeded','failed','cancelled'\)/);
+});
+
+test("RICE draft save returns unchanged without a new version when merged inputs equal the stored ones", async()=>{
+  const calls: Array<{sql:string;values:unknown[]|undefined}> = [];
+  const existing = { requirement_id:"req-1",reach_input:"1000",impact_input:"2",confidence_input:"80",effort_input:"5",notes:"n",source_version:3,edit_version:4,updated_by:"u",updated_at:new Date(0) };
+  const pool = { query: async()=>({rows:[],rowCount:0}), connect: async()=>({ query: async(sql:string,values:unknown[])=>{ calls.push({sql,values}); return sql.includes("SELECT * FROM rice_drafts")?{rows:[existing],rowCount:1}:{rows:[],rowCount:0}; }, release(){} }) } as never;
+  const store = new PostgresRepositories(pool);
+  const result = await store.requirements.saveRiceDraft({ requirementId:"req-1",expectedEditVersion:4,actorId:"u",sourceVersion:3,reachInput:"1000",impactInput:"2",confidenceInput:"80",effortInput:"5",notes:"n" });
+  assert.deepEqual(result,{outcome:"unchanged",editVersion:4});
+  assert.equal(calls.some((call)=>call.sql.startsWith("UPDATE rice_drafts")),false);
+  assert.equal(calls.some((call)=>call.sql.includes("INSERT INTO rice_draft_history")),false);
 });
 
 test("audit persistence strips fields outside the safe details allowlist", async()=>{

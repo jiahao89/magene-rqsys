@@ -264,6 +264,16 @@ test("outbound model payload carries no names, user IDs, contacts, credentials o
   }
 });
 
+test("evidence uses the same NFKC/whitespace normalization as facts, while fabricated quotes still fail", async () => {
+  const { validateAnalysisOutput } = await import("./contract.js");
+  const options = { dictionary: { version: 1, modules: ["基础数据"] }, priorityRule: null, sourceText: "标题\n支持查询和筛选\n支持导出 CSV 文件\n上下文" };
+  // 全角字母 + 去掉空格：归一化后仍是原文子串，不应把一次合法分析判失败。
+  const ok = validateAnalysisOutput({ ...validResult, evidence: ["支持导出ＣＳＶ文件"] }, options);
+  assert.deepEqual(ok.evidence, ["支持导出ＣＳＶ文件"]);
+  // 源文没有的引用照样拒绝（伪造/转述不放过）。
+  assert.throws(() => validateAnalysisOutput({ ...validResult, evidence: ["支持导出 Excel 文件"] }, options), /evidence does not occur/);
+});
+
 test("V02-T08 audience contract: defaults, controlled levels, source-bound evidence", async () => {
   const { validateAnalysisOutput } = await import("./contract.js");
   const options = { dictionary: { version: 1, modules: ["基础数据"] }, priorityRule: null, sourceText: "标题\n支持查询和筛选\n上下文" };

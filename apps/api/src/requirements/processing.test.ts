@@ -3,7 +3,7 @@
 // 完整 HTTP→worker→Base 链路由既有套件覆盖（T01-AC05），不在此重复。
 import test from "node:test";
 import assert from "node:assert/strict";
-import { analysisPiiMarkers, createRequirementWorkflow, type RequirementWorkflowDeps, type TouchedRequirement } from "./processing.js";
+import { analysisPiiMarkers, createRequirementWorkflow, enqueueSupersededPush, type RequirementWorkflowDeps, type TouchedRequirement } from "./processing.js";
 import { FeishuApiError } from "../base/transport.js";
 import { AiProviderError } from "../analysis/provider.js";
 import { isIntakeComplete } from "../domain/workflow.js";
@@ -94,6 +94,39 @@ function harness(options: { providerResult?: ValidatedAnalysis | Error } = {}) {
   return { deps, enqueued, analysisStates, providerInput: () => providerInput };
 }
 
+
+test("push compensation enqueues the current version when content advanced during the push", async () => {
+  const h = harness();
+  const current = { ...makeRequirement("req-1"), sourceVersion: 3, pipeline: { pull: "synced" as const, analysis: "analyzed" as const, owner: "not_required" as const, push: "pending" as const } };
+  const repositories = {
+    ...h.deps.repositories,
+    requirements: { ...h.deps.repositories.requirements, get: async () => current },
+    analyses: { ...h.deps.repositories.analyses, latest: async () => ({ status: "analyzed", analysisVersion: 3 }) as never },
+  } as unknown as RequirementWorkflowDeps["repositories"];
+  assert.equal(await enqueueSupersededPush({ repositories }, "req-1", 2, "operator"), true);
+  assert.deepEqual(ofJobType(h.enqueued, "base_push").map((job) => job.dedupeKey), ["base-push:req-1:sv3:av3"]);
+});
+
+test("push compensation stays quiet when the version did not move or the analysis is not terminal", async () => {
+  const h = harness();
+  const sameVersion = { ...makeRequirement("req-1"), sourceVersion: 3, pipeline: { pull: "synced" as const, analysis: "pending" as const, owner: "not_required" as const, push: "pending" as const } };
+  const repositories = {
+    ...h.deps.repositories,
+    requirements: { ...h.deps.repositories.requirements, get: async () => sameVersion },
+    analyses: { ...h.deps.repositories.analyses, latest: async () => ({ status: "analyzed", analysisVersion: 3 }) as never },
+  } as unknown as RequirementWorkflowDeps["repositories"];
+  // 版本没变：不是被取代的推送，不补推。
+  assert.equal(await enqueueSupersededPush({ repositories }, "req-1", 3, null), false);
+  // 分析仍在跑：交给分析终态推进器，不抢先重复入队。
+  const running = { ...sameVersion, sourceVersion: 4 };
+  const runningRepositories = {
+    ...h.deps.repositories,
+    requirements: { ...h.deps.repositories.requirements, get: async () => running },
+    analyses: { ...h.deps.repositories.analyses, latest: async () => ({ status: "running", analysisVersion: 3 }) as never },
+  } as unknown as RequirementWorkflowDeps["repositories"];
+  assert.equal(await enqueueSupersededPush({ repositories: runningRepositories }, "req-1", 2, null), false);
+  assert.equal(ofJobType(h.enqueued, "base_push").length, 0);
+});
 const ofJobType = (list: EnqueuedJob[], jobType: string) => list.filter((job) => job.jobType === jobType);
 
 test("dispatchAfterSync enqueues first analysis per source version and caps local development volume", async () => {
@@ -135,6 +168,22 @@ test("handleAnalysisJob masks roster and requester names before the model call a
   const pushes = ofJobType(h.enqueued, "base_push");
   assert.equal(pushes.length, 1);
   assert.equal(pushes[0]!.dedupeKey, "base-push:req-1:sv1:av1");
+});
+
+test("no published scoring rule leaves an audit marker instead of dropping the AI scoring silently", async () => {
+  const scoring = {
+    inputs: { user: { pain: 3, frequency: 3 }, market: { sellingPoint: 2, competitor: 2 }, strategy: { roadmap: 2, dependency: 2 }, cost: { workload: 2, technicalRisk: 2, resource: 2 } },
+    alpha: 1, safetyFlag: false, scoreConfidence: "中", scoreConfidenceReason: "r", basis: {}, rationale: "r",
+  };
+  const h = harness({ providerResult: { ...analyzedResult(), priority: null, scoring } as never });
+  const audits: Array<Record<string, unknown>> = [];
+  (h.deps.repositories.audit as unknown as { append: (event: Record<string, unknown>) => Promise<void> }).append = async (event) => { audits.push(event); };
+  const workflow = createRequirementWorkflow(h.deps);
+  await workflow.handleAnalysisJob({ payload: { requirementId: "req-1", sourceVersion: 1, actorId: "operator" } });
+  const marker = audits.find((event) => event.eventType === "scoring.suggested_skipped_no_rule");
+  assert.ok(marker, "无规则时必须留一条审计");
+  assert.deepEqual(marker!.safeDetails, { reason: "no_published_priority_rule", analysisVersion: 1 });
+  assert.equal(marker!.result, "succeeded");
 });
 
 test("handleAnalysisJob with a failing provider still lands a retryable terminal state and queues the push", async () => {

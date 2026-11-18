@@ -16,6 +16,78 @@ afterEach(() => {
 });
 
 describe("RQ-Sys local workbench", () => {
+  it("shows the AI status block from the overview metrics payload", async () => {
+    fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/sources") return Response.json({ items: [] });
+      if (path.startsWith("/api/batches")) return Response.json({ items: [] });
+      if (path.startsWith("/api/requirements")) return Response.json({ items: [] });
+      if (path === "/api/overview/metrics") return Response.json({
+        counts: { total: 12, pullSynced: 12, analysisAnalyzed: 8, ownerResolved: 9, pushPushed: 6, failed: 2 },
+        ai: { status: "ok", statsAvailable: true, pausedUntil: null, pauseReason: null, analysis: { total: 44, today: 3 }, chatIntake: { total: 9, today: 1 }, lastCall: { at: "2026-11-18T07:30:00.000Z", kind: "chat_intake", result: "failed" } },
+      });
+      return Response.json({ items: [] });
+    });
+
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "AI 状态" })).toBeInTheDocument();
+    expect(screen.getByText("正常")).toBeInTheDocument();
+    expect(screen.getByText("44")).toBeInTheDocument();
+    expect(screen.getByText("聊天抽取 · 失败")).toBeInTheDocument();
+    // 同一次响应的其他指标照常渲染。
+    expect(screen.getByText("8 / 12")).toBeInTheDocument();
+  });
+
+  it("degrades only the AI card when the stats aggregation is unavailable", async () => {
+    fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/sources") return Response.json({ items: [] });
+      if (path.startsWith("/api/batches")) return Response.json({ items: [] });
+      if (path === "/api/overview/metrics") return Response.json({
+        counts: { total: 311, pullSynced: 311, analysisAnalyzed: 8, ownerResolved: 9, pushPushed: 6, failed: 2 },
+        ai: { status: "unavailable", statsAvailable: false, pausedUntil: null, pauseReason: null, analysis: { total: 0, today: 0 }, chatIntake: { total: 0, today: 0 }, lastCall: { at: null, kind: null, result: null } },
+      });
+      return Response.json({ items: [], nextCursor: null });
+    });
+
+    render(<App />);
+    // 接口仍是 200 + counts：其他指标照常，只有 AI 卡片降级。
+    expect(await screen.findByText("311 / 311")).toBeInTheDocument();
+    expect(screen.getByText("状态不可用（统计暂不可用）")).toBeInTheDocument();
+  });
+
+  it("degrades only the AI card when the payload has no ai block", async () => {
+    fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/sources") return Response.json({ items: [] });
+      if (path.startsWith("/api/batches")) return Response.json({ items: [] });
+      if (path === "/api/overview/metrics") return Response.json({ counts: { total: 311, pullSynced: 311, analysisAnalyzed: 0, ownerResolved: 0, pushPushed: 0, failed: 0 } });
+      return Response.json({ items: [], nextCursor: null });
+    });
+
+    render(<App />);
+    expect(await screen.findByText("311 / 311")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "AI 状态" })).toBeInTheDocument();
+    expect(screen.getAllByText("状态不可用").length).toBeGreaterThan(0);
+  });
+
+  it("keeps the overview rendered when the metrics request fails", async () => {
+    fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/overview/metrics") return Response.json({ error: { code: "UNAVAILABLE", message: "temporarily unavailable" } }, { status: 503 });
+      return Response.json({ items: [], nextCursor: null });
+    });
+
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "工作流总览" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "AI 状态" })).toBeInTheDocument();
+    expect(screen.getAllByText("状态不可用").length).toBeGreaterThan(0);
+  });
+
   it("uses full-dataset metrics instead of the current requirement page size", async () => {
     fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
       const path = typeof input === "string" ? input : new Request(input).url;

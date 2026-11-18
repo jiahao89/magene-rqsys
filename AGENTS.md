@@ -24,6 +24,7 @@
 - Requirement identity is `(Teambition project ID, Teambition requirement ID)`. Use source `id` as text; never use title or floating `unique_id` for deduplication.
 - Keep pull, analysis, owner-mapping and Base-push states independent. Low confidence, missing priority, or first-pass AI failure never blocks an otherwise eligible push.
 - No-owner requirements are imported and can be pushed with an empty owner. Unresolved/empty TB ownership must not erase a manually assigned Base owner.
+- Base write snapshot window (2026-11-18 known limitation): the push path reads the prior Base snapshot, compares, then writes; a PM edit made in Base between the snapshot read and the write can be overwritten. The application side does not close this window; PMs must re-check Base after a push.
 - AI output is versioned and separate from PM-confirmed fields. Do not send names, user IDs, contact information, credentials or attachment contents to a model. **PRD-26 exception (user-approved 2026-11-18)**: the chat-paste intake draft may send names to the model only to fill the display-only `proposerName` field; the name must not be used for owner matching or notifications, and the existing PII masking still runs first. All other flows keep the general rule.
 - The MVP does not implement all 28 upstream fields or all 114 Teambition custom fields. Only approved fields in the source `field_map` may enter the normalized projection, model request or Base write.
 - Keep PM processing state and notification delivery out of Web unless a new approved read path is added.

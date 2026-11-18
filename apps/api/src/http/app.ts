@@ -86,6 +86,60 @@ function reportIntakeFailure(dependencies: ApiDependencies, details: { errorClas
   }
   process.stderr.write(`intake draft failed ${JSON.stringify(details)}\n`);
 }
+// 总览 AI 区：今日按 Asia/Shanghai 自然日切分（UTC+8，无夏令时）。计数口径是「调用次数」，不含 token。
+const SHANGHAI_OFFSET_MS = 8 * 3_600_000;
+function shanghaiDayStart(now: Date): Date {
+  const shifted = new Date(now.getTime() + SHANGHAI_OFFSET_MS);
+  return new Date(Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate()) - SHANGHAI_OFFSET_MS);
+}
+const AI_ANALYSIS_RESULTS: Record<string, "succeeded" | "failed"> = { analyzed: "succeeded", failed_retryable: "failed" };
+const AI_INTAKE_RESULTS: Record<string, "succeeded" | "failed"> = { "intake.draft_extracted": "succeeded", "intake.draft_failed": "failed" };
+const EMPTY_AI_ANALYSIS = { total: 0, today: 0, lastAt: null as string | null, lastStatus: null as string | null };
+const EMPTY_AI_INTAKE = { total: 0, today: 0, lastAt: null as string | null, lastEventType: null as string | null };
+/** 总览 AI 状态：未配置优先于暂停，暂停优先于正常；最近一次调用取分析与聊天抽取里更新的那条。 */
+async function aiOverview(dependencies: ApiDependencies, repositories: ApiRepositories, now: Date) {
+  const since = shanghaiDayStart(now).toISOString();
+  const configured = Boolean(process.env.AI_API_KEY);
+  let analysis = EMPTY_AI_ANALYSIS;
+  let intake = EMPTY_AI_INTAKE;
+  let statsAvailable = true;
+  try {
+    analysis = (await repositories.analyses?.aiCallStats?.(since)) ?? EMPTY_AI_ANALYSIS;
+    intake = (await repositories.audit?.countByEntityType?.({ entityType: "intake", eventTypes: ["intake.draft_extracted", "intake.draft_failed"], since })) ?? EMPTY_AI_INTAKE;
+  } catch {
+    // 统计聚合失败只降级 AI 卡片：接口仍回 200 和 counts，不让整页总览跟着挂。
+    statsAvailable = false;
+    analysis = EMPTY_AI_ANALYSIS;
+    intake = EMPTY_AI_INTAKE;
+  }
+  if (!statsAvailable) {
+    return {
+      status: "unavailable" as const,
+      statsAvailable: false,
+      pausedUntil: null,
+      pauseReason: null,
+      analysis: { total: 0, today: 0 },
+      chatIntake: { total: 0, today: 0 },
+      lastCall: { at: null, kind: null, result: null },
+    };
+  }
+  const pause = await readAiPause(repositories.flags, now);
+  const latest: { at: string; kind: "analysis" | "chat_intake"; result: "succeeded" | "failed" | null }[] = [];
+  if (analysis.lastAt) latest.push({ at: analysis.lastAt, kind: "analysis", result: analysis.lastStatus ? AI_ANALYSIS_RESULTS[analysis.lastStatus] ?? null : null });
+  if (intake.lastAt) latest.push({ at: intake.lastAt, kind: "chat_intake", result: intake.lastEventType ? AI_INTAKE_RESULTS[intake.lastEventType] ?? null : null });
+  latest.sort((a, b) => b.at.localeCompare(a.at));
+  const last = latest[0] ?? null;
+  const status = !configured ? "unconfigured" : pause.paused ? "paused" : "ok";
+  return {
+    status,
+    statsAvailable: true,
+    pausedUntil: status === "paused" ? pause.until : null,
+    pauseReason: status === "paused" ? pause.reason : null,
+    analysis: { total: analysis.total, today: analysis.today },
+    chatIntake: { total: intake.total, today: intake.today },
+    lastCall: { at: last?.at ?? null, kind: last?.kind ?? null, result: last?.result ?? null },
+  };
+}
 async function readMigrationStatus(database: Pool | null): Promise<{ latest: string | null; expected: string; upToDate: boolean | null; error?: string }> {
   try {
     const { rows } = await database!.query("SELECT filename FROM schema_migrations ORDER BY filename DESC LIMIT 1");
@@ -308,6 +362,7 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     const counts = await repositories.requirements.getPipelineCounts();
     const rule = await repositories.priorityRules?.getPublished();
     const rulePayload = rule?.rules as { thresholds?: { p0?: number; p1?: number; p2?: number } } | null;
+    const ai = await aiOverview(dependencies, repositories, (dependencies.now ?? (() => new Date()))());
     return json({
       counts: {
         ...counts,
@@ -317,6 +372,7 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
           formulaText: SCORING_FORMULA_TEXT,
         } : null,
       },
+      ai,
     });
   }
   if (method === "GET" && url.pathname === "/api/dev/fixtures/status") {

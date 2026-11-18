@@ -1,0 +1,5 @@
+R1 push=running, A 分析成功 → not_eligible jobs: []
+R2 push=running, A 分析失败 → not_eligible jobs: []
+R3 push=pushed(B), A 分析失败 → not_eligible jobs: []
+对照 push=pending, A 分析失败 → queued jobs: [ 'base-push:req-1:sv3:av3' ]
+对照 push=pending, A 分析成功 → queued jobs: [ 'base-push:req-1:sv3:av3' ]

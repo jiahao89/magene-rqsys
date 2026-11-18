@@ -132,6 +132,20 @@ h1,h2,p { margin: 0; }
 .metric-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--rq-divider); color: var(--rq-text-muted); font-size: var(--rq-font-caption); }
 .metric-trend { display: grid; width: 20px; height: 20px; place-items: center; border-radius: var(--rq-radius-sm); color: var(--rq-text-muted); background: #f6f7f9; }
 .overview-grid { display: grid; grid-template-columns: minmax(0,1.08fr) minmax(320px,.92fr); gap: 13px; margin-top: 14px; }
+/* AI 状态卡片（总览）：状态/暂停信息 + 累计与今日调用次数 + 最近一次调用。 */
+.ai-status-panel { margin-bottom: 18px; }
+.ai-status-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.ai-status-stat { display: flex; flex-direction: column; gap: 4px; padding: 11px 13px; border: 1px solid var(--rq-border); border-radius: var(--rq-radius-md); background: var(--rq-surface-subtle); }
+.ai-status-stat > span { color: var(--rq-text-muted); font-size: var(--rq-font-caption); }
+.ai-status-stat > strong { color: var(--rq-text-strong); font-size: 20px; font-weight: 650; line-height: 1.2; }
+.ai-status-stat > small { color: var(--rq-text-faint); font-size: var(--rq-font-caption); }
+.ai-status-stat:last-child > strong { font-size: var(--rq-font-title); font-weight: 600; }
+.ai-status-note { margin-top: 10px; padding: 8px 10px; border: 1px dashed var(--rq-border); border-radius: var(--rq-radius-sm); color: var(--rq-text-muted); font-size: var(--rq-font-caption); }
+.ai-status-unavailable { display: flex; flex-direction: column; gap: 4px; padding: 14px; border: 1px dashed var(--rq-border); border-radius: var(--rq-radius-md); color: var(--rq-text-muted); font-size: var(--rq-font-caption); }
+.ai-status-unavailable strong { color: var(--rq-text-strong); font-size: var(--rq-font-body); }
+@media (max-width: 860px) { .ai-status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .ai-status-grid { grid-template-columns: 1fr; } }
+
 .panel { min-width: 0; padding: 16px; }
 .panel-heading { margin-bottom: 16px; }
 .pipeline-overview { position: relative; display: flex; flex-direction: column; gap: 0; }

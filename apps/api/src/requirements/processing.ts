@@ -212,6 +212,20 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
         } catch (cause) {
           log(`scoring suggestion persistence failed for ${requirement.id}: ${(cause as Error)?.name ?? "unknown"}`);
         }
+      } else if (run.status === "analyzed" && run.result?.scoring && !run.result.priority) {
+        // 没有已发布评分规则时按口径不落评分建议，但要留痕：否则运维分不清「AI 没给分」和「给了但没落库」。
+        try {
+          await deps.repositories.audit.append({
+            id: randomUUID(),
+            actorId: typeof job.payload.actorId === "string" ? job.payload.actorId : null,
+            eventType: "scoring.suggested_skipped_no_rule",
+            entityType: "requirement",
+            entityId: requirement.id,
+            result: "succeeded",
+            safeDetails: { reason: "no_published_priority_rule", analysisVersion: run.analysisVersion },
+            occurredAt: new Date().toISOString(),
+          });
+        } catch { /* 留痕失败不改变分析终态 */ }
       }
       // I3-3：额度耗尽（429）在窗口内达到阈值时暂停自动分析入队并告警；失败不影响主链路。
       if (run.status !== "analyzed" && run.safeErrorCode === "rate_limited") {
@@ -303,6 +317,12 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
         ? job.payload.idempotencyKey
         : basePushIdempotencyKey(requirementId, requirement.sourceVersion, latestAnalysis?.analysisVersion ?? 0);
       const outcome = await service.pushRequirement(requirementId, idempotencyKey);
+      // 推送期间内容前进（例如 A→B→A 的竞态）：本次推的是旧版本，为当前版本补一次入队。
+      try {
+        await enqueueSupersededPush(deps, requirementId, requirement.sourceVersion, typeof job.payload.actorId === "string" ? job.payload.actorId : null);
+      } catch (cause) {
+        log(`superseded base push compensation failed for ${requirementId}: ${(cause as Error)?.name ?? "unknown"}`);
+      }
       if (outcome.kind === "error") {
         // 只有确定不可重试的失败（字段/权限/4xx/响应无法判定）才判终态；
         // 网络、429、5xx 等瞬时故障必须交回重试策略，否则一次抖动会把需求永久标记为推送失败。
@@ -319,6 +339,28 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
       }
     },
   };
+}
+
+/** 推送期间内容前进了（同步把 push_state 重置为 pending）：为当前版本补入队一次推送，
+ *  避免旧版本推送的完成态把 pending 覆盖后无人再推（A→B→A 竞态）。分析未到终态时交给分析终态推进器。 */
+export async function enqueueSupersededPush(
+  deps: { repositories: RequirementWorkflowDeps["repositories"] },
+  requirementId: string,
+  pushedSourceVersion: number,
+  actorId: string | null,
+): Promise<boolean> {
+  const current = await deps.repositories.requirements.get(requirementId);
+  if (!current || current.sourceVersion === pushedSourceVersion) return false;
+  if (current.pipeline.push !== "pending") return false;
+  const latest = await deps.repositories.analyses.latest(requirementId);
+  if (!latest || (latest.status !== "analyzed" && latest.status !== "failed_retryable")) return false;
+  await deps.repositories.jobs.enqueue({
+    jobType: "base_push",
+    dedupeKey: basePushIdempotencyKey(requirementId, current.sourceVersion, latest.analysisVersion),
+    payload: { requirementId, actorId, sourceVersion: current.sourceVersion, analysisVersion: latest.analysisVersion },
+    availableAt: new Date().toISOString(),
+  });
+  return true;
 }
 
 export type RequirementWorkflow = ReturnType<typeof createRequirementWorkflow>;

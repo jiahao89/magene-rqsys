@@ -130,6 +130,8 @@ export interface AnalysisRunRepository {
   listByRequirement(requirementId: string): Promise<AnalysisRunRecord[]>;
   /** I3-3：窗口内指定失败码的运行数（AI 额度暂停判定）。可选，内存实现可不提供。 */
   countRecentFailures?(safeErrorCode: string, since: string): Promise<number>;
+  /** 总览 AI 区：全部调用次数、今日调用次数、最近一次调用的时间与状态（无调用则 null）。 */
+  aiCallStats?(since: string): Promise<{ total: number; today: number; lastAt: string | null; lastStatus: string | null }>;
 }
 
 /** I3-3：全局运行开关（如 AI 暂停）。value 为扁平 JSON 对象。 */
@@ -333,6 +335,12 @@ export interface AuditEventRepository {
     until?: string;
     limit: number;
   }): Promise<AuditEventRecord[]>;
+  /** 总览 AI 区：按实体类型统计若干事件的全量/今日次数与最近一条（走 entity_type 前缀索引）。 */
+  countByEntityType?(query: {
+    entityType: string;
+    eventTypes: readonly string[];
+    since: string;
+  }): Promise<{ total: number; today: number; lastAt: string | null; lastEventType: string | null }>;
 }
 
 // module_dictionary_versions / priority_rule_versions（受控版本，发布状态留痕）
@@ -431,7 +439,7 @@ export interface RequirementQueryRepository {
     confidenceInput?: string | null;
     effortInput?: string | null;
     notes?: string | null;
-  }): Promise<{ outcome: "saved"; editVersion: number } | { outcome: "version_conflict"; currentEditVersion: number }>;
+  }): Promise<{ outcome: "saved"; editVersion: number } | { outcome: "unchanged"; editVersion: number } | { outcome: "version_conflict"; currentEditVersion: number }>;
   // V02-T09：人工人群标签（多选/空集，确认语义）。乐观版本；修改只落库与审计，不触发任何主流程。
   setAudienceTags(requirementId: string, input: { tags: AudienceLevel[]; expectedVersion: number; actorId: string }): Promise<
     | { outcome: "updated"; version: number }

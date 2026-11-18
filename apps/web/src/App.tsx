@@ -4,6 +4,7 @@ import { ApiError, createPriorityRuleDraft, getHealth, getOverviewMetrics, listP
 import { GuidePanel, ModulesPanel, OpsPanel, PanelErrorBoundary, PublishStatusChip, RequirementsPanel, SourcesPanel, SyncRecordsPanel, TeamPanel } from "./panels";
 import { SopPanel } from "./sop";
 import { SkeletonBlock, SkeletonCards, SkeletonTableRows } from "./skeleton";
+import { AiStatusCard } from "./overview-ai";
 import { Button as ArcoButton, Dropdown as ArcoDropdown, Input as ArcoInput, InputNumber as ArcoInputNumber, Menu as ArcoMenu, Table as ArcoTable } from "@arco-design/web-react";
 import { readRequirementDeepLink } from "./deep-link";
 import { readWorkbenchPage, readWorkbenchRoute, workbenchUrl, type WorkbenchPage, type WorkbenchTab } from "./workbench-routing";
@@ -432,6 +433,8 @@ function App() {
                 <p className="priority-rule-note">{priority ? <>已分级 {priorityGraded} 条，其中 <strong>{priority.legacy}</strong> 条来自历史分析优先级（v1，不套用上方 v2 分数范围）；<strong>{priority.unscored}</strong> 条待评分。人工优先级优先于评分；当前评分版本优先于历史分析优先级。</> : "评分统计随总览指标加载；合成验收数据不计入。"}</p>
               </div>
             </section>
+
+            <AiStatusCard ai={metrics?.ai} loadState={health} onExpire={loadData} />
 
             <div className="overview-grid"><section className="panel pipeline-panel"><div className="panel-heading"><div><h2>处理阶段</h2><p>需求处理状态一览</p></div><span className="pipeline-help" role="img" aria-label="阶段说明" title="拉取、AI 分析、负责人匹配和 Base 推送分别记录状态；AI 分析失败不会阻止推送。"><CircleHelp size={16} /></span></div><div className="pipeline-overview">{[
               { name: "拉取", detail: "从 Teambition 获取需求", value: counts.pull, color: "blue", icon: ArrowDownToLine },

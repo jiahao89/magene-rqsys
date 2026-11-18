@@ -52,7 +52,16 @@ paths:
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /api/overview/metrics:
     get:
-      summary: Get full-dataset workflow counts, excluding synthetic acceptance fixtures
+      summary: Get full-dataset workflow counts and AI status, excluding synthetic acceptance fixtures
+      description: >-
+        Pipeline counts are independent of requirement-list pagination. The `ai` block reports the
+        provider configuration state, the analysis quota-pause state, and provider call attempts.
+        Counts are call attempts (analysis runs and chat-intake attempts), not token usage; `today`
+        is the Asia/Shanghai calendar day. Status precedence: unconfigured > paused > ok. A call
+        still running has no result yet, so lastCall.result is null for it. If the statistics
+        aggregation itself fails, the endpoint still returns 200 with `counts`; the ai block then
+        reports status "unavailable" with statsAvailable false, zero counts and null details so
+        the client can degrade only the AI card.
       responses:
         '200':
           description: Persisted counts independent of requirement-list pagination
@@ -62,7 +71,36 @@ paths:
                 type: object
                 properties:
                   counts: { $ref: '#/components/schemas/OverviewMetrics' }
-                required: [counts]
+                  ai:
+                    type: object
+                    required: [status, statsAvailable, pausedUntil, pauseReason, analysis, chatIntake, lastCall]
+                    properties:
+                      status: { type: string, enum: [ok, paused, unconfigured, unavailable] }
+                      statsAvailable:
+                        type: boolean
+                        description: False when the call-count aggregation failed; counts are zeroed and the client must degrade only this card.
+                      pausedUntil: { type: string, format: date-time, nullable: true }
+                      pauseReason: { type: string, nullable: true }
+                      analysis:
+                        type: object
+                        required: [total, today]
+                        properties:
+                          total: { type: integer, minimum: 0 }
+                          today: { type: integer, minimum: 0 }
+                      chatIntake:
+                        type: object
+                        required: [total, today]
+                        properties:
+                          total: { type: integer, minimum: 0 }
+                          today: { type: integer, minimum: 0 }
+                      lastCall:
+                        type: object
+                        required: [at, kind, result]
+                        properties:
+                          at: { type: string, format: date-time, nullable: true }
+                          kind: { type: string, enum: [analysis, chat_intake], nullable: true }
+                          result: { type: string, enum: [succeeded, failed], nullable: true }
+                required: [counts, ai]
         '401': { $ref: '#/components/responses/Unauthorized' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /api/sources:

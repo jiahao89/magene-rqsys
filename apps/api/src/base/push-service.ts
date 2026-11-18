@@ -317,6 +317,17 @@ export function createBasePushService(deps: BasePushServiceDeps) {
     };
   };
 
+  // 只有当前源版本仍是本次推送的版本时才能改推送状态：推送期间新一轮同步可能已把 push_state
+  // 重置为 pending，旧版本推送的完成态会把它覆盖回去（A→B→A 竞态的根因）。
+  // 返回 false 表示本次推送已被更新的源版本取代，调用方负责为当前版本补一次入队。
+  async function settlePushState(req: { id: string; sourceVersion: number }, to: "pushed" | "failed"): Promise<boolean> {
+    const current = await deps.requirements.get(req.id);
+    if (!current) return false;
+    if (current.sourceVersion === req.sourceVersion) { await deps.requirements.setPushState(req.id, to); return true; }
+    if (current.pipeline.push === "running") await deps.requirements.setPushState(req.id, "pending");
+    return false;
+  }
+
   async function pushRequirementUnlocked(requirementId: string, idempotencyKey: string): Promise<PushOutcome> {
     const req = await deps.requirements.get(requirementId);
     if (!req) return { kind: "not_found" };
@@ -447,13 +458,13 @@ export function createBasePushService(deps: BasePushServiceDeps) {
         // 键冲突（V02-T03-AC02）：数据级冲突，停该条并审计；不自动合并、不另建行。
         // 推送落 failed 供数据修复后手动重试；worker 把 conflict 视为终态不再自动重试。
         await deps.basePushes.updateResult(run.id, { status: "failed", safeErrorCode: "BASE_KEY_CONFLICT", safeErrorSummary: "Base key conflict; inspect the Base rows for this requirement.", completedAt: now().toISOString() });
-        await deps.requirements.setPushState(req.id, "failed");
+        await settlePushState(req, "failed");
         await deps.audit.append({ id: randomUUID(), actorId: deps.actorId, eventType: "base.push", entityType: "requirement", entityId: req.id, result: "denied", safeDetails: { sourceVersion: req.sourceVersion, reason: "base_key_conflict" }, occurredAt: now().toISOString() });
         return { kind: "conflict", reason: "base_key_conflict" };
       }
       const failure = safeBaseFailure(error);
       await deps.basePushes.updateResult(run.id, { status: "failed", safeErrorCode: failure.code, safeErrorSummary: failure.summary, completedAt: now().toISOString() });
-      await deps.requirements.setPushState(req.id, "failed");
+      await settlePushState(req, "failed");
       await deps.audit.append({ id: randomUUID(), actorId: deps.actorId, eventType: "base.push", entityType: "requirement", entityId: req.id, result: "failed", safeDetails: { sourceVersion: req.sourceVersion, errorClass: "base_push_failed" }, occurredAt: now().toISOString() });
       return { kind: "error", errorCode: failure.code, retryable: failure.retryable };
     }
@@ -463,7 +474,7 @@ export function createBasePushService(deps: BasePushServiceDeps) {
     try {
       await deps.basePushes.updateResult(run.id, { status: "pushed", baseRecordId: pushedResult.recordId, completedAt: now().toISOString() });
       await deps.requirements.setBaseRecord(req.id, pushedResult.recordId, now().toISOString());
-      await deps.requirements.setPushState(req.id, "pushed");
+      await settlePushState(req, "pushed");
       // 推送时解析到负责人则推进 owner 状态（已达目标状态时跳过，避免非法迁移）
       if (owner) {
         const targetOwnerState = owner.matchMethod === "manual" ? "manually_mapped" : "auto_mapped";

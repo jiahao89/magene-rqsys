@@ -18,8 +18,15 @@ describe("workbench API client", () => {
   it("loads all-record overview counts from the aggregate endpoint", async () => {
     const counts = { total: 311, pullSynced: 311, analysisAnalyzed: 0, ownerResolved: 0, pushPushed: 0, failed: 0 };
     const fetcher = vi.fn().mockResolvedValue(Response.json({ counts }));
-    await expect(getOverviewMetrics(fetcher)).resolves.toEqual(counts);
+    await expect(getOverviewMetrics(fetcher)).resolves.toEqual({ ...counts, ai: null });
     expect(fetcher).toHaveBeenCalledWith("/api/overview/metrics", expect.objectContaining({ headers: { accept: "application/json" } }));
+  });
+
+  it("merges the top-level ai block into the overview metrics", async () => {
+    const counts = { total: 311, pullSynced: 311, analysisAnalyzed: 8, ownerResolved: 9, pushPushed: 6, failed: 2 };
+    const ai = { status: "paused", statsAvailable: true, pausedUntil: "2026-11-18T10:00:00.000Z", pauseReason: "额度受限", analysis: { total: 44, today: 3 }, chatIntake: { total: 9, today: 1 }, lastCall: { at: "2026-11-18T07:30:00.000Z", kind: "analysis", result: "succeeded" } };
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ counts, ai }));
+    await expect(getOverviewMetrics(fetcher)).resolves.toEqual({ ...counts, ai });
   });
 
   it("rejects malformed overview counts instead of showing partial page counts", async () => {

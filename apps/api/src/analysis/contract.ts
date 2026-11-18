@@ -138,13 +138,13 @@ export function validateAnalysisOutput(
     ...result.facts.map((item) => item.evidence),
     ...result.audience.flatMap((item) => item.evidence),
   ];
-  if (evidence.some((quote) => !sourceText.includes(quote))) throw new Error("Analysis evidence does not occur in source text");
-  // facts 声称是"源文事实"：同样必须能在源文里找到，防止需求正文里的提示注入
-  // 伪造出源文没有的"事实"进入结构化结果与详情页。
-  // 匹配对空白/全半角做归一化：真实模型会正确摘抄但可能改动分段与全半角；
-  // 归一化后仍要求逐字包含，转述/编造依然被拒（2026-10-25 目标环境真实模型验证发现过严，放宽此一处）。
+  // evidence 与 facts 用同一套归一化：真实模型会正确摘抄但可能改动分段与全半角，
+  // 逐字比较会把合法证据判成失败、浪费一次模型调用。归一化后仍要求逐字包含，伪造/转述依然被拒。
   const compact = (value: string) => value.normalize("NFKC").replace(/\s+/gu, "");
   const compactSource = compact(sourceText);
+  if (evidence.some((quote) => !compactSource.includes(compact(quote)))) throw new Error("Analysis evidence does not occur in source text");
+  // facts 声称是"源文事实"：同样必须能在源文里找到，防止需求正文里的提示注入
+  // 伪造出源文没有的"事实"进入结构化结果与详情页。
   if (result.facts.some((item) => !compactSource.includes(compact(item.text)))) throw new Error("Analysis fact does not occur in source text");
   if (result.scoring) validateScoringEvidence(result.scoring, sourceText);
   return { ...result, priority: null };

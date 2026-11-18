@@ -23,6 +23,9 @@ export class PostgresAnalysisRunRepository implements AnalysisRunRepository{
     return rows[0]?from(rows[0]):null;
   }
   async countRecentFailures(code:string,since:string){const{rows}=await this.pool.query("SELECT count(*)::int AS count FROM analysis_runs WHERE status='failed_retryable' AND safe_error_code=$1 AND started_at>=$2::timestamptz",[code,since]);return Number(rows[0]?.count??0);}
+  // 总览 AI 区：一次查询拿全量/今日/最近一次。analysis_runs 没有 started_at 索引（加索引要迁移，暂不做），
+  // 当前量级下 count(*) 是全表扫描，可接受；最近一次走 ORDER BY started_at DESC 的排序取首行。
+  async aiCallStats(since:string){const{rows}=await this.pool.query("SELECT count(*)::int AS total,(count(*) FILTER (WHERE started_at>=$1::timestamptz))::int AS today,max(started_at) AS last_at,(SELECT status FROM analysis_runs ORDER BY started_at DESC,id DESC LIMIT 1) AS last_status FROM analysis_runs",[since]);const row=rows[0]??{};return{total:Number(row.total??0),today:Number(row.today??0),lastAt:row.last_at?new Date(row.last_at).toISOString():null,lastStatus:row.last_status===null||row.last_status===undefined?null:String(row.last_status)};}
   async listByRequirement(id:string){
     const{rows}=await this.pool.query("SELECT * FROM analysis_runs WHERE requirement_id=$1 ORDER BY analysis_version",[id]);
     return rows.map(from);

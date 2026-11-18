@@ -5,6 +5,19 @@ import type { AuditEventRecord, RequirementRecord, SourceConfigRecord, SyncBatch
 import type { ApiDependencies, ApiRepositories } from "./app.js";
 import { handleApiRequest, MAX_JSON_BODY_BYTES } from "./app.js";
 import { AiProviderError } from "../analysis/provider.js";
+// AI 状态区读 process.env.AI_API_KEY；测试里显式设置并还原，避免依赖跑测试机器的环境。
+async function withAiKey<T>(value: string | undefined, run: () => Promise<T>): Promise<T> {
+  const previous = process.env.AI_API_KEY;
+  if (value === undefined) delete process.env.AI_API_KEY; else process.env.AI_API_KEY = value;
+  try { return await run(); }
+  finally { if (previous === undefined) delete process.env.AI_API_KEY; else process.env.AI_API_KEY = previous; }
+}
+const emptyCounts = { total: 0, pullSynced: 0, analysisAnalyzed: 0, ownerResolved: 0, pushPushed: 0, failed: 0, pushFailed: 0, pushPending: 0, suppressed: 0, priority: { P0: 0, P1: 0, P2: 0, P3: 0, scored: 0, legacy: 0, unscored: 0 } };
+function overviewDependencies() {
+  const d = makeDependencies();
+  (d.repositories!.requirements as unknown as { getPipelineCounts: () => Promise<unknown> }).getPipelineCounts = async () => emptyCounts;
+  return d;
+}
 import { encodeBatchCursor } from "../application/batch-cursor.js";
 import { EXPECTED_LATEST_MIGRATION } from "../db/expected-migration.js";
 
@@ -96,9 +109,108 @@ test("overview metrics return full pipeline counts and require an authenticated 
 
  const d = makeDependencies();
  (d.repositories!.requirements as unknown as { getPipelineCounts: () => Promise<unknown> }).getPipelineCounts = async () => ({ total: 311, pullSynced: 311, analysisAnalyzed: 0, ownerResolved: 0, pushPushed: 0, failed: 0, pushFailed: 0, pushPending: 0, suppressed: 5, priority: { P0: 0, P1: 0, P2: 0, P3: 0, scored: 0, legacy: 0, unscored: 0 } });
- const response = await handleApiRequest(new Request("http://localhost/api/overview/metrics"), d);
- assert.equal(response.status, 200);
- assert.deepEqual(await response.json(), { counts: { total: 311, pullSynced: 311, analysisAnalyzed: 0, ownerResolved: 0, pushPushed: 0, failed: 0, pushFailed: 0, pushPending: 0, suppressed: 5, priority: { P0: 0, P1: 0, P2: 0, P3: 0, scored: 0, legacy: 0, unscored: 0 }, priorityRule: null } });
+ await withAiKey(undefined, async () => {
+   const response = await handleApiRequest(new Request("http://localhost/api/overview/metrics"), d);
+   assert.equal(response.status, 200);
+   const body = await response.json() as { counts: unknown; ai: { status: string } };
+   assert.deepEqual(body.counts, { total: 311, pullSynced: 311, analysisAnalyzed: 0, ownerResolved: 0, pushPushed: 0, failed: 0, pushFailed: 0, pushPending: 0, suppressed: 5, priority: { P0: 0, P1: 0, P2: 0, P3: 0, scored: 0, legacy: 0, unscored: 0 }, priorityRule: null });
+   // 没有密钥时状态是未配置，计数区块不受影响。
+   assert.equal(body.ai.status, "unconfigured");
+ });
+});
+
+test("overview AI block reports ok status, call counts and the latest call", async () => {
+  const d = overviewDependencies();
+  let analysisSince: string | null = null;
+  let auditSince: string | null = null;
+  (d.repositories!.analyses as unknown as Record<string, unknown>).aiCallStats = async (since: string) => { analysisSince = since; return { total: 12, today: 3, lastAt: "2026-10-08T00:00:00.000Z", lastStatus: "analyzed" }; };
+  d.repositories!.audit.countByEntityType = async (query) => {
+    auditSince = query.since;
+    assert.equal(query.entityType, "intake");
+    assert.deepEqual([...query.eventTypes], ["intake.draft_extracted", "intake.draft_failed"]);
+    return { total: 5, today: 2, lastAt: "2026-10-07T23:00:00.000Z", lastEventType: "intake.draft_failed" };
+  };
+  await withAiKey("sk-test", async () => {
+    const body = await (await handleApiRequest(new Request("http://localhost/api/overview/metrics"), d)).json() as { ai: unknown };
+    assert.deepEqual(body.ai, {
+      status: "ok",
+      statsAvailable: true,
+      pausedUntil: null,
+      pauseReason: null,
+      analysis: { total: 12, today: 3 },
+      chatIntake: { total: 5, today: 2 },
+      lastCall: { at: "2026-10-08T00:00:00.000Z", kind: "analysis", result: "succeeded" },
+    });
+  });
+  // 今日按 Asia/Shanghai 自然日：UTC 2026-10-08T00:00Z 是当地 08:00，日界是 UTC 2026-10-07T16:00Z。
+  assert.equal(analysisSince, "2026-10-07T16:00:00.000Z");
+  assert.equal(auditSince, "2026-10-07T16:00:00.000Z");
+
+  // 当地 23:59 仍然算前一天：UTC 2026-10-07T15:59:59Z → 日界 UTC 2026-10-06T16:00Z。
+  d.now = () => new Date("2026-10-07T15:59:59.000Z");
+  await withAiKey("sk-test", async () => { await handleApiRequest(new Request("http://localhost/api/overview/metrics"), d); });
+  assert.equal(analysisSince, "2026-10-06T16:00:00.000Z");
+});
+
+test("overview AI block degrades to unavailable when the statistics aggregation fails while counts still render", async () => {
+  const d = overviewDependencies();
+  (d.repositories!.requirements as unknown as { getPipelineCounts: () => Promise<unknown> }).getPipelineCounts = async () => ({ total: 7 });
+  (d.repositories!.analyses as unknown as Record<string, unknown>).aiCallStats = async () => { throw new Error("db down"); };
+  await withAiKey("sk-test", async () => {
+    const response = await handleApiRequest(new Request("http://localhost/api/overview/metrics"), d);
+    assert.equal(response.status, 200);
+    const body = await response.json() as { counts: { total: number }; ai: unknown };
+    assert.equal(body.counts.total, 7);
+    assert.deepEqual(body.ai, {
+      status: "unavailable",
+      statsAvailable: false,
+      pausedUntil: null,
+      pauseReason: null,
+      analysis: { total: 0, today: 0 },
+      chatIntake: { total: 0, today: 0 },
+      lastCall: { at: null, kind: null, result: null },
+    });
+  });
+});
+
+test("overview AI block reports paused state with the reason and recovery time", async () => {
+  const d = overviewDependencies();
+  d.repositories!.flags = { get: async () => ({ value: { until: "2026-10-08T01:00:00.000Z", reason: "ai_rate_limited" }, updatedAt: "2026-10-08T00:00:00.000Z" }), set: async () => undefined };
+  await withAiKey("sk-test", async () => {
+    const body = await (await handleApiRequest(new Request("http://localhost/api/overview/metrics"), d)).json() as { ai: { status: string; pausedUntil: string | null; pauseReason: string | null } };
+    assert.equal(body.ai.status, "paused");
+    assert.equal(body.ai.pausedUntil, "2026-10-08T01:00:00.000Z");
+    assert.equal(body.ai.pauseReason, "ai_rate_limited");
+  });
+});
+
+test("overview AI block prefers unconfigured over a paused flag", async () => {
+  const d = overviewDependencies();
+  d.repositories!.flags = { get: async () => ({ value: { until: "2026-10-08T01:00:00.000Z", reason: "ai_rate_limited" }, updatedAt: "2026-10-08T00:00:00.000Z" }), set: async () => undefined };
+  await withAiKey(undefined, async () => {
+    const body = await (await handleApiRequest(new Request("http://localhost/api/overview/metrics"), d)).json() as { ai: { status: string; pausedUntil: string | null; pauseReason: string | null } };
+    assert.equal(body.ai.status, "unconfigured");
+    assert.equal(body.ai.pausedUntil, null);
+    assert.equal(body.ai.pauseReason, null);
+  });
+});
+
+test("overview AI block takes the newer intake call and degrades to zeros when stats are unavailable", async () => {
+  const bare = overviewDependencies();
+  await withAiKey("sk-test", async () => {
+    const body = await (await handleApiRequest(new Request("http://localhost/api/overview/metrics"), bare)).json() as { ai: Record<string, unknown> };
+    assert.deepEqual(body.ai.analysis, { total: 0, today: 0 });
+    assert.deepEqual(body.ai.chatIntake, { total: 0, today: 0 });
+    assert.deepEqual(body.ai.lastCall, { at: null, kind: null, result: null });
+  });
+
+  const d = overviewDependencies();
+  (d.repositories!.analyses as unknown as Record<string, unknown>).aiCallStats = async () => ({ total: 1, today: 0, lastAt: "2026-10-07T10:00:00.000Z", lastStatus: "failed_retryable" });
+  d.repositories!.audit.countByEntityType = async () => ({ total: 2, today: 1, lastAt: "2026-10-08T00:30:00.000Z", lastEventType: "intake.draft_extracted" });
+  await withAiKey("sk-test", async () => {
+    const body = await (await handleApiRequest(new Request("http://localhost/api/overview/metrics"), d)).json() as { ai: { lastCall: unknown } };
+    assert.deepEqual(body.ai.lastCall, { at: "2026-10-08T00:30:00.000Z", kind: "chat_intake", result: "succeeded" });
+  });
 });
 test("test fixture status requires authentication and reports only its availability", async () => {
  const unauthenticatedResponse = await handleApiRequest(new Request("http://localhost/api/dev/fixtures/status"), unauthenticated);

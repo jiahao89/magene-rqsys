@@ -74,6 +74,8 @@ function makeHarness(options: {
   webBaseUrl?: string;
   baseOwner?: { userId: string; idType: "open_id" | "user_id" | "union_id" } | null;
   withLock?: boolean;
+  /** 模拟推送期间新一轮同步推进 source_version（A→B→A 竞态）。 */
+  versionAfterPush?: number;
 } = {}) {
   const auditEvents: { eventType: string; result: string; safeDetails: Record<string, unknown> }[] = [];
   const req = options.req ?? requirement();
@@ -101,7 +103,8 @@ function makeHarness(options: {
   const latestAnalysis = options.latestAnalysis === undefined ? defaultAnalysis : options.latestAnalysis;
   const service = createBasePushService({
     requirements: {
-      get: async () => req,
+      // versionAfterPush：模拟推送期间新一轮同步把 source_version 推进（A→B→A 竞态）。
+      get: async () => options.versionAfterPush !== undefined && calls.includes("base") ? { ...req, sourceVersion: options.versionAfterPush } : req,
       setOwner: async (_id: string, _owner: string | null, state: RequirementRecord["pipeline"]["owner"]) => { calls.push("owner"); calls.push(`owner-state:${state}`); },
       markManualOwnerPushed: async (_id: string, feishuUserId: string) => { calls.push(`manual-owner-pushed:${feishuUserId}`); },
       markLastPushedOwner: async (_id: string, owner: { feishuUserId: string } | null) => { calls.push(`last-owner:${owner?.feishuUserId ?? "none"}`); },
@@ -165,6 +168,40 @@ test("substantive source updates snapshot against the last successful push and p
   const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
   assert.equal(result.kind, "pushed");
   assert.equal(h.baseInput?.substantiveChanged, true);
+  assert.equal(h.savedBaseRecord, "record-2");
+});
+
+test("A→B→A race: a stale push completion must not overwrite the newer pending state", async () => {
+  // B(v2) 的推送在飞；期间 v3（内容回到 A）同步完成并把 push_state 置回 pending。
+  // 旧实现会在这里无条件写 pushed，把 pending 覆盖掉，导致 v3 永远不会被推出。
+  const req = requirement({
+    sourceVersion: 2,
+    pipeline: { pull: "synced", analysis: "analyzed", owner: "not_required", push: "running" },
+  });
+  const h = makeHarness({ req, versionAfterPush: 3, lastSuccessful: pushRun({ sourceVersion: 1 }) });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.ok(h.calls.includes("base"), "旧版本仍按原样写 Base");
+  assert.equal(h.calls.includes("state:pushed"), false, "不能把回退后的 pending 覆盖成 pushed");
+  assert.equal(h.calls.includes("state:pending"), true, "保留 pending 交给补推");
+});
+
+test("A→B→A: content returning to an older hash still pushes as a substantive change", async () => {
+  // 源内容 A(v1) → B(v2，已成功推送) → 回到 A(v3)：上一次成功推送的快照是 B，当前实质哈希又变回 A。
+  // 这是 #1 疑点要复现的场景：若推送判据只看"是否推过"或"是否与历史某版一致"，这里就不会写 Base。
+  const req = requirement({
+    sourceVersion: 3, sourceHash: "hash-v1", substantiveHash: "substantive-v1",
+    pipeline: { pull: "synced", analysis: "analyzed", owner: "not_required", push: "pending" },
+  });
+  const h = makeHarness({
+    req,
+    lastSuccessful: pushRun({ sourceVersion: 2, pushVersion: 2, idempotencyKey: "push:req-1:v2" }),
+    sourceSnapshot: sourceSnapshot({ sourceVersion: 2, sourceHash: "hash-v2", substantiveHash: "substantive-b" }),
+  });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v3");
+  assert.equal(result.kind, "pushed");
+  assert.equal(h.baseInput?.substantiveChanged, true, "回到旧内容也必须按实质变更写 Base");
+  assert.equal(h.calls.filter((call) => call === "base").length, 1);
   assert.equal(h.savedBaseRecord, "record-2");
 });
 
