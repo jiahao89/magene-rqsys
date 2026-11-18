@@ -644,6 +644,23 @@ export function createRequirement(input: { title: string; description: string; s
 }
 export const REQUIREMENT_INTAKE_TYPES = ["新增功能", "功能扩展", "体验优化", "性能优化", "质量修复", "安全合规", "成本效率", "技术治理"] as const;
 
+// PRD-26 / 5a：聊天粘贴 → 需求草稿。草稿不入库，确认后仍走 createRequirement。
+export interface ChatIntakeDraft {
+  title: string;
+  description: string;
+  sourceChannel: (typeof REQUIREMENT_INTAKE_CHANNELS)[number] | null;
+  requirementType: (typeof REQUIREMENT_INTAKE_TYPES)[number] | null;
+  productModel: string | null;
+  constraintNotes: string | null;
+  intakeModule: string | null;
+  proposer: string | null;
+  aiFilled: string[];
+}
+export interface ChatIntakeSimilar { id: string; platformRequirementId: string; title: string; sourceType: string }
+export function extractIntakeDraft(text: string, fetcher: typeof fetch = fetch): Promise<{ draft: ChatIntakeDraft; similar: ChatIntakeSimilar[] }> {
+  return postJson("/api/requirements/intake-draft", { text }, fetcher);
+}
+
 async function patchJson<T>(path: string, body: unknown, fetcher: typeof fetch, headers: Record<string, string> = {}): Promise<T> {
   const response = await fetcher(path, { method: "PATCH", headers: { accept: "application/json", "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
   return parseJsonResponse<T>(response);

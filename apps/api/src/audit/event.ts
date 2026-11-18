@@ -107,6 +107,8 @@ const ALLOWED_DETAIL_KEYS: readonly string[] = [
   // 运维告警（ops/alerts.ts）：只记录计数，不含作业 payload
   "failed",
   "stuck",
+  // 聊天抽取（PRD-26）：只记粘贴文本的字符数，不记内容
+  "textLength",
 ];
 
 // 判断 safeDetails 键是否命中禁止模式。

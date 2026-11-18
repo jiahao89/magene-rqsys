@@ -10,6 +10,7 @@ export const ERROR_STATUS = {
   NOT_FOUND: 404,
   CONFLICT: 409,
   PAYLOAD_TOO_LARGE: 413,
+  RATE_LIMITED: 429,
   INTERNAL: 500,
   ROUTE_NOT_IMPLEMENTED: 501,
   DEPENDENCY_UNAVAILABLE: 503,
@@ -24,6 +25,7 @@ const DEFAULT_MESSAGES: Record<ErrorCode, string> = {
   NOT_FOUND: "Resource not found.",
   CONFLICT: "Conflicting concurrent operation.",
   PAYLOAD_TOO_LARGE: "Request body exceeds the accepted size.",
+  RATE_LIMITED: "Too many requests. Please retry later.",
   INTERNAL: "An internal error occurred.",
   ROUTE_NOT_IMPLEMENTED:
     "This endpoint is defined by the API contract and will be implemented in its ticket.",

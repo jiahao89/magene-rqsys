@@ -3,7 +3,7 @@
 // 幂等键在同一次提交意图内复用（失败重试不换键），成功或重新展开表单后重置。
 import { useEffect, useRef, useState } from "react";
 import { Button as ArcoButton, Input, Select } from "@arco-design/web-react";
-import { ApiError, AUDIENCE_LEVELS, AUDIENCE_LEVEL_NAMES, REQUIREMENT_INTAKE_CHANNELS, REQUIREMENT_INTAKE_TYPES, createRequirement, getFunctionModules, getRiceDraft, listKanoEvidence, listKanoRuns, saveRiceDraft, setAudienceTags, triggerKanoRun, updateRequirement, type KanoEvidenceVersionDto, type KanoRunDto, type RiceDraft } from "./api";
+import { ApiError, AUDIENCE_LEVELS, AUDIENCE_LEVEL_NAMES, REQUIREMENT_INTAKE_CHANNELS, REQUIREMENT_INTAKE_TYPES, createRequirement, extractIntakeDraft, getFunctionModules, getRiceDraft, listKanoEvidence, listKanoRuns, saveRiceDraft, setAudienceTags, triggerKanoRun, updateRequirement, type ChatIntakeDraft, type ChatIntakeSimilar, type KanoEvidenceVersionDto, type KanoRunDto, type RiceDraft } from "./api";
 
 export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) => void }) {
   const [open, setOpen] = useState(false);
@@ -19,6 +19,14 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
   const idempotencyKey = useRef<string>(crypto.randomUUID());
   const [modules, setModules] = useState<Array<{ name: string; personName: string | null }>>([]);
   const [intakeModule, setIntakeModule] = useState("");
+  // PRD-26：聊天粘贴。草稿只填表单，AI 填充的字段带标记，用户确认后才提交。
+  const [chatText, setChatText] = useState("");
+  const [chatOpen, setChatOpen] = useState(false);
+  const [extracting, setExtracting] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
+  const [aiFilled, setAiFilled] = useState<string[]>([]);
+  const [proposer, setProposer] = useState<string | null>(null);
+  const [similar, setSimilar] = useState<ChatIntakeSimilar[]>([]);
   // 受控词典模块（G-MODULE）：只提供已发布选项；模块责任人仅作候选提示，不自动分配。
   useEffect(() => {
     if (!open) return;
@@ -27,13 +35,35 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
   const moduleCandidate = modules.find((item) => item.name === intakeModule)?.personName ?? null;
 
   if (!open) {
-    return <div className="toolbar-actions"><ArcoButton type="primary" size="small" htmlType="button" onClick={() => { setOpen(true); setError(null); }}>新建需求</ArcoButton></div>;
+    return <div className="toolbar-actions"><ArcoButton type="primary" size="small" htmlType="button" onClick={() => { setOpen(true); setError(null); }}>新建需求</ArcoButton><ArcoButton size="small" htmlType="button" onClick={() => { setOpen(true); setChatOpen(true); setError(null); }}>从聊天粘贴</ArcoButton></div>;
   }
 
   const reset = () => {
     setTitle(""); setDescription(""); setChannel(""); setProductModel(""); setRequirementType(""); setConstraintNotes(""); setSupplementUrl(""); setIntakeModule(""); setError(null);
+    setChatText(""); setChatOpen(false); setChatError(null); setAiFilled([]); setProposer(null); setSimilar([]);
     idempotencyKey.current = crypto.randomUUID();
   };
+
+  const applyDraft = (draft: ChatIntakeDraft) => {
+    setTitle(draft.title); setDescription(draft.description);
+    setChannel(draft.sourceChannel ?? ""); setRequirementType(draft.requirementType ?? "");
+    setProductModel(draft.productModel ?? ""); setConstraintNotes(draft.constraintNotes ?? "");
+    setIntakeModule(draft.intakeModule ?? ""); setProposer(draft.proposer); setAiFilled(draft.aiFilled);
+  };
+  const extract = async () => {
+    if (!chatText.trim()) { setChatError("请先粘贴聊天内容。"); return; }
+    setExtracting(true); setChatError(null);
+    try {
+      const { draft, similar: hints } = await extractIntakeDraft(chatText);
+      applyDraft(draft);
+      setSimilar(hints);
+      // 草稿是新的提交意图：换新的幂等键，避免与之前未提交的内容混用。
+      idempotencyKey.current = crypto.randomUUID();
+    } catch (cause) {
+      setChatError(cause instanceof ApiError ? cause.message : "无法整理聊天内容，请手工填写。");
+    } finally { setExtracting(false); }
+  };
+  const aiMark = (field: string) => aiFilled.includes(field) ? <small className="ai-filled-tag" title="由 AI 根据聊天内容填充，请核对后再提交"> AI 填充</small> : null;
 
   const submit = async () => {
     if (!title.trim() || !description.trim() || !channel) { setError("请填写标题、需求描述，并选择来源渠道。"); return; }
@@ -57,29 +87,47 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
   };
 
   return <div className="rules-form intake-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
+    <div className="field" style={{ flexBasis: "100%" }}>
+      {!chatOpen
+        ? <ArcoButton size="small" htmlType="button" onClick={() => setChatOpen(true)} disabled={busy}>从聊天粘贴</ArcoButton>
+        : <>
+            <span>聊天内容（粘贴后由 AI 整理成下面的表单，仍需你确认；聊天原文不会保存）</span>
+            <Input.TextArea aria-label="聊天内容" rows={5} maxLength={20000} placeholder="把聊天里的需求原文粘贴到这里" value={chatText} onChange={(value: string) => setChatText(value)} disabled={busy || extracting} />
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6, flexWrap: "wrap" }}>
+              <ArcoButton type="primary" size="small" htmlType="button" onClick={() => void extract()} disabled={busy || extracting || !chatText.trim()}>{extracting ? "整理中…" : "整理成需求草稿"}</ArcoButton>
+              <ArcoButton size="small" htmlType="button" onClick={() => { setChatOpen(false); setChatError(null); }} disabled={extracting}>收起</ArcoButton>
+              {aiFilled.length > 0 && <span className="status-hint" role="status">已填充表单，带「AI 填充」的字段请核对后再提交。</span>}
+            </div>
+            {chatError && <div className="field-error" role="alert">{chatError}</div>}
+          </>}
+      {proposer && <span className="status-hint" style={{ display: "block", marginTop: 4 }}>聊天中的提出人：{proposer}（仅供参考，不会自动设为负责人；可写进需求描述）</span>}
+      {similar.length > 0 && <div className="status-hint" role="status" style={{ marginTop: 4 }}>可能相似的已有需求（按标题关键字匹配，请自行判断是否重复）：
+        <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>{similar.map((item) => <li key={item.id}>{item.platformRequirementId} · {item.title}</li>)}</ul>
+      </div>}
+    </div>
     <label className="field" style={{ flex: 2, minWidth: 240 }}>
-      <span>标题 *</span>
+      <span>标题 *{aiMark("title")}</span>
       <Input aria-label="新建需求标题" placeholder="一句话描述用户的问题或诉求" value={title} onChange={(value: string) => setTitle(value)} disabled={busy} />
     </label>
     <label className="field">
-      <span>来源渠道 *</span>
+      <span>来源渠道 *{aiMark("sourceChannel")}</span>
       <Select aria-label="新建来源渠道" value={channel} onChange={(value: string) => setChannel(value)} disabled={busy} placeholder="请选择" style={{ minWidth: 160 }} options={[{ label: "请选择", value: "" }, ...REQUIREMENT_INTAKE_CHANNELS.map((item) => ({ label: item, value: item }))]} />
     </label>
     <label className="field">
-      <span>产品/型号</span>
+      <span>产品/型号{aiMark("productModel")}</span>
       <Input aria-label="关联产品或型号" placeholder="选填，如码表 C606" value={productModel} onChange={(value: string) => setProductModel(value)} disabled={busy} />
     </label>
     <label className="field">
-      <span>需求类型</span>
+      <span>需求类型{aiMark("requirementType")}</span>
       <Select aria-label="需求类型" value={requirementType} onChange={(value: string) => setRequirementType(value)} disabled={busy} placeholder="未选择" style={{ minWidth: 160 }} options={[{ label: "未选择", value: "" }, ...REQUIREMENT_INTAKE_TYPES.map((item) => ({ label: item, value: item }))]} />
     </label>
     <label className="field">
-      <span>功能模块</span>
+      <span>功能模块{aiMark("intakeModule")}</span>
       <Select aria-label="功能模块（录入）" value={intakeModule} onChange={(value: string) => setIntakeModule(value)} disabled={busy} placeholder="未选择" style={{ minWidth: 160 }} options={[{ label: "未选择", value: "" }, ...modules.map((item) => ({ label: item.name, value: item.name }))]} />
     </label>
     {moduleCandidate && <span className="status-hint" style={{ flexBasis: "100%" }}>该模块责任人：{moduleCandidate}（候选提示；负责人在创建后的详情里确认分配）</span>}
     <label className="field" style={{ flexBasis: "100%" }}>
-      <span>边界/限制</span>
+      <span>边界/限制{aiMark("constraintNotes")}</span>
       <Input.TextArea aria-label="边界或限制" rows={2} placeholder="选填：兼容性、法规、成本、上市时间等已知约束；未知留空" value={constraintNotes} onChange={(value: string) => setConstraintNotes(value)} disabled={busy} />
     </label>
     <label className="field" style={{ flexBasis: "100%" }}>
@@ -87,7 +135,7 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
       <Input aria-label="来源链接" type="url" placeholder="选填：原始反馈或工单链接（http/https）" value={supplementUrl} onChange={(value: string) => setSupplementUrl(value)} disabled={busy} />
     </label>
     <label className="field" style={{ flexBasis: "100%" }}>
-      <span>需求描述 *</span>
+      <span>需求描述 *{aiMark("description")}</span>
       <Input.TextArea aria-label="新建需求描述" rows={4} placeholder={"建议按四段描述（缺段不阻断提交，AI 会标出缺失项）：\n用户/场景：谁在什么场景下…\n现状问题：当前遇到…\n期望结果：希望…\n补充：约束、链接等（可留空）"} value={description} onChange={(value: string) => setDescription(value)} disabled={busy} />
     </label>
     <div className="field" style={{ flexBasis: "100%", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>

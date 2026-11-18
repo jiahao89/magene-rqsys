@@ -3,6 +3,7 @@ import { createPool } from "./adapters/postgres/pool.js";
 import { PostgresRepositories } from "./adapters/postgres/repositories.js";
 import { createPostgresSyncPersistence } from "./adapters/postgres/sync-persistence.js";
 import { markDuplicateInBase } from "./base/duplicate-marker.js";
+import { createChatIntakeExtractor } from "./intake/chat-extract.js";
 import { type ApiDependencies, handleApiRequest } from "./http/app.js";
 import { errorBody } from "./http/errors.js";
 import { PipelineJobWorker } from "./jobs/worker.js";
@@ -124,6 +125,8 @@ function parseBaseFields(raw: string | undefined): typeof DEFAULT_BASE_FIELDS {
   }
 }
 const baseFields = parseBaseFields(process.env.BASE_FIELDS_JSON);
+// PRD-26：聊天抽取器进程内只建一次（限流器按它缓存）；未配置 AI_API_KEY 时调用会返回明确的不可用提示。
+const chatIntake = { extractor: createChatIntakeExtractor() };
 const feishuUserDirectory = process.env.FEISHU_USER_ACCESS_TOKEN
   ? new FeishuUserDirectoryClient({ userAccessToken: async () => process.env.FEISHU_USER_ACCESS_TOKEN ?? "" })
   : undefined;
@@ -208,7 +211,7 @@ const server = createServer(async (incoming, outgoing) => {
     const request = new Request(`http://${incoming.headers.host ?? "localhost"}${incoming.url ?? "/"}`, {
       method: incoming.method ?? "GET", headers, ...(body.length > 0 ? { body } : {}),
     });
-    const dependencies: ApiDependencies = { database, repositories, identity, ...(duplicateMarker ? { duplicateMarker } : {}), ...(teambitionSourceProjects ? { teambitionSourceProjects } : {}), ...(feishuUserDirectory ? { feishuUsers: feishuUserDirectory } : {}), now: undefined };
+    const dependencies: ApiDependencies = { database, repositories, identity, chatIntake, ...(duplicateMarker ? { duplicateMarker } : {}), ...(teambitionSourceProjects ? { teambitionSourceProjects } : {}), ...(feishuUserDirectory ? { feishuUsers: feishuUserDirectory } : {}), now: undefined };
     const response = await handleApiRequest(request, dependencies);
     outgoing.statusCode = response.status;
     response.headers.forEach((value, key) => outgoing.setHeader(key, value));

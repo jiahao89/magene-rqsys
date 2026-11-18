@@ -54,6 +54,7 @@ const SHARED = [
   "application/csv.ts",
   "ops/ai-pause.ts",
   "ops/gates.ts",
+  "intake/chat-extract.ts",
 ];
 
 // 平台适配：允许不同，但必须在 DECLARED 里给出理由，避免"漂移了却没人知道"。

@@ -21,6 +21,8 @@ import { DEFAULT_TEAM_MEMBERS } from "../domain/team-directory.js";
 import { isDatabaseReady } from "../adapters/postgres/health.js";
 import { EXPECTED_LATEST_MIGRATION } from "../db/expected-migration.js";
 import { jsonError } from "./errors.js";
+import { ChatDraftRequestSchema, createDraftRateLimiter, type ChatIntakeExtractor, type DraftRateLimit } from "../intake/chat-extract.js";
+import { readAiPause } from "../ops/ai-pause.js";
 import { decodeRequirementCursor } from "../application/requirement-cursor.js";
 import { decodeBatchCursor } from "../application/batch-cursor.js";
 import { basePushIdempotencyKey } from "../application/idempotency-keys.js";
@@ -54,6 +56,15 @@ export interface ApiDependencies {
   now: (() => Date) | undefined;
   /** Q2：Base 重复行标记；组合根未注入时判定不触达 Base。 */
   duplicateMarker?: (input: import("../base/duplicate-marker.js").DuplicateMarkInput) => Promise<import("../base/duplicate-marker.js").DuplicateMarkResult>;
+  /** PRD-26：聊天一键复制的草稿抽取；未注入时接口返回 503，用户仍可手工填写。 */
+  chatIntake?: { extractor: ChatIntakeExtractor; limit?: DraftRateLimit };
+}
+// 限流器随 chatIntake 对象缓存：妙搭每次请求展开新的依赖对象，但 chatIntake 引用稳定。
+const draftRateLimiters = new WeakMap<object, ReturnType<typeof createDraftRateLimiter>>();
+function draftRateLimiterFor(chatIntake: NonNullable<ApiDependencies["chatIntake"]>) {
+  let limiter = draftRateLimiters.get(chatIntake);
+  if (!limiter) { limiter = createDraftRateLimiter(chatIntake.limit); draftRateLimiters.set(chatIntake, limiter); }
+  return limiter;
 }
 function json(body: unknown, status = 200): Response { return Response.json(body, { status }); }
 async function readMigrationStatus(database: Pool | null): Promise<{ latest: string | null; expected: string; upToDate: boolean | null; error?: string }> {
@@ -561,6 +572,44 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
     if (!parsed.success) return jsonError("VALIDATION_FAILED");
     try { return json({ items: (await dependencies.feishuUsers.search(parsed.data.q)).slice(0, 20) }); }
     catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
+  }
+  if (method === "POST" && url.pathname === "/api/requirements/intake-draft") {
+    // PRD-26 / 5a：聊天文本 → 需求草稿。草稿不入库，确认后仍由 POST /api/requirements 创建。
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.requirements || !repositories.audit || !repositories.dictionaries) return jsonError("DEPENDENCY_UNAVAILABLE");
+    if (!dependencies.chatIntake) return jsonError("DEPENDENCY_UNAVAILABLE", "聊天抽取暂不可用，请手工填写需求。");
+    const draftBody = ChatDraftRequestSchema.safeParse(await readJson(request)); if (!draftBody.success) return jsonError("VALIDATION_FAILED");
+    const draftNow = (dependencies.now ?? (() => new Date()))();
+    if ((await readAiPause(repositories.flags, draftNow)).paused) return jsonError("DEPENDENCY_UNAVAILABLE", "AI 额度暂时受限，请手工填写需求。");
+    const wait = draftRateLimiterFor(dependencies.chatIntake).take(auth.actor.id, draftNow.getTime());
+    if (wait !== null) {
+      const limited = jsonError("RATE_LIMITED", "操作太频繁，请稍后再试。");
+      limited.headers.set("Retry-After", String(wait));
+      return limited;
+    }
+    const publishedModules = (await repositories.dictionaries.list()).find((version) => version.status === "published");
+    const draftModules = (publishedModules?.entries ?? []).map((entry) => typeof entry === "string" ? entry : String((entry as { name?: unknown }).name ?? entry));
+    // 审计只记发起动作与字符数，不记聊天内容；写失败不阻断草稿（草稿不改变业务状态）。
+    const auditDraft = async (result: "succeeded" | "failed", details: Record<string, string | number>) => {
+      try { await repositories.audit.append({ id: randomUUID(), actorId: auth.actor.id, eventType: result === "succeeded" ? "intake.draft_extracted" : "intake.draft_failed", entityType: "intake", entityId: randomUUID(), result, safeDetails: { textLength: Array.from(draftBody.data.text).length, ...details }, occurredAt: draftNow.toISOString() }); }
+      catch { /* best effort */ }
+    };
+    let draft: Awaited<ReturnType<ChatIntakeExtractor["extract"]>>;
+    try { draft = await dependencies.chatIntake.extractor.extract({ text: draftBody.data.text, modules: draftModules }); }
+    catch (cause) {
+      await auditDraft("failed", { errorClass: String((cause as { code?: unknown })?.code ?? "unknown") });
+      return jsonError("DEPENDENCY_UNAVAILABLE", "AI 暂时无法整理聊天内容，请手工填写需求。");
+    }
+    await auditDraft("succeeded", {});
+    // 相似需求提示：标题是子串匹配（不是语义相似），先用完整标题，无结果再用标题前 8 个字。
+    let similar: { id: string; platformRequirementId: string; title: string; sourceType: string }[] = [];
+    try {
+      const titleChars = Array.from(draft.title);
+      let found = (await repositories.requirements.search({ q: draft.title, limit: 5 })).items;
+      if (found.length === 0 && titleChars.length > 8) found = (await repositories.requirements.search({ q: titleChars.slice(0, 8).join(""), limit: 5 })).items;
+      similar = found.slice(0, 5).map((item) => ({ id: item.id, platformRequirementId: item.platformRequirementId, title: item.title, sourceType: item.sourceType }));
+    } catch { similar = []; }
+    return json({ draft, similar });
   }
   if (method === "POST" && url.pathname === "/api/requirements") {
     // V02-T04：Web 手工收录。actor、时间、来源类型与平台编号都由服务端生成；

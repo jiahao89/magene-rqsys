@@ -658,3 +658,107 @@ test("V02-T14 Kano run routes: trigger guards and stale flags", async () => {
   // 源版本一致但最新已批准资料是 v2 且报告引用 v2 → 不过期；此处 run.sourceVersion=1 与 requirement 一致
   assert.equal(typeof body.items[0]?.staleInputs, "boolean");
 });
+
+// ---- PRD-26 / 5a：聊天一键复制草稿接口 ----
+type DraftExtractor = NonNullable<ApiDependencies["chatIntake"]>["extractor"];
+function draftDependencies(extract: DraftExtractor["extract"], options: { limit?: { perMinute: number; perDay: number } } = {}) {
+  const d = makeDependencies();
+  (d.repositories as unknown as Record<string, unknown>).dictionaries = { list: async () => [{ version: 3, status: "published", entries: [{ name: "报表分析" }, "导航"] }] };
+  const audits: { eventType: string; result: string; safeDetails: Record<string, unknown> }[] = [];
+  d.repositories!.audit.append = async (event) => { audits.push(event as never); };
+  const created: unknown[] = [];
+  (d.repositories!.requirements as unknown as Record<string, unknown>).createManualRequirement = async (input: unknown) => { created.push(input); return { requirementId: requirement.id, platformRequirementId: "RQ-000001", replay: false }; };
+  d.chatIntake = { extractor: { extract }, ...(options.limit ? { limit: options.limit } : {}) };
+  return { d, audits, created };
+}
+const sampleDraft = { title: "导出骑行报表", description: "售后反馈用户希望导出报表", sourceChannel: "售后" as const, requirementType: null, productModel: null, constraintNotes: null, intakeModule: "报表分析", proposer: "小王", aiFilled: ["title", "description", "sourceChannel", "intakeModule", "proposer"] as never };
+const draftRequest = (text: unknown) => new Request("http://localhost/api/requirements/intake-draft", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text }) });
+
+test("intake-draft returns a draft without creating a requirement and audits only the text length", async () => {
+  let seen: { text: string; modules: readonly string[] } | null = null;
+  const { d, audits, created } = draftDependencies(async (input) => { seen = input; return sampleDraft; });
+  const chat = "客户小王说：希望能导出骑行报表，电话 13812345678";
+  const response = await handleApiRequest(draftRequest(chat), d);
+  assert.equal(response.status, 200);
+  const body = await response.json() as { draft: { title: string }; similar: unknown[] };
+  assert.equal(body.draft.title, "导出骑行报表");
+  assert.deepEqual(body.similar, []);
+  assert.equal(created.length, 0);
+  assert.deepEqual(seen!.modules, ["报表分析", "导航"]);
+  assert.equal(audits.length, 1);
+  assert.equal(audits[0]!.eventType, "intake.draft_extracted");
+  assert.equal(audits[0]!.safeDetails.textLength, Array.from(chat).length);
+  assert.equal(JSON.stringify(audits[0]).includes("13812345678"), false);
+  assert.equal(JSON.stringify(audits[0]).includes("小王"), false);
+});
+
+test("intake-draft rejects empty or oversized text and unauthenticated callers", async () => {
+  let calls = 0;
+  const { d } = draftDependencies(async () => { calls += 1; return sampleDraft; });
+  assert.equal((await handleApiRequest(draftRequest("   "), d)).status, 400);
+  assert.equal((await handleApiRequest(draftRequest("x".repeat(20_001)), d)).status, 400);
+  assert.equal((await handleApiRequest(new Request("http://localhost/api/requirements/intake-draft", { method: "POST", body: "not json" }), d)).status, 400);
+  const anonymous = { ...unauthenticated, chatIntake: d.chatIntake! };
+  assert.equal((await handleApiRequest(draftRequest("hi"), anonymous)).status, 401);
+  assert.equal(calls, 0);
+});
+
+test("intake-draft returns 503 when the extractor is not configured", async () => {
+  const { d } = draftDependencies(async () => sampleDraft);
+  delete (d as { chatIntake?: unknown }).chatIntake;
+  assert.equal((await handleApiRequest(draftRequest("hi"), d)).status, 503);
+});
+
+test("intake-draft does not call the model while AI is paused for quota", async () => {
+  let calls = 0;
+  const { d } = draftDependencies(async () => { calls += 1; return sampleDraft; });
+  d.repositories!.flags = { get: async () => ({ value: { until: "2026-10-08T01:00:00.000Z", reason: "rate_limited" }, updatedAt: "2026-10-08T00:00:00.000Z" }), set: async () => undefined };
+  const response = await handleApiRequest(draftRequest("hi"), d);
+  assert.equal(response.status, 503);
+  assert.equal(calls, 0);
+});
+
+test("intake-draft limits each actor to the per-minute cap and sets Retry-After", async () => {
+  let calls = 0;
+  const { d } = draftDependencies(async () => { calls += 1; return sampleDraft; }, { limit: { perMinute: 2, perDay: 100 } });
+  assert.equal((await handleApiRequest(draftRequest("a"), d)).status, 200);
+  assert.equal((await handleApiRequest(draftRequest("b"), d)).status, 200);
+  const limited = await handleApiRequest(draftRequest("c"), d);
+  assert.equal(limited.status, 429);
+  assert.ok(Number(limited.headers.get("Retry-After")) >= 1);
+  assert.equal(calls, 2);
+});
+
+test("intake-draft maps provider failures to a safe 503 and audits only the error class", async () => {
+  const { d, audits } = draftDependencies(async () => { throw Object.assign(new Error("sk-secret-key-1234567890 upstream said no"), { code: "rate_limited" }); });
+  const response = await handleApiRequest(draftRequest("需要导出"), d);
+  assert.equal(response.status, 503);
+  const text = await response.text();
+  assert.equal(text.includes("sk-secret"), false);
+  assert.equal(audits[0]!.eventType, "intake.draft_failed");
+  assert.equal(audits[0]!.result, "failed");
+  assert.equal(audits[0]!.safeDetails.errorClass, "rate_limited");
+  assert.equal(JSON.stringify(audits[0]).includes("sk-secret"), false);
+});
+
+test("intake-draft lists similar requirements and falls back to a title prefix", async () => {
+  const queries: string[] = [];
+  const { d } = draftDependencies(async () => ({ ...sampleDraft, title: "导出骑行报表到表格文件" }));
+  (d.repositories!.requirements as unknown as Record<string, unknown>).search = async (query: { q?: string }) => {
+    queries.push(query.q ?? "");
+    return { items: query.q === "导出骑行报表到表" ? [{ ...requirement, id: "r-1", platformRequirementId: "RQ-000009", title: "导出骑行报表", sourceType: "teambition" }] : [], nextCursor: null };
+  };
+  const body = await (await handleApiRequest(draftRequest("需要导出"), d)).json() as { similar: { platformRequirementId: string; title: string }[] };
+  assert.deepEqual(queries, ["导出骑行报表到表格文件", "导出骑行报表到表"]);
+  assert.equal(body.similar.length, 1);
+  assert.equal(body.similar[0]!.platformRequirementId, "RQ-000009");
+});
+
+test("intake-draft still returns the draft when the similar-requirement search or audit fails", async () => {
+  const { d } = draftDependencies(async () => sampleDraft);
+  (d.repositories!.requirements as unknown as Record<string, unknown>).search = async () => { throw new Error("db down"); };
+  d.repositories!.audit.append = async () => { throw new Error("audit down"); };
+  const response = await handleApiRequest(draftRequest("需要导出"), d);
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json() as { similar: unknown[] }).similar, []);
+});

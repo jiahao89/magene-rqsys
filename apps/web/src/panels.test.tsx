@@ -1187,6 +1187,65 @@ describe("RequirementsPanel intake (V02-T04)", () => {
     await waitFor(() => expect(keys.length).toBe(2));
     expect(keys[0]).toBe(keys[1]);
   });
+
+  // PRD-26 / 5a：聊天粘贴 → 草稿填表单；草稿不入库，提交仍走 POST /api/requirements。
+  it("fills the intake form from pasted chat, marks AI fields and creates only after the user submits", async () => {
+    const draftCalls: string[] = [];
+    const posts: { body: Record<string, unknown> }[] = [];
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/requirements/intake-draft" && init?.method === "POST") {
+        draftCalls.push(String(init.body));
+        return Response.json({
+          draft: { title: "导出骑行报表", description: "售后反馈用户希望导出报表", sourceChannel: "售后", requirementType: null, productModel: null, constraintNotes: null, intakeModule: null, proposer: "小王", aiFilled: ["title", "description", "sourceChannel", "proposer"] },
+          similar: [{ id: "req-9", platformRequirementId: "RQ-000009", title: "导出报表", sourceType: "teambition" }],
+        });
+      }
+      if (path === "/api/requirements" && init?.method === "POST") {
+        posts.push({ body: JSON.parse(String(init.body)) as Record<string, unknown> });
+        return Response.json({ requirementId: "req-new", platformRequirementId: "RQ-000042", sourceType: "web_manual", status: "collected" }, { status: 201 });
+      }
+      if (path.startsWith("/api/requirements/")) return Response.json(intakeDetail);
+      if (path === "/api/people") return Response.json({ items: [] });
+      return Response.json({ items: [intakeRow], nextCursor: null });
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    fireEvent.click(await screen.findByRole("button", { name: "从聊天粘贴" }));
+    fireEvent.change(screen.getByLabelText("聊天内容"), { target: { value: "小王：客户想导出骑行报表" } });
+    fireEvent.click(screen.getByRole("button", { name: "整理成需求草稿" }));
+    await waitFor(() => expect(screen.getByLabelText("新建需求标题")).toHaveValue("导出骑行报表"));
+    expect(JSON.parse(draftCalls[0]!)).toEqual({ text: "小王：客户想导出骑行报表" });
+    expect(screen.getByLabelText("新建需求描述")).toHaveValue("售后反馈用户希望导出报表");
+    expect(screen.getAllByText(/AI 填充/).length).toBeGreaterThanOrEqual(3);
+    expect(screen.getByText(/聊天中的提出人：小王/)).toBeInTheDocument();
+    expect(screen.getByText(/RQ-000009 · 导出报表/)).toBeInTheDocument();
+    // 抽取本身不创建需求
+    expect(posts).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "提交并进入分析" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0]!.body).toEqual({ title: "导出骑行报表", description: "售后反馈用户希望导出报表", sourceChannel: "售后" });
+    expect(JSON.stringify(posts[0]!.body)).not.toContain("proposer");
+  });
+
+  it("shows the server message and keeps manual entry available when chat extraction fails", async () => {
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/requirements/intake-draft" && init?.method === "POST") {
+        return Response.json({ error: { code: "RATE_LIMITED", message: "操作太频繁，请稍后再试。" } }, { status: 429 });
+      }
+      if (path === "/api/people") return Response.json({ items: [] });
+      return Response.json({ items: [intakeRow], nextCursor: null });
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    fireEvent.click(await screen.findByRole("button", { name: "从聊天粘贴" }));
+    fireEvent.change(screen.getByLabelText("聊天内容"), { target: { value: "客户想导出报表" } });
+    fireEvent.click(screen.getByRole("button", { name: "整理成需求草稿" }));
+    expect(await screen.findByText("操作太频繁，请稍后再试。")).toBeInTheDocument();
+    // 表单未被改写，仍可手工填写
+    expect(screen.getByLabelText("新建需求标题")).toHaveValue("");
+    fireEvent.change(screen.getByLabelText("新建需求标题"), { target: { value: "手工填写" } });
+    expect(screen.getByLabelText("新建需求标题")).toHaveValue("手工填写");
+  });
 });
 
 
