@@ -75,7 +75,8 @@ export interface PriorityRuleVersion {
 }
 
 export class ApiError extends Error {
-  constructor(message: string, readonly status: number, readonly code: string) {
+  /** 429 时服务端给出的等待秒数（Retry-After）；没有该头时为 null。 */
+  constructor(message: string, readonly status: number, readonly code: string, readonly retryAfterSeconds: number | null = null) {
     super(message);
     this.name = "ApiError";
   }
@@ -86,7 +87,10 @@ async function parseJsonResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const error = body && typeof body === "object" && "error" in body ? body.error : undefined;
     const detail = error && typeof error === "object" ? error as { code?: string; message?: string } : {};
-    throw new ApiError(detail.message ?? `Request failed (${response.status})`, response.status, detail.code ?? "REQUEST_FAILED");
+    // Retry-After 可能是秒数或 HTTP 日期；契约里只发秒数，其他格式按未知处理。
+    const retryHeader = response.headers.get("retry-after");
+    const retrySeconds = retryHeader && /^\d+$/.test(retryHeader.trim()) ? Math.max(1, Number(retryHeader)) : null;
+    throw new ApiError(detail.message ?? `Request failed (${response.status})`, response.status, detail.code ?? "REQUEST_FAILED", retrySeconds);
   }
   return body as T;
 }
@@ -639,7 +643,7 @@ export interface IntakeResult {
 }
 export const REQUIREMENT_INTAKE_CHANNELS = ["销售", "售后", "电商", "运营/用研", "终端用户", "产品/研发/测试"] as const;
 // 同一次提交（含失败重试）复用同一幂等键；成功后由表单重新生成（V02-T04-AC03）。
-export function createRequirement(input: { title: string; description: string; sourceChannel: string; productModel?: string | null; requirementType?: string | null; constraintNotes?: string | null; supplementUrl?: string | null; intakeModule?: string | null; owner?: { feishuUserId: string; feishuIdType: "open_id" | "user_id" | "union_id"; tbDisplayName?: string | null } }, fetcher: typeof fetch = fetch, idempotencyKey: string = crypto.randomUUID()): Promise<IntakeResult> {
+export function createRequirement(input: { title: string; description: string; sourceChannel: string; productModel?: string | null; requirementType?: string | null; constraintNotes?: string | null; supplementUrl?: string | null; intakeModule?: string | null; /** PRD-26：只有聊天粘贴路径传 "chat_paste"；落库仍是 web_manual。 */ intakeOrigin?: "chat_paste" | null; /** PRD-26：聊天中提到的提出人，仅展示，不进负责人匹配、不发通知。 */ proposerName?: string | null; owner?: { feishuUserId: string; feishuIdType: "open_id" | "user_id" | "union_id"; tbDisplayName?: string | null } }, fetcher: typeof fetch = fetch, idempotencyKey: string = crypto.randomUUID()): Promise<IntakeResult> {
   return postJson<IntakeResult>("/api/requirements", input, fetcher, { "Idempotency-Key": idempotencyKey });
 }
 export const REQUIREMENT_INTAKE_TYPES = ["新增功能", "功能扩展", "体验优化", "性能优化", "质量修复", "安全合规", "成本效率", "技术治理"] as const;
@@ -657,7 +661,15 @@ export interface ChatIntakeDraft {
   aiFilled: string[];
 }
 export interface ChatIntakeSimilar { id: string; platformRequirementId: string; title: string; sourceType: string }
-export function extractIntakeDraft(text: string, fetcher: typeof fetch = fetch): Promise<{ draft: ChatIntakeDraft; similar: ChatIntakeSimilar[] }> {
+export interface ChatIntakeDraftResult {
+  draft: ChatIntakeDraft;
+  similar: ChatIntakeSimilar[];
+  /** 模型输出不可用、标题/描述取自掩码原文时为 true：界面必须说明「未经 AI 整理」。 */
+  fallback: boolean;
+  /** 实际由 AI 填充的字段数；fallback 时应为 0。 */
+  aiFilledCount: number;
+}
+export function extractIntakeDraft(text: string, fetcher: typeof fetch = fetch): Promise<ChatIntakeDraftResult> {
   return postJson("/api/requirements/intake-draft", { text }, fetcher);
 }
 

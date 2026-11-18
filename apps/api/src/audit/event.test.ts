@@ -12,6 +12,14 @@ test("评分与人群审计的细节键不会被白名单清空", () => {
   assert.deepEqual(redactSafeDetails({ apiKey: "k", email: "a@b.c", score: 1 }), { score: 1 });
 });
 
+test("PRD-26 聊天抽取审计保留字符数、兜底标记与 AI 填充数", () => {
+  // 这三个键在写入前会再过一次白名单；漏登记会让接口测试通过、线上审计却是空对象。
+  assert.deepEqual(
+    redactSafeDetails({ textLength: 120, fallback: true, aiFilledCount: 3, email: "a@b.c" }),
+    { textLength: 120, fallback: true, aiFilledCount: 3 },
+  );
+});
+
 test("不变量5：审计事件捕获 actor/entity/result/timestamp（DDL 对齐形状）", () => {
   const event = createAuditEvent({
     actor: "worker:abc",

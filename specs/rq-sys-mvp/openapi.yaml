@@ -393,6 +393,20 @@ paths:
                 constraintNotes: { type: string, maxLength: 2000, nullable: true }
                 supplementUrl: { type: string, maxLength: 500, format: uri, nullable: true }
                 intakeModule: { type: string, maxLength: 100, nullable: true, description: Must exist in the published module dictionary. }
+                intakeOrigin:
+                  type: string
+                  enum: [chat_paste]
+                  description: >-
+                    Set only by the chat-paste path (PRD-26). Stored in source_payload; source_type
+                    stays web_manual, so no new source type or migration is introduced.
+                proposerName:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+                  nullable: true
+                  description: >-
+                    Person who raised the need as written in the pasted chat. Display only: it never
+                    drives owner matching and never triggers a notification.
                 owner:
                   type: object
                   nullable: true
@@ -476,8 +490,12 @@ paths:
         persisted: the user reviews the draft and creates the requirement through
         POST /api/requirements. Enum fields outside the fixed channel/type lists and modules
         outside the published dictionary are dropped (null), never guessed. Limited to 3
-        requests per minute and 100 per day per actor. Unavailable while AI quota pause is
-        active. The audit event records only the text length, never the chat content.
+        requests per minute and 100 per day per actor (per process; multi-instance deployments
+        count separately). Unavailable while AI quota pause is active. The audit event records
+        only the text length, the fallback flag and the number of AI-filled fields, never the
+        chat content. When the model returns unusable output, the response is still 200 but
+        fallback is true and title/description come from the masked chat text, so the client
+        must ask the user to review or rewrite them.
       requestBody:
         required: true
         content:
@@ -495,8 +513,14 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [draft, similar]
+                required: [draft, similar, fallback, aiFilledCount]
                 properties:
+                  fallback:
+                    type: boolean
+                    description: >-
+                      True when the model supplied no usable title or description, so the draft's
+                      title/description fall back to the masked chat text (not AI-organized).
+                  aiFilledCount: { type: integer, minimum: 0, maximum: 8 }
                   draft:
                     type: object
                     required: [title, description, aiFilled]
@@ -526,12 +550,18 @@ paths:
         '400': { $ref: '#/components/responses/Validation' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429':
-          description: Per-actor rate limit reached; Retry-After carries the wait in seconds.
+          description: >-
+            Rate limited: either the per-actor draft limit or the AI provider itself. Retry-After
+            carries the wait in seconds.
           headers:
             Retry-After: { schema: { type: integer } }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '500':
+          description: >-
+            AI provider configuration or request error (missing credential, rejected request).
+            Reported to server diagnostics without the provider response body or the chat text.
         '503': { $ref: '#/components/responses/DependencyUnavailable' }
   /api/requirements/{id}/audience:
     put:

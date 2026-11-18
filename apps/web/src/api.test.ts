@@ -32,6 +32,16 @@ describe("workbench API client", () => {
     await expect(listSources(fetcher)).rejects.toMatchObject({ code: "DEPENDENCY_UNAVAILABLE", status: 503 } satisfies Partial<ApiError>);
   });
 
+  it("keeps the server Retry-After seconds on rate-limited errors", async () => {
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ error: { code: "RATE_LIMITED", message: "操作太频繁，请稍后再试。" } }, { status: 429, headers: { "Retry-After": "42" } }));
+    await expect(listSources(fetcher)).rejects.toMatchObject({ code: "RATE_LIMITED", status: 429, retryAfterSeconds: 42 } satisfies Partial<ApiError>);
+  });
+
+  it("ignores a non-numeric Retry-After instead of inventing a wait time", async () => {
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ error: { code: "RATE_LIMITED", message: "操作太频繁，请稍后再试。" } }, { status: 429, headers: { "Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT" } }));
+    await expect(listSources(fetcher)).rejects.toMatchObject({ status: 429, retryAfterSeconds: null } satisfies Partial<ApiError>);
+  });
+
   it("posts manual runs to the contract route with an idempotency key and stable batch result", async () => {
     const fetcher = vi.fn().mockResolvedValue(Response.json({ batchId: "batch-42", status: "running" }, { status: 202 }));
     await expect(runSync(source, "full_pipeline", fetcher, () => "key-123456")).resolves.toEqual({ batchId: "batch-42", status: "running" });

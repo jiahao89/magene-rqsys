@@ -36,8 +36,18 @@ export interface ChatIntakeDraft {
   aiFilled: ChatDraftField[];
 }
 
+/**
+ * 抽取结果：草稿 + 是否兜底。
+ * fallback=true 表示模型没给出可用的标题或描述，对应字段取自掩码原文（未经整理），
+ * 调用方必须在响应里带出这个标记，界面提示用户改写后再提交。
+ */
+export interface ChatIntakeExtraction {
+  draft: ChatIntakeDraft;
+  fallback: boolean;
+}
+
 export interface ChatIntakeExtractor {
-  extract(input: { text: string; modules: readonly string[] }): Promise<ChatIntakeDraft>;
+  extract(input: { text: string; modules: readonly string[] }): Promise<ChatIntakeExtraction>;
 }
 
 // 模型输出按「宽进严出」解析：任何字段类型不对都当作缺失，最终由 sanitize 决定保留什么。
@@ -68,7 +78,7 @@ function firstLine(source: string): string {
 }
 
 /** 把模型的原始 JSON 收敛成合法草稿；maskedText 用于模型漏填标题/描述时的兜底。 */
-export function sanitizeChatDraft(raw: unknown, modules: readonly string[], maskedText: string): ChatIntakeDraft {
+export function sanitizeChatDraft(raw: unknown, modules: readonly string[], maskedText: string): ChatIntakeExtraction {
   const parsed = RawDraftSchema.safeParse(raw);
   const value = parsed.success ? parsed.data : {};
   const aiTitle = text(value.title, 200);
@@ -90,7 +100,8 @@ export function sanitizeChatDraft(raw: unknown, modules: readonly string[], mask
     if (field === "description") return aiDescription !== null;
     return draft[field] !== null;
   });
-  return draft;
+  // 标题或描述只要有一个取自掩码原文，就是兜底：接口如实标记，不把它当成功摘出。
+  return { draft, fallback: aiTitle === null || aiDescription === null };
 }
 
 function prompt(maskedText: string, modules: readonly string[]): string {

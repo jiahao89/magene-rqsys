@@ -110,6 +110,10 @@ export const RequirementIntakeSchema = z.strictObject({
   supplementUrl: z.string().trim().url().max(500).nullish(),
   // V02-T06：受控词典模块（服务端对照已发布词典校验）与可选需求级负责人（D-12：人工分配首推通知被分配人）。
   intakeModule: z.string().trim().min(1).max(100).nullish(),
+  // PRD-26：聊天粘贴路径的来源标记（落 source_payload，不改 source_type=web_manual）；现值只有这一个，
+  // 5c 做来源徽标/筛选时读它。提出人只做展示，不参与负责人匹配，也不发通知。
+  intakeOrigin: z.literal("chat_paste").optional(),
+  proposerName: z.string().trim().min(1).max(100).nullish(),
   owner: z.strictObject({
     feishuUserId: z.string().trim().min(1).max(64),
     feishuIdType: z.enum(["open_id", "user_id", "union_id"]),

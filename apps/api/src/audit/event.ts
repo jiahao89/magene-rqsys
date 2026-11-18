@@ -109,6 +109,9 @@ const ALLOWED_DETAIL_KEYS: readonly string[] = [
   "stuck",
   // 聊天抽取（PRD-26）：只记粘贴文本的字符数，不记内容
   "textLength",
+  // PRD-26 兜底与 AI 填充统计：同样只记计数/布尔，不含聊天正文
+  "fallback",
+  "aiFilledCount",
 ];
 
 // 判断 safeDetails 键是否命中禁止模式。

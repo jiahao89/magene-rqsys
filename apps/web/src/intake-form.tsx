@@ -4,6 +4,34 @@
 import { useEffect, useRef, useState } from "react";
 import { Button as ArcoButton, Input, Select } from "@arco-design/web-react";
 import { ApiError, AUDIENCE_LEVELS, AUDIENCE_LEVEL_NAMES, REQUIREMENT_INTAKE_CHANNELS, REQUIREMENT_INTAKE_TYPES, createRequirement, extractIntakeDraft, getFunctionModules, getRiceDraft, listKanoEvidence, listKanoRuns, saveRiceDraft, setAudienceTags, triggerKanoRun, updateRequirement, type ChatIntakeDraft, type ChatIntakeSimilar, type KanoEvidenceVersionDto, type KanoRunDto, type RiceDraft } from "./api";
+import { ConfirmModal } from "./confirm-modal";
+
+/** PRD-26 5a 补丁：服务端与客户端共用同一组上限，提交前拦截，避免落到英文通用校验错误。 */
+const INTAKE_LIMITS = { title: 200, description: 20_000, productModel: 100, constraintNotes: 2_000, supplementUrl: 500, proposerName: 100 } as const;
+
+/** 聊天文本先过 PII 掩码；「（姓名已掩码）」这类占位不是真实提出人，不展示也不提交。 */
+function isMaskedPlaceholder(value: string | null): boolean {
+  return !!value && value.includes("已掩码");
+}
+
+function waitLabel(seconds: number): string {
+  if (seconds >= 3600) return `${Math.ceil(seconds / 3600)} 小时`;
+  if (seconds >= 60) return `${Math.ceil(seconds / 60)} 分钟`;
+  return `${seconds} 秒`;
+}
+
+/** 按错误码给出可执行提示：429 读 Retry-After 说明还需等多久，500/503 说明可以先手工填写。 */
+function intakeErrorMessage(cause: unknown, action: "整理" | "提交", fallback: string): string {
+  if (!(cause instanceof ApiError)) return fallback;
+  if (cause.status === 429) {
+    if (!cause.retryAfterSeconds) return cause.message;
+    const daily = cause.retryAfterSeconds >= 3600 ? "；可能是今日次数已用完，可先手工填写" : "";
+    return `${cause.message}（还需等待约 ${waitLabel(cause.retryAfterSeconds)}${daily}）`;
+  }
+  if (cause.status === 500) return `服务端暂时无法完成这次${action}（配置或请求异常），可先手工填写或稍后重试。`;
+  if (cause.status === 503 && action === "提交") return "服务暂时不可用，请稍后重试；同一提交重试不会重复建需求。";
+  return cause.message;
+}
 
 export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) => void }) {
   const [open, setOpen] = useState(false);
@@ -27,6 +55,14 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
   const [aiFilled, setAiFilled] = useState<string[]>([]);
   const [proposer, setProposer] = useState<string | null>(null);
   const [similar, setSimilar] = useState<ChatIntakeSimilar[]>([]);
+  // 只有走过聊天草稿的提交才带 intakeOrigin=chat_paste；用户手工填的表单仍是普通 Web 收录。
+  const [fromChatPaste, setFromChatPaste] = useState(false);
+  // 服务端 fallback=true：模型输出不可用，标题/描述取自掩码原文，必须明确告诉用户「未经过 AI 整理」。
+  const [fallbackDraft, setFallbackDraft] = useState(false);
+  // 草稿与已填内容冲突时先确认：合并（只补空白）或覆盖，不静默冲掉用户输入。
+  const [pendingDraft, setPendingDraft] = useState<{ draft: ChatIntakeDraft; similar: ChatIntakeSimilar[]; conflicts: string[] } | null>(null);
+  // 409：同一幂等键已用于不同内容（多半是上一次实际已创建、响应丢了）。给一个换新键重提的出口。
+  const [conflict, setConflict] = useState(false);
   // 受控词典模块（G-MODULE）：只提供已发布选项；模块责任人仅作候选提示，不自动分配。
   useEffect(() => {
     if (!open) return;
@@ -41,33 +77,78 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
   const reset = () => {
     setTitle(""); setDescription(""); setChannel(""); setProductModel(""); setRequirementType(""); setConstraintNotes(""); setSupplementUrl(""); setIntakeModule(""); setError(null);
     setChatText(""); setChatOpen(false); setChatError(null); setAiFilled([]); setProposer(null); setSimilar([]);
+    setFromChatPaste(false); setFallbackDraft(false); setPendingDraft(null); setConflict(false);
     idempotencyKey.current = crypto.randomUUID();
   };
 
-  const applyDraft = (draft: ChatIntakeDraft) => {
-    setTitle(draft.title); setDescription(draft.description);
-    setChannel(draft.sourceChannel ?? ""); setRequirementType(draft.requirementType ?? "");
-    setProductModel(draft.productModel ?? ""); setConstraintNotes(draft.constraintNotes ?? "");
-    setIntakeModule(draft.intakeModule ?? ""); setProposer(draft.proposer); setAiFilled(draft.aiFilled);
+  /** 用户改过的字段不再算「AI 填充」：一编辑就撤掉该字段的标记。 */
+  const clearAiMark = (field: string) => setAiFilled((prev) => prev.includes(field) ? prev.filter((item) => item !== field) : prev);
+
+  /** 草稿与已填内容冲突的字段（草稿值为空也算，因为覆盖会把已有内容清空）。 */
+  const draftConflicts = (draft: ChatIntakeDraft): string[] => {
+    const conflicts: string[] = [];
+    if (title.trim() && draft.title.trim() !== title.trim()) conflicts.push("标题");
+    if (description.trim() && draft.description.trim() !== description.trim()) conflicts.push("需求描述");
+    if (channel && (draft.sourceChannel ?? "") !== channel) conflicts.push("来源渠道");
+    if (requirementType && (draft.requirementType ?? "") !== requirementType) conflicts.push("需求类型");
+    if (productModel.trim() && (draft.productModel ?? "").trim() !== productModel.trim()) conflicts.push("产品/型号");
+    if (constraintNotes.trim() && (draft.constraintNotes ?? "").trim() !== constraintNotes.trim()) conflicts.push("边界/限制");
+    if (intakeModule && (draft.intakeModule ?? "") !== intakeModule) conflicts.push("功能模块");
+    return conflicts;
+  };
+
+  /** 把草稿写入表单：merge 只补空白字段，overwrite 全量替换；标记只挂在本次真正由 AI 写入的字段上。 */
+  const applyDraft = (draft: ChatIntakeDraft, mode: "merge" | "overwrite") => {
+    const written = new Set<string>();
+    const write = (field: string, current: string, next: string, set: (value: string) => void) => {
+      if (mode === "overwrite" || current.trim() === "") {
+        set(next);
+        if (draft.aiFilled.includes(field)) written.add(field);
+      }
+    };
+    write("title", title, draft.title, setTitle);
+    write("description", description, draft.description, setDescription);
+    write("sourceChannel", channel, draft.sourceChannel ?? "", setChannel);
+    write("requirementType", requirementType, draft.requirementType ?? "", setRequirementType);
+    write("productModel", productModel, draft.productModel ?? "", setProductModel);
+    write("constraintNotes", constraintNotes, draft.constraintNotes ?? "", setConstraintNotes);
+    write("intakeModule", intakeModule, draft.intakeModule ?? "", setIntakeModule);
+    setProposer(isMaskedPlaceholder(draft.proposer) ? null : draft.proposer);
+    setAiFilled((prev) => [...new Set([...(mode === "merge" ? prev.filter((field) => !written.has(field)) : []), ...written])]);
+    setFromChatPaste(true);
   };
   const extract = async () => {
     if (!chatText.trim()) { setChatError("请先粘贴聊天内容。"); return; }
-    setExtracting(true); setChatError(null);
+    setExtracting(true); setChatError(null); setConflict(false);
     try {
-      const { draft, similar: hints } = await extractIntakeDraft(chatText);
-      applyDraft(draft);
-      setSimilar(hints);
-      // 草稿是新的提交意图：换新的幂等键，避免与之前未提交的内容混用。
-      idempotencyKey.current = crypto.randomUUID();
+      const result = await extractIntakeDraft(chatText);
+      setFallbackDraft(result.fallback === true);
+      const conflicts = draftConflicts(result.draft);
+      if (conflicts.length > 0) setPendingDraft({ draft: result.draft, similar: result.similar, conflicts });
+      else { applyDraft(result.draft, "merge"); setSimilar(result.similar); }
     } catch (cause) {
-      setChatError(cause instanceof ApiError ? cause.message : "无法整理聊天内容，请手工填写。");
+      setChatError(intakeErrorMessage(cause, "整理", "无法整理聊天内容，请手工填写。"));
     } finally { setExtracting(false); }
   };
   const aiMark = (field: string) => aiFilled.includes(field) ? <small className="ai-filled-tag" title="由 AI 根据聊天内容填充，请核对后再提交"> AI 填充</small> : null;
 
+  /** 提交前按服务端契约做本地校验（上限来自 pipeline.ts / PRD-26），给出中文字段级提示。 */
+  const validateIntake = (): string | null => {
+    if (!title.trim() || !description.trim() || !channel) return "请填写标题、需求描述，并选择来源渠道。";
+    if (title.trim().length > INTAKE_LIMITS.title) return `标题不能超过 ${INTAKE_LIMITS.title} 字，当前 ${title.trim().length} 字。`;
+    if (description.trim().length > INTAKE_LIMITS.description) return `需求描述不能超过 20,000 字，当前 ${description.trim().length.toLocaleString("zh-CN")} 字。`;
+    if (productModel.trim().length > INTAKE_LIMITS.productModel) return `产品/型号不能超过 ${INTAKE_LIMITS.productModel} 字。`;
+    if (constraintNotes.trim().length > INTAKE_LIMITS.constraintNotes) return `边界/限制不能超过 ${INTAKE_LIMITS.constraintNotes.toLocaleString("zh-CN")} 字。`;
+    const link = supplementUrl.trim();
+    if (link && !/^https?:\/\/\S+$/i.test(link)) return "来源链接需以 http:// 或 https:// 开头。";
+    if (link.length > INTAKE_LIMITS.supplementUrl) return `来源链接不能超过 ${INTAKE_LIMITS.supplementUrl} 字。`;
+    return null;
+  };
   const submit = async () => {
-    if (!title.trim() || !description.trim() || !channel) { setError("请填写标题、需求描述，并选择来源渠道。"); return; }
-    setBusy(true); setError(null);
+    const problem = validateIntake();
+    if (problem) { setError(problem); return; }
+    setBusy(true); setError(null); setConflict(false);
+    const proposerName = proposer && !isMaskedPlaceholder(proposer) ? proposer.trim().slice(0, INTAKE_LIMITS.proposerName) : null;
     try {
       const created = await createRequirement({
         title: title.trim(), description: description.trim(), sourceChannel: channel,
@@ -76,75 +157,105 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
         ...(constraintNotes.trim() ? { constraintNotes: constraintNotes.trim() } : {}),
         ...(supplementUrl.trim() ? { supplementUrl: supplementUrl.trim() } : {}),
         ...(intakeModule ? { intakeModule } : {}),
+        ...(fromChatPaste ? { intakeOrigin: "chat_paste" as const } : {}),
+        ...(proposerName ? { proposerName } : {}),
       }, undefined, idempotencyKey.current);
       reset();
       setOpen(false);
       onCreated(created.requirementId);
     } catch (cause) {
-      // 失败保留输入与幂等键：网络恢复后重试仍是同一次提交，不会重复建需求。
-      setError(cause instanceof ApiError ? cause.message : "提交失败，请重试；同一提交重试不会重复建需求。");
+      if (cause instanceof ApiError && cause.status === 409) {
+        // 同键不同内容：上一次可能其实已经创建成功。保留内容与键，先让用户去确认，再由用户决定换新键重提。
+        setConflict(true);
+        setError(`${cause.message}若上一次提交实际已成功，请先在需求池确认；确认没有这条需求后，可更换提交编号重试。`);
+      } else {
+        // 失败保留输入与幂等键：网络恢复后重试仍是同一次提交，不会重复建需求。
+        setError(intakeErrorMessage(cause, "提交", "提交失败，请重试；同一提交重试不会重复建需求。"));
+      }
     } finally { setBusy(false); }
   };
+  /** 仅在用户明确确认「上次没建成」后使用：换新幂等键重提，可能产生重复需求。 */
+  const retryWithNewKey = () => {
+    idempotencyKey.current = crypto.randomUUID();
+    setConflict(false); setError(null);
+    void submit();
+  };
 
-  return <div className="rules-form intake-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
-    <div className="field" style={{ flexBasis: "100%" }}>
-      {!chatOpen
-        ? <ArcoButton size="small" htmlType="button" onClick={() => setChatOpen(true)} disabled={busy}>从聊天粘贴</ArcoButton>
-        : <>
-            <span>聊天内容（粘贴后由 AI 整理成下面的表单，仍需你确认；聊天原文不会保存）</span>
-            <Input.TextArea aria-label="聊天内容" rows={5} maxLength={20000} placeholder="把聊天里的需求原文粘贴到这里" value={chatText} onChange={(value: string) => setChatText(value)} disabled={busy || extracting} />
-            <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6, flexWrap: "wrap" }}>
-              <ArcoButton type="primary" size="small" htmlType="button" onClick={() => void extract()} disabled={busy || extracting || !chatText.trim()}>{extracting ? "整理中…" : "整理成需求草稿"}</ArcoButton>
-              <ArcoButton size="small" htmlType="button" onClick={() => { setChatOpen(false); setChatError(null); }} disabled={extracting}>收起</ArcoButton>
-              {aiFilled.length > 0 && <span className="status-hint" role="status">已填充表单，带「AI 填充」的字段请核对后再提交。</span>}
-            </div>
-            {chatError && <div className="field-error" role="alert">{chatError}</div>}
-          </>}
-      {proposer && <span className="status-hint" style={{ display: "block", marginTop: 4 }}>聊天中的提出人：{proposer}（仅供参考，不会自动设为负责人；可写进需求描述）</span>}
-      {similar.length > 0 && <div className="status-hint" role="status" style={{ marginTop: 4 }}>可能相似的已有需求（按标题关键字匹配，请自行判断是否重复）：
-        <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>{similar.map((item) => <li key={item.id}>{item.platformRequirementId} · {item.title}</li>)}</ul>
+  return <>
+    <div className="rules-form intake-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
+      <div className="field" style={{ flexBasis: "100%" }}>
+        {!chatOpen
+          ? <ArcoButton size="small" htmlType="button" onClick={() => setChatOpen(true)} disabled={busy}>从聊天粘贴</ArcoButton>
+          : <>
+              <span>聊天内容（粘贴后由 AI 整理成下面的表单，仍需你确认；聊天原文不会保存）</span>
+              <Input.TextArea aria-label="聊天内容" rows={5} maxLength={20000} showWordLimit placeholder="把聊天里的需求原文粘贴到这里" value={chatText} onChange={(value: string) => setChatText(value)} disabled={busy || extracting} />
+              <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6, flexWrap: "wrap" }}>
+                <ArcoButton type="primary" size="small" htmlType="button" onClick={() => void extract()} disabled={busy || extracting || !chatText.trim()}>{extracting ? "整理中…" : "整理成需求草稿"}</ArcoButton>
+                <ArcoButton size="small" htmlType="button" onClick={() => { setChatOpen(false); setChatError(null); }} disabled={extracting}>收起</ArcoButton>
+                {aiFilled.length > 0 && <span className="status-hint" role="status">已填充表单，带「AI 填充」的字段请核对后再提交。</span>}
+              </div>
+              {chatError && <div className="field-error" role="alert">{chatError}</div>}
+            </>}
+        {fallbackDraft && <div className="field-error" role="alert" style={{ display: "block", marginTop: 4 }}>AI 没能整理这段聊天，标题和描述已按脱敏原文填入（未经过 AI 整理），请核对或改写后再提交。</div>}
+        {proposer && !isMaskedPlaceholder(proposer) && <span className="status-hint" style={{ display: "block", marginTop: 4 }}>聊天中的提出人：{proposer}（只做展示，不进负责人匹配、不发通知；提交后显示在需求详情里）</span>}
+        {similar.length > 0 && <div className="status-hint" role="status" style={{ marginTop: 4 }}>可能相似的已有需求（按标题关键字匹配，请自行判断是否重复）：
+          <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>{similar.map((item) => <li key={item.id}>{item.platformRequirementId} · {item.title}</li>)}</ul>
+        </div>}
+      </div>
+      <label className="field" style={{ flex: 2, minWidth: 240 }}>
+        <span>标题 *{aiMark("title")}</span>
+        <Input aria-label="新建需求标题" placeholder="一句话描述用户的问题或诉求" value={title} onChange={(value: string) => { setTitle(value); clearAiMark("title"); }} disabled={busy} />
+      </label>
+      <label className="field">
+        <span>来源渠道 *{aiMark("sourceChannel")}</span>
+        <Select aria-label="新建来源渠道" value={channel} onChange={(value: string) => { setChannel(value); clearAiMark("sourceChannel"); }} disabled={busy} placeholder="请选择" style={{ minWidth: 160 }} options={[{ label: "请选择", value: "" }, ...REQUIREMENT_INTAKE_CHANNELS.map((item) => ({ label: item, value: item }))]} />
+      </label>
+      <label className="field">
+        <span>产品/型号{aiMark("productModel")}</span>
+        <Input aria-label="关联产品或型号" placeholder="选填，如码表 C606" value={productModel} onChange={(value: string) => { setProductModel(value); clearAiMark("productModel"); }} disabled={busy} />
+      </label>
+      <label className="field">
+        <span>需求类型{aiMark("requirementType")}</span>
+        <Select aria-label="需求类型" value={requirementType} onChange={(value: string) => { setRequirementType(value); clearAiMark("requirementType"); }} disabled={busy} placeholder="未选择" style={{ minWidth: 160 }} options={[{ label: "未选择", value: "" }, ...REQUIREMENT_INTAKE_TYPES.map((item) => ({ label: item, value: item }))]} />
+      </label>
+      <label className="field">
+        <span>功能模块{aiMark("intakeModule")}</span>
+        <Select aria-label="功能模块（录入）" value={intakeModule} onChange={(value: string) => { setIntakeModule(value); clearAiMark("intakeModule"); }} disabled={busy} placeholder="未选择" style={{ minWidth: 160 }} options={[{ label: "未选择", value: "" }, ...modules.map((item) => ({ label: item.name, value: item.name }))]} />
+      </label>
+      {moduleCandidate && <span className="status-hint" style={{ flexBasis: "100%" }}>该模块责任人：{moduleCandidate}（候选提示；负责人在创建后的详情里确认分配）</span>}
+      <label className="field" style={{ flexBasis: "100%" }}>
+        <span>边界/限制{aiMark("constraintNotes")}</span>
+        <Input.TextArea aria-label="边界或限制" rows={2} placeholder="选填：兼容性、法规、成本、上市时间等已知约束；未知留空" value={constraintNotes} onChange={(value: string) => { setConstraintNotes(value); clearAiMark("constraintNotes"); }} disabled={busy} />
+      </label>
+      <label className="field" style={{ flexBasis: "100%" }}>
+        <span>来源链接</span>
+        <Input aria-label="来源链接" type="url" placeholder="选填：原始反馈或工单链接（http/https）" value={supplementUrl} onChange={(value: string) => { setSupplementUrl(value); }} disabled={busy} />
+      </label>
+      <label className="field" style={{ flexBasis: "100%" }}>
+        <span>需求描述 *{aiMark("description")}</span>
+        <Input.TextArea aria-label="新建需求描述" rows={4} placeholder={"建议按四段描述（缺段不阻断提交，AI 会标出缺失项）：\n用户/场景：谁在什么场景下…\n现状问题：当前遇到…\n期望结果：希望…\n补充：约束、链接等（可留空）"} value={description} onChange={(value: string) => { setDescription(value); clearAiMark("description"); }} disabled={busy} />
+      </label>
+      <div className="field" style={{ flexBasis: "100%", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <ArcoButton type="primary" size="small" htmlType="button" onClick={() => void submit()} disabled={busy}>提交并进入分析</ArcoButton>
+        <ArcoButton size="small" htmlType="button" onClick={() => { setOpen(false); reset(); }} disabled={busy}>取消</ArcoButton>
+        {busy && <span className="status-hint" role="status">正在提交…</span>}
+      </div>
+      {error && <div className="field-error" role="alert" style={{ flexBasis: "100%" }}>{error}</div>}
+      {conflict && <div className="field" style={{ flexBasis: "100%", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <ArcoButton size="small" htmlType="button" onClick={retryWithNewKey} disabled={busy}>换新键重提</ArcoButton>
+        <span className="status-hint">只在你确认上一次没有创建成功时使用：换了提交编号后重复提交可能产生重复需求。</span>
       </div>}
     </div>
-    <label className="field" style={{ flex: 2, minWidth: 240 }}>
-      <span>标题 *{aiMark("title")}</span>
-      <Input aria-label="新建需求标题" placeholder="一句话描述用户的问题或诉求" value={title} onChange={(value: string) => setTitle(value)} disabled={busy} />
-    </label>
-    <label className="field">
-      <span>来源渠道 *{aiMark("sourceChannel")}</span>
-      <Select aria-label="新建来源渠道" value={channel} onChange={(value: string) => setChannel(value)} disabled={busy} placeholder="请选择" style={{ minWidth: 160 }} options={[{ label: "请选择", value: "" }, ...REQUIREMENT_INTAKE_CHANNELS.map((item) => ({ label: item, value: item }))]} />
-    </label>
-    <label className="field">
-      <span>产品/型号{aiMark("productModel")}</span>
-      <Input aria-label="关联产品或型号" placeholder="选填，如码表 C606" value={productModel} onChange={(value: string) => setProductModel(value)} disabled={busy} />
-    </label>
-    <label className="field">
-      <span>需求类型{aiMark("requirementType")}</span>
-      <Select aria-label="需求类型" value={requirementType} onChange={(value: string) => setRequirementType(value)} disabled={busy} placeholder="未选择" style={{ minWidth: 160 }} options={[{ label: "未选择", value: "" }, ...REQUIREMENT_INTAKE_TYPES.map((item) => ({ label: item, value: item }))]} />
-    </label>
-    <label className="field">
-      <span>功能模块{aiMark("intakeModule")}</span>
-      <Select aria-label="功能模块（录入）" value={intakeModule} onChange={(value: string) => setIntakeModule(value)} disabled={busy} placeholder="未选择" style={{ minWidth: 160 }} options={[{ label: "未选择", value: "" }, ...modules.map((item) => ({ label: item.name, value: item.name }))]} />
-    </label>
-    {moduleCandidate && <span className="status-hint" style={{ flexBasis: "100%" }}>该模块责任人：{moduleCandidate}（候选提示；负责人在创建后的详情里确认分配）</span>}
-    <label className="field" style={{ flexBasis: "100%" }}>
-      <span>边界/限制{aiMark("constraintNotes")}</span>
-      <Input.TextArea aria-label="边界或限制" rows={2} placeholder="选填：兼容性、法规、成本、上市时间等已知约束；未知留空" value={constraintNotes} onChange={(value: string) => setConstraintNotes(value)} disabled={busy} />
-    </label>
-    <label className="field" style={{ flexBasis: "100%" }}>
-      <span>来源链接</span>
-      <Input aria-label="来源链接" type="url" placeholder="选填：原始反馈或工单链接（http/https）" value={supplementUrl} onChange={(value: string) => setSupplementUrl(value)} disabled={busy} />
-    </label>
-    <label className="field" style={{ flexBasis: "100%" }}>
-      <span>需求描述 *{aiMark("description")}</span>
-      <Input.TextArea aria-label="新建需求描述" rows={4} placeholder={"建议按四段描述（缺段不阻断提交，AI 会标出缺失项）：\n用户/场景：谁在什么场景下…\n现状问题：当前遇到…\n期望结果：希望…\n补充：约束、链接等（可留空）"} value={description} onChange={(value: string) => setDescription(value)} disabled={busy} />
-    </label>
-    <div className="field" style={{ flexBasis: "100%", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-      <ArcoButton type="primary" size="small" htmlType="button" onClick={() => void submit()} disabled={busy}>提交并进入分析</ArcoButton>
-      <ArcoButton size="small" htmlType="button" onClick={() => { setOpen(false); reset(); }} disabled={busy}>取消</ArcoButton>
-      {busy && <span className="status-hint" role="status">正在提交…</span>}
-    </div>
-    {error && <div className="field-error" role="alert" style={{ flexBasis: "100%" }}>{error}</div>}
-  </div>;
+    <ConfirmModal
+      visible={pendingDraft !== null}
+      title="草稿与已填内容冲突"
+      description={<>以下字段已经有内容：{pendingDraft?.conflicts.join("、")}。选择「只补空白字段」会保留你已填的内容；选择「覆盖已填字段」会按草稿替换这些字段。</>}
+      okText="覆盖已填字段"
+      cancelText="只补空白字段"
+      onOk={() => { if (pendingDraft) { applyDraft(pendingDraft.draft, "overwrite"); setSimilar(pendingDraft.similar); } setPendingDraft(null); }}
+      onCancel={() => { if (pendingDraft) { applyDraft(pendingDraft.draft, "merge"); setSimilar(pendingDraft.similar); } setPendingDraft(null); }}
+    />
+  </>;
 }
 
 export interface ManualEditSource {

@@ -451,6 +451,10 @@ export interface RequirementQueryRepository {
     constraintNotes?: string | null;
     supplementUrl?: string | null;
     intakeModule?: string | null;
+    /** PRD-26：聊天粘贴来源标记，只写 source_payload，不改 source_type。 */
+    intakeOrigin?: "chat_paste" | null;
+    /** PRD-26：聊天中提到的提出人，只做展示。 */
+    proposerName?: string | null;
     owner?: { feishuUserId: string; feishuIdType: "open_id" | "user_id" | "union_id"; name?: string | null };
   }): Promise<{ requirementId: string; platformRequirementId: string; replay: boolean } | { outcome: "key_conflict" }>;
   // V02-T07：手工需求编辑（仅 web_manual）。期望源版本乐观并发；实质变更原子落新版本/快照/审计/分析任务；

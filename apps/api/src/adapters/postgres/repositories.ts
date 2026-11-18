@@ -163,7 +163,7 @@ async updateManualRequirement(p:{requirementId:string;expectedSourceVersion:numb
   try{
     await c.query("BEGIN");
     // 行锁先行：并发同键编辑在行锁上串行，之后回执检查才能正确重放/冲突（与 create 同理）。
-    const row=(await c.query("SELECT id,source_type,source_version,title,description,source_channel,product_model,requirement_type,constraint_notes,supplement_url,intake_module,source_hash,substantive_hash FROM requirements WHERE id=$1 FOR UPDATE",[p.requirementId])).rows[0];
+    const row=(await c.query("SELECT id,source_type,source_version,title,description,source_channel,product_model,requirement_type,constraint_notes,supplement_url,intake_module,source_payload,proposer_name,source_hash,substantive_hash FROM requirements WHERE id=$1 FOR UPDATE",[p.requirementId])).rows[0];
     const receipt=await c.query("SELECT requirement_id,request_hash,outcome,substantive_changed,source_version FROM requirement_edit_receipts WHERE idempotency_key=$1",[p.idempotencyKey]);
     if(receipt.rows[0]){
       const hit=receipt.rows[0];
@@ -183,7 +183,9 @@ async updateManualRequirement(p:{requirementId:string;expectedSourceVersion:numb
     const nextType=p.requirementType!==undefined?p.requirementType:row.requirement_type===null?null:String(row.requirement_type);
     const nextNotes=p.constraintNotes!==undefined?p.constraintNotes:row.constraint_notes===null?null:String(row.constraint_notes);
     const nextUrl=p.supplementUrl!==undefined?p.supplementUrl:row.supplement_url===null?null:String(row.supplement_url);
-    const payload={sourceType:"web_manual",title:nextTitle,description:nextDescription,sourceChannel:nextChannel,productModel:nextProduct,requirementType:nextType,constraintNotes:nextNotes,supplementUrl:nextUrl,intakeModule:row.intake_module===null||row.intake_module===undefined?null:String(row.intake_module)};
+    // 编辑不改来源标记与提出人：重建 source_payload 时原样带过来，否则详情「提出人」与 5c 的来源徽标会在第一次编辑后丢失。
+    const preservedProvenance=row.source_payload&&typeof row.source_payload==="object"?row.source_payload as Record<string,unknown>:{};
+    const payload={sourceType:"web_manual",title:nextTitle,description:nextDescription,sourceChannel:nextChannel,productModel:nextProduct,requirementType:nextType,constraintNotes:nextNotes,supplementUrl:nextUrl,intakeModule:row.intake_module===null||row.intake_module===undefined?null:String(row.intake_module),...(typeof preservedProvenance.intakeOrigin==="string"?{intakeOrigin:preservedProvenance.intakeOrigin}:{}),...(row.proposer_name?{proposerName:String(row.proposer_name)}:{})};
     const nextSubstantive=substantiveHash({title:nextTitle,description:nextDescription,scope:null,acceptanceCriteria:null,attachmentRefs:[]});
     const metadataChanged=(nextChannel!==String(row.source_channel))||(nextUrl!==(row.supplement_url===null?null:String(row.supplement_url)))||(nextType!==(row.requirement_type===null?null:String(row.requirement_type)));
     const definitionChanged=(nextSubstantive!==String(row.substantive_hash))||(nextProduct!==(row.product_model===null?null:String(row.product_model)))||(nextNotes!==(row.constraint_notes===null?null:String(row.constraint_notes)));
@@ -302,7 +304,7 @@ async createKanoRun(p:{requirementId:string;sourceVersion:number;audienceSnapsho
 async completeKanoRun(id:string,result:unknown,model:string|null){const{rows}=await this.pool.query("UPDATE kano_runs SET status='succeeded',result=$2,model=$3,completed_at=now() WHERE id=$1 AND status='running' RETURNING *",[id,JSON.stringify(result),model]);return rows[0]?kanoRun(rows[0]):null;}
 async failKanoRun(id:string,safeErrorCode:string,safeErrorSummary:string){const{rows}=await this.pool.query("UPDATE kano_runs SET status='failed',safe_error_code=$2,safe_error_summary=$3,completed_at=now() WHERE id=$1 AND status='running' RETURNING *",[id,safeErrorCode,safeErrorSummary]);return rows[0]?kanoRun(rows[0]):null;}
 async findIntakeReceipt(key:string){const{rows}=await this.pool.query("SELECT requirement_id,request_hash,actor_id FROM requirement_intake_receipts WHERE idempotency_key=$1",[key]);return rows[0]?{requirementId:String(rows[0].requirement_id),requestHash:String(rows[0].request_hash),actorId:String(rows[0].actor_id)}:null;}
-async createManualRequirement(p:{idempotencyKey:string;actorId:string;requestHash:string;title:string;description:string|null;sourceChannel:string;productModel?:string|null;requirementType?:string|null;constraintNotes?:string|null;supplementUrl?:string|null;intakeModule?:string|null;owner?:{feishuUserId:string;feishuIdType:"open_id"|"user_id"|"union_id";name?:string|null};}){
+async createManualRequirement(p:{idempotencyKey:string;actorId:string;requestHash:string;title:string;description:string|null;sourceChannel:string;productModel?:string|null;requirementType?:string|null;constraintNotes?:string|null;supplementUrl?:string|null;intakeModule?:string|null;intakeOrigin?:"chat_paste"|null;proposerName?:string|null;owner?:{feishuUserId:string;feishuIdType:"open_id"|"user_id"|"union_id";name?:string|null};}){
   const c=await this.pool.connect();
   try{
     await c.query("BEGIN");
@@ -316,17 +318,17 @@ async createManualRequirement(p:{idempotencyKey:string;actorId:string;requestHas
     }
     const next=await c.query("SELECT COALESCE(MAX(SUBSTRING(platform_requirement_id FROM 4)::bigint),0)+1 AS next_number FROM requirements WHERE platform_requirement_id ~ '^RQ-[0-9]+$'");
     const platformRequirementId=`RQ-${String(next.rows[0].next_number).padStart(6,"0")}`;
-    const payload={sourceType:"web_manual",title:p.title,description:p.description,sourceChannel:p.sourceChannel,productModel:p.productModel??null,requirementType:p.requirementType??null,constraintNotes:p.constraintNotes??null,supplementUrl:p.supplementUrl??null,intakeModule:p.intakeModule??null};
+    const payload={sourceType:"web_manual",title:p.title,description:p.description,sourceChannel:p.sourceChannel,productModel:p.productModel??null,requirementType:p.requirementType??null,constraintNotes:p.constraintNotes??null,supplementUrl:p.supplementUrl??null,intakeModule:p.intakeModule??null,...(p.intakeOrigin?{intakeOrigin:p.intakeOrigin}:{}),...(p.proposerName?{proposerName:p.proposerName}:{})};
     const hash=stableHash(payload);
     const sub=substantiveHash({title:p.title,description:p.description,scope:null,acceptanceCriteria:null,attachmentRefs:[]});
     const id=randomUUID();
     const ownerState=p.owner?"manually_mapped":"not_required";
-    await c.query("INSERT INTO requirements(id,source_type,source_channel,source_config_id,teambition_requirement_id,title,description,product_model,requirement_type,constraint_notes,supplement_url,intake_module,source_hash,substantive_hash,source_version,platform_requirement_id,pull_state,analysis_state,owner_state,push_state,manual_owner_feishu_user_id,manual_owner_feishu_id_type,manual_owner_name,manual_owner_assigned_by,manual_owner_assigned_at,source_payload) VALUES($1,'web_manual',$2,NULL,NULL,$3,$4,$5,$6,$7,$8,$9,$10,$11,1,$12,'collected','pending',$13,'pending',$14,$15,$16,$17,$18,$19)",[id,p.sourceChannel,p.title,p.description,p.productModel??null,p.requirementType??null,p.constraintNotes??null,p.supplementUrl??null,p.intakeModule??null,hash,sub,platformRequirementId,ownerState,p.owner?.feishuUserId??null,p.owner?.feishuIdType??null,p.owner?.name??null,p.actorId,p.owner?new Date().toISOString():null,JSON.stringify(payload)]);
+    await c.query("INSERT INTO requirements(id,source_type,source_channel,source_config_id,teambition_requirement_id,title,description,product_model,requirement_type,constraint_notes,supplement_url,intake_module,proposer_name,source_hash,substantive_hash,source_version,platform_requirement_id,pull_state,analysis_state,owner_state,push_state,manual_owner_feishu_user_id,manual_owner_feishu_id_type,manual_owner_name,manual_owner_assigned_by,manual_owner_assigned_at,source_payload) VALUES($1,'web_manual',$2,NULL,NULL,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,1,$13,'collected','pending',$14,'pending',$15,$16,$17,$18,$19,$20)",[id,p.sourceChannel,p.title,p.description,p.productModel??null,p.requirementType??null,p.constraintNotes??null,p.supplementUrl??null,p.intakeModule??null,p.proposerName??null,hash,sub,platformRequirementId,ownerState,p.owner?.feishuUserId??null,p.owner?.feishuIdType??null,p.owner?.name??null,p.actorId,p.owner?new Date().toISOString():null,JSON.stringify(payload)]);
     await c.query("INSERT INTO source_snapshots(id,requirement_id,source_version,source_hash,substantive_hash,payload,is_substantive_change,captured_at) VALUES($1,$2,1,$3,$4,$5,true,now())",[randomUUID(),id,hash,sub,JSON.stringify(payload)]);
     await c.query("INSERT INTO requirement_intake_receipts(idempotency_key,actor_id,request_hash,requirement_id) VALUES($1,$2,$3,$4)",[p.idempotencyKey,p.actorId,p.requestHash,id]);
     await c.query("INSERT INTO pipeline_jobs(id,job_type,dedupe_key,payload,available_at,max_attempts) VALUES($1,'analysis',$2,$3,now(),5) ON CONFLICT(dedupe_key) DO NOTHING",[randomUUID(),`analysis:${id}:v1`,JSON.stringify({requirementId:id,sourceVersion:1,substantiveHash:sub,actorId:p.actorId})]);
     // 审计与需求同事务提交（V02-T04-AC04）：入库失败时整笔回滚，不留无审计的收录。
-    await c.query("INSERT INTO audit_events(id,actor_id,event_type,entity_type,entity_id,result,safe_details,occurred_at) VALUES($1,$2,'intake.created','requirement',$3,'succeeded',$4,now())",[randomUUID(),p.actorId,id,JSON.stringify({sourceType:"web_manual",sourceChannel:p.sourceChannel})]);
+    await c.query("INSERT INTO audit_events(id,actor_id,event_type,entity_type,entity_id,result,safe_details,occurred_at) VALUES($1,$2,'intake.created','requirement',$3,'succeeded',$4,now())",[randomUUID(),p.actorId,id,JSON.stringify({sourceType:"web_manual",sourceChannel:p.sourceChannel,...(p.intakeOrigin?{intakeOrigin:p.intakeOrigin}:{})})]);
     await c.query("COMMIT");
     return{requirementId:id,platformRequirementId,replay:false};
   }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}

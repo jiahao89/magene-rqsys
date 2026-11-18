@@ -1223,8 +1223,7 @@ describe("RequirementsPanel intake (V02-T04)", () => {
     expect(posts).toHaveLength(0);
     fireEvent.click(screen.getByRole("button", { name: "提交并进入分析" }));
     await waitFor(() => expect(posts).toHaveLength(1));
-    expect(posts[0]!.body).toEqual({ title: "导出骑行报表", description: "售后反馈用户希望导出报表", sourceChannel: "售后" });
-    expect(JSON.stringify(posts[0]!.body)).not.toContain("proposer");
+    expect(posts[0]!.body).toEqual({ title: "导出骑行报表", description: "售后反馈用户希望导出报表", sourceChannel: "售后", intakeOrigin: "chat_paste", proposerName: "小王" });
   });
 
   it("shows the server message and keeps manual entry available when chat extraction fails", async () => {
@@ -1245,6 +1244,213 @@ describe("RequirementsPanel intake (V02-T04)", () => {
     expect(screen.getByLabelText("新建需求标题")).toHaveValue("");
     fireEvent.change(screen.getByLabelText("新建需求标题"), { target: { value: "手工填写" } });
     expect(screen.getByLabelText("新建需求标题")).toHaveValue("手工填写");
+  });
+
+  // 5a 补丁：同一个提交意图内幂等键不因「重新整理草稿」而轮换，失败重试不会重复建需求。
+  it("keeps the same idempotency key when the draft is re-extracted after a failed submit", async () => {
+    const keys: string[] = [];
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/requirements/intake-draft" && init?.method === "POST") {
+        return Response.json({
+          draft: { title: "导出骑行报表", description: "售后反馈用户希望导出报表", sourceChannel: "售后", requirementType: null, productModel: null, constraintNotes: null, intakeModule: null, proposer: null, aiFilled: ["title", "description", "sourceChannel"] },
+          similar: [], fallback: false, aiFilledCount: 3,
+        });
+      }
+      if (path === "/api/requirements" && init?.method === "POST") {
+        keys.push(new Headers(init.headers).get("Idempotency-Key") ?? "");
+        if (keys.length === 1) return Response.json({ error: { code: "DEPENDENCY_UNAVAILABLE", message: "upstream" } }, { status: 503 });
+        return Response.json({ requirementId: "req-new", sourceType: "web_manual", status: "collected" }, { status: 201 });
+      }
+      if (path.startsWith("/api/requirements/")) return Response.json(intakeDetail);
+      if (path === "/api/people") return Response.json({ items: [] });
+      return Response.json({ items: [intakeRow], nextCursor: null });
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    fireEvent.click(await screen.findByRole("button", { name: "从聊天粘贴" }));
+    fireEvent.change(screen.getByLabelText("聊天内容"), { target: { value: "客户想导出报表" } });
+    fireEvent.click(screen.getByRole("button", { name: "整理成需求草稿" }));
+    await waitFor(() => expect(screen.getByLabelText("新建需求标题")).toHaveValue("导出骑行报表"));
+    fireEvent.click(screen.getByRole("button", { name: "提交并进入分析" }));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    // 同一段聊天再次整理：草稿与表单一致，不弹冲突确认，键保持不变。
+    fireEvent.click(screen.getByRole("button", { name: "整理成需求草稿" }));
+    await waitFor(() => expect(screen.getByLabelText("新建需求标题")).toHaveValue("导出骑行报表"));
+    expect(screen.queryByText("草稿与已填内容冲突")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "提交并进入分析" }));
+    await waitFor(() => expect(keys.length).toBe(2));
+    expect(keys[0]).toBe(keys[1]);
+  });
+
+  // 5a 补丁：已填内容先确认，默认合并只补空白字段，不静默冲掉用户输入。
+  it("merges the draft into only the empty fields when the form already has content", async () => {
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/requirements/intake-draft" && init?.method === "POST") {
+        return Response.json({
+          draft: { title: "AI 标题", description: "AI 整理后的描述", sourceChannel: "售后", requirementType: null, productModel: null, constraintNotes: null, intakeModule: null, proposer: "小王", aiFilled: ["title", "description", "sourceChannel"] },
+          similar: [], fallback: false, aiFilledCount: 3,
+        });
+      }
+      if (path === "/api/people") return Response.json({ items: [] });
+      return Response.json({ items: [intakeRow], nextCursor: null });
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    fireEvent.click(await screen.findByRole("button", { name: "新建需求" }));
+    fireEvent.change(screen.getByLabelText("新建需求标题"), { target: { value: "手工标题" } });
+    await chooseArcoOption("新建来源渠道", "销售");
+    fireEvent.click(screen.getByRole("button", { name: "从聊天粘贴" }));
+    fireEvent.change(screen.getByLabelText("聊天内容"), { target: { value: "客户想导出报表" } });
+    fireEvent.click(screen.getByRole("button", { name: "整理成需求草稿" }));
+    expect(await screen.findByText("草稿与已填内容冲突")).toBeInTheDocument();
+    expect(screen.getByText(/标题、来源渠道/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "只补空白字段" }));
+    // 已填标题和渠道保留，只有空白描述被草稿补上；标记只挂在真正由 AI 写入的字段上。
+    expect(screen.getByLabelText("新建需求标题")).toHaveValue("手工标题");
+    expect(screen.getByLabelText("新建需求描述")).toHaveValue("AI 整理后的描述");
+    expect(arcoSelectText("新建来源渠道")).toContain("销售");
+    expect(screen.getAllByTitle("由 AI 根据聊天内容填充，请核对后再提交")).toHaveLength(1);
+  });
+
+  it("overwrites the filled fields only after the user confirms it", async () => {
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/requirements/intake-draft" && init?.method === "POST") {
+        return Response.json({
+          draft: { title: "AI 标题", description: "AI 整理后的描述", sourceChannel: "售后", requirementType: null, productModel: null, constraintNotes: null, intakeModule: null, proposer: null, aiFilled: ["title", "description", "sourceChannel"] },
+          similar: [], fallback: false, aiFilledCount: 3,
+        });
+      }
+      if (path === "/api/people") return Response.json({ items: [] });
+      return Response.json({ items: [intakeRow], nextCursor: null });
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    fireEvent.click(await screen.findByRole("button", { name: "新建需求" }));
+    fireEvent.change(screen.getByLabelText("新建需求标题"), { target: { value: "手工标题" } });
+    await chooseArcoOption("新建来源渠道", "销售");
+    fireEvent.click(screen.getByRole("button", { name: "从聊天粘贴" }));
+    fireEvent.change(screen.getByLabelText("聊天内容"), { target: { value: "客户想导出报表" } });
+    fireEvent.click(screen.getByRole("button", { name: "整理成需求草稿" }));
+    expect(await screen.findByText("草稿与已填内容冲突")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "覆盖已填字段" }));
+    expect(screen.getByLabelText("新建需求标题")).toHaveValue("AI 标题");
+    expect(arcoSelectText("新建来源渠道")).toContain("售后");
+    expect(screen.getAllByTitle("由 AI 根据聊天内容填充，请核对后再提交")).toHaveLength(3);
+  });
+
+  // 5a 补丁：用户一编辑，「AI 填充」标记就该撤销，否则标记会失真。
+  it("removes the AI-filled mark as soon as the user edits a field", async () => {
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/requirements/intake-draft" && init?.method === "POST") {
+        return Response.json({
+          draft: { title: "AI 标题", description: "AI 整理后的描述", sourceChannel: "售后", requirementType: null, productModel: null, constraintNotes: null, intakeModule: null, proposer: null, aiFilled: ["title", "description", "sourceChannel"] },
+          similar: [], fallback: false, aiFilledCount: 3,
+        });
+      }
+      if (path === "/api/people") return Response.json({ items: [] });
+      return Response.json({ items: [intakeRow], nextCursor: null });
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    fireEvent.click(await screen.findByRole("button", { name: "从聊天粘贴" }));
+    fireEvent.change(screen.getByLabelText("聊天内容"), { target: { value: "客户想导出报表" } });
+    fireEvent.click(screen.getByRole("button", { name: "整理成需求草稿" }));
+    await waitFor(() => expect(screen.getByLabelText("新建需求标题")).toHaveValue("AI 标题"));
+    expect(screen.getAllByTitle("由 AI 根据聊天内容填充，请核对后再提交")).toHaveLength(3);
+    fireEvent.change(screen.getByLabelText("新建需求标题"), { target: { value: "人工改写后的标题" } });
+    expect(screen.getAllByTitle("由 AI 根据聊天内容填充，请核对后再提交")).toHaveLength(2);
+  });
+
+  it("shows how long to wait and the chat word count when extraction is rate limited", async () => {
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/requirements/intake-draft" && init?.method === "POST") {
+        return Response.json({ error: { code: "RATE_LIMITED", message: "操作太频繁，请稍后再试。" } }, { status: 429, headers: { "Retry-After": "42" } });
+      }
+      if (path === "/api/people") return Response.json({ items: [] });
+      return Response.json({ items: [intakeRow], nextCursor: null });
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    fireEvent.click(await screen.findByRole("button", { name: "从聊天粘贴" }));
+    fireEvent.change(screen.getByLabelText("聊天内容"), { target: { value: "客户想导出报表" } });
+    expect(screen.getByText("7/20000")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "整理成需求草稿" }));
+    expect(await screen.findByText(/还需等待约 42 秒/)).toBeInTheDocument();
+  });
+
+  // 5a 补丁：服务端 fallback=true 时必须说明「未经过 AI 整理」，不能让人以为已经整理好。
+  it("warns when the draft fell back to the masked transcript", async () => {
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/requirements/intake-draft" && init?.method === "POST") {
+        return Response.json({
+          draft: { title: "张伟 2026-11-18 09:12", description: "（手机号已掩码）：希望导出报表", sourceChannel: null, requirementType: null, productModel: null, constraintNotes: null, intakeModule: null, proposer: "（姓名已掩码）", aiFilled: [] },
+          similar: [], fallback: true, aiFilledCount: 0,
+        });
+      }
+      if (path === "/api/people") return Response.json({ items: [] });
+      return Response.json({ items: [intakeRow], nextCursor: null });
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    fireEvent.click(await screen.findByRole("button", { name: "从聊天粘贴" }));
+    fireEvent.change(screen.getByLabelText("聊天内容"), { target: { value: "张伟：希望导出报表" } });
+    fireEvent.click(screen.getByRole("button", { name: "整理成需求草稿" }));
+    expect(await screen.findByText(/AI 没能整理这段聊天/)).toBeInTheDocument();
+    expect(screen.getByLabelText("新建需求标题")).toHaveValue("张伟 2026-11-18 09:12");
+    expect(screen.queryAllByTitle("由 AI 根据聊天内容填充，请核对后再提交")).toHaveLength(0);
+    expect(screen.queryByText(/聊天中的提出人/)).not.toBeInTheDocument();
+  });
+
+  it("rejects over-long fields before calling the create endpoint", async () => {
+    const posts: string[] = [];
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/requirements" && init?.method === "POST") { posts.push(path); return Response.json({}, { status: 201 }); }
+      if (path === "/api/people") return Response.json({ items: [] });
+      return Response.json({ items: [intakeRow], nextCursor: null });
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    fireEvent.click(await screen.findByRole("button", { name: "新建需求" }));
+    fireEvent.change(screen.getByLabelText("新建需求标题"), { target: { value: "标".repeat(201) } });
+    await chooseArcoOption("新建来源渠道", "售后");
+    fireEvent.change(screen.getByLabelText("新建需求描述"), { target: { value: "用户希望导出报表" } });
+    fireEvent.click(screen.getByRole("button", { name: "提交并进入分析" }));
+    expect(await screen.findByText(/标题不能超过 200 字/)).toBeInTheDocument();
+    expect(posts).toHaveLength(0);
+  });
+
+  // 5a 补丁：409 表示同键不同内容（上一次可能已创建），给用户换新键重提的出口。
+  it("offers a new-key retry when the idempotency key conflicts", async () => {
+    const keys: string[] = [];
+    let detailOpened = false;
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/requirements/intake-draft" && init?.method === "POST") {
+        return Response.json({
+          draft: { title: "导出骑行报表", description: "售后反馈用户希望导出报表", sourceChannel: "售后", requirementType: null, productModel: null, constraintNotes: null, intakeModule: null, proposer: null, aiFilled: ["title", "description", "sourceChannel"] },
+          similar: [], fallback: false, aiFilledCount: 3,
+        });
+      }
+      if (path === "/api/requirements" && init?.method === "POST") {
+        keys.push(new Headers(init.headers).get("Idempotency-Key") ?? "");
+        if (keys.length === 1) return Response.json({ error: { code: "CONFLICT", message: "该幂等键已用于不同的提交内容。" } }, { status: 409 });
+        return Response.json({ requirementId: "req-new", sourceType: "web_manual", status: "collected" }, { status: 201 });
+      }
+      if (path.startsWith("/api/requirements/")) { detailOpened = true; return Response.json(intakeDetail); }
+      if (path === "/api/people") return Response.json({ items: [] });
+      return Response.json({ items: [intakeRow], nextCursor: null });
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    fireEvent.click(await screen.findByRole("button", { name: "从聊天粘贴" }));
+    fireEvent.change(screen.getByLabelText("聊天内容"), { target: { value: "客户想导出报表" } });
+    fireEvent.click(screen.getByRole("button", { name: "整理成需求草稿" }));
+    await waitFor(() => expect(screen.getByLabelText("新建需求标题")).toHaveValue("导出骑行报表"));
+    fireEvent.click(screen.getByRole("button", { name: "提交并进入分析" }));
+    expect(await screen.findByText(/该幂等键已用于不同的提交内容。/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "换新键重提" }));
+    await waitFor(() => expect(detailOpened).toBe(true));
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).not.toBe(keys[1]);
   });
 });
 
