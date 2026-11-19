@@ -1,0 +1,1562 @@
+
+> test
+> node --import=tsx --test 'src/**/*.test.ts'
+
+✔ uses the documented user-authenticated GET search and users response (32.300083ms)
+✔ rejects expired credentials without retaining provider messages (0.456958ms)
+✔ pool is disabled without a database url (0.657791ms)
+✔ pool size defaults to 10 and honours PG_POOL_MAX (0.284667ms)
+✖ source configuration create/get persists a minute-precision schedule, owner names and field map (11.357667ms)
+✖ source config round-trips the multi-weekday list (5.887625ms)
+✖ source config mutation and audit append share one transaction (1.65525ms)
+✖ MVP source configuration is database-enforced as a singleton (1.587166ms)
+✖ requirements receive stable sequential RQ IDs without changing the TB upsert key (1.464ms)
+✖ sync batch create is idempotent and blocks a parallel active batch (1.62775ms)
+✖ persistent job queue claims a lease and completes the job with fencing (1.503833ms)
+✖ fixture rejection settles its batch atomically and a stale claimant cannot overwrite recovery (1.407208ms)
+✖ analysis records append versions and keep the earlier run (1.803458ms)
+✖ analysis completion rejects a result produced for a stale source version (1.947416ms)
+✖ PM snapshots and audit events persist and can be read (1.481542ms)
+✖ requirement upsert round-trips source URL and latest batch (3.768625ms)
+✖ requirement search keyset cursor returns a second page (2.413625ms)
+✖ suspected duplicates stay in the pool/counts and keep detail links (12.3715ms)
+✖ batch keyset cursor does not skip rows with identical start times and applies inclusive time filters (5.171666ms)
+✖ system flags persist the AI pause state (I3-3) (2.520125ms)
+✖ ops metrics aggregate completed sync batches in the window (PRD 10) (4.7075ms)
+✖ source-missing marking flags only unseen TB requirements and clears on reappearance (Q4) (10.929208ms)
+✖ pool search treats % and _ literally and ships the search indexes (3.353833ms)
+✖ changed source upsert atomically snapshots, resets analysis and push, and only clears owner mapping when the TB owner changes (1.371917ms)
+✖ sync item persists orchestrator started time (3.12375ms)
+✖ PM snapshot wiring keys on the database requirement id, never the Teambition id (4.486542ms)
+✖ requirement advisory lock serializes the same requirement and releases on failure (1.771584ms)
+✖ concurrent pushes of the same requirement serialize through the advisory lock and write one Base row (1.39625ms)
+✖ a no-TB-owner requirement keeps a per-requirement owner across syncs until it is cleared (1.735208ms)
+✖ releaseManualOwner clears the assignment and moves the state in one transaction, including the bridge from manually_mapped (1.64975ms)
+✖ assigning a per-requirement owner to a missing requirement fails without side effects (2.425666ms)
+✖ V02-T02 manual intake: transactional create, idempotent replay, shared RQ allocator (1.62ms)
+✖ V02-T02 source branch constraints: TB rows require identity; manual rows reject TB identity (1.420041ms)
+✖ V02-T07 manual edit: substantive/metadata/no-change/version-conflict/TB-read-only/replay (1.421ms)
+✖ V02-T09 audience tags: multi-select, confirmed-empty, optimistic version, no side effects (1.5685ms)
+✖ V02-T11 RICE draft: save, merge, optimistic conflict, history, no side effects (5.289917ms)
+✖ V02-T13 Kano evidence: import, PII flag blocks approval, clean approve, immutable versions (6.89275ms)
+✖ V02-T14 Kano runs: versioned create with active guard, job+audit in txn, lifecycle states (0.831917ms)
+✖ V02-S06 score versions: AI suggestion, manual confirmation and AI adoption keep one current version (0.550916ms)
+✖ V02-T10 seeded v1 rule remains historical; V02-S06 scoring v2 is the single published rule (0.723167ms)
+✖ confirmed duplicate decisions suppress processing and survive requirement re-upsert (1.418292ms)
+✖ V02-T26 priority override and analysis context persist and drive overview counts (6.387333ms)
+✔ team directory CRUD survives a transport that cannot serialize PostgreSQL void (2.673042ms)
+✔ audit intake counts avoid array parameters and FILTER so the target transport can bind them (5.690459ms)
+✔ base form intake inserts source_type base_form with a record-id identity guard (0.540916ms)
+✔ team directory reports roster bindings and flags same-name multi-account conflicts (0.398416ms)
+✔ binding a person inserts one roster mapping and rejects an account already bound elsewhere (0.692541ms)
+✔ binding a person adopts an existing unnamed TB-scoped mapping for the same Feishu account (0.174708ms)
+✔ renaming a person carries the binding and refuses a target name bound to another account (0.278459ms)
+✔ requirement-level manual mapping replaces only that person's name-scoped mapping (0.208916ms)
+✔ deleting a person deactivates every active mapping for that name (0.15775ms)
+✔ source config repository maps persisted snake_case fields (0.208459ms)
+✔ overview aggregation excludes synthetic fixtures and maps database counts (0.184416ms)
+✔ source config JSON fields are passed as JSON, not PostgreSQL array literals (0.136417ms)
+✔ audit search uses parameterized filters and limit (0.068958ms)
+✔ manual metadata edit enqueues a deterministic base-push key and requeues a finished job (0.299167ms)
+✔ RICE draft save returns unchanged without a new version when merged inputs equal the stored ones (0.15975ms)
+✔ RICE draft save rejects a stale source baseline instead of editing over a newer requirement (0.080875ms)
+✔ audit persistence strips fields outside the safe details allowlist (0.063834ms)
+✔ batch search applies inclusive time bounds and a stable composite cursor (0.071833ms)
+✔ requirement search filters by latest batch and last-seen time on the server (0.095542ms)
+✔ priority triage search filters effective priority and disables cursor pagination (0.049166ms)
+✔ requirement search escapes LIKE wildcards and uses the indexed UTC keyset expression (0.074583ms)
+✔ base push repository looks up a run by idempotency key (0.075083ms)
+✔ ops metrics query uses the computed window and returns a stable shape on empty data (0.19425ms)
+✔ ops view lists failed jobs with a bounded parameterized query (0.094333ms)
+✔ job claim uses SKIP LOCKED and expires old leases (0.077042ms)
+✔ first module dictionary save persists the built-in roster (0.10125ms)
+✔ module dictionary save refuses an empty list without retiring the published version (0.126667ms)
+✔ enqueue reopens a terminally failed job for an explicit same-key retry (0.063ms)
+✖ repository contract [pg]: requirement upsert keeps source identity and issues sequential RQ IDs (17.799875ms)
+✖ repository contract [pg]: manual owner upsert accepts a null Teambition user id (2026-10-22 503 path) (2.930375ms)
+✖ repository contract [pg]: person binding adopts an unnamed mapping and refuses a second person (2.750125ms)
+✖ repository contract [pg]: analysis completion persists provider provenance (1.496958ms)
+✖ repository contract [pg]: batch listing tolerates omitted typed time filters (1.798708ms)
+✖ repository contract [pg]: requirement search applies filters and keyset pagination without skipping rows (4.164667ms)
+✖ repository contract [pg]: duplicate hints are persisted without merging or deleting rows (1.54125ms)
+✖ repository contract [pg]: job claim uses a lease and only the current attempt can complete (1.6035ms)
+✖ repository contract [pg]: settling a failed sync job also closes its running batch atomically (1.738791ms)
+✖ repository contract [pg]: publishing a dictionary retires the previously published version (2.19375ms)
+✖ repository contract [drizzle-text-order]: requirement upsert keeps source identity and issues sequential RQ IDs (1.837458ms)
+✖ repository contract [drizzle-text-order]: manual owner upsert accepts a null Teambition user id (2026-10-22 503 path) (1.64875ms)
+✖ repository contract [drizzle-text-order]: person binding adopts an unnamed mapping and refuses a second person (2.207708ms)
+✖ repository contract [drizzle-text-order]: analysis completion persists provider provenance (4.308917ms)
+✖ repository contract [drizzle-text-order]: batch listing tolerates omitted typed time filters (1.259708ms)
+✖ repository contract [drizzle-text-order]: requirement search applies filters and keyset pagination without skipping rows (1.163625ms)
+✖ repository contract [drizzle-text-order]: duplicate hints are persisted without merging or deleting rows (1.217584ms)
+✖ repository contract [drizzle-text-order]: job claim uses a lease and only the current attempt can complete (0.921875ms)
+✖ repository contract [drizzle-text-order]: settling a failed sync job also closes its running batch atomically (1.049708ms)
+✖ repository contract [drizzle-text-order]: publishing a dictionary retires the previously published version (1.013666ms)
+✖ text-order placeholder shim reproduces the target-transport failure that plain pg tolerates (1.148667ms)
+✔ sync terminal state is accompanied by an actor-attributed audit event (3.103834ms)
+✔ resolves an exact project name and its unique requirement task type (35.8245ms)
+✔ does not resolve a project by a partial or different name (0.572625ms)
+✔ rejects duplicate project names instead of selecting the first project (0.539375ms)
+✔ rejects multiple requirement task types even when one is named exactly 需求 (0.36625ms)
+✔ surfaces only the HTTP status for gateway failures (0.197583ms)
+✔ fails closed at construction when the gateway URL is missing and names the env var (0.085708ms)
+✔ fails closed at construction when the gateway API key is missing and names the env var (0.054834ms)
+✔ duplicate allowlisted custom field IDs use the last returned value deterministically (1.713083ms)
+✔ custom-field allowlist excludes unrelated and duplicate unknown IDs (0.085042ms)
+✔ malformed serialized custom fields fail closed to an empty projection (0.080291ms)
+✔ rtf fields become readable text and lookup fields retain proposer identity separately (0.668375ms)
+✔ buildAnalysisRequest masks listed identity PII and pattern-matched contact details in all model text (1.496833ms)
+✔ validateAnalysisOutput accepts a fully evidenced contract, ignores model priority, and rejects bad module/evidence/inference (9.497042ms)
+✔ provider config does not invent credentials when AI_API_KEY is unset (0.143792ms)
+✔ provider accepts fenced JSON returned by Claude-compatible models (33.711292ms)
+✔ provider omits temperature when AI_TEMPERATURE is none for Claude-compatible gateways (3.028792ms)
+✔ DeepSeek provider sends JSON-mode request and parses structured response via injected fetch (0.549209ms)
+✔ provider resolves model evidence references to exact source excerpts (0.365916ms)
+✔ provider ignores an AI-generated priority when no calibrated rule is published (0.271167ms)
+✔ failed analysis keeps provider/model/prompt attribution (complete() writes unspecified columns as NULL) (3.398666ms)
+✔ parseModelJson parses plain JSON first, so fences inside string values are never mis-cut (0.67025ms)
+✔ analysis orchestration appends versions, safely records provider failures, and does not touch PM fields (0.449209ms)
+✔ analysis is refused until the source snapshot has persisted (0.288167ms)
+✔ analysis config keeps API credential absent rather than making an external call (0.43ms)
+✔ V02-T14 target finding: fact check tolerates whitespace/width but rejects paraphrase (1.267417ms)
+✔ maskPii covers extra identity markers: platform user IDs, ID cards and @mentions (0.0795ms)
+✔ maskPii redacts a person name embedded in a labeled Teambition feedback title (0.079542ms)
+✔ outbound model payload carries no names, user IDs, contacts, credentials or attachment content (ticket 13) (0.43675ms)
+✔ evidence uses the same NFKC/whitespace normalization as facts, while fabricated quotes still fail (0.201875ms)
+✔ V02-T08 audience contract: defaults, controlled levels, source-bound evidence (0.487834ms)
+✔ a response body that stalls until the deadline fails as a timeout, not a hang (54.019875ms)
+✔ appends the manual analysis context as a separate labeled section (0.620666ms)
+✔ reads the note from RequirementRecord.analysisContext when the record is passed directly (0.05725ms)
+✔ omits the supplement section when the note is absent or empty (0.051791ms)
+✔ countPiiFindings covers the mention and platform-user-id patterns that maskPii already masks (1.298334ms)
+✔ maskPii masks mentions and platform user ids (0.096709ms)
+✔ recommendationValues 提取四维建议取值作为评分映射的查找键 (2.729292ms)
+✔ buildPriorityRule：按已批准评分映射与阈值确定性映射 P0–P3 (0.224209ms)
+✔ buildPriorityRule：建议取值不在评分映射中时优先级为 null（宁缺毋滥） (0.065209ms)
+✔ buildPriorityRule：证据缺失与否不影响分数——禁止把 missing_evidence 计为优先级分数 (0.067584ms)
+✔ buildPriorityRule：评分 v2 规则用九项输入与 α 计算，且不为旧建议映射返回 P (0.137916ms)
+✔ buildPriorityRule：v3 分位规则按发布阈值计算优先级（P0/P1/P2/P3） (0.401708ms)
+✔ buildPriorityRule：规则缺少评分映射、阈值或校准证据时不得用于计算（priority 留空） (0.086292ms)
+✔ runAnalysis：已发布且校准的规则驱动优先级；无规则或未校准规则时保持 null (1.146417ms)
+✔ a recommendation that collides with an Object prototype key is not scored (0.102167ms)
+✔ analysis repository adapter appends then completes a separate durable analysis version (1.232625ms)
+✔ append persists attribution up front instead of leaving it NULL until completion (0.0895ms)
+✔ a run row with no recorded provider reads back as unknown rather than an invented model name (0.084958ms)
+✔ V02-S06 scoring: explicit null proposedScore is treated as omitted (16.876875ms)
+✔ V02-S06 scoring: fixed formula reproduces calibration examples (1.881584ms)
+✔ V02-S06 scoring: P0-P3 boundaries are inclusive at 45/25/10 (0.177125ms)
+✔ V02-S06 scoring: schema requires nine inputs, valid alpha and all basis keys (2.06875ms)
+✔ V02-S06 scoring: evidence must occur in source unless assumption is explicit (0.9ms)
+✔ blank-only evidence is rejected instead of trivially matching the source (0.772416ms)
+✔ VOC 未接入时 α 由服务端定为中性 1.0，只有安全证据才升到 1.5 (0.158875ms)
+✔ batch cursor preserves both startedAt and id for stable pagination (1.212916ms)
+✔ malformed batch cursor is ignored safely (0.127708ms)
+✔ escapes commas, quotes and newlines per RFC 4180 (0.686834ms)
+✔ neutralizes spreadsheet formula injection (0.064083ms)
+✔ joins rows with CRLF (0.057291ms)
+✔ 评分与人群审计的细节键不会被白名单清空 (1.533625ms)
+✔ PRD-26 聊天抽取审计保留字符数、兜底标记与 AI 填充数 (0.068375ms)
+✔ 不变量5：审计事件捕获 actor/entity/result/timestamp（DDL 对齐形状） (0.900584ms)
+✔ 不变量5：result 枚举与 DDL CHECK 对齐（succeeded/failed/denied） (0.0925ms)
+✔ source configuration audit actions are part of the controlled event vocabulary (0.087916ms)
+✔ 不变量5：禁止字段被脱敏（密钥/联系方式/原始载荷） (0.066375ms)
+✔ 不变量5：白名单外的字段被丢弃，嵌套结构被丢弃 (0.049708ms)
+✔ 不变量5：全部字段被脱敏后 safeDetails 为空对象 (0.041ms)
+✔ 不变量5：createAuditEvent 内部自动脱敏 (0.083375ms)
+✔ 不变量5：审计存储追加只读，按实体查询按时间排序 (7.470875ms)
+✔ 不变量5：非法事件被 schema 拒绝 (0.585333ms)
+✔ 来源方式取值与 5c-1 来源口径一致 (0.818ms)
+✔ 来源方式只在配置了字段映射时写入 Base (0.510208ms)
+✔ 平台键经过限流装饰器仍生效：手工需求重复推送复用同一 Base 行 (0.233667ms)
+✔ creates/upserts on the Teambition requirement ID, permits empty owner, and filters fields (0.147292ms)
+✔ findCurrentOwner reads the Base person field and identifies its ID type (0.667708ms)
+✔ snapshots before substantive update and only then resets PM status (0.153875ms)
+✔ serializes Base selects and text metadata, while an unavailable module option does not block push (0.113541ms)
+✔ snapshot failure leaves existing Base row untouched (0.280083ms)
+✔ Base PM read failure aborts the write and a retry after recovery snapshots and resets PM state (0.256167ms)
+✔ reports an out-of-options select value instead of silently dropping it (0.132833ms)
+✔ distinguishes the deliberate 无法识别 omission from a rejected value (0.08ms)
+✔ reports no omissions when every value fits the Base options (0.069833ms)
+✔ splits the owner merge value and the recipient into two requests when their id types differ (0.172916ms)
+✔ an existing row update also separates the owner and recipient id types (0.092375ms)
+✔ writes a PM Leader recipient as user_id in the second request even when the row has no owner (0.069625ms)
+✔ writes no notification fields and only one request without a notification payload (0.045833ms)
+✔ writes the event id and type without person fields when the event has no recipient (0.051709ms)
+✔ a Base missing the notification fields records the omissions and still writes the business fields (1.8275ms)
+✔ a Base missing only the owner merge field records that omission and still writes the notification (0.263208ms)
+✔ writes the requirement deep link for a silent push and records a missing link field instead of failing (0.221708ms)
+✔ keeps the owner merge value when only the requirement link field is missing (0.231792ms)
+✔ keeps the requirement link when only the owner merge field is missing (0.202625ms)
+✔ propagates a first-request failure that is not FieldNameNotFound (0.2675ms)
+✔ propagates a second-request failure that is not FieldNameNotFound (0.246375ms)
+✔ V02-T03 platform key wins: existing row located by RQ id without a TB lookup (0.146791ms)
+✔ V02-T03 compat window: platform miss falls back to the unique TB row and backfills the platform id (0.112292ms)
+✔ V02-T03 key conflict: TB row already holds a different platform id (0.139917ms)
+✔ V02-T03 key conflict: platform row holds a different TB id (0.150375ms)
+✔ V02-T03 manual rows create without TB fields and never query the TB key (0.193875ms)
+✔ V02-T03 create-timeout recovery: a landed row is reused by the platform key on replay (0.348375ms)
+✔ writes the duplicate mark and canonical link without touching other fields (1.268792ms)
+✔ clears both fields when the decision is revoked or confirmed unique (0.100875ms)
+✔ skips when the mapping is absent or the requirement was never pushed (0.067875ms)
+✔ reports a missing Base field and other failures without throwing (0.21725ms)
+✔ imports valid rows, rejects an invalid row with a reason, and stays idempotent on re-read (6.629125ms)
+✔ walks every page and keeps the record id as the source identity (0.647583ms)
+✔ a failed write-back is audited and self-heals on the next run (1.221083ms)
+✔ a read failure is audited, reported, and recorded in the ops state (0.377042ms)
+✔ parses bitable cell shapes and rejects missing or invalid required fields (0.592417ms)
+✔ module mapping is exact after mechanical normalization and never writes free text (0.399875ms)
+✔ field mapping overrides are validated and duplicate roles are rejected (0.385959ms)
+✔ 推送把来源方式传给 Base 适配器（聊天粘贴按 intakeOrigin 判定） (7.385792ms)
+✔ retrying the same failed Base push executes the upsert instead of reporting the failure as success (0.196084ms)
+✔ substantive source updates snapshot against the last successful push and persist the Base record ID (0.194583ms)
+✔ A→B→A race: a stale push completion must not overwrite the newer pending state (0.125041ms)
+✔ A→B→A: content returning to an older hash still pushes as a substantive change (0.149375ms)
+✔ uses the latest AI scoring suggestion priority for the Base AI field (0.118292ms)
+✔ falls back to the analysis priority when no AI scoring suggestion exists (0.154625ms)
+✔ uses the configured Teambition source project ID as the Base project key (0.110667ms)
+✔ records a rejected select value in the push audit instead of hiding it (0.802083ms)
+✔ keeps the success audit free of an omission reason when nothing was skipped (0.157708ms)
+✔ classifies Feishu failures from structured fields rather than Error.message wording (0.306333ms)
+✔ marks transient Base failures retryable and permanent ones terminal (0.530958ms)
+✔ a permanent Base failure keeps a non-retry summary and a retryable one still advertises retry (0.1545ms)
+✔ a bookkeeping failure after a successful Base write is not reported as a push failure (0.107584ms)
+✔ reconciles a Base record left by a previous push whose local record was never written (0.117584ms)
+✔ first push stays silent so a bulk backfill cannot flood the PM Leader (0.127042ms)
+✔ first push notifies the owner when this requirement was assigned by hand (1.358125ms)
+✔ first push stays silent when the owner comes from a manual TB mapping (0.087084ms)
+✔ first push stays silent when the owner comes from a name-based roster binding (0.160208ms)
+✔ writes the stable web requirement deep link on every push, including a silent first push (0.075125ms)
+✔ defaults the requirement deep link to the production workbench (0.06825ms)
+✔ reads the deep-link base from RQSYS_WEB_BASE_URL and trims a trailing slash (0.06075ms)
+✔ a substantive change notifies the Base-preserved owner when the app has no mapping (0.082916ms)
+✔ a substantive change notifies the current owner with substantive_update (0.094916ms)
+✔ a substantive change without an owner falls back to the PM Leader (0.080708ms)
+✔ an owner appearing for the first time produces owner_assigned for the new owner (0.081167ms)
+✔ manual assignment after an empty-owner push still notifies when the old TB executor has no mapping (0.083625ms)
+✔ an owner A→B change produces owner_changed with the previous and new user ids in the event id (0.080042ms)
+✔ AI failure followed by success on the same source version produces ai_retry_success (0.087292ms)
+✔ AI retry success without an owner falls back to the PM Leader (0.078375ms)
+✔ owner switch from the last pushed manual owner to the TB mapping produces owner_changed (0.120542ms)
+✔ a same-title hint does not block Base push (0.071084ms)
+✔ a repeated no-change sync is silent and writes no notification fields (0.067208ms)
+✔ replaying a pushed idempotency key is silent and never touches Base again (0.040917ms)
+✔ first push without an owner is also silent (0.052208ms)
+✔ first push with an owner but no PM Leader stays silent instead of falling back to the owner (0.058667ms)
+✔ omits the notification payload when no recipient can be resolved (0.058375ms)
+✔ event ids are stable for the same event and distinct across events (0.229208ms)
+✔ the requirement advisory lock serializes concurrent pushes and prevents a duplicate Base row (23.158125ms)
+✔ a hand-picked owner on a requirement without a TB owner is written to Base and notified on the first push (0.246459ms)
+✔ assigning an owner after an empty-owner push notifies the newly assigned owner (0.107ms)
+✔ manual source snapshots without TB owner fields still notify on a later hand-picked owner (0.079833ms)
+✔ once the hand-picked owner is in Base, later pushes neither rewrite the owner nor notify again (0.069916ms)
+✔ a substantive change on a hand-assigned requirement notifies that owner rather than the PM Leader (0.066292ms)
+✔ reassigning a hand-picked owner produces owner_changed from the owner previously written to Base (0.062292ms)
+✔ a stored hand-picked owner on a no-TB-owner requirement moves the owner state from not_required (0.0575ms)
+✔ a hand-picked owner keeps precedence after Teambition later provides a mapped owner (0.066333ms)
+✔ an unmapped TB owner still pushes with an empty owner and writes no assignment (Q1) (0.049541ms)
+✔ V02-T03 a Base key conflict stops the push with a denied audit and a failed run (0.102333ms)
+✔ V02-T03 manual requirements push with a null TB id and the platform key (0.051208ms)
+✔ minIntervalMs 为 0 时只串行化，不额外等待 (1.262541ms)
+✔ 连续调用被拉开到最小间隔 (0.174584ms)
+✔ 并发调用不会重叠：内部客户端一次只被调用一个 (16.571708ms)
+✔ 已有足够间隔时不额外等待，队列失败不阻塞后续调用 (1.177625ms)
+✔ 所有 Base 方法都受限流（含读取路径） (0.247209ms)
+✔ source versions use the actual target field type for both numeric production and text POC tables (42.142083ms)
+✔ owner ID type passes through the production adapter and rate limiter (1.124083ms)
+✔ field schema follows pagination, caches reads, and rejects incomplete or cyclic responses (2.495ms)
+✔ tenant token 请求并缓存至过期前 (0.267333ms)
+✔ V02-T03 findByPlatformKey 按需求平台 ID 精确过滤；多行命中抛键冲突 (0.406583ms)
+✔ findByRequirementKey 使用 Bitable v1 按 TB 需求 ID 精确过滤 (0.204333ms)
+✔ TB 需求 ID 无命中返回 null (0.118ms)
+✔ 重复 TB 需求 ID 拒绝任意选择记录 (0.140958ms)
+✔ create/update/readPmFields 走 bitable records API (0.246042ms)
+✔ Feishu 业务错误（code != 0）抛错且不泄露 appSecret (0.21625ms)
+✔ records-filter 1254607 is treated as transient, not a permanent validation failure (0.069375ms)
+✔ kano request masks requirement text before it reaches the prompt (1.412375ms)
+✔ kano report validation: controlled types, evidence refs must exist, no stats fields (1.438625ms)
+✔ kano prompt version is pinned (0.046833ms)
+✔ kano provider shares the main analysis defaults: empty env values fall back instead of passing through (49.994333ms)
+✔ kano provider treats an empty AI_TIMEOUT_MS as unset rather than a zero-ms abort (25.171666ms)
+✔ kano provider omits temperature for AI_TEMPERATURE=none and accepts fenced JSON (6.569917ms)
+✔ rice-v1 computes R×I×(C/100)÷E with hand-checkable cases (1.251209ms)
+✔ missing, non-finite, zero-effort, bad-level and out-of-range inputs yield no score (0.097583ms)
+✔ SyncRunRequest 只接受 UUID sourceId (1.496ms)
+✔ OwnerMappingUpdate 与 openapi 对齐：tbUserId/tbDisplayName 可空可省略 (0.359542ms)
+✔ 需求池优先级分诊参数：priority 枚举与 sort 分诊模式 (0.411917ms)
+✔ 分页查询默认 limit 与契约一致（batches 25 / audit 50） (0.495292ms)
+✔ BatchListQuery status 只接受契约枚举 (0.496167ms)
+✔ RequirementListQuery 四阶段状态枚举与契约一致，q 最长 200 (0.768125ms)
+✔ AuditListQuery since/until 接受 UTC 与偏移量时间戳（RFC 3339 date-time） (0.117167ms)
+✔ Idempotency-Key header 契约：8-128 字符 (0.103458ms)
+✔ 剥离文件自带的顶层 BEGIN;/COMMIT; (0.761542ms)
+✔ 没有事务包装的文件原样返回 (0.10675ms)
+✔ 只剥离首尾：PL/pgSQL 的 BEGIN 与文件中间的 COMMIT 不受影响 (0.08225ms)
+✔ 大小写与空白不敏感 (0.042125ms)
+✔ 常见迁移：BEGIN 与 COMMIT 都在时，中间语句完整保留 (0.045916ms)
+✔ 注释开头的迁移也能剥离：0008 起的迁移都是先写注释再写 BEGIN; (0.177083ms)
+✔ 仓库内每个带事务包装的迁移都能被剥离 (47.331ms)
+✔ suspected resolutions never suppress processing (1.506375ms)
+✔ confirmed duplicate/ignored suppress; confirmed_unique stays active (0.201834ms)
+✔ pull 合法迁移：pending → running → synced/failed，failed → pending 重试 (0.66ms)
+✔ pull 非法迁移被拒绝 (0.053458ms)
+✔ analysis 合法迁移：failed_retryable → pending/running（新建版本重试） (0.056417ms)
+✔ owner 迁移：auto_mapped → manually_mapped 允许，人工映射不可被自动流程改写 (0.04625ms)
+✔ push 合法迁移：failed → pending 重试，pushed → running 实质更新 (0.046334ms)
+✔ assertTransition 非法迁移抛 InvalidTransitionError (0.207ms)
+✔ 不变量：自动映射建议不覆盖人工确认字段 (0.050458ms)
+✔ 不变量：低置信/缺优先级/首轮 AI 失败不阻塞合格推送 (0.250875ms)
+✔ 不变量：未完成前置阶段的推送不合格 (0.188167ms)
+overview ai stats failed {"phase":"overview_ai_stats","stat":"analysis","errorType":"Error","databaseCode":"unknown","causeType":"unknown"}
+✔ rejects non-UUID path IDs with 404 before touching uuid repositories (33.649833ms)
+✔ malformed percent-encoding in a path segment returns 4xx instead of throwing (0.339417ms)
+✔ liveness reports the API service (1.087791ms)
+✔ readiness reports the applied migration without failing when it lags (0.481ms)
+✔ readiness reports unavailable when no database is configured (0.103875ms)
+✔ overview metrics return full pipeline counts and require an authenticated actor (12.8565ms)
+✔ overview AI block reports ok status, call counts and the latest call (11.257041ms)
+✔ overview AI block degrades to unavailable when the statistics aggregation fails while counts still render (0.590584ms)
+✔ overview AI stats failure reports a sanitized error class instead of leaking the query (0.291542ms)
+✔ overview AI stats failure in the intake count is attributed to the intake stat (3.677333ms)
+✔ overview AI block reports paused state with the reason and recovery time (0.235542ms)
+✔ overview AI block prefers unconfigured over a paused flag (0.146916ms)
+✔ overview AI block takes the newer intake call and degrades to zeros when stats are unavailable (0.241708ms)
+✔ overview AI block reports a running analysis with a null result at its start time (0.116459ms)
+✔ test fixture status requires authentication and reports only its availability (0.158541ms)
+✔ lists only user-maintained source settings after injected identity authentication (0.128875ms)
+✔ rejects protected routes without an identity provider (0.051417ms)
+✔ updates source settings by project name while keeping server-owned IDs and metadata (6.550167ms)
+✔ updates source schedule with a multi-weekday list (0.5195ms)
+✔ saves a manual score after server-side recomputation (3.877208ms)
+✔ applies an AI score suggestion through a versioned confirmation (7.756708ms)
+✔ any authenticated Feishu actor can update source settings without an application role (0.373291ms)
+✔ queues a sync once and returns the batch for an idempotent repeat (0.689583ms)
+✔ queues a source-only sync mode separately and records the mode in the audit (0.292541ms)
+✔ scopes the same idempotency token to its sync mode (0.357792ms)
+✔ queues a Base push retry without an undocumented project ID dependency (0.841666ms)
+✔ queues a retry for a pending analysis when its current queue job is missing (0.262333ms)
+✔ audits an analysis retry request when an existing queued job is reused (0.159833ms)
+✔ lists and retrieves batches with items (1.935458ms)
+✔ failed item retry is idempotent across repeated requests (1.28275ms)
+✔ batch and requirement list routes pass time, batch and stable cursor filters to repositories (2.292709ms)
+✔ requirement list and export forward the source filter to repositories (1.36925ms)
+✔ V02-T02 manual requirements read back with source fields and no TB link fallback (1.933ms)
+✔ empty requirement search returns an empty page without querying mappings with an empty source id (2.91325ms)
+✔ audit list forwards an event-type filter and rejects malformed event types (8.270667ms)
+✔ exports the filtered requirement pool as CSV with escaping and a 5000-row cap (11.149416ms)
+✔ ops gate status evaluates automatic checks and records manual evidence (4.894416ms)
+✔ ops metrics default to a 7-day window and validate the range (1.299042ms)
+✔ ops metrics expose the base form sync state without leaking the table id (1.316541ms)
+✔ ops job view lists failed and stuck jobs without leaking payload (2.304625ms)
+✔ lists audit events (0.449625ms)
+✔ requirement detail returns the full analysis version history (spec 02 prior versions) (0.568166ms)
+✔ retries a requirement stranded in running by a crashed analysis handler (0.786292ms)
+✔ still rejects a retry while the analysis job is genuinely running (0.464875ms)
+✔ V02-T04 web manual intake: server-side actor, idempotent replay, payload-bound key (8.485917ms)
+✔ PRD-26 chat-paste origin and proposer name reach the manual create path without new source types (1.194875ms)
+✔ web manual intake returns 503 instead of 500 when the dictionary or the receipt read fails (1.91325ms)
+✔ oversized request bodies are rejected with 413 before any route logic runs (9.723375ms)
+✔ V02-T04 intake rejects a missing idempotency key, an unknown channel, or an empty description (8.763084ms)
+✔ V02-T07 PATCH edits manual requirements with version and idempotency semantics (1.152584ms)
+✔ V02-T09 audience tags route saves with optimistic version and rejects unknown levels (0.48575ms)
+✔ V02-T11 RICE draft routes: read defaults, save with optimistic version, conflict carries current (0.475ms)
+✔ V02-T11 RICE draft save reports a stale source baseline as a conflict (0.10675ms)
+✔ V02-T13 Kano evidence routes: import validates, approve rejects flagged material (0.52925ms)
+✔ V02-T14 Kano run routes: trigger guards and stale flags (0.373958ms)
+✔ intake-draft returns a draft without creating a requirement and audits only the text length (0.373208ms)
+✔ intake-draft rejects empty or oversized text and unauthenticated callers (0.487458ms)
+✔ intake-draft returns 503 when the extractor is not configured (0.065667ms)
+✔ intake-draft does not call the model while AI is paused for quota (0.100333ms)
+✔ intake-draft limits each actor to the per-minute cap and sets Retry-After (0.635916ms)
+✔ intake-draft maps provider rate limiting to 429 with Retry-After and audits only the error class (2.196125ms)
+✔ intake-draft maps provider config errors to 500 and reports them to diagnostics without leaking secrets (1.276833ms)
+✔ intake-draft maps timeouts and unusable model output to a retryable 503 (1.944708ms)
+✔ intake-draft ties every attempt to one requestId and records the prompt version on failure too (1.398667ms)
+✔ intake-draft returns 503 instead of 500 when the module dictionary cannot be read (0.712917ms)
+✔ intake-draft reports the fallback draft honestly in the response and the audit (0.54125ms)
+✔ intake-draft lists similar requirements and falls back to a title prefix (1.704166ms)
+✔ intake-draft still returns the draft when the similar-requirement search or audit fails (1.533334ms)
+✔ production repository composition exposes rules repositories to the HTTP layer (0.789542ms)
+✔ authenticated user creates the single source and reads it back consistently (56.0795ms)
+✔ source config time read from PostgreSQL round-trips through the update API (0.873958ms)
+✔ source creation rejects credentials and server-owned configuration fields (0.807584ms)
+✔ any authenticated user can configure the source and maintain module dictionaries (0.553333ms)
+✔ any authenticated user can operate the sync, retry, mapping and push routes (0.922708ms)
+✔ read endpoints remain available to every authenticated user (0.154417ms)
+✔ audit write failure does not report a successful publish or source creation (0.344875ms)
+✔ authenticated user configures a source by project name and stores server-resolved Teambition IDs (0.26275ms)
+✔ changing the project name resolves new IDs and clears project-specific server mappings (0.399958ms)
+✔ source setup rejects client-supplied Teambition IDs instead of bypassing name resolution (0.220916ms)
+✔ source setup rejects client-supplied field and owner mapping controls (0.284375ms)
+✔ source setup fails closed when server-side project resolution is unavailable (0.432708ms)
+✔ source setup reports a project-resolution conflict without persisting a source (0.188834ms)
+✔ redactSecrets 脱敏密钥/凭据/联系方式 (0.957917ms)
+✔ redactSecrets 保留资源标识符（UUID）以维持可诊断性 (0.056542ms)
+✔ errorBody 默认消息与契约一致，自定义消息自动脱敏 (0.648458ms)
+✔ jsonError 返回注册表对应的 HTTP 状态 (27.633625ms)
+✔ ERROR_STATUS 与 openapi 错误契约对齐 (0.063708ms)
+✔ provider 原始错误永不回显 (0.072666ms)
+✔ defaults to disabled so the server stays fail-closed (0.681875ms)
+✔ never activates in production, regardless of configuration (0.066333ms)
+✔ accepts the platform contract header from a loopback peer when explicitly enabled (21.43875ms)
+✔ still requires the identity header rather than trusting the environment alone (0.343666ms)
+✔ rejects non-loopback peers so the seam cannot be reached remotely (0.354667ms)
+✔ rejects control characters and over-long identities (0.1475ms)
+✔ supports configurable header names but defaults to the Miaoda contract (0.258958ms)
+✔ accepts IPv6 and IPv4-mapped loopback forms (1.083916ms)
+✔ startup notice describes the seam without leaking anything reusable (0.100333ms)
+✔ lists active person mappings for the single source (30.907208ms)
+✔ mappings list requires authentication (0.548792ms)
+✔ mappings list returns an empty page when no source is configured (0.233541ms)
+✔ searches Feishu users only for an authorized operator and returns minimal candidates (0.714375ms)
+✔ Feishu user search validates query and is available to any authenticated user (0.553208ms)
+✔ resolves a platform selection only after login and keeps the I64 identifier as text (4.353291ms)
+✔ per-requirement owner assignment stores it on the requirement, queues a push and audits (45.640333ms)
+✔ assigning an owner to a requirement with a TB executor never rewrites the global mapping (0.560166ms)
+✔ clearing a per-requirement owner restores the TB default mapping and queues a push (0.872458ms)
+✔ a same-title hint does not block owner assignment (0.858125ms)
+✔ manual mapping does not bypass pull state or push when requirement is missing (1.13725ms)
+✔ push API queues the asynchronous Base push and deduplicates by requirement versions (0.554125ms)
+✔ assigning an owner to a requirement without a TB owner stores it on the requirement and queues a push (0.448833ms)
+✔ a legacy no-owner requirement still waiting for mapping accepts a per-requirement owner (0.224ms)
+✔ a per-requirement owner assignment that cannot be stored reports a dependency failure and queues nothing (0.318667ms)
+✔ the requirement detail shows the per-requirement owner picked for a no-TB-owner requirement (0.354792ms)
+✔ clearing a manual owner releases it atomically and lands on auto_mapped (0.211208ms)
+✔ a row stuck in manually_mapped without a manual owner can be released instead of being blocked by 409 (0.136375ms)
+✔ DELETE owner still returns 409 when there is neither a manual owner nor a manually_mapped state (0.359667ms)
+✔ clearing a manual owner on a requirement without TB executor lands on not_required (0.155958ms)
+✔ sets a manual priority override and returns override + effective priority (55.882ms)
+✔ clearing the override falls back to the current scoring priority and audits the clear (0.543875ms)
+✔ rejects invalid priority override bodies and unknown requirements (1.371042ms)
+✔ suppressed requirements cannot be given a manual priority or context (409) (0.695458ms)
+✔ saves and clears the analysis context (0.464667ms)
+✔ rejects invalid analysis context bodies (0.411334ms)
+✔ detail and list DTOs expose priorityOverride, effectivePriority and analysisContext (1.009208ms)
+✔ force retry uses a deterministic dedupe key and passes force into the job payload (0.367041ms)
+✔ repeated force retries reuse the queued force job instead of enqueueing another AI call (0.390709ms)
+✔ force retry reuses any live analysis job (plain retry or first-pass) for the same version (0.295625ms)
+✔ force retry re-enqueues the same key after the previous force job failed (0.166625ms)
+✔ a running requirement whose live job is a force job is not treated as a crash leftover (0.1395ms)
+✔ retry without body keeps force=false and the legacy dedupe key (0.10825ms)
+✔ retry rejects malformed bodies with 400 (0.270917ms)
+✔ detail exposes a Base record link only when a valid https template is configured (0.436542ms)
+✔ duplicate decisions write the Base duplicate marker without notifications (0.606875ms)
+✔ a failing duplicate marker does not fail the decision itself (0.21175ms)
+✔ lists module dictionary versions after authentication (39.830417ms)
+✔ rejects rules routes without an identity provider (0.541ms)
+✔ creates a module dictionary draft with an auto-incremented version (4.33325ms)
+✔ rejects an empty or malformed dictionary body (1.141916ms)
+✔ publishes a draft dictionary and retires the previously published version (5.04575ms)
+✔ publishing an unknown or non-draft dictionary version fails without mutating state (0.416708ms)
+✔ audits dictionary create and publish actions (0.324541ms)
+✔ lists priority rule versions after authentication (0.215792ms)
+✔ creates a priority rule draft and rejects thresholds violating the contract (1.553541ms)
+✔ publishes a draft priority rule and retires the previously published version (0.265083ms)
+✔ publishing an unknown or non-draft priority rule fails (0.155166ms)
+✔ audits priority rule create and publish actions (1.6815ms)
+✔ refuses to publish a legacy v1 rule while the confirmed v2 formula is active (0.450584ms)
+✔ source adapter completes API contract endpoints and protects base health (46.799708ms)
+✔ team-directory endpoints require the trusted Feishu identity (45.501542ms)
+✔ people endpoints list, add, rename and delete names with actor-attributed audit events (4.101333ms)
+✔ binds and unbinds a roster person to a Feishu identity with audit and conflict handling (1.68625ms)
+✔ module directory reads and saves the exact module/person dictionary as a new version (0.774417ms)
+✔ refuses an empty module list so the active taxonomy cannot be cleared (0.225625ms)
+✔ requirements API forwards exact TB-owner filtering to the server repository (0.596666ms)
+✔ request schema rejects empty text and counts the limit in code points (5.172833ms)
+✔ sanitize keeps valid fields and drops out-of-range enums and unknown modules (1.029458ms)
+✔ sanitize falls back to the masked chat text when the model omits title or description (0.195ms)
+✔ sanitize enforces field length limits (5.011916ms)
+✔ extract masks PII before sending, treats the chat as data and returns a sanitized draft (27.141167ms)
+✔ extract accepts fenced JSON and reports provider failures with stable codes (1.954ms)
+✔ provider error bodies are drained but never echoed into the error (0.273084ms)
+✔ extract fails closed without a credential and on network errors (0.314584ms)
+✔ rate limiter allows 3 per minute per actor and recovers after the window (0.130417ms)
+✔ rate limiter enforces the daily cap (0.321ms)
+✔ 不变量1：无已有 run 时 claim 创建新 run 并绑定 worker lease (5.004375ms)
+✔ 不变量1：同幂等键重复触发不创建重复工作（already_active） (0.282708ms)
+✔ 不变量1：不同幂等键但同身份活跃 run 存在时返回 already_active (0.135ms)
+✔ 同键终态 run 拒绝重复触发，新键可对终态身份创建新 run (0.140375ms)
+✔ 不变量1：终态 run 拒绝同幂等键重复触发（terminal_rejected） (0.1345ms)
+✔ 不变量3：过期 lease 可安全回收（lease_expired_reclaimed） (0.207625ms)
+✔ 不变量3：从未 claim 的 queued run 可被回收 (0.149583ms)
+✔ 不变量3：lease 有效性判断的边界条件 (0.158459ms)
+✔ 不变量2：nextStage 返回首个未成功阶段，保留先前成功结果 (0.31075ms)
+✔ 不变量2：全部阶段成功时 nextStage 返回 null (0.242209ms)
+✔ 回收过期 lease 时恢复到首个未成功阶段 (0.189875ms)
+✔ 活跃与终态判断 (0.114458ms)
+✔ 不变量1：同幂等键的重复调度不创建重复 run (4.560958ms)
+✔ 不变量1：同需求身份不同键、活跃 run 存在时不创建重复工作 (0.2455ms)
+✔ 不变量1：不同需求身份各自创建独立 run (0.17975ms)
+✔ 不变量3：有效 lease 内的并发 claim 被拒绝，过期后可回收 (0.251625ms)
+✔ 不变量2：阶段推进只追加成功结果，失败保留先前成功 (0.358834ms)
+✔ 不变量2：全部阶段成功后 run 标记 succeeded，lease 释放 (0.231792ms)
+✔ advance 校验 lease 与阶段匹配 (0.872166ms)
+✔ 幂等键生成：调度键稳定，手动键唯一 (0.174292ms)
+✔ 幂等键格式校验 (0.152375ms)
+✔ worker claims one due job and dispatches sync using the existing orchestrator (6.204833ms)
+✔ worker preserves the explicit source-only mode for a manual import (0.337291ms)
+✔ worker preserves the explicit scheduled fixture marker for the safe sync reader (0.26625ms)
+✔ 迟到的 worker 结果被 fencing 拒绝：不覆盖新认领者的状态（不变量，工单 15） (0.255125ms)
+✔ worker leaves the queue untouched when no job is claimable (0.112458ms)
+✔ 不变量4：retryable failure reschedules with bounded stage backoff and a safe summary (0.250791ms)
+✔ 不变量4：max attempts reached completes the job as failed terminal (0.107ms)
+✔ fixture policy denial is terminal and never schedules an unsafe retry (0.105042ms)
+✔ fixture rejection persists a bounded reason without disclosing environment values (0.221833ms)
+✔ partial_failure sync is retryable; job types without a handler fail closed (terminal) (0.199125ms)
+✔ 同步失败项全是数据类错误时直接终态，不再整批重拉 (0.1165ms)
+✔ 同步失败项含基础设施错误时仍可重试，并在重排前把批次置回 running (0.102458ms)
+✔ 延后信号把作业记为 cancelled（可被同键入队重置），不重排、不当作失败 (0.105167ms)
+✔ sync 作业的任意终态失败都收敛批次，不留下永久 running 的孤儿批次 (0.07775ms)
+✔ 夹具策略拒绝仍然收敛批次（原有行为不回退） (0.071375ms)
+✔ dispatch 期间按租约 1/3 周期续约，长任务不会被重复认领 (352.805958ms)
+✔ 续约被拒（租约已易主）后停止续约，不覆盖他人结果 (402.653667ms)
+✔ 永久性错误直接终态，不白白重试到 Max attempts (2.057458ms)
+✔ 可重试错误仍然按退避重排（分类不误伤） (0.676708ms)
+✔ reads the pause flag and treats an expired until as recovered (1.40525ms)
+✔ pauses only after the threshold and alerts once (22.679375ms)
+✔ works without an alert channel and ignores missing repositories (0.114292ms)
+✔ parses the pause configuration with safe defaults (1.220291ms)
+✔ alerts are disabled without an https webhook (2.217666ms)
+✔ a healthy queue sends nothing (0.109125ms)
+✔ sends one summary, audits it, and suppresses the same signature during cooldown (33.915708ms)
+✔ a new failure changes the signature and alerts again inside the cooldown (0.535125ms)
+✔ webhook rejection or network errors are audited as failed and retried next tick (0.444417ms)
+✔ alert text marks a truncated failed list (0.142875ms)
+✔ 自动项与人工确认共同决定 Gate 状态 (1.359ms)
+✔ 自动检查反映未配置与待映射 (0.126042ms)
+✔ v3 规则发布后 G2 自动项通过，但仍需人工校准确认 (0.091334ms)
+✔ 拒绝确认非人工项与未知 Gate (0.05925ms)
+✔ resolves by TB ID before a colliding normalized name (1.290833ms)
+✔ uses exactly one active normalized-name match when ID is absent (0.142791ms)
+✔ classifies duplicate normalized names as ambiguous (0.060458ms)
+✔ classifies unmatched or inactive ID as unmatched without falling back to name (0.051208ms)
+✔ permits no owner and does not return an owner mapping (0.046959ms)
+✔ preserves manual mappings when automatic resolution is empty or unresolved (0.055041ms)
+✔ 无负责人需求：分析终态后标记 not_required 并幂等入队推送（可空负责人推送） (4.755875ms)
+✔ TB 有负责人且映射唯一：分析失败终态也入队推送（AI 不是门槛） (0.144208ms)
+✔ 单条人工负责人优先：TB 执行人未匹配映射也照常推送 (0.120166ms)
+✔ TB 有负责人但未匹配：仍以空负责人入队推送（Q1） (0.089875ms)
+✔ AI 成功重试可更新已推送需求；失败重试不重复推送，未同步需求不推进 (0.109ms)
+✔ 推送映射最新 AI 版本：P3 原样传递不丢弃，无分析时不写 AI 字段 (0.939667ms)
+✔ TB 有负责人但未匹配：以空负责人推送，不写执行人字段（Q1） (0.988583ms)
+✔ TB 无负责人：先 not_required 再空负责人推送，且新源版本才触发 PM 快照 (0.362291ms)
+✔ 无 TB 负责人但已在 Web 指定负责人：分析终态后保持 manually_mapped 并入队推送 (0.836208ms)
+✔ metadata-only source changes reuse a known owner mapping and queue Base update without AI (1.596916ms)
+✔ metadata-only owner removal resolves to no owner and queues an empty-owner Base update (0.108667ms)
+✔ metadata-only update with an unmapped new owner still queues an empty-owner push (Q1) (0.074875ms)
+✔ metadata-only source update preserves an existing manual owner selection (0.084209ms)
+✔ metadata-only sync of a no-TB-owner requirement keeps the owner picked in Web (0.16575ms)
+✔ 不变量6：确定性时钟不依赖机器本地时间 (2.124625ms)
+✔ 系统时钟返回合法 Date (0.293875ms)
+✔ intake readiness covers TB synced and manual collected states (0.729917ms)
+✔ pii markers cover roster plus proposer and executor without duplicates or empties (0.664166ms)
+✔ push compensation enqueues the current version when content advanced during the push (1.787167ms)
+✔ push compensation stays quiet when the version did not move or the analysis is not terminal (0.189584ms)
+✔ dispatchAfterSync enqueues first analysis per source version and caps local development volume (3.426959ms)
+✔ handleAnalysisJob masks roster and requester names before the model call and advances after terminal state (1.549291ms)
+✔ no published scoring rule leaves an audit marker instead of dropping the AI scoring silently (0.503125ms)
+✔ handleAnalysisJob with a failing provider still lands a retryable terminal state and queues the push (0.521542ms)
+✔ handleAnalysisJob drops stale jobs whose substantive hash no longer matches (0.181709ms)
+✔ handleAnalysisJob force re-runs an already analyzed requirement and still skips the guard otherwise (0.498458ms)
+✔ handleBasePushJob without a configured transport fails fast instead of pretending (0.62125ms)
+✔ handleBasePushJob drops jobs whose source version no longer matches (0.180625ms)
+✔ handleBasePushJob only terminalizes non-retryable Base failures (1.580125ms)
+✔ V02-T14 handleKanoRunJob completes a run via a controlled provider and isolates the main pipeline (1.955375ms)
+✔ V02-T14 handleKanoRunJob fails safely on invalid provider output without retrying (0.4725ms)
+✔ AI 额度暂停期间 dispatchAfterSync 不入队首分析（I3-3） (0.090541ms)
+✔ rate_limited 失败达到阈值时写入 AI 暂停标记（I3-3） (0.256375ms)
+✔ 不变量4：退避计算确定且有界（指数增长但封顶） (0.73075ms)
+✔ 不变量4：rate_limited 退避翻倍但仍封顶 (0.09925ms)
+✔ 不变量4：各阶段尝试上限确定且不同 (0.049ms)
+✔ 不变量4：shouldRetry 在达到上限后返回 false (0.067ms)
+✔ 不可重试错误类别直接返回 false (0.065833ms)
+✔ 可重试错误类别按阶段判断 (0.039292ms)
+✔ HTTP 状态码到错误类别映射 (0.065791ms)
+✔ 不变量2：失败阶段的重试只影响该阶段（由 nextStage + storage 保证） (0.047125ms)
+✔ failed_retryable 需求会被自动补排分析作业并写系统审计 (2.170916ms)
+✔ 已有 queued/running 作业时不重复入队 (0.164208ms)
+✔ 作业已 succeeded 但需求仍是 failed_retryable 时不做自动动作 (0.089375ms)
+✔ 同一源版本累计调度重试达到上限后放弃：只留一条 failed 审计，之后静默跳过 (0.223ms)
+✔ 上限内的调度重试仍会继续入队（边界：2 次已用，允许第 3 次） (0.104709ms)
+✔ running + 作业已终态 → 回退 failed_retryable 并写 analysis.recovery 审计 (0.208458ms)
+✔ running + 作业不存在 → 回退 failed_retryable（reason=job_missing） (0.107667ms)
+✔ running + 作业租约未过期 → 不动 (0.119708ms)
+✔ running + 首轮同步链路的活作业（analysis:<id>:v<sv>）→ 不动，避免误判崩溃 (0.148417ms)
+✔ running + 租约过期但尝试次数未用尽 → 不动（worker 会重新认领） (0.113708ms)
+✔ running + 租约过期且尝试次数用尽 → 终结僵尸作业并回退 (0.134625ms)
+✔ 僵尸作业在被回收前被其他实例认领（fencing 拒绝）→ 不回退需求状态 (0.076542ms)
+✔ running 阶段查询异常时记录错误，但不阻断 failed_retryable 重试 (0.194291ms)
+✔ 单个需求入队异常时记录错误并继续处理下一条 (0.105917ms)
+✔ 作业键助手覆盖重试键、上一版本键与首轮同步键 (0.04775ms)
+✔ AI 额度暂停期间补排与自动重试直接跳过（I3-3） (0.125667ms)
+✔ 不变量1：同一调度窗口的重复触发不创建重复批次/任务（幂等键按窗口） (31.82025ms)
+✔ 同窗口批次已终态时不再入队：失败的调度批次不会每个 tick 重跑 (1.025125ms)
+✔ 不变量6：调度计算按显式时区执行（UTC 08:00） (0.223375ms)
+✔ 未启用/未配置调度的来源跳过 (0.082083ms)
+✔ 定时合成验收只调度指定来源，并隔离正式窗口幂等键 (1.936ms)
+✔ 合成来源不存在时，在其他来源入队前失败 (1.155458ms)
+✔ 单个来源入队失败不中断其他来源，且不留孤儿批次 (1.69ms)
+✔ 复用既有批次时入队失败不覆盖该批次状态 (0.922542ms)
+✔ 不变量6：调度计算使用显式时区而非机器本地时区 (11.090667ms)
+✔ 不变量6：now 在目标时刻之前时返回昨日窗口 (0.35025ms)
+✔ 不变量6：weekday 过滤找到最近符合的窗口 (0.31075ms)
+✔ 不变量6：多 weekday 取最近一个匹配日，weekdays 优先于旧 weekday (0.412333ms)
+✔ 不变量6：调度未启用或配置不完整返回 null (0.066208ms)
+✔ 不变量6：非法 time 格式抛错而非静默回退 (0.176125ms)
+✔ 不变量6：非法时区抛错而非静默回退到机器本地时区 (0.070833ms)
+✔ 窗口终点为起点 + 24 小时 (0.166167ms)
+✔ 跨夏令时边界：America/New_York 时区的调度计算 (0.318792ms)
+✔ 跨夏令时回退边界：窗口时刻与 now 分居切换日两侧时起点仍准确 (0.213833ms)
+✔ 调度幂等键：同窗口同键，不同窗口不同键 (0.431333ms)
+✔ 解析到映射的需求会入队 base_push 并写 recheck 审计 (1.927208ms)
+✔ 解析不到映射时按 Q1 以空负责人入队，不改 owner 状态且不通知 (0.141959ms)
+✔ analysisVersion 取最新分析版本，缺失版本时用 0 (0.135542ms)
+✔ 单条需求的异常只进 errors，后续需求继续入队 (0.20375ms)
+✔ limit 默认 100 且可覆盖，单轮不会全量入队 (0.591167ms)
+✔ owner_state 迁移不被状态机允许时不写状态，但仍入队 (0.094042ms)
+✔ 已映射状态不被自动改写，尤其人工映射结果 (0.086084ms)
+✔ manual 匹配的映射落 manually_mapped，而不是 auto_mapped (0.074375ms)
+✔ 无 tbUserId 时按规范化姓名解析映射；无执行人的需求跳过 (0.163042ms)
+✔ 候选查询失败不抛出，只记录 errors (0.109834ms)
+✔ 已按空负责人推送的需求在映射补齐后用独立 intent 键重推 (0.086083ms)
+✔ 补映射重推使用稳定的 intent 键：同一映射重复扫描不会重复入队 (0.0745ms)
+✔ 作业不存在且批次已过最小年龄 → 回收为 failed (1.975917ms)
+✔ 作业已终态但批次仍 running → 回收（收敛机会已过去） (0.314667ms)
+✔ 作业仍在 queued/running → 不动它（租约机制会接管） (0.252541ms)
+✔ 未过最小年龄的批次放过，避免误杀刚建好、作业尚未入队的批次 (0.182958ms)
+✔ 只扫描 running 批次 (0.191792ms)
+✔ 手动路径的作业键（sync:<sourceId>:<key>）也能找到作业，不误杀健康批次 (0.277459ms)
+✔ running 且尝试用尽、租约过期 → 原子收敛（complete + settleSyncBatch） (1.4575ms)
+✔ 尝试用尽但租约尚未过期 → 放过（可能仍有活着的 worker 在收尾） (0.167833ms)
+✔ 次数用尽的 base_push 作业：作业落 failed，需求 push 从 running 收敛为 failed (0.898333ms)
+✔ base_push 卡死但需求已不在 running → 不改写需求状态，只收尾作业和运行行 (0.135125ms)
+✔ 次数用尽的 kano_run：只有该运行落 failed，不触碰推送与主分析状态 (0.099667ms)
+✔ 作业收尾被并发抢先（complete 返回 null）→ 不动需求状态 (0.076166ms)
+✔ 仓储未实现该查询（内存桩）→ 直接跳过，不抛错 (0.039625ms)
+✔ stableHash is independent of object key insertion order (1.336792ms)
+✔ substantiveHash changes only for substantive text and attachment references (0.185708ms)
+✔ source-only mode suppresses every downstream stage while omitted mode keeps the full pipeline (0.687584ms)
+✔ imports every returned task, filters provider fields, and persists snapshots and results (5.902625ms)
+✔ keeps successful items committed and safely completes a partial-failure batch (0.272167ms)
+✔ a sync-item write failure is reported as one failed item without re-running the batch (0.223667ms)
+✔ marks a source-list failure as a failed batch (0.103ms)
+✔ fetches all pages including archived tasks and deduplicates repeated IDs (0.203375ms)
+✔ keeps every same-title TB record and links later ones as suspected duplicates (0.345917ms)
+✔ clears duplicate links when a title becomes unique again (0.219042ms)
+✔ blank titles are never marked as duplicates (0.146625ms)
+✔ a duplicate-hint refresh failure does not fail already-synced items (0.178833ms)
+✔ does not expose unmapped provider custom fields in normalized payload (1.270667ms)
+✔ source-only metadata updates remain recoverable by a later full sync (0.314791ms)
+✔ classifies a source snapshot write failure without exposing its database error (0.128125ms)
+✔ 全量同步成功后标记本次未出现的 TB 需求（Q4） (0.083792ms)
+✔ 单条重试和失败批次不做「来源已移除」标记（Q4） (0.147375ms)
+✔ 空来源成功返回时不标记「来源已移除」，避免误标全部需求（Q4） (0.048667ms)
+✔ 标记失败不改变批次状态，但写进批次摘要（Q4） (0.110333ms)
+✔ scheduled fixture mode is off by default and accepts only an explicit short-lived POC source (0.671667ms)
+✔ invalid or expired fixture configuration never falls back to real synchronization (0.245292ms)
+✔ all stages reject real or other-source work while fixture mode is active (0.12725ms)
+✔ delayed fixture analysis or push cannot run after restoring a formal Base (0.071292ms)
+✔ fixture policy denial identifies a safe Base app mismatch without exposing the configured value (0.145709ms)
+✔ fixed source identity survives retry and has no owner or proposer (0.579375ms)
+✔ a single-item fixture retry retains its original identity even without a payload marker (0.1025ms)
+ℹ tests 655
+ℹ suites 0
+ℹ pass 596
+ℹ fail 59
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2112.225417
+
+✖ failing tests:
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:2930
+✖ source configuration create/get persists a minute-precision schedule, owner names and field map (11.357667ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:26:124)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:3661
+✖ source config round-trips the multi-weekday list (5.887625ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:27:77)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:4076
+✖ source config mutation and audit append share one transaction (1.65525ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:28:90)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:4844
+✖ MVP source configuration is database-enforced as a singleton (1.587166ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:29:89)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:5126
+✖ requirements receive stable sequential RQ IDs without changing the TB upsert key (1.464ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:31:13)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:6249
+✖ sync batch create is idempotent and blocks a parallel active batch (1.62775ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:45:95)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:6803
+✖ persistent job queue claims a lease and completes the job with fencing (1.503833ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:46:99)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:7640
+✖ fixture rejection settles its batch atomically and a stale claimant cannot overwrite recovery (1.407208ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:49:15)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:9272
+✖ analysis records append versions and keep the earlier run (1.803458ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:68:86)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:10281
+✖ analysis completion rejects a result produced for a stale source version (1.947416ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:69:101)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:11205
+✖ PM snapshots and audit events persist and can be read (1.481542ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:70:82)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:12256
+✖ requirement upsert round-trips source URL and latest batch (3.768625ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:72:87)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:13019
+✖ requirement search keyset cursor returns a second page (2.413625ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:73:83)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:14278
+✖ suspected duplicates stay in the pool/counts and keep detail links (12.3715ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:74:95)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:15924
+✖ batch keyset cursor does not skip rows with identical start times and applies inclusive time filters (5.171666ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:76:129)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:17155
+✖ system flags persist the AI pause state (I3-3) (2.520125ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:79:15)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:17914
+✖ ops metrics aggregate completed sync batches in the window (PRD 10) (4.7075ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:92:15)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:18830
+✖ source-missing marking flags only unseen TB requirements and clears on reappearance (Q4) (10.929208ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:108:15)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:20314
+✖ pool search treats % and _ literally and ships the search indexes (3.353833ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:130:15)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:21883
+✖ changed source upsert atomically snapshots, resets analysis and push, and only clears owner mapping when the TB owner changes (1.371917ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:151:13)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:24873
+✖ sync item persists orchestrator started time (3.12375ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:172:73)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:25494
+✖ PM snapshot wiring keys on the database requirement id, never the Teambition id (4.486542ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:179:15)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:26541
+✖ requirement advisory lock serializes the same requirement and releases on failure (1.771584ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:203:15)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:27987
+✖ concurrent pushes of the same requirement serialize through the advisory lock and write one Base row (1.39625ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:237:15)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:30006
+✖ a no-TB-owner requirement keeps a per-requirement owner across syncs until it is cleared (1.735208ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:285:13)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:32106
+✖ releaseManualOwner clears the assignment and moves the state in one transaction, including the bridge from manually_mapped (1.64975ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:314:13)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:33484
+✖ assigning a per-requirement owner to a missing requirement fails without side effects (2.425666ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:334:13)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:34287
+✖ V02-T02 manual intake: transactional create, idempotent replay, shared RQ allocator (1.62ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:345:13)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:37718
+✖ V02-T02 source branch constraints: TB rows require identity; manual rows reject TB identity (1.420041ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:397:13)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:39379
+✖ V02-T07 manual edit: substantive/metadata/no-change/version-conflict/TB-read-only/replay (1.421ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:414:13)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:42829
+✖ V02-T09 audience tags: multi-select, confirmed-empty, optimistic version, no side effects (1.5685ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:457:13)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:44831
+✖ V02-T11 RICE draft: save, merge, optimistic conflict, history, no side effects (5.289917ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:492:13)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:47038
+✖ V02-T13 Kano evidence: import, PII flag blocks approval, clean approve, immutable versions (6.89275ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:527:13)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:49462
+✖ V02-T14 Kano runs: versioned create with active guard, job+audit in txn, lifecycle states (0.831917ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:553:13)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:52097
+✖ V02-S06 score versions: AI suggestion, manual confirmation and AI adoption keep one current version (0.550916ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:587:13)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:55008
+✖ V02-T10 seeded v1 rule remains historical; V02-S06 scoring v2 is the single published rule (0.723167ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:620:13)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:56129
+✖ confirmed duplicate decisions suppress processing and survive requirement re-upsert (1.418292ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:640:15)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repositories.integration.test.ts:1:58681
+✖ V02-T26 priority override and analysis context persist and drive overview counts (6.387333ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:20:198)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repositories.integration.test.ts:684:15)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repository-contract.test.ts:1:5329
+✖ repository contract [pg]: requirement upsert keeps source identity and issues sequential RQ IDs (17.799875ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:134:3)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:187:17)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repository-contract.test.ts:1:6226
+✖ repository contract [pg]: manual owner upsert accepts a null Teambition user id (2026-10-22 503 path) (2.930375ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:134:3)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:202:17)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repository-contract.test.ts:1:7074
+✖ repository contract [pg]: person binding adopts an unnamed mapping and refuses a second person (2.750125ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:134:3)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:219:17)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repository-contract.test.ts:1:8035
+✖ repository contract [pg]: analysis completion persists provider provenance (1.496958ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:134:3)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:238:17)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repository-contract.test.ts:1:9254
+✖ repository contract [pg]: batch listing tolerates omitted typed time filters (1.798708ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:134:3)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:258:17)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repository-contract.test.ts:1:10351
+✖ repository contract [pg]: requirement search applies filters and keyset pagination without skipping rows (4.164667ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:134:3)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:279:17)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repository-contract.test.ts:1:11875
+✖ repository contract [pg]: duplicate hints are persisted without merging or deleting rows (1.54125ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:134:3)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:306:17)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repository-contract.test.ts:1:13947
+✖ repository contract [pg]: job claim uses a lease and only the current attempt can complete (1.6035ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:134:3)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:330:17)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repository-contract.test.ts:1:15547
+✖ repository contract [pg]: settling a failed sync job also closes its running batch atomically (1.738791ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:134:3)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:353:17)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repository-contract.test.ts:1:16741
+✖ repository contract [pg]: publishing a dictionary retires the previously published version (2.19375ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:134:3)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:368:17)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repository-contract.test.ts:1:5329
+✖ repository contract [drizzle-text-order]: requirement upsert keeps source identity and issues sequential RQ IDs (1.837458ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:134:3)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:187:17)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repository-contract.test.ts:1:6226
+✖ repository contract [drizzle-text-order]: manual owner upsert accepts a null Teambition user id (2026-10-22 503 path) (1.64875ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:134:3)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:202:17)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repository-contract.test.ts:1:7074
+✖ repository contract [drizzle-text-order]: person binding adopts an unnamed mapping and refuses a second person (2.207708ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:134:3)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:219:17)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repository-contract.test.ts:1:8035
+✖ repository contract [drizzle-text-order]: analysis completion persists provider provenance (4.308917ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:134:3)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:238:17)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repository-contract.test.ts:1:9254
+✖ repository contract [drizzle-text-order]: batch listing tolerates omitted typed time filters (1.259708ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:134:3)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:258:17)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repository-contract.test.ts:1:10351
+✖ repository contract [drizzle-text-order]: requirement search applies filters and keyset pagination without skipping rows (1.163625ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:134:3)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:279:17)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repository-contract.test.ts:1:11875
+✖ repository contract [drizzle-text-order]: duplicate hints are persisted without merging or deleting rows (1.217584ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:134:3)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:306:17)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repository-contract.test.ts:1:13947
+✖ repository contract [drizzle-text-order]: job claim uses a lease and only the current attempt can complete (0.921875ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:134:3)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:330:17)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repository-contract.test.ts:1:15547
+✖ repository contract [drizzle-text-order]: settling a failed sync job also closes its running batch atomically (1.049708ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:134:3)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:353:17)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repository-contract.test.ts:1:16741
+✖ repository contract [drizzle-text-order]: publishing a dictionary retires the previously published version (1.013666ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:134:3)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:368:17)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+
+test at src/adapters/postgres/repository-contract.test.ts:1:17823
+✖ text-order placeholder shim reproduces the target-transport failure that plain pg tolerates (1.148667ms)
+  Error: connect ENOENT /Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432
+      at /Volumes/Files/A_Projects/RQ-Sys/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async setup (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:134:3)
+      at async TestContext.<anonymous> (/Volumes/Files/A_Projects/RQ-Sys/apps/api/src/adapters/postgres/repository-contract.test.ts:385:15)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/Users/jacko/.local/share/rq-sys/postgres/.s.PGSQL.5432'
+  }
+npm error Lifecycle script `test` failed with error:
+npm error code 1
+npm error path /Volumes/Files/A_Projects/RQ-Sys/apps/api
+npm error workspace @rq-sys/api
+npm error location /Volumes/Files/A_Projects/RQ-Sys/apps/api
+npm error command failed
+npm error command sh -c node --import=tsx --test 'src/**/*.test.ts'

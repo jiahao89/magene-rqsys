@@ -1,0 +1,46 @@
+
+> @rq-sys/web@0.1.0 test
+> vitest run
+
+
+ RUN  v4.1.11 /Volumes/Files/A_Projects/RQ-Sys/apps/web
+
+ ✓ src/requirements-url.test.ts (8 tests) 4ms
+ ✓ src/api.test.ts (16 tests) 11ms
+ ✓ src/contract.test.ts (2 tests) 24ms
+ ✓ src/schedule.test.ts (10 tests) 38ms
+ ✓ src/workbench-routing.test.ts (6 tests) 4ms
+ ✓ src/skeleton.test.tsx (2 tests) 83ms
+ ✓ src/overview-ai.test.tsx (12 tests) 111ms
+ ✓ src/deep-link.test.ts (5 tests) 2ms
+stderr | src/App.test.tsx > RQ-Sys local workbench > shows the AI status block from the overview metrics payload
+Accessing element.ref was removed in React 19. ref is now a regular prop. It will be removed from the JSX Element type in a future release.
+
+(node:4405) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+stderr | src/App.test.tsx > RQ-Sys local workbench > drills a priority card down into the requirement pool triage view
+Accessing element.ref was removed in React 19. ref is now a regular prop. It will be removed from the JSX Element type in a future release.
+Accessing element.ref was removed in React 19. ref is now a regular prop. It will be removed from the JSX Element type in a future release.
+
+stderr | src/panels.test.tsx > BatchesPanel (ticket 16) > opens batch detail, keeps succeeded rows visible and retries the failed item
+Accessing element.ref was removed in React 19. ref is now a regular prop. It will be removed from the JSX Element type in a future release.
+Accessing element.ref was removed in React 19. ref is now a regular prop. It will be removed from the JSX Element type in a future release.
+
+stderr | src/App.test.tsx > RQ-Sys local workbench > opens the responsive navigation as a dialog and closes it after selection
+Accessing element.ref was removed in React 19. ref is now a regular prop. It will be removed from the JSX Element type in a future release.
+
+ ✓ src/App.test.tsx (28 tests) 2287ms
+     ✓ keeps one help entry and hides low-frequency actions behind advanced disclosures  528ms
+stderr | src/panels.test.tsx > 团队字典维护 > supports adding, renaming and deleting people through the API
+Accessing element.ref was removed in React 19. ref is now a regular prop. It will be removed from the JSX Element type in a future release.
+
+ ✓ src/panels.test.tsx (72 tests) 8438ms
+     ✓ supports adding, renaming and deleting people through the API  1097ms
+     ✓ binds a roster person to a Feishu account and unbinds it from the people table  565ms
+     ✓ supports creating, editing and deleting a module with a listed owner  1126ms
+
+ Test Files  10 passed (10)
+      Tests  161 passed (161)
+   Start at  12:18:17
+   Duration  10.69s (transform 1.07s, setup 1.97s, import 2.04s, tests 11.00s, environment 9.29s)
+

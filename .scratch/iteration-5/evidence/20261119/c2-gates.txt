@@ -1,0 +1,25 @@
+
+> check:alignment
+> node scripts/check-repo-alignment.mjs
+
+两仓对齐检查（忽略 import 扩展名差异）
+  逐字一致：54 个模块
+  声明的共用逻辑：36/36 一致
+  已声明的平台适配：15 处确有差异，18 处当前恰好一致
+  已声明的 root 独有：5 处
+  已声明的 app 独有：5 处
+
+全部差异均已分类：无未声明的行为漂移。
+---migrations---
+
+> check:migrations
+> node scripts/check-migrations.mjs
+
+迁移文件名检查（database/migrations）
+  迁移文件：29 个；前缀：28 个；最大前缀 0029；下一个空号 0030
+  已白名单的重复前缀：0002（2 个文件）
+  已登记的前缀缺口：0019 → 0021
+
+通过：没有新增重复迁移前缀；EXPECTED_LATEST_MIGRATION 已对齐。
+---diffcheck---
+diffcheck=0
