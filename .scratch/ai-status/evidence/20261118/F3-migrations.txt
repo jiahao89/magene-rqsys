@@ -1,0 +1,14 @@
+
+> check:migrations
+> node scripts/check-migrations.mjs
+
+迁移文件名检查（database/migrations）
+  迁移文件：28 个；前缀：27 个；最大前缀 0028；下一个空号 0029
+  已白名单的重复前缀：0002（2 个文件）
+  已登记的前缀缺口：0019 → 0021
+
+通过：没有新增重复迁移前缀；EXPECTED_LATEST_MIGRATION 已对齐。
+---
+0026_repair_trgm_index.sql
+0027_source_missing.sql
+0028_system_flags.sql

@@ -1,8 +1,8 @@
 # 总览「AI 状态」验收清单（2026-11-18）
 
-> 状态：**待执行**（后端/前端补丁合入并发版后）。依据：用户 2026-11-18 要求「总览页面增加 AI 状态区：AI 状态 + 累计用量」；Chief 2026-11-18 给出的口径与接口契约。
+> 状态：**V 区已完成；A1–A6、D1–D5、E1–E4、F1/F3、K 已有证据；仅剩 B、D6/D7/D8/L（需写库）与 F2（需 EXPLAIN）待执行**。依据：用户 2026-11-18 要求「总览页面增加 AI 状态区：AI 状态 + 累计用量」；Chief 2026-11-18 给出的口径与接口契约。
 > 执行环境：飞书妙搭线上 app（生产库、生产 Base）。本功能以只读为主，**唯一写操作是暂停态测试用的 `system_flags` 临时行**；执行前须拿到授权，执行后必须清理并复查（见 §2、§10）。
-> 执行人：待填　｜　日期：待填　｜　版本：待填（release id / 两仓 commit）
+> 执行人：测试（V 区复验；线上 JSON/截图由 Chief 采集）　｜　日期：2026-11-18　｜　版本：V 区 release `7709458181873110291`（妙搭 `10ac4f9` / 根仓 `7dc8ec8`）
 
 ---
 
@@ -10,16 +10,16 @@
 
 | 区块 | 用例数 | 必须通过 | 结果 |
 | --- | --- | --- | --- |
-| 执行前检查（P0） | 5 | 全部 | 待填 |
-| 正常态展示（A） | 6 | A1–A5 | 待填 |
-| 暂停态与自动恢复（B） | 6 | B1–B5 | 待填 |
-| 未配置态（C） | 2 | 以本地证据 | 待填 |
-| 计数与对账（D） | 8 | D1–D6 | 待填 |
-| 降级（E） | 4 | E1–E4 | 待填 |
-| 性能与索引（F） | 3 | F1 | 待填 |
-| 清理（L） | 5 | 全部 | 待填 |
-| 线上复验·统计修复（V，2026-11-18） | 8 | V1–V6 | 待填 |
-| 目标不可构造（K） | 8 | 必须有本地证据 | 待填 |
+| 执行前检查（P0） | 5 | 全部 | P0-1/2/3/5 PASS；P0-4 部分（flag/待处理作业未取基线） |
+| 正常态展示（A） | 6 | A1–A5 | **A1–A6 全 PASS**（A4 本地；A5 线上连续刷新两次一致） |
+| 暂停态与自动恢复（B） | 6 | B1–B5 | 待授权（写 `system_flags`，未执行） |
+| 未配置态（C） | 2 | 以本地证据 | 目标不可构造；K-1 本地证据 PASS |
+| 计数与对账（D） | 8 | D1–D6 | D1–D5 PASS；D6 待目标；D7/D8 待授权 |
+| 降级（E） | 4 | E1–E4 | **E1–E4 全 PASS**（E1 线上阻断实测；E2–E4 本地） |
+| 性能与索引（F） | 3 | F1 | **F1 PASS（281ms/271ms）、F3 PASS**；F2 待目标环境 `EXPLAIN` |
+| 清理（L） | 5 | 全部 | 尚无测试数据；写操作后执行 |
+| 线上复验·统计修复（V，2026-11-18） | 8 | V1–V6 | **V1–V8 全部 PASS**（V7 记「不适用降级」） |
+| 目标不可构造（K） | 8 | 必须有本地证据 | **K-1–K-8 本地证据齐**（K-4/K-8 本轮补用例） |
 
 **通过条件**：A、B、D、E、F1、L 全 PASS，K 每项有对应本地用例证据；**若本轮是「统计暂不可用」修复后的版本，另须 V1–V6 全 PASS**。任一 P0 失败即整体不通过；L 不通过不得判「通过」。
 
@@ -84,11 +84,11 @@ ai: {
 
 | ID | 检查 | 预期 | 实际 | 结论 |
 | --- | --- | --- | --- | --- |
-| P0-1 | 版本正确 | 新 release `finished`、`error_logs: []`，与补丁 commit 一致 | | |
-| P0-2 | 契约字段存在 | 响应含 `ai` 块且字段名/类型与 openapi 完全一致（三态枚举、四个计数、`lastCall` 三字段） | | |
-| P0-3 | 未加迁移 | `git status` 无新迁移文件；`schema_migrations` 最新号与发版前一致（`check:migrations` 输出记录） | | |
-| P0-4 | 基线快照 | 记录：`analysis_runs` 总数/今日、`intake.*` 审计总数/今日、`system_flags` 是否有 `ai_analysis_pause` 及其值、`pipeline_jobs` 待处理分析数、需求总数 | | |
-| P0-5 | 页面入口 | 「总览」页可见「AI 状态」卡片（实际标题以实现为准），与既有指标卡同页不报错 | | |
+| P0-1 | 版本正确 | 新 release `finished`、`error_logs: []`，与补丁 commit 一致 | release `7709458181873110291`（`finished`、`error_logs: []`），绑定妙搭 `10ac4f9` / 根仓 `7dc8ec8` | PASS |
+| P0-2 | 契约字段存在 | 响应含 `ai` 块且字段名/类型与 openapi 完全一致（三态枚举、四个计数、`lastCall` 三字段） | `overview-metrics-raw.json`：`ai` 与 `counts` 顶层并列，`status` 枚举含 `unavailable`、`statsAvailable` 必填；openapi 定义一致 | PASS |
+| P0-3 | 未加迁移 | `git status` 无新迁移文件；`schema_migrations` 最新号与发版前一致（`check:migrations` 输出记录） | `check:migrations` 通过，最新 `0028_system_flags.sql`，无新增迁移 | PASS |
+| P0-4 | 基线快照 | 记录：`analysis_runs` 总数/今日、`intake.*` 审计总数/今日、`system_flags` 是否有 `ai_analysis_pause` 及其值、`pipeline_jobs` 待处理分析数、需求总数 | analysis **1422/2**、intake **0/0**、需求 **333**（V 区同窗口）；`system_flags` 与待处理分析作业未取基线 | **部分** |
+| P0-5 | 页面入口 | 「总览」页可见「AI 状态」卡片（实际标题以实现为准），与既有指标卡同页不报错 | `online-ai-card.png` 可见「AI 状态」卡片，与优先级分级、处理阶段同页 | PASS |
 
 基线查询（只读，Asia/Shanghai 自然日）：
 
@@ -119,12 +119,12 @@ SELECT job_type, status, count(*) FROM pipeline_jobs WHERE job_type='analysis' G
 
 | ID | 用例 | 预期 | 实际 | 结论 |
 | --- | --- | --- | --- | --- |
-| A1 | 打开总览 | AI 卡片显示状态「正常」；无暂停原因/恢复时间（或显示「—」）；不显示配置错误 | | |
-| A2 | 累计用量 | 显示「分析 N 次 · 聊天抽取 M 次」；数字与 P0-4 的 SQL 总数一致；今日合计展示为「今日 X 次」或等价文案，且 X = 分析今日 + 抽取今日 | | |
-| A3 | 最近一次调用 | 显示时间、类型（分析/聊天抽取）、结果（成功/失败）；与 SQL 取两边最大值比对 | | |
-| A4 | 无调用记录（如可实现） | 空库/无记录时应显示「暂无调用记录」而不是 0/NaN/报错；目标环境不可构造时引用组件测试 | | |
-| A5 | 刷新一致性 | 连续刷新两次，数字不抖动、不递减（除验收自身新增数据外） | | |
-| A6 | 时区文案 | 卡片时间按本地（Asia/Shanghai）展示，不出现 UTC 时间或时区错位 | | |
+| A1 | 打开总览 | AI 卡片显示状态「正常」；无暂停原因/恢复时间（或显示「—」）；不显示配置错误 | 线上截图：徽标「正常」，无暂停原因/恢复时间 | PASS |
+| A2 | 累计用量 | 显示「分析 N 次 · 聊天抽取 M 次」；数字与 P0-4 的 SQL 总数一致；今日合计展示为「今日 X 次」或等价文案，且 X = 分析今日 + 抽取今日 | 分析 **1422**（今日 2）· 聊天抽取 **0**（今日 0）；今日合计 **2** = 2+0 | PASS |
+| A3 | 最近一次调用 | 显示时间、类型（分析/聊天抽取）、结果（成功/失败）；与 SQL 取两边最大值比对 | 分析·成功 **2026/11/18 09:25:48**（JSON `01:25:48.468Z`） | PASS |
+| A4 | 无调用记录（如可实现） | 空库/无记录时应显示「暂无调用记录」而不是 0/NaN/报错；目标环境不可构造时引用组件测试 | 无调用时显示「暂无记录」，组件测试断言无 NaN/undefined（本轮补） | PASS（本地） |
+| A5 | 刷新一致性 | 连续刷新两次，数字不抖动、不递减（除验收自身新增数据外） | 线上连续刷新两次，两次 `ai` 块完全相同：分析 1422（今日 2）、抽取 0（今日 0）、`lastCall` `01:25:48.468Z`/analysis/succeeded，无抖动 | PASS |
+| A6 | 时区文案 | 卡片时间按本地（Asia/Shanghai）展示，不出现 UTC 时间或时区错位 | 卡片显示 09:25:48，对应 JSON `01:25:48Z`（UTC+8），无时区错位 | PASS |
 
 ---
 
@@ -134,14 +134,14 @@ SELECT job_type, status, count(*) FROM pipeline_jobs WHERE job_type='analysis' G
 
 | ID | 用例 | 预期 | 实际 | 结论 |
 | --- | --- | --- | --- | --- |
-| D1 | 分析总数对账 | API `ai.analysis.total` = `SELECT count(*) FROM analysis_runs` | | |
-| D2 | 分析今日对账 | API `ai.analysis.today` = 上海自然日 SQL 计数；把系统时区改成 UTC 口径会不一致——用 SQL 验证即可 | | |
-| D3 | 聊天抽取总数对账 | API `ai.chatIntake.total` = `entity_type='intake'` 且两类事件之和 | | |
-| D4 | 聊天抽取今日对账 | 同上加上海自然日窗口 | | |
-| D5 | lastCall 对账 | API `lastCall.at/kind/result` = 两边最新事件（按 SQL 取最大）；若最新是 running 分析，按契约定义核对并记录 | | |
-| D6 | 429/400 不计入 | 在限流或 400 之后刷新，`chatIntake` 不增加；审计也无新增（与 5a 验收结论一致） | | |
-| D7 | 增量（可选，需授权） | 做 1 次成功抽取：`chatIntake.total/today` 各 +1、lastCall 变 `chat_intake/succeeded`。若再做 1 条测试需求让分析跑完：`analysis.total/today` +1、lastCall 随之更新。记录前后差值 | | |
-| D8 | 删除后还原 | L 区删除测试审计/需求后，计数回到 D7 前基线（累计是派生值，不缓存） | | |
+| D1 | 分析总数对账 | API `ai.analysis.total` = `SELECT count(*) FROM analysis_runs` | **1422 = 1422** | PASS |
+| D2 | 分析今日对账 | API `ai.analysis.today` = 上海自然日 SQL 计数；把系统时区改成 UTC 口径会不一致——用 SQL 验证即可 | **2 = 2**（Asia/Shanghai 自然日） | PASS |
+| D3 | 聊天抽取总数对账 | API `ai.chatIntake.total` = `entity_type='intake'` 且两类事件之和 | **0 = 0** | PASS |
+| D4 | 聊天抽取今日对账 | 同上加上海自然日窗口 | **0 = 0** | PASS |
+| D5 | lastCall 对账 | API `lastCall.at/kind/result` = 两边最新事件（按 SQL 取最大）；若最新是 running 分析，按契约定义核对并记录 | `01:25:48.468Z` / `analysis` / `succeeded` = 库最近一条 `analyzed` | PASS |
+| D6 | 429/400 不计入 | 在限流或 400 之后刷新，`chatIntake` 不增加；审计也无新增（与 5a 验收结论一致） | 待目标环境发一次 429/400 后刷新 | 待执行 |
+| D7 | 增量（可选，需授权） | 做 1 次成功抽取：`chatIntake.total/today` 各 +1、lastCall 变 `chat_intake/succeeded`。若再做 1 条测试需求让分析跑完：`analysis.total/today` +1、lastCall 随之更新。记录前后差值 | 待授权（写操作） | 待授权 |
+| D8 | 删除后还原 | L 区删除测试审计/需求后，计数回到 D7 前基线（累计是派生值，不缓存） | 待 D7 后清理复跑 | 待执行 |
 
 > 计数精度提醒：`intake.*` 审计是 best-effort 写入（写失败不阻断草稿），极端情况下聊天计数会**少计**；这属于已知取舍，验收只要求「与审计表一致」，不要求等于真实模型调用次数。
 
@@ -172,8 +172,8 @@ SELECT job_type, status, count(*) FROM pipeline_jobs WHERE job_type='analysis' G
 
 | ID | 用例 | 预期 | 实际 | 结论 |
 | --- | --- | --- | --- | --- |
-| C1 | 状态「未配置」 | 缺 AI 密钥时 `status='unconfigured'`，优先于正常（以及按契约是否压过暂停）；卡片给配置提示，不显示「正常」 | | |
-| C2 | 与聊天入口一致 | 未配置时聊天抽取应失败（当前映射为 500/配置类错误），卡片文案与入口行为不矛盾 | | |
+| C1 | 状态「未配置」 | 缺 AI 密钥时 `status='unconfigured'`，优先于正常（以及按契约是否压过暂停）；卡片给配置提示，不显示「正常」 | 本地：`app.test` 无 key → `unconfigured` 且优先于暂停；web 组件「未配置」提示 | PASS（本地） |
+| C2 | 与聊天入口一致 | 未配置时聊天抽取应失败（当前映射为 500/配置类错误），卡片文案与入口行为不矛盾 | 本地：`app.test` 未配置时 intake-draft 返回 503，卡片提示与入口文案一致 | PASS（本地） |
 
 > 生产不能删除密钥来构造；由后端单测（env 覆盖）证明，目标侧只核对代码/测试证据。见 K-1。
 
@@ -183,12 +183,14 @@ SELECT job_type, status, count(*) FROM pipeline_jobs WHERE job_type='analysis' G
 
 | ID | 用例 | 预期 | 实际 | 结论 |
 | --- | --- | --- | --- | --- |
-| E1 | 接口请求失败 | DevTools 阻断 `/api/overview/metrics`（或离线后仅恢复页面静态资源）→ AI 卡片显示「状态不可用」；不出现白屏/未捕获异常；其他指标卡各自显示不可用但不互相拖垮 | | |
-| E2 | `ai` 块缺失/字段非法 | 其他指标正常渲染，AI 卡片降级为「状态不可用」或「暂无数据」；不出现 NaN/undefined/`[object Object]` | | |
-| E3 | 统计聚合失败（服务端） | 后端注入统计查询异常 → 接口仍 **200** 且 `counts` 完整；`ai.status="unavailable"`、`ai.statsAvailable=false`、四个计数为 0、`pausedUntil/pauseReason/lastCall` 为 null。**不允许接口 500、也不允许伪装成 `ok` + 0 次** | | |
-| E4 | 卡片对 `unavailable` 的降级展示 | `status==="unavailable"` 或 `statsAvailable===false` → 卡片显示「状态不可用（统计暂不可用）」类文案；其他指标照常渲染；不显示「0 次」当成真实用量 | | |
+| E1 | 接口请求失败 | DevTools 阻断 `/api/overview/metrics`（或离线后仅恢复页面静态资源）→ AI 卡片显示「状态不可用」；不出现白屏/未捕获异常；其他指标卡各自显示不可用但不互相拖垮 | 线上 CDP `Network.setBlockedURLs` 阻断该接口后刷新：AI 卡片「状态不可用 / 总览接口没有返回可用的 AI 状态；同一次响应里的其他指标照常展示」；无白屏、无 NaN/undefined/`[object Object]`，优先级分级、处理阶段、今日待办各自「暂不可用」互不拖垮；解除阻断刷新恢复「正常」且数字不变 | PASS |
+| E2 | `ai` 块缺失/字段非法 | 其他指标正常渲染，AI 卡片降级为「状态不可用」或「暂无数据」；不出现 NaN/undefined/`[object Object]` | 本地：`App.test` 无 `ai` 块仍渲染其他指标；`overview-ai` 缺块/坏块降级 | PASS（本地） |
+| E3 | 统计聚合失败（服务端） | 后端注入统计查询异常 → 接口仍 **200** 且 `counts` 完整；`ai.status="unavailable"`、`ai.statsAvailable=false`、四个计数为 0、`pausedUntil/pauseReason/lastCall` 为 null。**不允许接口 500、也不允许伪装成 `ok` + 0 次** | 本地：`app.test` 聚合抛错 → 200 + counts 完整 + `unavailable`；诊断仅脱敏字段 | PASS（本地） |
+| E4 | 卡片对 `unavailable` 的降级展示 | `status==="unavailable"` 或 `statsAvailable===false` → 卡片显示「状态不可用（统计暂不可用）」类文案；其他指标照常渲染；不显示「0 次」当成真实用量 | 本地：`overview-ai` + `App.test` 断言降级文案、不显示 0 用量 | PASS（本地） |
 
 > E1 可在目标环境用 Chromium DevTools「Block request URL」只挡这个接口；E2/E3/E4 目标不可构造，用后端/组件测试证据（E4 也可在本地用 `ai` stub 验证）。E3 与 E4 必须成对：服务端契约对、客户端不把 0 当真实值。
+>
+> **OBS（2026-11-19 E1 实测顺带发现，P3 文案，未修）**：接口整体失败时页面顶部兜底横幅写的是「服务暂不可用 / 无法连接到本地 API。请启动 API 服务后重试。」——这是给开发者看的句子，线上用户看不懂。文案来源 `apps/web/src/App.tsx:60`（`formatApiError` 的兜底返回），建议改成「服务暂不可用，请稍后重试」。不属于 AI 状态区范围，本轮不改。
 >
 > **2026-11-18 线上已实际触发过一次降级**：release `7709454179102362905` / `63f2b1b` 的卡片显示「统计不可用」，但直接用 `+db-execute` 跑统计 SQL 正常（分析 1422/今日 2/最近 analyzed；聊天抽取 0/0/0）——说明是运行时适配层抛错，`aiOverview` 的 catch 把异常吞了。修复后按 §13 复验；E3 的「注入失败」仍以单测为准，线上只验修复后的正常路径与诊断日志。
 
@@ -198,9 +200,9 @@ SELECT job_type, status, count(*) FROM pipeline_jobs WHERE job_type='analysis' G
 
 | ID | 用例 | 预期 | 实际 | 结论 |
 | --- | --- | --- | --- | --- |
-| F1 | 响应时间 | 总览接口在正常数据量下 < 2s（记录实测；含 AI 统计后不得明显劣化） | | |
-| F2 | 审计计数走索引 | 若能看到后端 SQL：`audit_events` 计数必须带 `entity_type='intake'` 前缀（现有 `audit_events_entity_idx` 是 `(entity_type, entity_id, occurred_at DESC)`；**没有 `event_type` 索引**）。`EXPLAIN` 不应对大表全表 Seq Scan；若为 Seq Scan，记 P2 并反馈后端改查询（不加迁移） | | |
-| F3 | 不加迁移 | 确认没有为 AI 统计新增表/索引/迁移；`check:migrations` 通过 | | |
+| F1 | 响应时间 | 总览接口在正常数据量下 < 2s（记录实测；含 AI 统计后不得明显劣化） | 线上两次实测 **281ms / 271ms**（CDP Network 事件计时，HTTP 200，含 AI 统计） | PASS |
+| F2 | 审计计数走索引 | 若能看到后端 SQL：`audit_events` 计数必须带 `entity_type='intake'` 前缀（现有 `audit_events_entity_idx` 是 `(entity_type, entity_id, occurred_at DESC)`；**没有 `event_type` 索引**）。`EXPLAIN` 不应对大表全表 Seq Scan；若为 Seq Scan，记 P2 并反馈后端改查询（不加迁移） | 待目标环境 `EXPLAIN`（需 `+db-execute`） | 待执行 |
+| F3 | 不加迁移 | 确认没有为 AI 统计新增表/索引/迁移；`check:migrations` 通过 | `check:migrations` 通过，最新 `0028_system_flags.sql`，无新增 | PASS |
 
 `EXPLAIN` 参考（只读）：
 
@@ -239,6 +241,21 @@ WHERE entity_type = 'intake'
 | K-6 | 请求被阻断时的页面降级 | 需 DevTools 故障注入 | E1 目标可做；组件测试补 | 其他卡片同时不可用时是否混淆 |
 | K-7 | 计数在审计写入失败时少计 | 需注入审计写失败 | 后端单测（best-effort 分支） | 统计偏低 |
 | K-8 | 暂停到期瞬间的并发请求 | 无法卡点 | 后端单测（`until` 边界：等于 now 算恢复） | 到期前后一次请求的状态歧义 |
+
+**K 区取证结果（2026-11-18，本地）**：
+
+| ID | 本地证据 | 结论 |
+| --- | --- | --- |
+| K-1 | `app.test`：无 key → `unconfigured`，且优先于暂停；Web `overview-ai`：未配置提示 | PASS |
+| K-2 | `app.test`：聚合抛错 → 200 + counts + `unavailable`；诊断只含脱敏字段；Web 两个降级用例 | PASS |
+| K-3 | `app.test`：UTC `2026-10-08T00:00Z` → 日界 `2026-10-07T16:00Z`；当地 23:59 仍算前一天 | PASS |
+| K-4 | `app.test`（本轮补）：running 分析 → `result=null`、`at=started_at` | PASS |
+| K-5 | `overview-ai`：`ai` 缺块/坏块 → 「状态不可用」 | PASS |
+| K-6 | `App.test`：metrics 503 仍渲染总览与 AI 卡片；无 `ai` 块同样降级 | PASS |
+| K-7 | `app.test`：审计写失败仍返回草稿（best-effort，计数可能偏低） | PASS |
+| K-8 | `ai-pause.test`（本轮补）：`until == now` → 已恢复 | PASS |
+
+> 本轮补的两条用例只加测试、不改业务代码：`app.test.ts` 的 running 映射、`ai-pause.test.ts` 的 `until == now` 边界。证据：`evidence/20261118/E-K-api-tests.txt`（97/97）。
 
 ---
 
@@ -289,10 +306,10 @@ cd rq-sys-miaoda && npm run test:rqsys-route && npm run test:rqsys-client
 
 | 项 | 要求 | 实际 |
 | --- | --- | --- |
-| 版本 | 新 release `finished`、`error_logs: []`，绑定修复提交；确认线上已不是 `7709454179102362905` | |
-| 契约 | 响应 `ai` 块存在，含 `status`、`statsAvailable`、两组计数、`lastCall` | |
-| 参数 | 记录复验开始/结束时间（Asia/Shanghai），用于同窗口对账 | |
-| 环境 | 线上登录态；DevTools 可复制 `/api/overview/metrics` 响应；有 `+db-execute` 只读权限 | |
+| 版本 | 新 release `finished`、`error_logs: []`，绑定修复提交；确认线上已不是 `7709454179102362905` | release `7709458181873110291`（`finished`、`error_logs: []`），绑定妙搭 `10ac4f9`；根仓 `7dc8ec8`；已不是坏版本 |
+| 契约 | 响应 `ai` 块存在，含 `status`、`statsAvailable`、两组计数、`lastCall` | `overview-metrics-raw.json`：`counts` 与 `ai` 顶层并列，字段齐全；`ai-block.json` 为其 `ai` 子集，逐字段一致 |
+| 参数 | 记录复验开始/结束时间（Asia/Shanghai），用于同窗口对账 | 证据采集时间 2026-11-18 18:40:58 +08（`capturedAt` `10:40:58.466Z`）；同窗口对账值由 Chief 提供（V2/V3） |
+| 环境 | 线上登录态；DevTools 可复制 `/api/overview/metrics` 响应；有 `+db-execute` 只读权限 | 线上登录态导出原始响应（HTTP 200）；Chief 具备 `+db-execute` 只读权限并提供了同窗口 SQL 结果 |
 
 ### 13.2 对账 SQL（只读；今日=Asia/Shanghai 自然日）
 
@@ -336,14 +353,61 @@ WHERE entity_type='intake' AND event_type IN ('intake.draft_extracted','intake.d
 - 证据：DevTools 响应 JSON、卡片截图、两条 SQL 的输出与时间戳，存 `.scratch/ai-status/evidence/<YYYYMMDD>/`。
 - 若数字仍对不上：先核对 `since` 是否按 Asia/Shanghai、计数是否含 `running`、`intake` 是否带 `entity_type='intake'`、以及 release 是否真的换成修复版；不要先改口径。
 
+### 13.5 复验结果（2026-11-18，release `7709458181873110291` / 妙搭 `10ac4f9` / 根仓 `7dc8ec8`）
+
+| ID | 结果 | 证据 / 说明 |
+| --- | --- | --- |
+| V1 | PASS | `overview-metrics-ai-block.json` / `overview-metrics-raw.json`：HTTP **200**，`status:"ok"`、`statsAvailable:true`、`pausedUntil/pauseReason:null`；类型正确（布尔/数字/ISO 字符串/null）；采集时间 `2026-11-18T10:40:58.466Z`（北京 18:40:58），晚于修复版发布 |
+| V2 | PASS | `ai.analysis` = **1422** / 今日 **2**；与 Chief 同窗口 SQL 的 `analysis_runs` **1422** / 今日 **2** 完全相等（JSON 见 `evidence/20261118/overview-metrics-ai-block.json`） |
+| V3 | PASS | `ai.chatIntake` = **0** / 今日 **0**，与库 `intake.*` **0/0/0** 相等；`statsAvailable=true`，0 是真实值而非降级 |
+| V4 | PASS | `lastCall`：`at=2026-11-18T01:25:48.468Z`（=北京时间 09:25:48）、`kind:"analysis"`、`result:"succeeded"`；与卡片文本、库最近一条 `analyzed` 三者一致 |
+| V5 | PASS | `online-ai-card.png`（1468×886）：AI 卡片完整入镜——徽标「正常」，分析调用 **1422**（今日 2 次）、聊天抽取 **0**（今日 0 次）、今日合计 **2** 次调用、最近一次 **分析·成功 2026/11/18 09:25:48**；无「统计暂不可用」、无 NaN/undefined；同屏其他指标正常（处理阶段 332/333、333/333、289/333、333/333） |
+| V6 | PASS | `overview-metrics-raw.json` 的 `counts.total=333`，与 5a 清理后基线 **333** 一致（未造需求）；本轮未粘贴/未建需求/未写 flag；`intake.*` 仍 0/0 |
+| V7 | PASS（不适用降级） | 修复后未降级；本地诊断用例：根仓 `app.test + repositories.test` **92/92**、妙搭 `drizzle-pool + overview-metrics` **9/9**（`evidence/20261118/`）；代码只记录 `phase/stat/errorType/databaseCode/causeType`，不写 SQL/参数/message |
+| V8 | PASS | Chief：线上 ERROR 日志 0 条、无 `overview_ai_stats_failed`；迁移检查通过（最新仍 `0028`，无 0029）；根仓 `7dc8ec8` / 妙搭 `10ac4f9` 与发布说明一致 |
+
+**代码级核对（补充证据）**：
+
+- 根因修复：妙搭 `drizzle-pool.ts` 改用 `sql.param(...)` 绑定每个值，数组不再被 Drizzle 当 chunk 展开。
+- 两条统计已拆成最简 count：分析 3 条查询、intake 3 条查询；**无 `ANY(`、无 `FILTER`、无标量子查询**；intake 用 `IN ($2,$3)` 逐个占位，`entity_type=$1` 保留。
+- 未新增迁移：`database/migrations` 仍到 `0028`，`check:migrations` 通过。
+
+**当前结论**：**V1–V8 全部 PASS（V7 记「不适用降级」），统计修复的线上复验通过。**
+
+- V1/V5 证据已补齐并复核：卡片截图 `online-ai-card.png` 完整入镜（正常 / 分析 1422 / 聊天抽取 0 / 今日合计 2 / 最近一次 09:25:48，无「统计暂不可用」）；原始响应 `evidence/20261118/overview-metrics-raw.json` 为 HTTP **200**，`counts` 与 `ai` 同响应；`overview-metrics-ai-block.json` 是 `ai` 子集，与 raw 逐字段一致。
+- 三处数值/时间闭合：JSON `01:25:48Z` = 卡片「09:25:48」= 库最近 `analyzed`；`analysis` 1422/2、`chatIntake` 0/0 与同窗口 SQL 一致；`counts.total=333` 回到清理后基线。
+- **范围提醒**：本节只关闭「统计暂不可用修复」的 V 区；A/D/E/F3/K 的只读与本地项已在 §4–§11 补证，但 B、D6/D7、E1、F1/F2、A5 仍未执行，不能据此宣布整个 AI 状态区验收通过。
+
 ---
 
 ## 14. 执行记录
 
 | ID | 结果（PASS/FAIL/BLOCKED/OBS） | 实际现象 | 证据（截图/JSON 路径） | 执行人 | 时间 |
 | --- | --- | --- | --- | --- | --- |
-| P0-1 | | | | | |
-| … | | | | | |
+| V1 | PASS | 线上 JSON：HTTP 200，`status:"ok"`、`statsAvailable:true`、类型正确 | `evidence/20261118/overview-metrics-ai-block.json`、`overview-metrics-raw.json` | 测试（复核）/ Chief（采集） | 2026-11-18 18:40 +08 |
+| V2 | PASS | 分析 1422 / 今日 2 = 库 1422 / 2 | 同上 + Chief 同窗口 SQL | 测试 / Chief | 2026-11-18 18:40 +08 |
+| V3 | PASS | 聊天抽取 0 / 0 = 库 0/0/0 | 同上 | 测试 / Chief | 2026-11-18 18:40 +08 |
+| V4 | PASS | `lastCall` `01:25:48Z` = 卡片 09:25:48 = 库最近 `analyzed` | 同上 + `online-ai-card.png` | 测试 / Chief | 2026-11-18 18:40 +08 |
+| V5 | PASS | 卡片完整入镜：正常 / 1422 / 0 / 今日合计 2 / 最近一次 09:25:48 | `online-ai-card.png` | 测试（复核）/ Chief（采集） | 2026-11-18 18:40 +08 |
+| V6 | PASS | `counts.total=333` 回到基线，未造需求 | `overview-metrics-raw.json` | 测试 | 2026-11-18 18:40 +08 |
+| V7 | PASS（不适用降级） | 修复后未降级；诊断只记脱敏字段 | `evidence/20261118/root-stats-tests.txt`、`miaoda-stats-tests.txt` | 测试 | 2026-11-18 18:40 +08 |
+| V8 | PASS | 同屏其他指标正常（332/333、333/333、289/333、333/333）；ERROR 0、无 `overview_ai_stats_failed` | `online-ai-card.png`、`overview-metrics-raw.json` | 测试 / Chief | 2026-11-18 18:40 +08 |
+| P0 | PASS（P0-4 部分） | 版本/契约/迁移/页面入口已核；flag 与待处理作业基线未取 | `evidence/20261118/F3-migrations.txt`、`overview-metrics-raw.json` | 测试 | 2026-11-18 18:45 +08 |
+| A1–A3, A6 | PASS | 正常态徽标、1422/0、今日合计 2、最近一次 09:25:48、时区正确 | `online-ai-card.png`、`overview-metrics-raw.json` | 测试 | 2026-11-18 18:45 +08 |
+| A4 | PASS（本地） | 无调用显示「暂无记录」，无 NaN/undefined | `evidence/20261118/E-K-web-tests.txt` | 测试 | 2026-11-18 18:45 +08 |
+| A5 | PASS | 连续刷新两次，`ai` 块逐字段相同（1422/2、0/0、`01:25:48.468Z`） | CDP Network 采集两次响应 | Chief | 2026-11-19 09:02 +08 |
+| D1–D5 | PASS | 1422/2、0/0、lastCall 与同窗口 SQL 一致 | `overview-metrics-raw.json` + Chief 同窗口 SQL | 测试 | 2026-11-18 18:45 +08 |
+| D6 | 待执行 | 429/400 后刷新计数不变 | — | 测试 / Chief | — |
+| E2–E4 | PASS（本地） | `ai` 缺块/聚合失败降级，其他指标不挂、不显示 0 用量 | `E-K-api-tests.txt`、`E-K-web-tests.txt` | 测试 | 2026-11-18 18:45 +08 |
+| F3 | PASS | 无新增迁移，最新 `0028` | `evidence/20261118/F3-migrations.txt` | 测试 | 2026-11-18 18:45 +08 |
+| K-1–K-8 | PASS（本地） | 8 项均有对应用例；K-4、K-8 本轮补 | `E-K-api-tests.txt`（97/97）、`E-K-web-tests.txt`（156/156）、`E-K-miaoda-tests.txt`（9/9） | 测试 | 2026-11-18 18:45 +08 |
+| B / D7 / D8 / L | 待授权 | 写 flag 或造数据后按 L 清理 | — | 测试 / Chief | — |
+| E1 | PASS | 阻断 `/api/overview/metrics` → AI 卡片「状态不可用」、其他面板各自「暂不可用」、无白屏/NaN；解阻后恢复「正常」 | `evidence/20261118/e1-metrics-blocked.png`、`e1-ai-card-blocked.png` | Chief | 2026-11-19 09:02 +08 |
+| F1 | PASS | 281ms / 271ms（HTTP 200） | CDP Network 计时 | Chief | 2026-11-19 09:02 +08 |
+| F2 | 待目标环境 | `EXPLAIN` 需线上库执行工具 | — | 测试 / Chief | — |
+
+> 尚未执行：B（写 `system_flags`）、D7（造 1 次抽取/1 条需求）、D8/L（删数据复查）、D6（429/400 实测）、A5（连续刷新）、E1（DevTools 阻断）、F1/F2（计时/EXPLAIN）。V 区通过不等于整体验收通过。
+> 证据指纹（2026-11-18 复核）：`online-ai-card.png` sha256 `06d9b58a29f37aa6978263a0bd7cc4dd0e2c2ebf1e185cfd515e68cc5821d5d3`；`overview-metrics-ai-block.json` `be1ea2942f3c7b366ba1da33bfb01c7e5d0be740f849e5dc64e99fd10483b148`；`overview-metrics-raw.json` `bf97f7c17b3fc5110964ebffa3db4764fce6b6e276a708822e976d624bebae72`。
 
 证据目录：`.scratch/ai-status/evidence/<YYYYMMDD>/`，命名 `<用例ID>-<简述>.png|json|txt`。
 

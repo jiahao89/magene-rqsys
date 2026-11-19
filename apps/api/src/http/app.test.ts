@@ -249,6 +249,17 @@ test("overview AI block takes the newer intake call and degrades to zeros when s
     assert.deepEqual(body.ai.lastCall, { at: "2026-10-08T00:30:00.000Z", kind: "chat_intake", result: "succeeded" });
   });
 });
+
+test("overview AI block reports a running analysis with a null result at its start time", async () => {
+  const d = overviewDependencies();
+  (d.repositories!.analyses as unknown as Record<string, unknown>).aiCallStats = async () => ({ total: 3, today: 1, lastAt: "2026-10-08T02:00:00.000Z", lastStatus: "running" });
+  await withAiKey("sk-test", async () => {
+    const body = await (await handleApiRequest(new Request("http://localhost/api/overview/metrics"), d)).json() as { ai: { lastCall: unknown } };
+    // running 不在终态映射表里：at 取 started_at，result 必须是 null，不能猜成成功/失败。
+    assert.deepEqual(body.ai.lastCall, { at: "2026-10-08T02:00:00.000Z", kind: "analysis", result: null });
+  });
+});
+
 test("test fixture status requires authentication and reports only its availability", async () => {
  const unauthenticatedResponse = await handleApiRequest(new Request("http://localhost/api/dev/fixtures/status"), unauthenticated);
  assert.equal(unauthenticatedResponse.status, 401);

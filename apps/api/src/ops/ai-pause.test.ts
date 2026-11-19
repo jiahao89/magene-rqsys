@@ -33,6 +33,9 @@ test("reads the pause flag and treats an expired until as recovered", async () =
   assert.equal((await readAiPause(future.flags as never, NOW)).paused, true);
   const past = harness({ until: "2026-11-12T07:00:00.000Z", reason: "ai_rate_limited" });
   assert.equal((await readAiPause(past.flags as never, NOW)).paused, false);
+  // 边界：until == now 就算恢复（实现用严格大于），不能多停一个瞬间。
+  const exact = harness({ until: NOW.toISOString(), reason: "ai_rate_limited" });
+  assert.equal((await readAiPause(exact.flags as never, NOW)).paused, false);
 });
 
 test("pauses only after the threshold and alerts once", async () => {

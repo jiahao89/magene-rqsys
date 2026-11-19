@@ -28,6 +28,12 @@ describe("AiStatusCard", () => {
     expect(screen.getByText(/\d{4}\/\d{1,2}\/\d{1,2}/)).toBeInTheDocument();
   });
 
+  it("shows an empty placeholder instead of NaN when there is no call yet", () => {
+    render(<AiStatusCard ai={{ ...okAi, analysis: { total: 0, today: 0 }, chatIntake: { total: 0, today: 0 }, lastCall: { at: null, kind: null, result: null } }} loadState="ready" />);
+    expect(screen.getByText("暂无记录")).toBeInTheDocument();
+    expect(screen.queryByText(/NaN|undefined/)).not.toBeInTheDocument();
+  });
+
   it("shows the pause reason and recovery time", () => {
     render(<AiStatusCard ai={{ ...okAi, status: "paused", pauseReason: "AI 额度受限", pausedUntil: "2026-11-18T10:00:00.000Z" }} loadState="ready" />);
     expect(screen.getByText("暂停中")).toBeInTheDocument();
