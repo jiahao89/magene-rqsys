@@ -9,6 +9,9 @@
 // - 只读「需求平台ID」「来源方式」两个字段；绝不读/写「系统通知事件ID」等通知字段。
 // - 不打印 cookie / token / secret。
 //
+// 预检：目标表必须有平台 ID 字段和「来源方式」字段；「来源方式」还必须是单选（type=3）且
+// Teambition / Web 手工 / 多维表格 / 聊天粘贴 四个选项齐全，任一不满足就直接退出（仍然不写任何数据）。
+//
 // 用法（目标环境，需要登录态 cookie）：
 //   RQSYS_API_BASE="https://miaoda.feishu.cn/app/app_17fqkjwyx1u" \
 //   RQSYS_COOKIE="<登录 cookie>" RQSYS_CSRF_TOKEN="<suda-csrf-token 解码值>" \
@@ -33,6 +36,30 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SOURCE_METHOD_FIELD_DEFAULT = "来源方式";
 const PLATFORM_FIELD_DEFAULT = "需求平台ID";
 const SOURCE_METHOD_VALUES = ["Teambition", "Web 手工", "多维表格", "聊天粘贴"];
+// Base 字段类型编号（只用于报错时给出人话）；单选是 3。
+const FIELD_TYPE_NAMES = {
+  1: "多行文本",
+  2: "数字",
+  3: "单选",
+  4: "多选",
+  5: "日期",
+  7: "复选框",
+  11: "人员",
+  13: "电话号码",
+  15: "超链接",
+  17: "附件",
+  18: "单向关联",
+  19: "查找引用",
+  20: "公式",
+  21: "双向关联",
+  22: "地理位置",
+  23: "群组",
+  1001: "创建时间",
+  1002: "最后更新时间",
+  1003: "创建人",
+  1004: "修改人",
+  1005: "自动编号",
+};
 
 function arg(name, fallback = null) {
   const index = process.argv.indexOf(name);
@@ -73,6 +100,44 @@ function expectedSourceMethod(sourceType, intakeOrigin) {
 function die(message) {
   console.error(`[source-backfill] ${message}`);
   process.exit(1);
+}
+
+/** 归一化只用于解释「名字看起来一样却匹配不上」的报错，不参与判定。 */
+function normalizeLabel(value) {
+  return String(value).normalize("NFKC").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * C2-B05：字段存在还不够 —— 回填写的是单选值，字段类型或选项不对时 Base 会拒写或静默丢值，
+ * 所以预检必须同时确认「type=3 单选」和「四个选项齐全」。
+ */
+function assertSourceMethodField(field) {
+  const type = Number(field.type);
+  if (type !== 3) {
+    die(
+      `「${field.field_name}」字段类型必须是单选（type=3），实际是 ${Number.isFinite(type) ? `${type}（${FIELD_TYPE_NAMES[type] ?? "未知类型"}）` : "未知类型"}；` +
+        `回填写的是「${SOURCE_METHOD_VALUES.join(" / ")}」这几个选项值。`,
+    );
+  }
+  const options = Array.isArray(field.property?.options) ? field.property.options : [];
+  const names = options.map((option) => (typeof option?.name === "string" ? option.name : "")).filter(Boolean);
+  const missing = SOURCE_METHOD_VALUES.filter((value) => !names.includes(value));
+  if (missing.length > 0) {
+    const hints = missing
+      .map((value) => {
+        const near = names.find((name) => normalizeLabel(name) === normalizeLabel(value));
+        return near === undefined ? value : `${value}（实际选项是「${near}」，空白/全半角不一致）`;
+      })
+      .join("、");
+    die(
+      `「${field.field_name}」选项不完整，缺少：${hints}；实际选项：${names.length > 0 ? names.join("、") : "（空）"}。` +
+        `请先在 Base 里把四个选项补齐（大小写和空格都要一致）。`,
+    );
+  }
+  const extra = names.filter((name) => !SOURCE_METHOD_VALUES.includes(name));
+  if (extra.length > 0) {
+    console.log(`[source-backfill] 提示：「${field.field_name}」还有额外选项 ${extra.join("、")}（回填不会写入）。`);
+  }
 }
 
 async function fetchAllRequirements(baseUrl, headers, limit) {
@@ -163,11 +228,20 @@ async function main() {
     return payload.data;
   };
 
-  // 先确认两个字段真实存在：缺字段时继续对照只会输出一列空值，没有意义。
+  // 先确认字段真的能写：缺字段、类型不是单选、四个选项不齐，都直接失败退出。
+  // 只缺字段且显式 --allow-missing-field 时才允许继续空跑对照（此时无从校验类型/选项）。
   const fields = await baseGet(`/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/fields?page_size=100`);
-  const fieldNames = new Set((fields.items ?? []).map((field) => field.field_name));
-  if (!fieldNames.has(platformField)) die(`目标表缺少平台 ID 字段「${platformField}」`);
-  if (!fieldNames.has(sourceMethodField) && !flag("--allow-missing-field")) die(`目标表缺少「${sourceMethodField}」字段；如确认要空跑对照，加 --allow-missing-field`);
+  const fieldItems = Array.isArray(fields.items) ? fields.items : [];
+  const fieldByName = new Map(fieldItems.map((field) => [field.field_name, field]));
+  if (!fieldByName.has(platformField)) die(`目标表缺少平台 ID 字段「${platformField}」`);
+  const sourceMethodMetadata = fieldByName.get(sourceMethodField);
+  const sourceMethodAvailable = sourceMethodMetadata !== undefined;
+  if (sourceMethodMetadata === undefined) {
+    if (!flag("--allow-missing-field")) die(`目标表缺少「${sourceMethodField}」字段；如确认要空跑对照，加 --allow-missing-field`);
+    console.log(`[source-backfill] 提示：目标表没有「${sourceMethodField}」，按 --allow-missing-field 空跑对照，跳过类型/选项校验。`);
+  } else {
+    assertSourceMethodField(sourceMethodMetadata);
+  }
 
   const rows = [];
   const summary = { scanned: 0, wouldWrite: 0, alreadyCorrect: 0, baseRowMissing: 0, noPlatformId: 0, unknownSource: 0, errors: 0 };
@@ -187,7 +261,8 @@ async function main() {
     try {
       const query = new URLSearchParams({
         filter: `CurrentValue.[${platformField}] = ${JSON.stringify(platformId)}`,
-        field_names: JSON.stringify([platformField, sourceMethodField]),
+        // 字段缺失时（仅 --allow-missing-field 可达）不能把字段名带进查询，否则 Base 报 1254045。
+        field_names: JSON.stringify([platformField, ...(sourceMethodAvailable ? [sourceMethodField] : [])]),
         page_size: "2",
       });
       const data = await baseGet(`/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/records?${query}`);

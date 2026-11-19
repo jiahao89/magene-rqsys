@@ -1,0 +1,4 @@
+PASS type-text (exit=1)
+PASS missing-option (exit=1)
+PASS ok-already-correct (exit=0)
+PASS ok-would-write (exit=0)
