@@ -16,7 +16,7 @@ import { readAiPauseConfig } from "./ops/ai-pause.js";
 import { reapExhaustedJobs, reapOrphanedBatches } from "./scheduler/reap.js";
 import { enqueueMissingAnalysisJobs, recoverAnalysisPipeline } from "./scheduler/analysis-recovery.js";
 import { recheckOwnerMappings } from "./scheduler/owner-recheck.js";
-import { FeishuBasePushAdapter } from "./base/client.js";
+import { FeishuBasePushAdapter, type BaseFieldMap } from "./base/client.js";
 import { FeishuBitableClient } from "./base/transport.js";
 import { RateLimitedBaseClient } from "./base/rate-limit.js";
 import { DEFAULT_BASE_FORM_FIELDS, parseBaseFormFields, publishedModuleNames, syncBaseFormIntake } from "./base/form-sync.js";
@@ -103,10 +103,10 @@ const DEFAULT_BASE_FIELDS = {
     module: ["需求澄清", "方案设计", "缺陷修复", "其他"], priority: ["P0", "P1", "P2", "P3"],
   } as Record<string, string[]>,
 };
-function parseBaseFields(raw: string | undefined): typeof DEFAULT_BASE_FIELDS {
+function parseBaseFields(raw: string | undefined): BaseFieldMap {
   if (!raw) return DEFAULT_BASE_FIELDS;
   try {
-    const parsed = JSON.parse(raw) as Partial<typeof DEFAULT_BASE_FIELDS>;
+    const parsed = JSON.parse(raw) as Partial<BaseFieldMap>;
     const source = { ...DEFAULT_BASE_FIELDS.source, ...(parsed.source ?? {}) };
     if (source.sourceUrl === "TB链接") source.sourceUrl = "TB地址";
     return {
@@ -120,6 +120,7 @@ function parseBaseFields(raw: string | undefined): typeof DEFAULT_BASE_FIELDS {
       // 缺省回落默认值：notification 整段缺失（或部分缺失）时仍指向 POC 验证过的四个通知字段与需求链接字段。
       notification: { ...DEFAULT_BASE_FIELDS.notification, ...(parsed.notification ?? {}) },
       selectOptions: { ...DEFAULT_BASE_FIELDS.selectOptions, ...(parsed.selectOptions ?? {}), priority: ["P0", "P1", "P2", "P3"] },
+      ...(typeof parsed.sourceMethod === "string" && parsed.sourceMethod.trim() ? { sourceMethod: parsed.sourceMethod.trim() } : {}),
     };
   } catch {
     return DEFAULT_BASE_FIELDS;

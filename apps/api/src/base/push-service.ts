@@ -15,7 +15,7 @@
 import { randomUUID } from "node:crypto";
 import type { RequirementQueryRepository, PersonMappingRepository, BasePushRunRepository, AuditEventRepository, AnalysisRunRepository, SourceSnapshotRepository, RequirementScoringRepository } from "../application/repositories.js";
 import type { AnalysisRunRecord, FeishuIdType, PersonMappingRecord, RequirementRecord, SourceSnapshotRecord } from "../domain/persistence.js";
-import type { FeishuBasePushAdapter, OmittedField } from "./client.js";
+import { baseSourceMethodValue, type FeishuBasePushAdapter, type OmittedField } from "./client.js";
 import { BaseKeyConflictError, FeishuApiError, isRetryableFeishuFailure } from "./transport.js";
 import { normalizeOwnerName } from "../owner/mapping.js";
 import { isIntakeComplete } from "../domain/workflow.js";
@@ -432,6 +432,8 @@ export function createBasePushService(deps: BasePushServiceDeps) {
           : null,
       });
       const sourceCreatedAt = req.sourceCreatedAt ? Date.parse(req.sourceCreatedAt) : Number.NaN;
+      // 5c-2：来源方式与 5c-1 徽标同口径；由 source_type + source_payload.intakeOrigin 判定。
+      const sourceMethod = baseSourceMethodValue(req.sourceType, req.sourcePayload?.intakeOrigin);
       pushedResult = await deps.base.push({
         projectId: deps.sourceProjectId, requirementId: req.teambitionRequirementId, platformRequirementId: req.platformRequirementId, requirementDbId: req.id,
         // 每次推送都写深链（含首推静默）：PM 从通知按钮点进来能直接打开该需求详情。
@@ -444,6 +446,7 @@ export function createBasePushService(deps: BasePushServiceDeps) {
           ...(Number.isFinite(sourceCreatedAt) ? { createdAt: sourceCreatedAt } : {}),
         },
         aiValues: ai,
+        ...(sourceMethod ? { sourceMethod } : {}),
         // 静默场景（重复同步无变化、同键重放）不传 notification，即不写四个通知字段。
         ...(notification ? { notification: {
           eventId: notification.eventId,

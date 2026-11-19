@@ -53,6 +53,7 @@ interface CapturedPushInput {
   platformRequirementId: string;
   substantiveChanged: boolean;
   requirementLink?: string;
+  sourceMethod?: string;
   notification?: { eventId: string; eventType: string; recipientUserId: string | null; recipientIdType: "open_id" | "user_id" | "union_id"; ownerMergeUserId: string | null };
   aiValues?: { module?: string; priority?: "P0" | "P1" | "P2" | "P3"; analysisVersion?: number };
 }
@@ -149,6 +150,24 @@ function makeHarness(options: {
   });
   return { service, calls, auditEvents, get baseInput() { return baseInput; }, get savedBaseRecord() { return savedBaseRecord; }, get savedFailure() { return savedFailure; } };
 }
+
+test("推送把来源方式传给 Base 适配器（聊天粘贴按 intakeOrigin 判定）", async () => {
+  const plain = makeHarness();
+  await plain.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(plain.baseInput?.sourceMethod, "Teambition");
+
+  const chat = makeHarness({ req: requirement({ sourceType: "web_manual", sourcePayload: { intakeOrigin: "chat_paste" } }) });
+  await chat.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(chat.baseInput?.sourceMethod, "聊天粘贴");
+
+  const manual = makeHarness({ req: requirement({ sourceType: "web_manual", sourcePayload: {} }) });
+  await manual.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(manual.baseInput?.sourceMethod, "Web 手工");
+
+  const form = makeHarness({ req: requirement({ sourceType: "base_form", sourcePayload: { sourceType: "base_form" } }) });
+  await form.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(form.baseInput?.sourceMethod, "多维表格");
+});
 
 test("retrying the same failed Base push executes the upsert instead of reporting the failure as success", async () => {
   const h = makeHarness({ previous: pushRun({ status: "failed", safeErrorCode: "BASE_PUSH_FAILED", completedAt: "2026-10-08T00:00:01.000Z" }) });

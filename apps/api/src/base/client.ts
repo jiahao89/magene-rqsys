@@ -70,6 +70,11 @@ export interface BaseFieldMap {
   ai: Record<string, string>;
   pm: string[];
   metadata?: Record<string, string>;
+  /**
+   * 5c-2：来源方式单选字段名（如「来源方式」）。只有配置了才写；未配置时不写、也不报错。
+   * 取值由 baseSourceMethodValue() 从 source_type + intakeOrigin 判定，与 5c-1 的 Web 徽标/筛选同口径。
+   */
+  sourceMethod?: string;
   notification?: BaseNotificationFieldMap;
   /**
    * Q2：重复行标记（可选）。只有配置了字段名才会写；未配置时判定不触达 Base。
@@ -87,6 +92,22 @@ export interface BaseFieldMap {
   /// 未列出的字段按单选处理——这是更严格且与飞书存储一致的形态。
   multiSelect?: Record<string, boolean>;
   selectOptions?: Record<string, string[]>;
+}
+
+/** 5c-2：Base「来源方式」四个选项，与 PM 表单选字段逐字一致。 */
+export const BASE_SOURCE_METHOD_VALUES = ["Teambition", "Web 手工", "多维表格", "聊天粘贴"] as const;
+export type BaseSourceMethod = (typeof BASE_SOURCE_METHOD_VALUES)[number];
+
+/**
+ * 5c-2：需求来源 → Base「来源方式」。与 5c-1 的 Web 来源徽标/筛选同口径：
+ * teambition → Teambition；base_form → 多维表格；web_manual + intakeOrigin=chat_paste → 聊天粘贴；
+ * web_manual 其余 → Web 手工。未知来源返回 null（不写，不猜）。
+ */
+export function baseSourceMethodValue(sourceType: string, intakeOrigin?: unknown): BaseSourceMethod | null {
+  if (sourceType === "teambition") return "Teambition";
+  if (sourceType === "base_form") return "多维表格";
+  if (sourceType === "web_manual") return intakeOrigin === "chat_paste" ? "聊天粘贴" : "Web 手工";
+  return null;
 }
 
 export interface BasePushInput {
@@ -113,6 +134,8 @@ export interface BasePushInput {
   idempotencyKey: string;
   sourceValues?: Record<string, unknown>;
   aiValues?: Record<string, unknown>;
+  /** 5c-2：Base「来源方式」单选值；未配置字段映射时为 undefined（不写）。 */
+  sourceMethod?: BaseSourceMethod;
   /**
    * 可选的通知事件载荷：仅当本次推送命中事件且解析到唯一收件人时传入。
    * 未传时不写四个通知系统字段（重复同步无变化、同键重放等静默场景）。
@@ -231,6 +254,8 @@ export class FeishuBasePushAdapter {
       if (!input.platformRequirementId) throw new Error("RQ-Sys platform requirement ID is missing");
       delta[this.fields.platformRequirementId] = input.platformRequirementId;
     }
+    // 5c-2：来源方式只在配置了字段映射时写；未配置时既不写也不报错（老 Base 不受影响）。
+    if (this.fields.sourceMethod && input.sourceMethod) delta[this.fields.sourceMethod] = input.sourceMethod;
     const sourceValues = { title: input.title, ...(input.description === undefined ? {} : { description: input.description }), ...input.sourceValues };
     for (const [name, value] of Object.entries(sourceValues)) {
       const field = this.fields.source[name];

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { FeishuBasePushAdapter, type BaseClient } from "./client.js";
+import { FeishuBasePushAdapter, baseSourceMethodValue, type BaseClient } from "./client.js";
 import { BaseKeyConflictError, FeishuApiError } from "./transport.js";
 import { RateLimitedBaseClient } from "./rate-limit.js";
 
@@ -16,6 +16,37 @@ function fakeBase(initial?: { recordId: string; fields: Record<string, unknown> 
   };
   return { client, calls, row: () => row };
 }
+
+test("来源方式取值与 5c-1 来源口径一致", () => {
+  assert.equal(baseSourceMethodValue("teambition"), "Teambition");
+  assert.equal(baseSourceMethodValue("web_manual", "chat_paste"), "聊天粘贴");
+  assert.equal(baseSourceMethodValue("web_manual", null), "Web 手工");
+  assert.equal(baseSourceMethodValue("base_form"), "多维表格");
+  assert.equal(baseSourceMethodValue("unknown"), null);
+});
+
+test("来源方式只在配置了字段映射时写入 Base", async () => {
+  const input = {
+    projectId: "p", requirementId: null, platformRequirementId: "RQ-000001",
+    requirementDbId: "11111111-2222-4333-8444-555555555555", title: "Manual",
+    owner: null, sourceVersion: 1, substantiveChanged: false, idempotencyKey: "manual:v1",
+    sourceMethod: "聊天粘贴" as const,
+  };
+  const configured = fakeBase();
+  await new FeishuBasePushAdapter(configured.client, {
+    requirementId: "TB需求ID", platformRequirementId: "需求平台ID", owner: "执行人",
+    source: { title: "标题" }, ai: {}, pm: [], sourceMethod: "来源方式",
+  }).push(input);
+  assert.equal(configured.row()?.fields["来源方式"], "聊天粘贴");
+
+  // 未配置 sourceMethod：老 Base 不受影响，不写也不报错。
+  const plain = fakeBase();
+  await new FeishuBasePushAdapter(plain.client, {
+    requirementId: "TB需求ID", platformRequirementId: "需求平台ID", owner: "执行人",
+    source: { title: "标题" }, ai: {}, pm: [],
+  }).push(input);
+  assert.equal("来源方式" in (plain.row()?.fields ?? {}), false);
+});
 
 test("平台键经过限流装饰器仍生效：手工需求重复推送复用同一 Base 行", async () => {
   const fake = fakeBase();
