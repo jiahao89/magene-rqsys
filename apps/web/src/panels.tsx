@@ -454,7 +454,7 @@ export function ModulesPanel() {
     <div className="panel-heading"><div><h2>功能模块</h2><p>AI 仅从已发布的模块名称中选择；无法匹配时输出“无法识别”。每次保存生成一个新字典版本，且至少保留一个模块。</p></div><Button onPress={() => void load()} isDisabled={busy} variant="secondary" size="small"><RefreshCw size={14} />刷新</Button></div>
     <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
     {formError && <div className="field-error" role="alert">{formError}</div>}
-    <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}><label className="field" style={{ flex: 1 }}><span>功能模块</span><Input aria-label="功能模块名称" value={name} onChange={(event) => setName(event.target.value)} /></label><label className="field"><span>人员</span><ArcoSelect aria-label="模块责任人员" value={personName} onChange={(value: string) => setPersonName(value)} style={{ minWidth: 150 }} options={[{ label: "未分配", value: "" }, ...people.filter((person) => person.name).map((person) => ({ label: person.name!, value: person.name! }))]} /></label><Button onPress={submit} isDisabled={busy} variant="primary" size="small">新增模块</Button></div>
+    <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}><label className="field" style={{ flex: 1 }}><span>功能模块</span><Input aria-label="功能模块名称" value={name} onChange={(event) => setName(event.target.value)} /></label><div className="field"><span>人员</span><ArcoSelect aria-label="模块责任人员" value={personName} onChange={(value: string) => setPersonName(value)} style={{ minWidth: 150 }} options={[{ label: "未分配", value: "" }, ...people.filter((person) => person.name).map((person) => ({ label: person.name!, value: person.name! }))]} /></div><Button onPress={submit} isDisabled={busy} variant="primary" size="small">新增模块</Button></div>
     {items.length ? <div tabIndex={0} role="region" aria-label="功能模块列表"><ArcoTable<FunctionModuleEntry>
       rowKey="name"
       data={items}
@@ -1023,42 +1023,42 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
           <span className="sr-only">需求标题</span>
           <ArcoInput aria-label="搜索需求标题" placeholder="搜索需求标题或批次 ID…" value={query} onChange={(value: string) => setQuery(value)} onPressEnter={() => applyFilters()} />
         </label>
-        <label className="qfield">
+        <div className="qfield">
           <span className="sr-only">负责人</span>
           <ArcoSelect aria-label="TB负责人筛选" value={executorName} onChange={(value: string) => setExecutorName(value)} style={{ minWidth: 150 }} options={[{ label: "全部 TB 负责人", value: "" }, ...people.filter((person) => person.name).map((person) => ({ label: person.name!, value: person.name! }))]} />
-        </label>
-        <label className="qfield">
+        </div>
+        <div className="qfield">
           <span className="sr-only">同步状态</span>
           <ArcoSelect aria-label="同步状态筛选" value={pullState} onChange={(value: string) => setPullState(value)} style={{ minWidth: 130 }} options={pullStateOptions.map(([value, label]) => ({ label, value }))} />
-        </label>
-        <label className="qfield">
+        </div>
+        <div className="qfield">
           <span className="sr-only">来源</span>
           <ArcoSelect aria-label="来源筛选" value={sourceFilter} onChange={(value: string) => setSourceFilter(value)} style={{ minWidth: 130 }} options={sourceFilterOptions.map(([value, label]) => ({ label, value }))} />
-        </label>
+        </div>
         {/* ARCO-05：details/summary 改为受控按钮 + 条件渲染；aria-expanded/aria-controls 表达展开状态。 */}
         <div className="qmore" ref={moreFiltersRef}>
           <ArcoButton ref={moreFiltersButtonRef} htmlType="button" size="small" aria-expanded={moreFiltersOpen} aria-controls="requirement-more-filters" onClick={() => setMoreFiltersOpen((open) => !open)}>更多筛选{activeFilterCount - (query.trim() ? 1 : 0) - (executorName ? 1 : 0) - (pullState ? 1 : 0) - (sourceFilter ? 1 : 0) > 0 ? `（${activeFilterCount - (query.trim() ? 1 : 0) - (executorName ? 1 : 0) - (pullState ? 1 : 0) - (sourceFilter ? 1 : 0)}）` : ""}</ArcoButton>
           {moreFiltersOpen && <div className="qmore-body" id="requirement-more-filters">
-            <label className="qfield">
+            <div className="qfield">
               <span className="sr-only">优先级</span>
               <ArcoSelect aria-label="优先级筛选" value={priorityFilter} onChange={(value: string) => setPriorityFilter(value)} style={{ minWidth: 130 }} options={priorityFilterOptions.map(([value, label]) => ({ label, value }))} />
-            </label>
-            <label className="qfield">
+            </div>
+            <div className="qfield">
               <span className="sr-only">排序方式</span>
               <ArcoSelect aria-label="排序方式" value={prioritySort} onChange={(value: string) => setPrioritySort(value)} style={{ minWidth: 170 }} options={prioritySortOptions.map(([value, label]) => ({ label, value }))} />
-            </label>
-            <label className="qfield">
+            </div>
+            <div className="qfield">
               <span className="sr-only">负责人状态</span>
               <ArcoSelect aria-label="负责人筛选" value={ownerState} onChange={(value: string) => setOwnerState(value)} style={{ minWidth: 150 }} options={ownerStateOptions.map(([value, label]) => ({ label, value }))} />
-            </label>
-            <label className="qfield">
+            </div>
+            <div className="qfield">
               <span className="sr-only">分析状态</span>
               <ArcoSelect aria-label="分析状态筛选" value={analysisState} onChange={(value: string) => setAnalysisState(value)} style={{ minWidth: 130 }} options={analysisStateOptions.map(([value, label]) => ({ label, value }))} />
-            </label>
-            <label className="qfield">
+            </div>
+            <div className="qfield">
               <span className="sr-only">推送状态</span>
               <ArcoSelect aria-label="推送状态筛选" value={pushState} onChange={(value: string) => setPushState(value)} style={{ minWidth: 130 }} options={pushStateOptions.map(([value, label]) => ({ label, value }))} />
-            </label>
+            </div>
             <label className="qfield">
               <span className="sr-only">批次 ID</span>
               <ArcoInput aria-label="批次 ID 筛选" placeholder="批次 ID" value={batchId} onChange={(value: string) => setBatchId(value)} />
@@ -1405,7 +1405,7 @@ function DuplicateDecisionSection({ detail, onSaved }: { detail: RequirementDeta
       {suppressed && <ArcoButton type="primary" htmlType="button" size="small" onClick={() => openMode("revoke")} disabled={busy}>撤销判定（恢复活跃）</ArcoButton>}
     </div> : <div className="rules-form duplicate-form">
       <strong style={{ flexBasis: "100%" }}>{heading}</strong>
-      {mode === "duplicate" && <label className="field"><span>主记录（同标题候选）</span><ArcoSelect aria-label="主记录候选" value={canonicalId} onChange={(value: string) => setCanonicalId(value)} disabled={busy} style={{ minWidth: 260 }} placeholder="选择主记录" options={canonicalOptions.map((candidate) => ({ label: `${candidate.title}（${candidate.hint}）`, value: candidate.id }))} /></label>}
+      {mode === "duplicate" && <div className="field"><span>主记录（同标题候选）</span><ArcoSelect aria-label="主记录候选" value={canonicalId} onChange={(value: string) => setCanonicalId(value)} disabled={busy} style={{ minWidth: 260 }} placeholder="选择主记录" options={canonicalOptions.map((candidate) => ({ label: `${candidate.title}（${candidate.hint}）`, value: candidate.id }))} /></div>}
       <label className="field"><span>判定理由 *</span><ArcoInput aria-label="判定理由" value={reason} onChange={(value: string) => setReason(value)} disabled={busy} placeholder={mode === "ignored" ? "例如：已知重复诉求，无需再处理" : "例如：与主记录描述同一诉求"} /></label>
       <ArcoButton type="primary" htmlType="button" size="small" onClick={() => void submit()} disabled={busy}>{busy ? "提交中…" : submitLabel}</ArcoButton>
       <ArcoButton htmlType="button" size="small" onClick={() => { setMode(null); setError(null); setConflict(false); }} disabled={busy}>取消</ArcoButton>
@@ -1457,7 +1457,7 @@ export function PriorityOverrideSection({ detail, onSaved }: { detail: Requireme
       <ArcoButton htmlType="button" size="small" onClick={() => { setMode("edit"); setReason(""); setError(null); setNotice(null); }} disabled={busy || suppressed} title={suppressed ? "已压制需求不能设置人工优先级；请先撤销判定" : "设置人工优先级覆盖"}>{override ? "修改人工优先级" : "设置人工优先级"}</ArcoButton>
       {override && <ArcoButton htmlType="button" size="small" onClick={() => { setMode("clear"); setReason(""); setError(null); setNotice(null); }} disabled={busy || suppressed} title={suppressed ? "已压制需求不能清除人工优先级" : "清除人工优先级，恢复评分结果"}>清除人工优先级</ArcoButton>}
     </div> : <div className="rules-form priority-override-form">
-      {mode === "edit" && <label className="field"><span>覆盖为 *</span><ArcoSelect aria-label="人工优先级" value={priority} onChange={(value: "P0" | "P1" | "P2" | "P3") => setPriority(value)} style={{ minWidth: 120 }} options={["P0", "P1", "P2", "P3"].map((level) => ({ label: level, value: level }))} /></label>}
+      {mode === "edit" && <div className="field"><span>覆盖为 *</span><ArcoSelect aria-label="人工优先级" value={priority} onChange={(value: "P0" | "P1" | "P2" | "P3") => setPriority(value)} style={{ minWidth: 120 }} options={["P0", "P1", "P2", "P3"].map((level) => ({ label: level, value: level }))} /></div>}
       <label className="field"><span>{mode === "clear" ? "清除原因 *" : "覆盖原因 *"}</span><ArcoInput aria-label="人工优先级原因" value={reason} onChange={(value: string) => setReason(value)} disabled={busy} placeholder="例如：产品会议决定提前处理（1–500 字）" /></label>
       <ArcoButton type="primary" htmlType="button" size="small" onClick={() => void submit()} disabled={busy || reason.trim().length === 0}>{busy ? "保存中…" : mode === "clear" ? "确认清除" : "保存"}</ArcoButton>
       <ArcoButton htmlType="button" size="small" onClick={() => { setMode(null); setError(null); }} disabled={busy}>取消</ArcoButton>

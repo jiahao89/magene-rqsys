@@ -213,22 +213,22 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
         <span>标题 *{aiMark("title")}</span>
         <Input aria-label="新建需求标题" placeholder="一句话描述用户的问题或诉求" value={title} onChange={(value: string) => { setTitle(value); clearAiMark("title"); }} disabled={busy} />
       </label>
-      <label className="field">
+      <div className="field">
         <span>来源渠道 *{aiMark("sourceChannel")}</span>
         <Select aria-label="新建来源渠道" value={channel} onChange={(value: string) => { setChannel(value); clearAiMark("sourceChannel"); }} disabled={busy} placeholder="请选择" style={{ minWidth: 160 }} options={[{ label: "请选择", value: "" }, ...REQUIREMENT_INTAKE_CHANNELS.map((item) => ({ label: item, value: item }))]} />
-      </label>
+      </div>
       <label className="field">
         <span>产品/型号{aiMark("productModel")}</span>
         <Input aria-label="关联产品或型号" placeholder="选填，如码表 C606" value={productModel} onChange={(value: string) => { setProductModel(value); clearAiMark("productModel"); }} disabled={busy} />
       </label>
-      <label className="field">
+      <div className="field">
         <span>需求类型{aiMark("requirementType")}</span>
         <Select aria-label="需求类型" value={requirementType} onChange={(value: string) => { setRequirementType(value); clearAiMark("requirementType"); }} disabled={busy} placeholder="未选择" style={{ minWidth: 160 }} options={[{ label: "未选择", value: "" }, ...REQUIREMENT_INTAKE_TYPES.map((item) => ({ label: item, value: item }))]} />
-      </label>
-      <label className="field">
+      </div>
+      <div className="field">
         <span>功能模块{aiMark("intakeModule")}</span>
         <Select aria-label="功能模块（录入）" value={intakeModule} onChange={(value: string) => { setIntakeModule(value); clearAiMark("intakeModule"); }} disabled={busy} placeholder="未选择" style={{ minWidth: 160 }} options={[{ label: "未选择", value: "" }, ...modules.map((item) => ({ label: item.name, value: item.name }))]} />
-      </label>
+      </div>
       {moduleCandidate && <span className="status-hint" style={{ flexBasis: "100%" }}>该模块责任人：{moduleCandidate}（候选提示；负责人在创建后的详情里确认分配）</span>}
       <label className="field" style={{ flexBasis: "100%" }}>
         <span>边界/限制{aiMark("constraintNotes")}</span>
@@ -324,13 +324,13 @@ export function ManualEditSection({ detail, onSaved }: { detail: ManualEditSourc
   };
   return <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap", borderTop: "1px solid rgba(125,131,140,.25)", paddingTop: 12 }}>
     <label className="field" style={{ flex: 2, minWidth: 240 }}><span>标题 *</span><Input aria-label="编辑需求标题" value={title} onChange={(value: string) => setTitle(value)} disabled={busy} /></label>
-    <label className="field"><span>来源渠道 *</span>
+    <div className="field"><span>来源渠道 *</span>
       <Select aria-label="编辑来源渠道" value={channel} onChange={(value: string) => setChannel(value)} disabled={busy} placeholder="请选择" style={{ minWidth: 160 }} options={[{ label: "请选择", value: "" }, ...REQUIREMENT_INTAKE_CHANNELS.map((item) => ({ label: item, value: item }))]} />
-    </label>
+    </div>
     <label className="field"><span>产品/型号</span><Input aria-label="编辑产品或型号" value={productModel} onChange={(value: string) => setProductModel(value)} disabled={busy} /></label>
-    <label className="field"><span>需求类型</span>
+    <div className="field"><span>需求类型</span>
       <Select aria-label="编辑需求类型" value={requirementType} onChange={(value: string) => setRequirementType(value)} disabled={busy} placeholder="未选择" style={{ minWidth: 160 }} options={[{ label: "未选择", value: "" }, ...REQUIREMENT_INTAKE_TYPES.map((item) => ({ label: item, value: item }))]} />
-    </label>
+    </div>
     <label className="field" style={{ flexBasis: "100%" }}><span>需求描述 *</span><Input.TextArea aria-label="编辑需求描述" rows={4} value={description} onChange={(value: string) => setDescription(value)} disabled={busy} /></label>
     <label className="field" style={{ flexBasis: "100%" }}><span>边界/限制</span><Input.TextArea aria-label="编辑边界或限制" rows={2} value={constraintNotes} onChange={(value: string) => setConstraintNotes(value)} disabled={busy} /></label>
     <label className="field" style={{ flexBasis: "100%" }}><span>来源链接</span><Input aria-label="编辑来源链接" type="url" value={supplementUrl} onChange={(value: string) => setSupplementUrl(value)} disabled={busy} /></label>
