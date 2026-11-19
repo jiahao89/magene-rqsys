@@ -1,0 +1,1323 @@
+{
+  "mode": "live",
+  "samples": "/Volumes/Files/A_Projects/RQ-Sys/.scratch/ai-intake-samples/SAMPLES-20261119.md",
+  "samplesSha256": "0649c23a4d939e7a2ee13f60505c0d6f965fa61e7cda11ad3b794fc3393550c4",
+  "modulesFile": "/Volumes/Files/A_Projects/RQ-Sys/.scratch/ai-intake-samples/module-dictionary-live.json",
+  "modulesVersion": 7,
+  "baseUrl": "https://ecn8egz1lhkq.feishuapp.com/app/app_17fqkjwyx1u",
+  "startedAt": "2026-11-19T06:59:44.618Z",
+  "finishedAt": "2026-11-19T07:11:56.197Z",
+  "summary": {
+    "total": 20,
+    "scoredSamples": 20,
+    "httpErrors": 0,
+    "fallbackIds": [],
+    "piiLeakIds": [],
+    "fieldFailureIds": [
+      "S01",
+      "S14",
+      "S16",
+      "S17"
+    ],
+    "positiveSamples": 18,
+    "positiveScoredSamples": 18,
+    "positiveFieldTotal": 72,
+    "positiveFieldMatched": 68,
+    "positiveAccuracy": 94.4,
+    "positiveNullCount": 14,
+    "positiveNullRate": 19.4,
+    "positiveUnexpectedNullCount": 1,
+    "positiveUnexpectedNullRate": 1.4,
+    "perField": {
+      "channel": {
+        "label": "渠道",
+        "matched": 18,
+        "total": 18,
+        "nulls": 0
+      },
+      "type": {
+        "label": "类型",
+        "matched": 16,
+        "total": 18,
+        "nulls": 0
+      },
+      "module": {
+        "label": "模块",
+        "matched": 16,
+        "total": 18,
+        "nulls": 3
+      },
+      "proposer": {
+        "label": "提出人",
+        "matched": 18,
+        "total": 18,
+        "nulls": 11
+      }
+    },
+    "negativeTotal": 2,
+    "negativePassed": 2,
+    "constraintFabricated": [],
+    "constraintMissing": [
+      "S01",
+      "S13",
+      "S20"
+    ],
+    "constraintReview": [
+      "S05"
+    ],
+    "constraintManual": [
+      "S06",
+      "S07",
+      "S09",
+      "S10",
+      "S16"
+    ],
+    "titleIssues": [],
+    "descriptionIssues": []
+  },
+  "gate": {
+    "checks": [
+      {
+        "label": "全部样本成功计分",
+        "pass": true,
+        "detail": "计分 20/20，HTTP 错误 0，fallback 0"
+      },
+      {
+        "label": "正向字段 ≥80%",
+        "pass": true,
+        "detail": "68/72（94.4%），要求 ≥58/72"
+      },
+      {
+        "label": "负向 2/2",
+        "pass": true,
+        "detail": "2/2"
+      },
+      {
+        "label": "PII 泄漏 0",
+        "pass": true,
+        "detail": "0"
+      },
+      {
+        "label": "约束缺失 ≤3",
+        "pass": true,
+        "detail": "3（S01, S13, S20）"
+      },
+      {
+        "label": "提出人错 ≤1",
+        "pass": true,
+        "detail": "18/18 正确，错误 0"
+      }
+    ],
+    "passed": true
+  },
+  "results": [
+    {
+      "id": "S01",
+      "scene": "销售｜低温掉电 + 电量百分比",
+      "negative": false,
+      "status": 200,
+      "error": null,
+      "fallback": false,
+      "scored": true,
+      "fields": {
+        "channel": {
+          "label": "渠道",
+          "expected": "销售",
+          "actual": "销售",
+          "ok": true
+        },
+        "type": {
+          "label": "类型",
+          "expected": "性能优化",
+          "actual": "功能扩展",
+          "ok": false
+        },
+        "module": {
+          "label": "模块",
+          "expected": "电源管理（海思新平台）",
+          "actual": "电源管理（海思新平台）",
+          "ok": true
+        },
+        "proposer": {
+          "label": "提出人",
+          "expected": null,
+          "actual": null,
+          "ok": true
+        }
+      },
+      "fieldMatches": 3,
+      "title": {
+        "value": "骑行中显示剩余电量百分比，并在低于20%时提醒",
+        "issues": []
+      },
+      "description": {
+        "value": "客户（经销商转述，销售整理）在冬季约零下10度的环境下骑行三个多小时，码表在其查看时显示仍有约20%电量的情况下直接关机。设备为C606，属新平台批次。客户希望骑行过程中能直接显示剩余电量百分比，并在电量低于20%时收到提醒，以便提前应对、避免骑行中途关机。",
+        "issues": []
+      },
+      "constraint": {
+        "status": "missing",
+        "expected": "零下约 10 度；连续骑行 3 小时以上",
+        "actual": null
+      },
+      "pii": {
+        "leaks": []
+      },
+      "expected": {
+        "channel": "销售",
+        "type": "性能优化",
+        "module": "电源管理（海思新平台）",
+        "proposer": null,
+        "constraints": "零下约 10 度；连续骑行 3 小时以上"
+      },
+      "elapsedMs": 17766
+    },
+    {
+      "id": "S02",
+      "scene": "售后｜雨骑后按键失灵",
+      "negative": false,
+      "status": 200,
+      "error": null,
+      "fallback": false,
+      "scored": true,
+      "fields": {
+        "channel": {
+          "label": "渠道",
+          "expected": "售后",
+          "actual": "售后",
+          "ok": true
+        },
+        "type": {
+          "label": "类型",
+          "expected": "质量修复",
+          "actual": "质量修复",
+          "ok": true
+        },
+        "module": {
+          "label": "模块",
+          "expected": null,
+          "actual": null,
+          "ok": true
+        },
+        "proposer": {
+          "label": "提出人",
+          "expected": "王先生",
+          "actual": "王先生",
+          "ok": true
+        }
+      },
+      "fieldMatches": 4,
+      "title": {
+        "value": "雨中骑行后码表按键失灵",
+        "issues": []
+      },
+      "description": {
+        "value": "客户王先生通过售后反馈：上周六雨中骑行约两小时，回来后码表按键按下没有反应，放置两天后恢复正常。客户询问是否进水、是否需要寄回检测，并表示设备才购买一个月，情绪有些不满。希望解决雨骑后按键失灵的问题。",
+        "issues": []
+      },
+      "constraint": {
+        "status": "pass",
+        "expected": null,
+        "actual": null
+      },
+      "pii": {
+        "leaks": []
+      },
+      "expected": {
+        "channel": "售后",
+        "type": "质量修复",
+        "module": null,
+        "proposer": "王先生",
+        "constraints": null
+      },
+      "elapsedMs": 7151
+    },
+    {
+      "id": "S03",
+      "scene": "电商｜表盘太少、想自定义",
+      "negative": false,
+      "status": 200,
+      "error": null,
+      "fallback": false,
+      "scored": true,
+      "fields": {
+        "channel": {
+          "label": "渠道",
+          "expected": "电商",
+          "actual": "电商",
+          "ok": true
+        },
+        "type": {
+          "label": "类型",
+          "expected": "功能扩展",
+          "actual": "功能扩展",
+          "ok": true
+        },
+        "module": {
+          "label": "模块",
+          "expected": "场景+表盘+场景设置",
+          "actual": "场景+表盘+场景设置",
+          "ok": true
+        },
+        "proposer": {
+          "label": "提出人",
+          "expected": null,
+          "actual": null,
+          "ok": true
+        }
+      },
+      "fieldMatches": 4,
+      "title": {
+        "value": "增加更多表盘并支持用户上传自定义图片作为表盘",
+        "issues": []
+      },
+      "description": {
+        "value": "需求方为天猫买家（双十一购买），通过电商客服转述的商品评价反馈。用户收到手表后发现只有两个表盘，且换颜色只算同一表盘的变化，不算新表盘。用户希望增加更多表盘样式，最好能支持自己上传图片作为表盘。",
+        "issues": []
+      },
+      "constraint": {
+        "status": "pass",
+        "expected": null,
+        "actual": null
+      },
+      "pii": {
+        "leaks": []
+      },
+      "expected": {
+        "channel": "电商",
+        "type": "功能扩展",
+        "module": "场景+表盘+场景设置",
+        "proposer": null,
+        "constraints": null
+      },
+      "elapsedMs": 6906
+    },
+    {
+      "id": "S04",
+      "scene": "终端用户｜导航提示晚、偏航重算慢",
+      "negative": false,
+      "status": 200,
+      "error": null,
+      "fallback": false,
+      "scored": true,
+      "fields": {
+        "channel": {
+          "label": "渠道",
+          "expected": "终端用户",
+          "actual": "终端用户",
+          "ok": true
+        },
+        "type": {
+          "label": "类型",
+          "expected": "体验优化",
+          "actual": "体验优化",
+          "ok": true
+        },
+        "module": {
+          "label": "模块",
+          "expected": "导航（路线/离线/位置点）",
+          "actual": "导航（路线/离线/位置点）",
+          "ok": true
+        },
+        "proposer": {
+          "label": "提出人",
+          "expected": "阿凯",
+          "actual": "阿凯",
+          "ok": true
+        }
+      },
+      "fieldMatches": 4,
+      "title": {
+        "value": "导航岔路口提示过晚且偏航后重新规划慢,希望提前提示并加快重算",
+        "issues": []
+      },
+      "description": {
+        "value": "需求方:终端用户阿凯。情况:按给定路线骑行时,在岔路口码表提示太晚,已经拐过去后才提示偏航。偏航后重新规划路线也很慢,需要在路口等待较长时间。诉求:岔路口的转向提示能更早给出,偏航后更快完成路线重算。原因:提示滞后导致走错路,重算慢导致骑行中断等待。",
+        "issues": []
+      },
+      "constraint": {
+        "status": "pass",
+        "expected": null,
+        "actual": null
+      },
+      "pii": {
+        "leaks": []
+      },
+      "expected": {
+        "channel": "终端用户",
+        "type": "体验优化",
+        "module": "导航（路线/离线/位置点）",
+        "proposer": "阿凯",
+        "constraints": null
+      },
+      "elapsedMs": 7387
+    },
+    {
+      "id": "S05",
+      "scene": "终端用户｜山区无信号、离线地图",
+      "negative": false,
+      "status": 200,
+      "error": null,
+      "fallback": false,
+      "scored": true,
+      "fields": {
+        "channel": {
+          "label": "渠道",
+          "expected": "终端用户",
+          "actual": "终端用户",
+          "ok": true
+        },
+        "type": {
+          "label": "类型",
+          "expected": "新增功能",
+          "actual": "新增功能",
+          "ok": true
+        },
+        "module": {
+          "label": "模块",
+          "expected": "地图",
+          "actual": "地图",
+          "ok": true
+        },
+        "proposer": {
+          "label": "提出人",
+          "expected": "老陈",
+          "actual": "老陈",
+          "ok": true
+        }
+      },
+      "fieldMatches": 4,
+      "title": {
+        "value": "码表支持出发前按省/区域下载离线地图和路线",
+        "issues": []
+      },
+      "description": {
+        "value": "终端用户老陈周末去门头沟山区骑行时,手机没有信号,码表地图显示空白,路线也加载不出来。他希望出发前能把地图和路线下载到码表中,并且支持按省或按区域下载,避免一次性占满码表内存。他使用的码表型号为 C606,内存 8G。",
+        "issues": []
+      },
+      "constraint": {
+        "status": "review-numbers",
+        "expected": "无手机信号场景；C606 8G 存储有限",
+        "actual": "码表内存为 8G,离线地图和路线需支持按省或按区域下载,避免一次性占满内存。",
+        "missing": [
+          "606"
+        ]
+      },
+      "pii": {
+        "leaks": []
+      },
+      "expected": {
+        "channel": "终端用户",
+        "type": "新增功能",
+        "module": "地图",
+        "proposer": "老陈",
+        "constraints": "无手机信号场景；C606 8G 存储有限"
+      },
+      "elapsedMs": 10755
+    },
+    {
+      "id": "S06",
+      "scene": "产品经理｜竞品爬坡规划",
+      "negative": false,
+      "status": 200,
+      "error": null,
+      "fallback": false,
+      "scored": true,
+      "fields": {
+        "channel": {
+          "label": "渠道",
+          "expected": "产品/研发/测试",
+          "actual": "产品/研发/测试",
+          "ok": true
+        },
+        "type": {
+          "label": "类型",
+          "expected": "新增功能",
+          "actual": "新增功能",
+          "ok": true
+        },
+        "module": {
+          "label": "模块",
+          "expected": "爬坡",
+          "actual": "爬坡",
+          "ok": true
+        },
+        "proposer": {
+          "label": "提出人",
+          "expected": "刘畅",
+          "actual": "刘畅",
+          "ok": true
+        }
+      },
+      "fieldMatches": 4,
+      "title": {
+        "value": "跟进竞品爬坡规划功能：按坡度拆分路线并提示最陡路段与剩余爬升",
+        "issues": []
+      },
+      "description": {
+        "value": "产品刘畅调研竞品新版后发现，竞品提供爬坡规划功能，能把路线按坡度拆成多段，提前告知哪一段最陡、还剩多少爬升。刘畅提出下个版本是否跟进，希望在12月15日前得出结论，以便明年Q1排期。产品老王建议先评估数据来源和实现难度，不要凭感觉决定。",
+        "issues": []
+      },
+      "constraint": {
+        "status": "manual",
+        "expected": "12 月 15 日前给结论；Q1 排期",
+        "actual": "需在12月15日前给出是否跟进的结论，以便明年Q1排期。",
+        "missing": []
+      },
+      "pii": {
+        "leaks": []
+      },
+      "expected": {
+        "channel": "产品/研发/测试",
+        "type": "新增功能",
+        "module": "爬坡",
+        "proposer": "刘畅",
+        "constraints": "12 月 15 日前给结论；Q1 排期"
+      },
+      "elapsedMs": 8732
+    },
+    {
+      "id": "S07",
+      "scene": "用研｜团骑看队友位置",
+      "negative": false,
+      "status": 200,
+      "error": null,
+      "fallback": false,
+      "scored": true,
+      "fields": {
+        "channel": {
+          "label": "渠道",
+          "expected": "运营/用研",
+          "actual": "运营/用研",
+          "ok": true
+        },
+        "type": {
+          "label": "类型",
+          "expected": "新增功能",
+          "actual": "新增功能",
+          "ok": true
+        },
+        "module": {
+          "label": "模块",
+          "expected": "团队骑行",
+          "actual": "团队骑行",
+          "ok": true
+        },
+        "proposer": {
+          "label": "提出人",
+          "expected": null,
+          "actual": null,
+          "ok": true
+        }
+      },
+      "fieldMatches": 4,
+      "title": {
+        "value": "团骑时在码表上直接查看队友位置",
+        "issues": []
+      },
+      "description": {
+        "value": "运营/用研本周访谈了8位团骑用户,其中7位希望在码表上看到队友位置,以便掉队时知道谁落在后面。用户反映掏出手机查看太麻烦,希望码表直接显示。用户认为5人以内的小团使用即可满足需求。另有3位用户提到,如果队友摔倒时能收到提醒会更好。",
+        "issues": []
+      },
+      "constraint": {
+        "status": "manual",
+        "expected": "5 人以内小团",
+        "actual": "团队规模5人以内即可满足需求",
+        "missing": []
+      },
+      "pii": {
+        "leaks": []
+      },
+      "expected": {
+        "channel": "运营/用研",
+        "type": "新增功能",
+        "module": "团队骑行",
+        "proposer": null,
+        "constraints": "5 人以内小团"
+      },
+      "elapsedMs": 9522
+    },
+    {
+      "id": "S08",
+      "scene": "售后｜固件升级中断黑屏",
+      "negative": false,
+      "status": 200,
+      "error": null,
+      "fallback": false,
+      "scored": true,
+      "fields": {
+        "channel": {
+          "label": "渠道",
+          "expected": "售后",
+          "actual": "售后",
+          "ok": true
+        },
+        "type": {
+          "label": "类型",
+          "expected": "质量修复",
+          "actual": "质量修复",
+          "ok": true
+        },
+        "module": {
+          "label": "模块",
+          "expected": "固件升级",
+          "actual": "固件升级",
+          "ok": true
+        },
+        "proposer": {
+          "label": "提出人",
+          "expected": null,
+          "actual": null,
+          "ok": true
+        }
+      },
+      "fieldMatches": 4,
+      "title": {
+        "value": "固件升级前强制检查电量，并支持升级中断后自动回滚",
+        "issues": []
+      },
+      "description": {
+        "value": "售后反馈一位客户的需求。该客户在固件升级到一半时遇到家中断电，设备随后开机黑屏，需长按电源键十秒才能恢复。客户希望：1）升级前强制检查电量，电量不足时禁止升级；2）升级意外中断后，设备能自行回滚到原有固件，避免黑屏。",
+        "issues": []
+      },
+      "constraint": {
+        "status": "pass",
+        "expected": null,
+        "actual": null
+      },
+      "pii": {
+        "leaks": []
+      },
+      "expected": {
+        "channel": "售后",
+        "type": "质量修复",
+        "module": "固件升级",
+        "proposer": null,
+        "constraints": null
+      },
+      "elapsedMs": 7424
+    },
+    {
+      "id": "S09",
+      "scene": "销售｜欧洲客户要荷兰语",
+      "negative": false,
+      "status": 200,
+      "error": null,
+      "fallback": false,
+      "scored": true,
+      "fields": {
+        "channel": {
+          "label": "渠道",
+          "expected": "销售",
+          "actual": "销售",
+          "ok": true
+        },
+        "type": {
+          "label": "类型",
+          "expected": "功能扩展",
+          "actual": "功能扩展",
+          "ok": true
+        },
+        "module": {
+          "label": "模块",
+          "expected": null,
+          "actual": null,
+          "ok": true
+        },
+        "proposer": {
+          "label": "提出人",
+          "expected": null,
+          "actual": null,
+          "ok": true
+        }
+      },
+      "fieldMatches": 4,
+      "title": {
+        "value": "欧洲经销商希望码表增加荷兰语支持",
+        "issues": []
+      },
+      "description": {
+        "value": "欧洲经销商通过销售反馈，希望码表增加荷兰语。目前码表只支持英语、德语、法语，说明书也没有荷兰语版本。经销商 Q2 要参加本地展会，希望 Q2 前得到答复。",
+        "issues": []
+      },
+      "constraint": {
+        "status": "manual",
+        "expected": "Q2 前答复",
+        "actual": "经销商 Q2 要参加本地展会，希望 Q2 前给出答复。",
+        "missing": []
+      },
+      "pii": {
+        "leaks": []
+      },
+      "expected": {
+        "channel": "销售",
+        "type": "功能扩展",
+        "module": null,
+        "proposer": null,
+        "constraints": "Q2 前答复"
+      },
+      "elapsedMs": 7241
+    },
+    {
+      "id": "S10",
+      "scene": "终端用户｜升级后蓝牙连不上",
+      "negative": false,
+      "status": 200,
+      "error": null,
+      "fallback": false,
+      "scored": true,
+      "fields": {
+        "channel": {
+          "label": "渠道",
+          "expected": "终端用户",
+          "actual": "终端用户",
+          "ok": true
+        },
+        "type": {
+          "label": "类型",
+          "expected": "质量修复",
+          "actual": "质量修复",
+          "ok": true
+        },
+        "module": {
+          "label": "模块",
+          "expected": "数据传输",
+          "actual": "数据传输",
+          "ok": true
+        },
+        "proposer": {
+          "label": "提出人",
+          "expected": null,
+          "actual": null,
+          "ok": true
+        }
+      },
+      "fieldMatches": 4,
+      "title": {
+        "value": "码表固件升级后无法连接手机，蓝牙一直转圈",
+        "issues": []
+      },
+      "description": {
+        "value": "终端用户反馈：码表升级后无法再连接手机，蓝牙连接界面一直转圈，删除设备并重新配对后问题依旧。用户手机为 iPhone 15，升级前连接正常。用户希望恢复码表与手机的正常连接。",
+        "issues": []
+      },
+      "constraint": {
+        "status": "manual",
+        "expected": "iPhone 15",
+        "actual": "用户手机为 iPhone 15，升级前连接正常，需保证升级后与该手机的兼容连接。",
+        "missing": []
+      },
+      "pii": {
+        "leaks": []
+      },
+      "expected": {
+        "channel": "终端用户",
+        "type": "质量修复",
+        "module": "数据传输",
+        "proposer": null,
+        "constraints": "iPhone 15"
+      },
+      "elapsedMs": 11203
+    },
+    {
+      "id": "S11",
+      "scene": "电商｜降价 + 客服慢（负向样本）",
+      "negative": true,
+      "status": 200,
+      "error": null,
+      "fallback": false,
+      "scored": true,
+      "fields": {
+        "channel": {
+          "label": "渠道",
+          "expected": "电商",
+          "actual": "电商",
+          "ok": true
+        },
+        "type": {
+          "label": "类型",
+          "expected": null,
+          "actual": null,
+          "ok": true
+        },
+        "module": {
+          "label": "模块",
+          "expected": null,
+          "actual": null,
+          "ok": true
+        },
+        "proposer": {
+          "label": "提出人",
+          "expected": null,
+          "actual": null,
+          "ok": true
+        }
+      },
+      "fieldMatches": 4,
+      "title": {
+        "value": "电商客户反馈双十一购买后降价且客服响应慢,要求退差价",
+        "issues": []
+      },
+      "description": {
+        "value": "电商渠道收到一条差评。客户在双十一购买商品,第三天商品降价,联系客服后长时间未获回复。客户表示商品本身没有问题,但购买和售后体验很差。客户要求退还差价,否则将投诉。电商客服询问是否需要转交产品团队。chat中没有提出具体的产品功能或改进需求,属于价格和客服服务投诉。",
+        "issues": []
+      },
+      "constraint": {
+        "status": "pass",
+        "expected": null,
+        "actual": null
+      },
+      "pii": {
+        "leaks": []
+      },
+      "expected": {
+        "channel": "电商",
+        "type": null,
+        "module": null,
+        "proposer": null,
+        "constraints": null
+      },
+      "elapsedMs": 6719
+    },
+    {
+      "id": "S12",
+      "scene": "终端用户｜摔倒检测误报",
+      "negative": false,
+      "status": 200,
+      "error": null,
+      "fallback": false,
+      "scored": true,
+      "fields": {
+        "channel": {
+          "label": "渠道",
+          "expected": "终端用户",
+          "actual": "终端用户",
+          "ok": true
+        },
+        "type": {
+          "label": "类型",
+          "expected": "质量修复",
+          "actual": "质量修复",
+          "ok": true
+        },
+        "module": {
+          "label": "模块",
+          "expected": "摔倒检测",
+          "actual": "摔倒检测",
+          "ok": true
+        },
+        "proposer": {
+          "label": "提出人",
+          "expected": null,
+          "actual": null,
+          "ok": true
+        }
+      },
+      "fieldMatches": 4,
+      "title": {
+        "value": "摔倒检测在过减速带等颠簸路段误报，需降低灵敏度",
+        "issues": []
+      },
+      "description": {
+        "value": "终端用户反馈：前一天骑行经过减速带时颠了一下，码表直接触发摔倒检测，并向其紧急联系人发送了短信，用户受到惊吓。用户表示正常骑行遇到颠簸也会误报，希望降低摔倒检测的敏感度，减少误报。",
+        "issues": []
+      },
+      "constraint": {
+        "status": "pass",
+        "expected": null,
+        "actual": null
+      },
+      "pii": {
+        "leaks": []
+      },
+      "expected": {
+        "channel": "终端用户",
+        "type": "质量修复",
+        "module": "摔倒检测",
+        "proposer": null,
+        "constraints": null
+      },
+      "elapsedMs": 4149
+    },
+    {
+      "id": "S13",
+      "scene": "测试｜强光下屏幕看不清",
+      "negative": false,
+      "status": 200,
+      "error": null,
+      "fallback": false,
+      "scored": true,
+      "fields": {
+        "channel": {
+          "label": "渠道",
+          "expected": "产品/研发/测试",
+          "actual": "产品/研发/测试",
+          "ok": true
+        },
+        "type": {
+          "label": "类型",
+          "expected": "体验优化",
+          "actual": "体验优化",
+          "ok": true
+        },
+        "module": {
+          "label": "模块",
+          "expected": "显示设置",
+          "actual": "显示设置",
+          "ok": true
+        },
+        "proposer": {
+          "label": "提出人",
+          "expected": "小赵",
+          "actual": "小赵",
+          "ok": true
+        }
+      },
+      "fieldMatches": 4,
+      "title": {
+        "value": "强光下屏幕难以看清，希望增加自动亮度或高对比模式",
+        "issues": []
+      },
+      "description": {
+        "value": "测试人员小赵反馈：户外强光下屏幕对比度不够，骑行时基本看不清速度，戴墨镜时更严重，目前只能用手遮挡才能看清。小赵希望增加自动亮度或高对比模式，以改善强光下的可读性。",
+        "issues": []
+      },
+      "constraint": {
+        "status": "missing",
+        "expected": "户外强光",
+        "actual": null
+      },
+      "pii": {
+        "leaks": []
+      },
+      "expected": {
+        "channel": "产品/研发/测试",
+        "type": "体验优化",
+        "module": "显示设置",
+        "proposer": "小赵",
+        "constraints": "户外强光"
+      },
+      "elapsedMs": 6371
+    },
+    {
+      "id": "S14",
+      "scene": "终端用户｜骑行记录导出",
+      "negative": false,
+      "status": 200,
+      "error": null,
+      "fallback": false,
+      "scored": true,
+      "fields": {
+        "channel": {
+          "label": "渠道",
+          "expected": "终端用户",
+          "actual": "终端用户",
+          "ok": true
+        },
+        "type": {
+          "label": "类型",
+          "expected": "功能扩展",
+          "actual": "功能扩展",
+          "ok": true
+        },
+        "module": {
+          "label": "模块",
+          "expected": "骑行记录",
+          "actual": "历史记录",
+          "ok": false
+        },
+        "proposer": {
+          "label": "提出人",
+          "expected": "老李",
+          "actual": "老李",
+          "ok": true
+        }
+      },
+      "fieldMatches": 3,
+      "title": {
+        "value": "骑行数据支持导出到 Excel 并同步 Strava，且可按月份筛选",
+        "issues": []
+      },
+      "description": {
+        "value": "终端用户老李反馈，骑行数据目前只能在 App 内查看。他想把数据导出到 Excel 做年度总结，或直接同步到 Strava。现在只能逐张截图保存，操作很麻烦。他希望导出前可以按月份筛选数据。",
+        "issues": []
+      },
+      "constraint": {
+        "status": "pass",
+        "expected": null,
+        "actual": null
+      },
+      "pii": {
+        "leaks": []
+      },
+      "expected": {
+        "channel": "终端用户",
+        "type": "功能扩展",
+        "module": "骑行记录",
+        "proposer": "老李",
+        "constraints": null
+      },
+      "elapsedMs": 7106
+    },
+    {
+      "id": "S15",
+      "scene": "售后｜充电发热、电池鼓包",
+      "negative": false,
+      "status": 200,
+      "error": null,
+      "fallback": false,
+      "scored": true,
+      "fields": {
+        "channel": {
+          "label": "渠道",
+          "expected": "售后",
+          "actual": "售后",
+          "ok": true
+        },
+        "type": {
+          "label": "类型",
+          "expected": "安全合规",
+          "actual": "安全合规",
+          "ok": true
+        },
+        "module": {
+          "label": "模块",
+          "expected": "电源管理（海思新平台）",
+          "actual": "电源管理（海思新平台）",
+          "ok": true
+        },
+        "proposer": {
+          "label": "提出人",
+          "expected": null,
+          "actual": null,
+          "ok": true
+        }
+      },
+      "fieldMatches": 4,
+      "title": {
+        "value": "C606码表充电发烫、电池鼓包的安全排查",
+        "issues": []
+      },
+      "description": {
+        "value": "售后反馈有客户在充电时发现码表发烫,电池有些鼓包,售后已让客户立即停止使用。该客户使用原装充电器,已使用约半年,机型为新平台C606。售后询问是否需要启动安全排查。",
+        "issues": []
+      },
+      "constraint": {
+        "status": "pass",
+        "expected": null,
+        "actual": null
+      },
+      "pii": {
+        "leaks": []
+      },
+      "expected": {
+        "channel": "售后",
+        "type": "安全合规",
+        "module": "电源管理（海思新平台）",
+        "proposer": null,
+        "constraints": null
+      },
+      "elapsedMs": 8212
+    },
+    {
+      "id": "S16",
+      "scene": "销售｜企业批量采购 50 台",
+      "negative": false,
+      "status": 200,
+      "error": null,
+      "fallback": false,
+      "scored": true,
+      "fields": {
+        "channel": {
+          "label": "渠道",
+          "expected": "销售",
+          "actual": "销售",
+          "ok": true
+        },
+        "type": {
+          "label": "类型",
+          "expected": "新增功能",
+          "actual": "新增功能",
+          "ok": true
+        },
+        "module": {
+          "label": "模块",
+          "expected": "系统管理",
+          "actual": null,
+          "ok": false
+        },
+        "proposer": {
+          "label": "提出人",
+          "expected": null,
+          "actual": null,
+          "ok": true
+        }
+      },
+      "fieldMatches": 3,
+      "title": {
+        "value": "企业客户批量采购 50 台，需统一账号管理、批量导入路线及激活情况后台",
+        "issues": []
+      },
+      "description": {
+        "value": "需求方：一家企业客户（经销售小唐转述）。该客户计划批量采购 50 台设备发放给员工，希望：1）可以统一管理员工账号；2）可以批量导入路线；3）有一个管理后台，能查看哪些员工已激活设备、哪些还没有使用。原因：便于企业集中管理和跟进设备的使用情况。客户称预算不是问题，但有采购流程要走。",
+        "issues": []
+      },
+      "constraint": {
+        "status": "manual",
+        "expected": "50 台",
+        "actual": "客户称预算不是问题；企业内部有采购流程需要走。采购规模为 50 台。",
+        "missing": []
+      },
+      "pii": {
+        "leaks": []
+      },
+      "expected": {
+        "channel": "销售",
+        "type": "新增功能",
+        "module": "系统管理",
+        "proposer": null,
+        "constraints": "50 台"
+      },
+      "elapsedMs": 8411
+    },
+    {
+      "id": "S17",
+      "scene": "终端用户｜语音播报太吵",
+      "negative": false,
+      "status": 200,
+      "error": null,
+      "fallback": false,
+      "scored": true,
+      "fields": {
+        "channel": {
+          "label": "渠道",
+          "expected": "终端用户",
+          "actual": "终端用户",
+          "ok": true
+        },
+        "type": {
+          "label": "类型",
+          "expected": "体验优化",
+          "actual": "功能扩展",
+          "ok": false
+        },
+        "module": {
+          "label": "模块",
+          "expected": "语音播报",
+          "actual": "语音播报",
+          "ok": true
+        },
+        "proposer": {
+          "label": "提出人",
+          "expected": null,
+          "actual": null,
+          "ok": true
+        }
+      },
+      "fieldMatches": 3,
+      "title": {
+        "value": "语音播报过于频繁且无法关闭，希望可自定义播报内容",
+        "issues": []
+      },
+      "description": {
+        "value": "终端用户反馈：语音播报每公里都会播报，且无法关闭，骑行时队友觉得吵。用户希望只播报关键数据，或能自行选择播报的内容。",
+        "issues": []
+      },
+      "constraint": {
+        "status": "pass",
+        "expected": null,
+        "actual": null
+      },
+      "pii": {
+        "leaks": []
+      },
+      "expected": {
+        "channel": "终端用户",
+        "type": "体验优化",
+        "module": "语音播报",
+        "proposer": null,
+        "constraints": null
+      },
+      "elapsedMs": 2991
+    },
+    {
+      "id": "S18",
+      "scene": "研发｜App 一键上传日志",
+      "negative": false,
+      "status": 200,
+      "error": null,
+      "fallback": false,
+      "scored": true,
+      "fields": {
+        "channel": {
+          "label": "渠道",
+          "expected": "产品/研发/测试",
+          "actual": "产品/研发/测试",
+          "ok": true
+        },
+        "type": {
+          "label": "类型",
+          "expected": "技术治理",
+          "actual": "技术治理",
+          "ok": true
+        },
+        "module": {
+          "label": "模块",
+          "expected": "日志/异常文件管理",
+          "actual": "日志/异常文件管理",
+          "ok": true
+        },
+        "proposer": {
+          "label": "提出人",
+          "expected": "老吴",
+          "actual": "老吴",
+          "ok": true
+        }
+      },
+      "fieldMatches": 4,
+      "title": {
+        "value": "App 端支持一键上传码表日志，自动附带设备型号和固件版本",
+        "issues": []
+      },
+      "description": {
+        "value": "研发人员老吴提出：现场问题排查效率低，码表日志目前需要连接电脑导出，用户不会操作。他希望在 App 内提供一键上传日志的功能，上传时自动附带设备型号和固件版本，用户只需点击一次即可完成。",
+        "issues": []
+      },
+      "constraint": {
+        "status": "pass",
+        "expected": null,
+        "actual": null
+      },
+      "pii": {
+        "leaks": []
+      },
+      "expected": {
+        "channel": "产品/研发/测试",
+        "type": "技术治理",
+        "module": "日志/异常文件管理",
+        "proposer": "老吴",
+        "constraints": null
+      },
+      "elapsedMs": 6446
+    },
+    {
+      "id": "S19",
+      "scene": "用研｜新用户不会用 + 闲聊",
+      "negative": false,
+      "status": 200,
+      "error": null,
+      "fallback": false,
+      "scored": true,
+      "fields": {
+        "channel": {
+          "label": "渠道",
+          "expected": "运营/用研",
+          "actual": "运营/用研",
+          "ok": true
+        },
+        "type": {
+          "label": "类型",
+          "expected": "体验优化",
+          "actual": "体验优化",
+          "ok": true
+        },
+        "module": {
+          "label": "模块",
+          "expected": "新手引导",
+          "actual": "新手引导",
+          "ok": true
+        },
+        "proposer": {
+          "label": "提出人",
+          "expected": null,
+          "actual": null,
+          "ok": true
+        }
+      },
+      "fieldMatches": 4,
+      "title": {
+        "value": "新用户首次使用缺少引导，表盘设置、传感器连接和骑行保存不会操作",
+        "issues": []
+      },
+      "description": {
+        "value": "需求来源：运营/用研在新用户访谈中收集的反馈，提出人为匿名的新用户。\n问题：新用户开机后不知道该做什么；表盘如何设置、传感器如何连接都需要咨询客服；有用户第一次骑行结束后不知道如何保存，误以为会自动保存。\n诉求：希望新用户首次使用时能获得明确引导，无需咨询客服即可完成表盘设置、传感器连接和骑行记录保存。",
+        "issues": []
+      },
+      "constraint": {
+        "status": "pass",
+        "expected": null,
+        "actual": null
+      },
+      "pii": {
+        "leaks": []
+      },
+      "expected": {
+        "channel": "运营/用研",
+        "type": "体验优化",
+        "module": "新手引导",
+        "proposer": null,
+        "constraints": null
+      },
+      "elapsedMs": 6745
+    },
+    {
+      "id": "S20",
+      "scene": "转发混合｜断连 + 踏频 + 功率",
+      "negative": true,
+      "status": 200,
+      "error": null,
+      "fallback": false,
+      "scored": true,
+      "fields": {
+        "channel": {
+          "label": "渠道",
+          "expected": null,
+          "actual": null,
+          "ok": true
+        },
+        "type": {
+          "label": "类型",
+          "expected": null,
+          "actual": null,
+          "ok": true
+        },
+        "module": {
+          "label": "模块",
+          "expected": null,
+          "actual": null,
+          "ok": true
+        },
+        "proposer": {
+          "label": "提出人",
+          "expected": null,
+          "actual": null,
+          "ok": true
+        }
+      },
+      "fieldMatches": 4,
+      "title": {
+        "value": "码表频繁断连、踏平数据不准，并希望增加功率查看界面",
+        "issues": []
+      },
+      "description": {
+        "value": "需求来源：一位用户的朋友通过他人转发反馈，提出人身份未具名。\n反馈内容：1）码表目前经常断连；2）踏平数据也不准确；3）客服建议寄回检修，用户嫌麻烦，未寄回；4）希望增加可查看功率的界面；5）希望价格最好便宜一些。\n聊天中未给出具体型号、数值或时间要求。",
+        "issues": []
+      },
+      "constraint": {
+        "status": "missing",
+        "expected": "成本敏感",
+        "actual": null
+      },
+      "pii": {
+        "leaks": []
+      },
+      "expected": {
+        "channel": null,
+        "type": null,
+        "module": null,
+        "proposer": null,
+        "constraints": "成本敏感"
+      },
+      "elapsedMs": 10305
+    }
+  ]
+}
