@@ -11,7 +11,7 @@
 //
 // 用法（目标环境，需要登录态 cookie）：
 //   RQSYS_API_BASE="https://miaoda.feishu.cn/app/app_17fqkjwyx1u" \
-//   RQSYS_COOKIE="<登录 cookie>" \
+//   RQSYS_COOKIE="<登录 cookie>" RQSYS_CSRF_TOKEN="<suda-csrf-token 解码值>" \
 //   FEISHU_APP_ID=... FEISHU_APP_SECRET=... BASE_APP_TOKEN=... BASE_TABLE_ID=... \
 //   node scripts/base-source-backfill.mjs --csv /tmp/source-backfill.csv
 //
@@ -136,7 +136,9 @@ async function main() {
     requirements = await readRequirementsFile(requirementsFile);
   } else {
     if (!cookie && !authorization) die("需要 RQSYS_COOKIE 或 INTAKE_COOKIE（登录态），或改用 --requirements-file");
-    const headers = { accept: "application/json", ...(cookie ? { cookie } : {}), ...(authorization ? { authorization } : {}) };
+    // 妙搭平台网关要求 CSRF 头；值取自家 suda-csrf-token（需 URL 解码），见 @lark-apaas/dataloom 的 csrf 工具。
+    const csrf = process.env.RQSYS_CSRF_TOKEN ?? process.env.SUDA_CSRF_TOKEN ?? "";
+    const headers = { accept: "application/json", ...(cookie ? { cookie } : {}), ...(authorization ? { authorization } : {}), ...(csrf ? { "x-suda-csrf-token": csrf } : {}) };
     requirements = await fetchAllRequirements(apiBase, headers, limit);
   }
   if (limit !== null) requirements = requirements.slice(0, limit);
