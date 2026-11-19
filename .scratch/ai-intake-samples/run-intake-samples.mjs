@@ -3,14 +3,15 @@
 //
 // 默认 stub 模式：在 127.0.0.1 上起一个假的 intake-draft 服务，不调线上、不写库、不产生审计。
 // live 模式必须显式加 --allow-live --ack-audit-writes，并自备登录 Cookie；每次成功/失败都会写一条
-// intake.* 审计，没有清库工具前不要跑。
+// intake.* 审计，跑完必须清理。
 //
 // 判分口径见 SAMPLES-20261119.md：渠道/类型/模块/提出人精确匹配；期望 null 的字段猜了就算错；
 // S11、S20 是负向/混合样本，单列统计；fallback 样本不计入字段准确率；标题/描述/约束的语义质量
 // 只做自动提示，最终仍需人工复核。
 
 import http from "node:http";
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -163,17 +164,53 @@ function validateSamples(samples, summary, markdown) {
   if (!markdown.includes("S11、S20 是负向/混合样本")) throw new Error("样本说明里的负向样本口径变了，请同步 NEGATIVE_IDS");
 }
 
-function checkDictionary(samples) {
+function readModuleNames(filePath) {
+  const raw = readFileSync(filePath, "utf8");
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    const parsed = JSON.parse(trimmed);
+    const items = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray(parsed.items) ? parsed.items
+      : Array.isArray(parsed.modules) ? parsed.modules
+      : Array.isArray(parsed.names) ? parsed.names
+      : Array.isArray(parsed.data) ? parsed.data
+      : null;
+    if (!items) throw new Error(`模块词典 JSON 结构不认识：${filePath}`);
+    const names = items
+      .map((item) => (typeof item === "string" ? item : item?.name))
+      .filter((name) => typeof name === "string" && name.trim());
+    return { names: new Set(names), version: parsed?.version ?? null };
+  }
+  const names = new Set(Array.from(raw.matchAll(/\{"name":"([^"]+)"/g), (match) => match[1]));
+  return { names, version: null };
+}
+
+// 标注基线以线上已发布词典为准：用 --modules-file 传入 GET /api/modules 的原始 JSON 或名称数组。
+// 不传时退回 0003 种子，只适合离线自检；线上复跑必须传 --modules-file。
+function checkDictionary(samples, modulesFile) {
   const pipelineSource = readFileSync(join(REPO_ROOT, "apps/api/src/contracts/pipeline.ts"), "utf8");
   for (const value of [...CHANNELS, ...TYPES]) {
     if (!pipelineSource.includes(`"${value}"`)) throw new Error(`pipeline.ts 里找不到枚举值：${value}`);
   }
-  const seed = readFileSync(join(REPO_ROOT, "database/migrations/0003_team_directory_seed.sql"), "utf8");
-  const modules = new Set(Array.from(seed.matchAll(/\{"name":"([^"]+)"/g), (match) => match[1]));
-  if (modules.size === 0) throw new Error("未能从 0003 种子解析出模块词典");
-  const unknown = samples.filter((sample) => sample.module !== null && !modules.has(sample.module));
-  if (unknown.length > 0) throw new Error(`模块不在 0003 已发布词典：${unknown.map((sample) => `${sample.id}=${sample.module}`).join("; ")}`);
-  return { modules: modules.size, nonNullModules: samples.filter((sample) => sample.module !== null).length };
+  // 默认优先用线上已发布词典快照；没有快照才退回 0003 种子。
+  const liveSnapshot = join(HERE, "module-dictionary-live.json");
+  const modulesPath = modulesFile
+    ? resolve(modulesFile)
+    : existsSync(liveSnapshot)
+      ? liveSnapshot
+      : join(REPO_ROOT, "database/migrations/0003_team_directory_seed.sql");
+  const dictionary = readModuleNames(modulesPath);
+  if (dictionary.names.size === 0) throw new Error(`未能从模块词典解析出条目：${modulesPath}`);
+  const unknown = samples.filter((sample) => sample.module !== null && !dictionary.names.has(sample.module));
+  if (unknown.length > 0) throw new Error(`模块不在词典 ${modulesPath}${dictionary.version === null ? "" : `（version ${dictionary.version}）`}：${unknown.map((sample) => `${sample.id}=${sample.module}`).join("; ")}`);
+  return {
+    modules: dictionary.names.size,
+    nonNullModules: samples.filter((sample) => sample.module !== null).length,
+    source: modulesPath,
+    version: dictionary.version,
+    fromSeed: modulesPath.endsWith(".sql"),
+  };
 }
 
 const PII_PATTERNS = [
@@ -370,14 +407,27 @@ function scoreSample(sample, { status, body, error }) {
   };
 }
 
+function percent(numerator, denominator) {
+  return denominator === 0 ? null : Math.round((numerator / denominator) * 1000) / 10;
+}
+
 function summarize(results) {
   const positive = results.filter((result) => !result.negative);
   const negative = results.filter((result) => result.negative);
   const scoredPositive = positive.filter((result) => result.scored);
   const fieldTotal = scoredPositive.length * 4;
   const fieldMatched = scoredPositive.reduce((sum, result) => sum + result.fieldMatches, 0);
+  const perField = {};
+  for (const [key, label] of Object.entries(FIELD_LABELS)) {
+    const matched = scoredPositive.filter((result) => result.fields[key].ok).length;
+    const nulls = scoredPositive.filter((result) => result.fields[key].actual === null).length;
+    perField[key] = { label, matched, total: scoredPositive.length, nulls };
+  }
+  const nullCount = scoredPositive.reduce((sum, result) => sum + Object.values(result.fields).filter((field) => field.actual === null).length, 0);
+  const unexpectedNullCount = scoredPositive.reduce((sum, result) => sum + Object.values(result.fields).filter((field) => field.expected !== null && field.actual === null).length, 0);
   return {
     total: results.length,
+    scoredSamples: results.filter((result) => result.scored).length,
     httpErrors: results.filter((result) => result.status !== 200).length,
     fallbackIds: results.filter((result) => result.fallback).map((result) => result.id),
     piiLeakIds: results.filter((result) => result.pii.leaks.length > 0).map((result) => result.id),
@@ -386,7 +436,12 @@ function summarize(results) {
     positiveScoredSamples: scoredPositive.length,
     positiveFieldTotal: fieldTotal,
     positiveFieldMatched: fieldMatched,
-    positiveAccuracy: fieldTotal === 0 ? null : Math.round((fieldMatched / fieldTotal) * 1000) / 10,
+    positiveAccuracy: percent(fieldMatched, fieldTotal),
+    positiveNullCount: nullCount,
+    positiveNullRate: percent(nullCount, fieldTotal),
+    positiveUnexpectedNullCount: unexpectedNullCount,
+    positiveUnexpectedNullRate: percent(unexpectedNullCount, fieldTotal),
+    perField,
     negativeTotal: negative.length,
     negativePassed: negative.filter((result) => result.scored && result.fieldMatches === 4).length,
     constraintFabricated: results.filter((result) => result.constraint.status === "fabricated").map((result) => result.id),
@@ -396,6 +451,44 @@ function summarize(results) {
     titleIssues: results.filter((result) => result.title.issues.length > 0).map((result) => result.id),
     descriptionIssues: results.filter((result) => result.description.issues.length > 0).map((result) => result.id),
   };
+}
+
+function evaluateGate(summary) {
+  const minMatched = Math.ceil(summary.positiveFieldTotal * 0.8);
+  const proposerErrors = summary.perField.proposer.total - summary.perField.proposer.matched;
+  const checks = [
+    {
+      label: "全部样本成功计分",
+      pass: summary.scoredSamples === summary.total && summary.httpErrors === 0 && summary.fallbackIds.length === 0,
+      detail: `计分 ${summary.scoredSamples}/${summary.total}，HTTP 错误 ${summary.httpErrors}，fallback ${summary.fallbackIds.length}${summary.fallbackIds.length ? `（${summary.fallbackIds.join(", ")}）` : ""}`,
+    },
+    {
+      label: "正向字段 ≥80%",
+      pass: summary.positiveFieldMatched >= minMatched,
+      detail: `${summary.positiveFieldMatched}/${summary.positiveFieldTotal}（${summary.positiveAccuracy ?? "n/a"}%），要求 ≥${minMatched}/${summary.positiveFieldTotal}`,
+    },
+    {
+      label: "负向 2/2",
+      pass: summary.negativePassed === summary.negativeTotal,
+      detail: `${summary.negativePassed}/${summary.negativeTotal}`,
+    },
+    {
+      label: "PII 泄漏 0",
+      pass: summary.piiLeakIds.length === 0,
+      detail: `${summary.piiLeakIds.length}${summary.piiLeakIds.length ? `（${summary.piiLeakIds.join(", ")}）` : ""}`,
+    },
+    {
+      label: "约束缺失 ≤3",
+      pass: summary.constraintMissing.length <= 3,
+      detail: `${summary.constraintMissing.length}${summary.constraintMissing.length ? `（${summary.constraintMissing.join(", ")}）` : ""}`,
+    },
+    {
+      label: "提出人错 ≤1",
+      pass: proposerErrors <= 1,
+      detail: `${summary.perField.proposer.matched}/${summary.perField.proposer.total} 正确，错误 ${proposerErrors}`,
+    },
+  ];
+  return { checks, passed: checks.every((check) => check.pass) };
 }
 
 function violates(actual, expected, label) {
@@ -422,17 +515,21 @@ function mark(field) {
   return `${field.ok ? "✓" : "✗"} ${field.expected ?? "null"}${field.ok ? "" : ` → ${field.actual ?? "null"}`}`;
 }
 
-function renderMarkdown({ mode, samples, results, summary, baseUrl, startedAt, finishedAt }) {
+function renderMarkdown({ mode, samples, samplesSha256, dictionary, results, summary, baseUrl, startedAt, finishedAt }) {
   const lines = [];
   lines.push(`# 聊天抽取 20 段回归结果（${mode}）`);
   lines.push("");
   lines.push(`- 样本文件：\`${samples}\``);
+  lines.push(`- 样本 sha256：\`${samplesSha256}\``);
+  lines.push(`- 模块词典：${dictionary.fromSeed ? "0003 种子" : `\`${dictionary.source}\``}${dictionary.version === null ? "" : `（version ${dictionary.version}）`}，共 ${dictionary.modules} 项`);
   lines.push(`- 时间：${startedAt} → ${finishedAt}`);
   lines.push(`- 端点：${baseUrl}`);
   lines.push(`- 样本：${summary.total}（正向 ${summary.positiveSamples}，负向/混合 ${summary.negativeTotal}）`);
   lines.push(`- HTTP 错误：${summary.httpErrors}`);
   lines.push(`- fallback：${summary.fallbackIds.length}${summary.fallbackIds.length ? `（${summary.fallbackIds.join(", ")}）` : ""}`);
   lines.push(`- 正向字段准确率：${summary.positiveFieldMatched}/${summary.positiveFieldTotal}（${summary.positiveAccuracy ?? "n/a"}%，已排除 fallback）`);
+  lines.push(`- 空值率：${summary.positiveNullCount}/${summary.positiveFieldTotal}（${summary.positiveNullRate ?? "n/a"}%），其中不该空却空 ${summary.positiveUnexpectedNullCount} 个（${summary.positiveUnexpectedNullRate ?? "n/a"}%）`);
+  lines.push(`- 分字段：${Object.values(summary.perField).map((field) => `${field.label} ${field.matched}/${field.total}`).join("，")}`);
   lines.push(`- 负向样本通过：${summary.negativePassed}/${summary.negativeTotal}`);
   lines.push(`- PII 泄漏：${summary.piiLeakIds.length}${summary.piiLeakIds.length ? `（${summary.piiLeakIds.join(", ")}）` : ""}`);
   lines.push(`- 约束：编造 ${summary.constraintFabricated.length}，缺失 ${summary.constraintMissing.length}，数字待核 ${summary.constraintReview.length}，语义待人工 ${summary.constraintManual.length}`);
@@ -475,23 +572,40 @@ function renderMarkdown({ mode, samples, results, summary, baseUrl, startedAt, f
 }
 
 function printSummary(summary, mode) {
-  console.log(`\n[${mode}] 样本 ${summary.total}｜HTTP 错误 ${summary.httpErrors}｜fallback ${summary.fallbackIds.length}`);
+  console.log(`\n[${mode}] 样本 ${summary.total}｜成功计分 ${summary.scoredSamples}｜HTTP 错误 ${summary.httpErrors}｜fallback ${summary.fallbackIds.length}`);
   console.log(`[${mode}] 正向字段 ${summary.positiveFieldMatched}/${summary.positiveFieldTotal}（${summary.positiveAccuracy ?? "n/a"}%）｜负向通过 ${summary.negativePassed}/${summary.negativeTotal}`);
+  console.log(`[${mode}] 空值率 ${summary.positiveNullCount}/${summary.positiveFieldTotal}（${summary.positiveNullRate ?? "n/a"}%），其中不该空却空 ${summary.positiveUnexpectedNullCount} 个（${summary.positiveUnexpectedNullRate ?? "n/a"}%）`);
+  const perField = Object.values(summary.perField).map((field) => `${field.label} ${field.matched}/${field.total}（空 ${field.nulls}）`).join("｜");
+  console.log(`[${mode}] 分字段：${perField}`);
   console.log(`[${mode}] PII 泄漏 ${summary.piiLeakIds.length}｜约束编造 ${summary.constraintFabricated.length}｜约束缺失 ${summary.constraintMissing.length}｜数字待核 ${summary.constraintReview.length}｜语义待人工 ${summary.constraintManual.length}`);
   const flagged = [...new Set([...summary.fieldFailureIds, ...summary.piiLeakIds, ...summary.fallbackIds])];
   if (flagged.length > 0) console.log(`[${mode}] 需关注：${flagged.join(", ")}`);
+}
+
+function printGate(summary) {
+  const gate = evaluateGate(summary);
+  console.log(`\n[gate] ${gate.passed ? "PASS" : "FAIL"}`);
+  for (const check of gate.checks) {
+    console.log(`[gate] ${check.pass ? "✓" : "✗"} ${check.label}：${check.detail}`);
+  }
+  if (!gate.passed) process.exitCode = 1;
+  return gate;
 }
 
 async function main() {
   const mode = arg("--mode", "stub");
   if (!["stub", "live"].includes(mode)) die(`--mode 只支持 stub|live，收到 ${mode}`);
   const samplesPath = resolve(arg("--samples", DEFAULT_SAMPLES));
+  const modulesFile = arg("--modules-file");
   const markdown = readFileSync(samplesPath, "utf8");
+  const samplesSha256 = createHash("sha256").update(markdown).digest("hex");
   const samples = parseSections(markdown);
   const summaryTable = parseSummary(markdown);
   validateSamples(samples, summaryTable, markdown);
-  const dictionary = checkDictionary(samples);
-  console.log(`[check] 样本 ${samples.length}/20｜枚举渠道 ${CHANNELS.length}、类型 ${TYPES.length}｜非空模块 ${dictionary.nonNullModules} 个均在 0003 词典里（词典共 ${dictionary.modules} 个）`);
+  const dictionary = checkDictionary(samples, modulesFile);
+  console.log(`[check] 样本 ${samples.length}/20｜sha256 ${samplesSha256}`);
+  console.log(`[check] 枚举渠道 ${CHANNELS.length}、类型 ${TYPES.length}｜模块词典 ${dictionary.modules} 个（来源：${dictionary.source}${dictionary.version === null ? "" : `，version ${dictionary.version}`}）｜非空模块 ${dictionary.nonNullModules} 个均在词典内`);
+  if (dictionary.fromSeed) console.log("[check] 警告：当前用 0003 种子做模块基线；线上已发布词典可能不同，正式复跑请用 --modules-file 传入 GET /api/modules 的 JSON。");
   console.log(`[check] 负向样本：${samples.filter((sample) => sample.negative).map((sample) => sample.id).join(", ")}｜含 PII 样本：${samples.filter((sample) => extractPii(sample.text).size > 0).map((sample) => sample.id).join(", ")}`);
   if (hasFlag("--check")) {
     console.log("[check] 通过：样本解析、总表一致性、枚举与模块词典都对齐。");
@@ -520,9 +634,9 @@ async function main() {
     baseUrl = arg("--base-url");
     if (!baseUrl) die("live 模式必须提供 --base-url");
     if (!process.env.INTAKE_COOKIE && !process.env.INTAKE_AUTHORIZATION) die("live 模式需要 INTAKE_COOKIE 或 INTAKE_AUTHORIZATION 环境变量（登录态），harness 不接收明文参数");
-    delayMs = Number(arg("--delay", "21000"));
+    delayMs = Number(arg("--delay", "30000"));
     if (!Number.isFinite(delayMs) || delayMs < 0) die("--delay 必须是非负毫秒数");
-    if (delayMs < 20000) console.warn(`[live] 警告：--delay ${delayMs}ms 低于 3 次/分钟的限流节奏，除非你确认了测试配置，否则会收到 429。`);
+    if (delayMs < 30000) console.warn(`[live] 警告：--delay ${delayMs}ms 低于 30 秒/段的限流节奏，可能收到 429；S09 上次就是因此失败。`);
     console.log(`[live] 目标：${baseUrl}${INTAKE_PATH}｜${selected.length} 段｜间隔 ${delayMs}ms｜预计 ${Math.round((selected.length * delayMs) / 1000)}s`);
     console.log("[live] 注意：每段成功/失败都会写一条 intake.* 审计；跑完必须按 samples 文档 §3 清理并复查。");
   }
@@ -539,7 +653,11 @@ async function main() {
       const headers = { "content-type": "application/json" };
       if (process.env.INTAKE_COOKIE) headers.cookie = process.env.INTAKE_COOKIE;
       if (process.env.INTAKE_AUTHORIZATION) headers.authorization = process.env.INTAKE_AUTHORIZATION;
-      const response = await fetch(new URL(INTAKE_PATH, baseUrl), {
+      // 妙搭网关要求 CSRF 头；值取自家 suda-csrf-token（需 URL 解码）。
+      if (process.env.INTAKE_CSRF_TOKEN) headers["x-suda-csrf-token"] = process.env.INTAKE_CSRF_TOKEN;
+      // 注意：new URL("/api/...", "https://host/app/app_x") 会解析到 host 根（绝对路径覆盖），
+      // 妙搭应用的 API 在 /app/<id>/api 下，所以这里直接拼字符串。
+      const response = await fetch(`${baseUrl.replace(/\/$/, "")}${INTAKE_PATH}`, {
         method: "POST",
         headers,
         body: JSON.stringify({ text: sample.text }),
@@ -564,6 +682,7 @@ async function main() {
   const finishedAt = new Date().toISOString();
   const summary = summarize(results);
   printSummary(summary, mode);
+  const gate = hasFlag("--gate") ? printGate(summary) : null;
 
   if (mode === "stub" && hasFlag("--assert-stub")) {
     const problems = violates(summary, STUB_EXPECTATION, "stub 预期");
@@ -582,16 +701,20 @@ async function main() {
   const report = {
     mode,
     samples: samplesPath,
+    samplesSha256,
+    modulesFile: modulesFile ? dictionary.source : null,
+    modulesVersion: dictionary.version,
     baseUrl,
     startedAt,
     finishedAt,
     summary,
+    gate,
     results,
   };
   const jsonPath = join(RESULTS_DIR, `${baseName}.json`);
   const mdPath = join(RESULTS_DIR, `${baseName}.md`);
   writeFileSync(jsonPath, `${JSON.stringify(report, null, 2)}\n`);
-  writeFileSync(mdPath, renderMarkdown({ mode, samples: samplesPath, results, summary, baseUrl, startedAt, finishedAt }));
+  writeFileSync(mdPath, renderMarkdown({ mode, samples: samplesPath, samplesSha256, dictionary, results, summary, baseUrl, startedAt, finishedAt }));
   console.log(`[report] ${jsonPath}`);
   console.log(`[report] ${mdPath}`);
 

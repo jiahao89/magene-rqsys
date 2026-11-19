@@ -5,6 +5,7 @@ import type { AuditEventRecord, RequirementRecord, SourceConfigRecord, SyncBatch
 import type { ApiDependencies, ApiRepositories } from "./app.js";
 import { handleApiRequest, MAX_JSON_BODY_BYTES } from "./app.js";
 import { AiProviderError } from "../analysis/provider.js";
+import { CHAT_PROMPT_VERSION } from "../intake/chat-extract.js";
 // AI 状态区读 process.env.AI_API_KEY；测试里显式设置并还原，避免依赖跑测试机器的环境。
 async function withAiKey<T>(value: string | undefined, run: () => Promise<T>): Promise<T> {
   const previous = process.env.AI_API_KEY;
@@ -952,7 +953,7 @@ test("intake-draft returns a draft without creating a requirement and audits onl
   assert.equal(audits[0]!.safeDetails.aiFilledCount, 5);
   // 一次抽取的审计要能串联：请求号既在 safeDetails 也做 entityId，并带提示词版本。
   assert.match(String(audits[0]!.safeDetails.requestId), /^[0-9a-f-]{36}$/);
-  assert.equal(audits[0]!.safeDetails.promptVersion, "rq-chat-intake-v1");
+  assert.equal(audits[0]!.safeDetails.promptVersion, CHAT_PROMPT_VERSION);
   assert.equal(audits[0]!.entityId, audits[0]!.safeDetails.requestId);
   assert.equal(JSON.stringify(audits[0]).includes("13812345678"), false);
   assert.equal(JSON.stringify(audits[0]).includes("小王"), false);
@@ -1045,7 +1046,7 @@ test("intake-draft ties every attempt to one requestId and records the prompt ve
   assert.equal((await handleApiRequest(draftRequest("需要导出"), failed.d)).status, 503);
   for (const attempt of [ok, failed]) {
     assert.match(String(attempt.audits[0]!.safeDetails.requestId), /^[0-9a-f-]{36}$/);
-    assert.equal(attempt.audits[0]!.safeDetails.promptVersion, "rq-chat-intake-v1");
+    assert.equal(attempt.audits[0]!.safeDetails.promptVersion, CHAT_PROMPT_VERSION);
     assert.equal(attempt.audits[0]!.entityId, attempt.audits[0]!.safeDetails.requestId);
   }
   assert.notEqual(ok.audits[0]!.entityId, failed.audits[0]!.entityId);

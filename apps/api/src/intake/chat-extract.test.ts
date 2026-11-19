@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { AiProviderError } from "../analysis/provider.js";
-import { ChatDraftRequestSchema, CHAT_TEXT_MAX_LENGTH, createChatIntakeExtractor, createDraftRateLimiter, sanitizeChatDraft } from "./chat-extract.js";
+import { ChatDraftRequestSchema, CHAT_PROMPT_VERSION, CHAT_TEXT_MAX_LENGTH, createChatIntakeExtractor, createDraftRateLimiter, sanitizeChatDraft } from "./chat-extract.js";
 
 const MODULES = ["导航", "骑行记录"];
 
@@ -78,6 +78,23 @@ test("sanitize enforces field length limits", () => {
   assert.equal(Array.from(draft.title).length, 200);
   assert.equal(Array.from(draft.productModel ?? "").length, 100);
   assert.equal(Array.from(draft.constraintNotes ?? "").length, 2_000);
+});
+
+test("prompt v2 encodes the relayer, type, module, constraint and PII rules", async () => {
+  assert.equal(CHAT_PROMPT_VERSION, "rq-chat-intake-v2");
+  const { instance, calls } = extractor(() => envelope({ title: "t", description: "d" }));
+  await instance.extract({ text: "客户反馈按键失灵，希望给个说法。", modules: MODULES });
+  const messages = calls[0]!.body.messages as { role: string; content: string }[];
+  const user = messages.find((message) => message.role === "user")!.content;
+  // 提出人是需求当事人、不是转述人；类型有明确诉求就要归类；模块必须原样复制；约束只收真约束；PII 不进输出。
+  assert.match(user, /never the relayer/);
+  assert.match(user, /choose exactly one type/);
+  assert.match(user, /copy exactly one value from the provided list/);
+  assert.match(user, /Reproduction steps/);
+  assert.match(user, /order\/transaction numbers/);
+  assert.match(user, /negative or mixed case/i);
+  // 词典是运行时注入的，规则不能写死某一版词典。
+  assert.ok(user.includes(JSON.stringify(MODULES)));
 });
 
 test("extract masks PII before sending, treats the chat as data and returns a sanitized draft", async () => {

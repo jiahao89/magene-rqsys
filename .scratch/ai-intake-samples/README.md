@@ -4,7 +4,7 @@
 
 ## 为什么先跑桩
 
-线上每跑一段（成功或失败）都会写一条 `intake.*` 审计，20 段会把 `chatIntake` 从 `0/0` 涨到 20 左右；目前没有清库工具，扫不干净。所以线上 20 段先不跑，等清理流程就绪后再一次性跑并清理。
+线上每跑一段（成功或失败）都会写一条 `intake.*` 审计，20 段会把 `chatIntake` 从 `0/0` 涨到 20 左右；清理流程现已就绪，但默认仍先跑桩验证 harness，正式跑完按样本文档 §3 删除本轮审计并复查归零。
 
 ## 用法
 
@@ -12,21 +12,36 @@
 cd .scratch/ai-intake-samples
 
 # 1) 只校验样本与标注：20 段、总表一致、枚举/模块词典对得上
-node run-intake-samples.mjs --check
+node run-intake-samples.mjs --check --modules-file module-dictionary-live.json
 
 # 2) 本地桩跑通：起 127.0.0.1 假端点，验证解析、打分、报告链路
-node run-intake-samples.mjs --mode stub --assert-stub
+node run-intake-samples.mjs --mode stub --assert-stub --modules-file module-dictionary-live.json
 
 # 3) 只跑指定样本（桩或线上都可）
-node run-intake-samples.mjs --mode stub --only S01,S02
+node run-intake-samples.mjs --mode stub --only S01,S02 --modules-file module-dictionary-live.json
 
-# 4) 以后线上（现在不要跑）：必须显式确认审计写入
+# 4) 线上复跑：必须显式确认审计写入；用线上已发布词典做模块基线
 export INTAKE_COOKIE='<登录 Cookie>'   # 或 INTAKE_AUTHORIZATION
+export INTAKE_CSRF_TOKEN='<suda-csrf-token>'
 node run-intake-samples.mjs --mode live \
   --allow-live --ack-audit-writes \
-  --base-url https://ecn8egz1lhkq.feishuapp.com \
-  --delay 21000
+  --base-url https://ecn8egz1lhkq.feishuapp.com/app/app_17fqkjwyx1u \
+  --modules-file module-dictionary-live.json \
+  --delay 30000 --gate
 ```
+
+`module-dictionary-live.json` 是线上 v7 词典快照（`{version, names:[...]}`）；也可以直接传 `GET /api/modules` 的原始返回（`{version, items:[{name}]}`）或名称数组。标注和模型都应以这份线上词典为准；不传时退回 `0003` 种子，只适合离线自检。
+
+`--gate` 按验收门槛输出 PASS/FAIL，失败时进程退出码为 1：
+
+- 20 段全部成功计分（无 HTTP 错误、无 fallback）；任一段 429/失败，整轮 FAIL，不接受缩水后的 68 分母
+- 正向字段精确匹配 ≥80%，即 **≥58/72**（18 个正向样本 × 4 个字段，最多 14 个字段错）
+- 负向 2/2
+- PII 泄漏 0
+- 约束缺失 ≤3
+- 提出人错误 ≤1
+
+同时报告**空值率**（实际 null 占四个硬字段的比例）和「不该空却空」的数量，避免靠全填 null 刷分。
 
 结果写到 `results/<mode>-<时间>.json|.md`；控制台同时打印逐段结果和汇总。
 
@@ -57,7 +72,9 @@ node run-intake-samples.mjs --mode live \
 
 ## 线上跑之前
 
-- 20 段按 3 次/分钟限流至少 7 分钟，默认 `--delay 21000`；不要为跑样本改线上限流。
+- 20 段按 3 次/分钟限流至少 10 分钟，默认 `--delay 30000`；S09 上次就是 21 秒间隔撞 429，不要为跑样本改线上限流。
+- 正式复跑必须带 `--modules-file`（`GET /api/modules` 的线上快照）；`0003` 种子与线上已发布词典可能不一致。
+- 正式复跑带 `--gate`；报告会记录样本 sha256 和词典版本，便于和上一轮精确对比。
 - 每段成功/失败都会写 `intake.*` 审计；跑完按样本文档 §3 删除本轮审计行，并复查今日 `intake.*` 归零。
 - 只调 `intake-draft`，不要创建需求；若误建，按 5a 的 L 流程清应用库和 Base 两侧。
 - 真实聊天替换样本前必须先脱敏并取得授权；harness 只接受当前虚构样本。
