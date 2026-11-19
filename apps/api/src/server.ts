@@ -19,7 +19,7 @@ import { recheckOwnerMappings } from "./scheduler/owner-recheck.js";
 import { FeishuBasePushAdapter } from "./base/client.js";
 import { FeishuBitableClient } from "./base/transport.js";
 import { RateLimitedBaseClient } from "./base/rate-limit.js";
-import { DEFAULT_BASE_FORM_FIELDS, parseBaseFormFields, syncBaseFormIntake } from "./base/form-sync.js";
+import { DEFAULT_BASE_FORM_FIELDS, parseBaseFormFields, publishedModuleNames, syncBaseFormIntake } from "./base/form-sync.js";
 import { FeishuUserDirectoryClient } from "./adapters/feishu/directory-client.js";
 import { PEER_ADDRESS_HEADER, createLocalIdentityProvider, describeLocalIdentity } from "./http/local-identity.js";
 import type { SourceProjectConfig } from "./domain/workflow.js";
@@ -295,18 +295,28 @@ if (worker && repositories && workerPollMs > 0) {
       // 5b：收集表同步按固定间隔运行（默认 60s），与 TB 批次互不影响。
       // 失败只落审计与 system_flags（运维页可见），不阻断本轮其它调度。
       if (baseIntakeClient && baseIntakeFields.fields && Date.now() - lastBaseIntakeSyncAt >= baseIntakeIntervalMs) {
-        lastBaseIntakeSyncAt = Date.now();
+        // 模块列只能写已发布词典里的名称：先读词典，读不到就跳过本轮（下一轮重试），
+        // 不能把整表模块都误判成「未识别」。
+        let moduleNames: string[] | null = null;
         try {
-          const report = await syncBaseFormIntake({
-            client: baseIntakeClient, requirements: repositories.requirements, audit: repositories.audit,
-            fields: baseIntakeFields.fields, now, tableId: baseIntakeTableId!, flags: repositories.flags,
-          });
-          if (report.created > 0 || report.rejected > 0 || report.writeBackFailed > 0 || report.readFailed) {
-            process.stdout.write(`base form sync: scanned=${report.scanned} created=${report.created} rejected=${report.rejected} writeBackFailed=${report.writeBackFailed}${report.readFailed ? " readFailed" : ""}\n`);
-          }
-          for (const error of report.errors) process.stderr.write(`base form sync item failed: ${error}\n`);
+          moduleNames = publishedModuleNames(await repositories.dictionaries.list());
         } catch (error) {
-          process.stderr.write(`base form sync failed: ${String(error)}\n`);
+          process.stderr.write(`base form sync skipped: module dictionary unavailable (${String(error)})\n`);
+        }
+        if (moduleNames !== null) {
+          lastBaseIntakeSyncAt = Date.now();
+          try {
+            const report = await syncBaseFormIntake({
+              client: baseIntakeClient, requirements: repositories.requirements, audit: repositories.audit,
+              fields: baseIntakeFields.fields, moduleNames, now, tableId: baseIntakeTableId!, flags: repositories.flags,
+            });
+            if (report.created > 0 || report.rejected > 0 || report.writeBackFailed > 0 || report.readFailed) {
+              process.stdout.write(`base form sync: scanned=${report.scanned} created=${report.created} rejected=${report.rejected} writeBackFailed=${report.writeBackFailed}${report.readFailed ? " readFailed" : ""}\n`);
+            }
+            for (const error of report.errors) process.stderr.write(`base form sync item failed: ${error}\n`);
+          } catch (error) {
+            process.stderr.write(`base form sync failed: ${String(error)}\n`);
+          }
         }
       }
       // 分析阶段自动恢复：先收敛 running 崩溃残留（回退 failed_retryable），再补排可重试失败；

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_BASE_FORM_FIELDS, parseBaseFormFields, parseBaseFormRecord, syncBaseFormIntake } from "./form-sync.js";
+import { DEFAULT_BASE_FORM_FIELDS, normalizeModuleName, parseBaseFormFields, parseBaseFormRecord, syncBaseFormIntake } from "./form-sync.js";
 import type { AuditEventRecord, BaseFormRequirementInput } from "../domain/persistence.js";
 
 type Row = { recordId: string; fields: Record<string, unknown> };
@@ -78,7 +78,8 @@ const now = new Date("2026-11-19T02:00:00.000Z");
 
 test("imports valid rows, rejects an invalid row with a reason, and stays idempotent on re-read", async () => {
   const h = harness([[validRow("rec-1"), validRow("rec-2", { 标题: "导航偏航提醒" }), validRow("rec-3", { 来源渠道: "微信" })]]);
-  const first = await syncBaseFormIntake({ client: h.client, requirements: h.requirements, audit: h.audit, fields, now, tableId: "tbl_test", flags: h.flags });
+  const moduleNames = ["场景/表盘/场景设置（海思新平台）"];
+  const first = await syncBaseFormIntake({ client: h.client, requirements: h.requirements, audit: h.audit, fields, moduleNames, now, tableId: "tbl_test", flags: h.flags });
   assert.deepEqual({ scanned: first.scanned, created: first.created, rejected: first.rejected, writeBackFailed: first.writeBackFailed, readFailed: first.readFailed }, { scanned: 3, created: 2, rejected: 1, writeBackFailed: 0, readFailed: false });
   assert.equal(h.created.length, 2);
   assert.equal(h.updates.length, 3);
@@ -94,7 +95,7 @@ test("imports valid rows, rejects an invalid row with a reason, and stays idempo
   assert.equal(h.flagWrites.at(-1)?.value.created, 2);
 
   // 第二轮：已写回系统需求 ID 的行直接跳过；校验失败行原因未变，不重复写回。
-  const second = await syncBaseFormIntake({ client: h.client, requirements: h.requirements, audit: h.audit, fields, now, tableId: "tbl_test", flags: h.flags });
+  const second = await syncBaseFormIntake({ client: h.client, requirements: h.requirements, audit: h.audit, fields, moduleNames, now, tableId: "tbl_test", flags: h.flags });
   assert.deepEqual({ scanned: second.scanned, skipped: second.skipped, created: second.created, rejected: second.rejected }, { scanned: 3, skipped: 2, created: 0, rejected: 1 });
   assert.equal(h.updates.length, 3);
   assert.equal(h.audits.length, 1);
@@ -169,6 +170,42 @@ test("parses bitable cell shapes and rejects missing or invalid required fields"
     assert.equal("reasonCode" in parsed, true, code);
     if ("reasonCode" in parsed) assert.equal(parsed.reasonCode, code);
   }
+});
+
+test("module mapping is exact after mechanical normalization and never writes free text", () => {
+  const dictionary = ["导航（路线/离线/位置点）", "电池管理"];
+  // 全半角括号差异 + 首尾空白：归一化后精确命中，写入词典里的名称。
+  const mapped = parseBaseFormRecord(validRow("rec-1", { 功能模块: "  导航(路线/离线/位置点) " }).fields, fields, dictionary);
+  assert.equal("reasonCode" in mapped, false);
+  if (!("reasonCode" in mapped)) {
+    assert.equal(mapped.intake.intakeModule, "导航（路线/离线/位置点）");
+    assert.equal(mapped.moduleNotice, null);
+    assert.equal(mapped.intake.sourcePayload.intakeModule, "导航（路线/离线/位置点）");
+  }
+  // 词典外文本：模块列留空、原文进 payload、同步说明标注；整行仍然有效。
+  const unmapped = parseBaseFormRecord(validRow("rec-2", { 功能模块: "电池" }).fields, fields, dictionary);
+  assert.equal("reasonCode" in unmapped, false);
+  if (!("reasonCode" in unmapped)) {
+    assert.equal(unmapped.intake.intakeModule, null);
+    assert.equal(unmapped.moduleNotice, "模块未识别：电池");
+    assert.equal(unmapped.intake.sourcePayload.intakeModuleRaw, "电池");
+    assert.equal(unmapped.intake.sourcePayload.moduleUnrecognized, true);
+  }
+  // 不做模糊/同义词：多一个空格就不算命中。
+  const spaced = parseBaseFormRecord(validRow("rec-3", { 功能模块: "导航 （路线/离线/位置点）" }).fields, fields, dictionary);
+  assert.equal("reasonCode" in spaced, false);
+  if (!("reasonCode" in spaced)) { assert.equal(spaced.intake.intakeModule, null); assert.match(String(spaced.moduleNotice), /模块未识别/); }
+  // 超长自由文本：仍创建，说明截断到 100 字，原文完整保留在 payload。
+  const longRaw = "电池".repeat(80);
+  const longModule = parseBaseFormRecord(validRow("rec-4", { 功能模块: longRaw }).fields, fields, dictionary);
+  assert.equal("reasonCode" in longModule, false);
+  if (!("reasonCode" in longModule)) {
+    assert.equal(longModule.intake.intakeModule, null);
+    assert.match(String(longModule.moduleNotice), /…$/);
+    assert.equal(longModule.intake.sourcePayload.intakeModuleRaw, longRaw);
+  }
+  // 归一化只做 NFKC + 空白合并，不做大小写/同义词。
+  assert.equal(normalizeModuleName("  导航（路线/离线/位置点） "), "导航(路线/离线/位置点)");
 });
 
 test("field mapping overrides are validated and duplicate roles are rejected", () => {

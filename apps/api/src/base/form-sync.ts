@@ -7,7 +7,7 @@
 // - 一期只收录一次：已写回「系统需求 ID」的行不再处理，收集表后续修改不同步（PRD-26 §5 第 2 项）。
 
 import { randomUUID } from "node:crypto";
-import type { AuditEventRecord, BaseFormRequirementInput } from "../domain/persistence.js";
+import type { AuditEventRecord, BaseFormRequirementInput, ModuleDictionaryVersionRecord } from "../domain/persistence.js";
 import type { AuditEventRepository, SystemFlagRepository } from "../application/repositories.js";
 import type { BaseClient } from "./client.js";
 import { REQUIREMENT_INTAKE_CHANNELS, REQUIREMENT_INTAKE_TYPES } from "../contracts/pipeline.js";
@@ -128,8 +128,23 @@ export function cellDateMs(value: unknown): number | null {
   return null;
 }
 
+/** 5b：模块匹配的机械归一化——全半角统一（NFKC）、去首尾空白、连续空白合并；不做同义词/别名/模糊匹配。 */
+export function normalizeModuleName(value: string): string {
+  return value.normalize("NFKC").replace(/\s+/gu, " ").trim();
+}
+
+/** 当前已发布模块词典的名称列表（无发布版本时为空，整表模块都按未识别处理）。 */
+export function publishedModuleNames(versions: readonly ModuleDictionaryVersionRecord[]): string[] {
+  const published = versions.find((version) => version.status === "published");
+  if (!published) return [];
+  return published.entries.flatMap((entry) => {
+    const name = (entry as { name?: unknown } | null)?.name;
+    return typeof name === "string" && name.trim() !== "" ? [name] : [];
+  });
+}
+
 export type BaseFormParseResult =
-  | { ok: true; intake: Omit<BaseFormRequirementInput, "sourceExternalId" | "capturedAt"> }
+  | { ok: true; intake: Omit<BaseFormRequirementInput, "sourceExternalId" | "capturedAt">; moduleNotice: string | null }
   | { ok: false; reasonCode: string; reasonText: string };
 
 function reject(reasonCode: string, reasonText: string): BaseFormParseResult {
@@ -137,7 +152,7 @@ function reject(reasonCode: string, reasonText: string): BaseFormParseResult {
 }
 
 /** 逐字段校验：必填缺失、枚举越界、链接非法直接拒绝（不建需求，只写回原因）。 */
-export function parseBaseFormRecord(fields: Record<string, unknown>, names: BaseFormFieldNames): BaseFormParseResult {
+export function parseBaseFormRecord(fields: Record<string, unknown>, names: BaseFormFieldNames, moduleNames: readonly string[] = []): BaseFormParseResult {
   const title = cellText(fields[names.title]);
   if (title === null) return reject("title_missing", "标题为空");
   if (title.length > 200) return reject("title_too_long", "标题超过 200 字");
@@ -153,8 +168,17 @@ export function parseBaseFormRecord(fields: Record<string, unknown>, names: Base
   }
   const productModel = cellText(fields[names.productModel]);
   if (productModel !== null && productModel.length > 100) return reject("product_model_too_long", "产品型号超过 100 字");
-  const intakeModule = cellText(fields[names.intakeModule]);
-  if (intakeModule !== null && intakeModule.length > 100) return reject("module_too_long", "功能模块超过 100 字");
+  // 功能模块是自由文本：归一化后与已发布词典精确匹配；命中写词典里的名称，不命中留空并在同步说明标注。
+  // 模块问题不拒绝整行——填的人不该被 54 个选项困住。
+  const rawModule = cellText(fields[names.intakeModule]);
+  let intakeModule: string | null = null;
+  let moduleNotice: string | null = null;
+  if (rawModule !== null) {
+    const normalized = normalizeModuleName(rawModule);
+    const matched = moduleNames.find((name) => normalizeModuleName(name) === normalized) ?? null;
+    if (matched) intakeModule = matched;
+    else moduleNotice = `模块未识别：${rawModule.length > 100 ? `${rawModule.slice(0, 100)}…` : rawModule}`;
+  }
   const constraintNotes = cellText(fields[names.constraintNotes]);
   if (constraintNotes !== null && constraintNotes.length > 2_000) return reject("constraint_notes_too_long", "约束说明超过 2000 字");
   const proposerName = cellPersonName(fields[names.proposerName]);
@@ -190,9 +214,11 @@ export function parseBaseFormRecord(fields: Record<string, unknown>, names: Base
         sourceType: "base_form",
         title, description, sourceChannel: channel,
         requirementType, productModel, constraintNotes, supplementUrl, intakeModule,
+        ...(rawModule === null ? {} : { intakeModuleRaw: rawModule, ...(intakeModule === null ? { moduleUnrecognized: true } : {}) }),
         ...(proposerName === null ? {} : { proposerName }),
       },
     },
+    moduleNotice,
   };
 }
 
@@ -206,6 +232,8 @@ export interface BaseFormSyncParams {
   requirements: BaseFormSyncRequirements;
   audit: Pick<AuditEventRepository, "append">;
   fields: BaseFormFieldNames;
+  /** 当前已发布模块词典的名称（调用方读取，无发布版本时传空数组）。 */
+  moduleNames?: readonly string[];
   now: Date;
   tableId: string;
   flags?: Pick<SystemFlagRepository, "set">;
@@ -315,7 +343,7 @@ export async function syncBaseFormIntake(params: BaseFormSyncParams): Promise<Ba
       report.skipped += 1;
       return;
     }
-    const parsed = parseBaseFormRecord(fields, params.fields);
+    const parsed = parseBaseFormRecord(fields, params.fields, params.moduleNames ?? []);
     if ("reasonCode" in parsed) {
       report.rejected += 1;
       const note = `${parsed.reasonText}（${parsed.reasonCode}）`;
@@ -360,7 +388,8 @@ export async function syncBaseFormIntake(params: BaseFormSyncParams): Promise<Ba
       await updateRow(recordId, {
         [params.fields.systemRequirementId]: platformRequirementId,
         [params.fields.syncStatus]: BASE_FORM_STATUS_RECORDED,
-        [params.fields.syncNote]: "",
+        // 模块未识别时把原因留在写回列里，填表人能看到；识别成功则清空说明。
+        [params.fields.syncNote]: parsed.moduleNotice ?? "",
         [params.fields.syncTime]: nowMs,
       });
     } catch (error) {
