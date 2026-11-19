@@ -56,3 +56,21 @@ describe("requirement priority triage URL contract", () => {
     expect(requirementFilterCount({ ...emptyRequirementListFilters, sort: "priority_asc" })).toBe(1);
   });
 });
+
+describe("requirement source filter URL contract", () => {
+  it("parses the four source values and rejects unknown ones", () => {
+    for (const value of ["teambition", "web_manual", "base_form", "chat_paste"]) {
+      expect(readRequirementListFilters(`?source=${value}`).source).toBe(value);
+    }
+    expect(readRequirementListFilters("?source=wechat").source).toBe("");
+    expect(readRequirementListFilters("?source=").source).toBe("");
+  });
+
+  it("round-trips the source filter and counts it as an applied filter", () => {
+    const search = buildRequirementPoolSearch({ ...emptyRequirementListFilters, source: "chat_paste" });
+    expect(search).toContain("source=chat_paste");
+    expect(readRequirementListFilters(search).source).toBe("chat_paste");
+    expect(requirementFilterCount({ ...emptyRequirementListFilters, source: "chat_paste" })).toBe(1);
+    expect(buildRequirementPoolSearch(emptyRequirementListFilters)).toBe("");
+  });
+});

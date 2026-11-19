@@ -610,6 +610,8 @@ const priorityFilterOptions = [["", "全部优先级"], ["P0", "P0"], ["P1", "P1
 const prioritySortOptions = [["", "默认排序"], ["priority_asc", "按优先级（P0 → P3）"]] as const;
 const analysisStateOptions = [["", "全部分析状态"], ["analyzed", "已分析"], ["failed_retryable", "待重试"], ["pending", "等待中"], ["running", "进行中"]] as const;
 const pullStateOptions = [["", "全部同步状态"], ["pending", "等待同步"], ["running", "同步中"], ["synced", "已同步"], ["failed", "同步失败"], ["collected", "已收录"]] as const;
+// 5c-1：来源筛选。HTTP 值由 sourceType + source_payload.intakeOrigin 判定；base_form 为 5b 预留。
+const sourceFilterOptions = [["", "全部来源"], ["teambition", "Teambition"], ["web_manual", "Web 手工"], ["base_form", "多维表格"], ["chat_paste", "聊天粘贴"]] as const;
 const pushStateOptions = [["", "全部推送状态"], ["pending", "等待推送"], ["running", "推送中"], ["pushed", "已推送"], ["failed", "推送失败"]] as const;
 
 // 详情/列表徽标按阶段取值：同一个原始枚举（pending/running/failed）在不同阶段含义不同，
@@ -750,6 +752,7 @@ function requirementListQuery(filter: RequirementListFilters) {
     pushState: filter.push || undefined,
     processingState: filter.processingState === "all" ? undefined : filter.processingState,
     priority: (filter.priority || undefined) as "P0" | "P1" | "P2" | "P3" | undefined,
+    source: (filter.source || undefined) as "teambition" | "web_manual" | "base_form" | "chat_paste" | undefined,
     sort: filter.sort === "priority_asc" ? ("priority_asc" as const) : undefined,
     batchId: filter.batchId || undefined,
     since: toIso(filter.from),
@@ -773,6 +776,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
   // 重复处理视图：all=全部 / active=仅活跃（默认）/ suppressed=已压制（重复或忽略）。
   const [processingState, setProcessingState] = useState(initialFilters.processingState);
   const [priorityFilter, setPriorityFilter] = useState(initialFilters.priority);
+  const [sourceFilter, setSourceFilter] = useState(initialFilters.source);
   const [prioritySort, setPrioritySort] = useState(initialFilters.sort);
   const [batchId, setBatchId] = useState(initialFilters.batchId);
   const [since, setSince] = useState(initialFilters.from);
@@ -815,7 +819,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, [moreFiltersOpen]);
-  const filters: RequirementListFilters = { title: query.trim(), owner: executorName, pull: pullState, analysis: analysisState, ownerState, push: pushState, processingState, priority: priorityFilter, sort: prioritySort, batchId: batchId.trim(), from: since, to: until };
+  const filters: RequirementListFilters = { title: query.trim(), owner: executorName, pull: pullState, analysis: analysisState, ownerState, push: pushState, processingState, priority: priorityFilter, source: sourceFilter, sort: prioritySort, batchId: batchId.trim(), from: since, to: until };
   // 已生效筛选：列表行/详情 URL 与刷新必须以「点过筛选」的条件为准，
   // 不能把用户尚未应用的草稿输入写进 URL。
   const appliedFiltersRef = useRef(initialFilters);
@@ -952,7 +956,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
   const clearFilters = () => {
     setAppliedFilterCount(0);
     const cleared = { ...emptyRequirementListFilters };
-    setQuery(""); setExecutorName(""); setPullState(""); setOwnerState(""); setAnalysisState(""); setPushState(""); setProcessingState(cleared.processingState); setPriorityFilter(""); setPrioritySort(""); setBatchId(""); setSince(""); setUntil("");
+    setQuery(""); setExecutorName(""); setPullState(""); setOwnerState(""); setAnalysisState(""); setPushState(""); setProcessingState(cleared.processingState); setPriorityFilter(""); setSourceFilter(""); setPrioritySort(""); setBatchId(""); setSince(""); setUntil("");
     window.history.replaceState(null, "", requirementPoolUrl(window.location.pathname || "/", cleared, null, window.location.hash));
     void load(cleared, null);
   };
@@ -1027,9 +1031,13 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
           <span className="sr-only">同步状态</span>
           <ArcoSelect aria-label="同步状态筛选" value={pullState} onChange={(value: string) => setPullState(value)} style={{ minWidth: 130 }} options={pullStateOptions.map(([value, label]) => ({ label, value }))} />
         </label>
+        <label className="qfield">
+          <span className="sr-only">来源</span>
+          <ArcoSelect aria-label="来源筛选" value={sourceFilter} onChange={(value: string) => setSourceFilter(value)} style={{ minWidth: 130 }} options={sourceFilterOptions.map(([value, label]) => ({ label, value }))} />
+        </label>
         {/* ARCO-05：details/summary 改为受控按钮 + 条件渲染；aria-expanded/aria-controls 表达展开状态。 */}
         <div className="qmore" ref={moreFiltersRef}>
-          <ArcoButton ref={moreFiltersButtonRef} htmlType="button" size="small" aria-expanded={moreFiltersOpen} aria-controls="requirement-more-filters" onClick={() => setMoreFiltersOpen((open) => !open)}>更多筛选{activeFilterCount - (query.trim() ? 1 : 0) - (executorName ? 1 : 0) - (pullState ? 1 : 0) > 0 ? `（${activeFilterCount - (query.trim() ? 1 : 0) - (executorName ? 1 : 0) - (pullState ? 1 : 0)}）` : ""}</ArcoButton>
+          <ArcoButton ref={moreFiltersButtonRef} htmlType="button" size="small" aria-expanded={moreFiltersOpen} aria-controls="requirement-more-filters" onClick={() => setMoreFiltersOpen((open) => !open)}>更多筛选{activeFilterCount - (query.trim() ? 1 : 0) - (executorName ? 1 : 0) - (pullState ? 1 : 0) - (sourceFilter ? 1 : 0) > 0 ? `（${activeFilterCount - (query.trim() ? 1 : 0) - (executorName ? 1 : 0) - (pullState ? 1 : 0) - (sourceFilter ? 1 : 0)}）` : ""}</ArcoButton>
           {moreFiltersOpen && <div className="qmore-body" id="requirement-more-filters">
             <label className="qfield">
               <span className="sr-only">优先级</span>
@@ -1724,7 +1732,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
     </div>}
 
     <section className="req-section" aria-labelledby="req-l1-heading">
-      <div className="req-section-head"><h3 id="req-l1-heading">需求信息</h3><span className="req-source-note">{detail.sourceType === "web_manual" ? `来自 Web 收录${detail.sourceChannel ? ` · ${detail.sourceChannel}` : ""}` : "来自 Teambition"}</span></div>
+      <div className="req-section-head"><h3 id="req-l1-heading">需求信息</h3><span className="req-source-note">{(() => { const info = requirementSourceInfo({ sourceType: detail.sourceType, sourceChannel: detail.sourceChannel, source: detail.source }); return info ? info.note : "来自 Teambition"; })()}</span></div>
       <div className="req-field">
         <TbFieldLabel sourceType={detail.sourceType}>标题</TbFieldLabel>
         <p className="req-l1-title">{detail.title}</p>
@@ -1820,6 +1828,19 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
   </div>;
 }
 
+/** 5c-1：来源徽标/说明。Teambition 是默认来源，不挂徽标；聊天粘贴按 source_payload.intakeOrigin 区分。 */
+function requirementSourceInfo(row: { sourceType: string; sourceChannel: string | null; source?: Record<string, unknown> | null }): { label: string; note: string } | null {
+  // 兼容旧响应：没有 sourceType 的记录按 Teambition 处理（历史行默认来源）。
+  const sourceType = row.sourceType ? String(row.sourceType) : "teambition";
+  if (sourceType === "teambition") return null;
+  const origin = row.source && typeof row.source === "object" ? row.source.intakeOrigin : undefined;
+  const channel = row.sourceChannel ? ` · ${row.sourceChannel}` : "";
+  if (sourceType === "web_manual" && origin === "chat_paste") return { label: "聊天粘贴", note: `来自聊天粘贴${channel}` };
+  if (sourceType === "web_manual") return { label: "手工", note: `来自 Web 收录${channel}` };
+  if (sourceType === "base_form") return { label: "多维表格", note: "来自多维表格" };
+  return { label: sourceType, note: `来自 ${sourceType}` };
+}
+
 function isRowActionTarget(target: EventTarget | null): boolean {
   return target instanceof Element && Boolean(target.closest("button, a, input, select, textarea"));
 }
@@ -1836,9 +1857,10 @@ function RequirementsTable({ rows, loading, onOpen, onAssign }: { rows: Requirem
       render: (_value: unknown, row: RequirementSummary) => {
         const badge = processingBadge(row);
         const suppressed = requirementProcessingState(row) !== "active";
+        const sourceInfo = requirementSourceInfo(row);
         return <div className="req-row-title-cell">
           <span className="req-row-title" title={row.title}>{row.title}</span>
-          {row.sourceType === "web_manual" ? <span className="source-badge" title={`Web 收录${row.sourceChannel ? ` · ${row.sourceChannel}` : ""}`}>手工</span> : null}
+          {sourceInfo ? <span className="source-badge" title={sourceInfo.note}>{sourceInfo.label}</span> : null}
           {badge ? <span className={`status-chip ${badge.className} processing-badge`} title={badge.title}>{badge.label}</span> : null}
           {row.sourceMissingSince ? <span className="status-chip processing-badge" title={`上次全量同步（${timeLabel(row.sourceMissingSince)}）未再出现该 TB 需求；记录保留，处理与推送状态不变`}>来源已移除</span> : null}
           {suppressed ? <span className="sr-only">（已压制：不进入 AI 分析/Base 推送/通知）</span> : null}
@@ -2162,6 +2184,7 @@ export function OpsPanel() {
           评分：AI 建议 {metrics.scoring.aiSuggested} · 人工修改 {metrics.scoring.manual} · 采用 AI {metrics.scoring.aiApplied}（采纳率 {opsRate(metrics.scoring.adoptionRate)}）
         </p>
         {metrics.analysis.failureCodes.length > 0 && <p className="status-hint ops-failures">分析失败码：{metrics.analysis.failureCodes.map((item) => `${item.code}×${item.count}`).join("、")}</p>}
+        {metrics.baseForm && <p className="status-hint">多维表格同步：扫描 {metrics.baseForm.scanned} 行 · 已收录 {metrics.baseForm.created + metrics.baseForm.recorded} · 校验失败 {metrics.baseForm.rejected} · 写回失败 {metrics.baseForm.writeBackFailed} · 读取失败 {metrics.baseForm.readFailed ? "是" : "否"} · 最近 {metrics.baseForm.lastRunAt ? timeLabel(metrics.baseForm.lastRunAt) : "—"}{metrics.baseForm.lastError ? ` · ${metrics.baseForm.lastError}` : ""}</p>}
       </> : <p className="status-hint">运营指标暂不可用。</p>}
     </div>
     <div className="ops-gates">

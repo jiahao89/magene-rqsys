@@ -335,6 +335,7 @@ paths:
         - { name: pushState, in: query, schema: { type: string } }
         - { name: processingState, in: query, schema: { type: string, enum: [active, suppressed] } }
         - { name: priority, in: query, schema: { type: string, enum: [P0, P1, P2, P3] } }
+        - { name: source, in: query, schema: { type: string, enum: [teambition, web_manual, base_form, chat_paste] } }
         - { name: sort, in: query, schema: { type: string, enum: [created_desc, priority_asc] } }
         - { name: batchId, in: query, schema: { type: string, format: uuid } }
         - { name: since, in: query, schema: { type: string, format: date-time } }
@@ -376,6 +377,14 @@ paths:
           in: query
           description: Effective priority (manual override wins over the current score version). Combine with sort=priority_asc for the triage view.
           schema: { type: string, enum: [P0, P1, P2, P3] }
+        - name: source
+          in: query
+          description: >-
+            Source filter for 5c-1: teambition / web_manual / base_form / chat_paste.
+            chat_paste means source_type=web_manual AND source_payload.intakeOrigin=chat_paste;
+            web_manual excludes those chat-paste rows. base_form is reserved for 5b and is
+            currently empty (an empty page is the correct result).
+          schema: { type: string, enum: [teambition, web_manual, base_form, chat_paste] }
         - name: sort
           in: query
           description: >-

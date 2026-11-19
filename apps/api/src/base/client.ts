@@ -4,6 +4,10 @@ export { BaseKeyConflictError };
 export interface BaseRequirementKey { requirementId: string; /** Legacy callers may still provide this; Base lookup ignores it. */ projectId?: string }
 export interface BaseRecord { recordId: string; fields: Record<string, unknown> }
 
+/** 5b：Base 分页读取的一页；nextPageToken 仅在 hasMore=true 时非空。 */
+export interface BaseRecordPage { items: BaseRecord[]; hasMore: boolean; nextPageToken: string | null }
+export interface BaseListOptions { pageSize?: number; pageToken?: string | null }
+
 // External Base access is isolated behind this transport interface.
 export interface BaseClient {
   // Production transport resolves the target schema; legacy injected test clients use text metadata.
@@ -11,6 +15,8 @@ export interface BaseClient {
   findByRequirementKey(key: BaseRequirementKey): Promise<BaseRecord | null>;
   /** V02-T03：按需求平台 ID 查找（跨来源首选键）。旧注入客户端未实现时适配器退回 TB 键兼容路径。 */
   findByPlatformKey?(platformRequirementId: string): Promise<BaseRecord | null>;
+  /** 5b：分页读取整表（收集表同步）。空表返回 items=[] 且 hasMore=false；未实现的注入客户端在同步服务里按不可用处理。 */
+  listRecords?(options?: BaseListOptions): Promise<BaseRecordPage>;
   create(fields: Record<string, unknown>, options?: BaseWriteOptions): Promise<BaseRecord>;
   update(recordId: string, fields: Record<string, unknown>, options?: BaseWriteOptions): Promise<BaseRecord>;
   readPmFields(recordId: string): Promise<Record<string, unknown>>;

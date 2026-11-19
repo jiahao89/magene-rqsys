@@ -62,6 +62,39 @@ test("audit intake counts avoid array parameters and FILTER so the target transp
   assert.match(queries[2]!.text, /ORDER BY occurred_at DESC,id DESC LIMIT 1/);
 });
 
+test("base form intake inserts source_type base_form with a record-id identity guard", async () => {
+  const statements: Array<{ text: string; values: unknown[] | undefined }> = [];
+  let existing: Array<Record<string, unknown>> = [];
+  const query = async (text: string, values?: unknown[]) => {
+    statements.push({ text, values });
+    if (/^(BEGIN|COMMIT|ROLLBACK)$/i.test(text.trim())) return { rows: [], rowCount: 0 };
+    if (text.includes("pg_advisory_xact_lock")) return { rows: [{ lock_acquired: true }], rowCount: 1 };
+    if (text.includes("FROM requirements WHERE source_type='base_form' AND source_external_id=$1")) return { rows: existing, rowCount: existing.length };
+    if (text.includes("next_number")) return { rows: [{ next_number: "42" }], rowCount: 1 };
+    if (text.startsWith("INSERT INTO requirements")) return { rows: [{ id: "req-uuid" }], rowCount: 1 };
+    return { rows: [], rowCount: 0 };
+  };
+  const store = new PostgresRepositories({ query, connect: async () => ({ query, release() {} }) } as never).requirements;
+  const input = {
+    sourceExternalId: "rec-1", title: "表盘自定义", description: "希望自定义表盘数据项", sourceChannel: "终端用户",
+    requirementType: null, productModel: null, constraintNotes: null, supplementUrl: null, intakeModule: null,
+    proposerName: "张骑", sourcePayload: { sourceType: "base_form" }, capturedAt: "2026-11-19T00:00:00.000Z",
+  };
+  assert.equal(await store.findBaseFormRequirement!("rec-1"), null);
+  const created = await store.createBaseFormRequirement!(input);
+  assert.deepEqual(created, { requirementId: "req-uuid", platformRequirementId: "RQ-000042", created: true });
+  const insert = statements.find((statement) => statement.text.startsWith("INSERT INTO requirements"))!;
+  assert.match(insert.text, /'base_form'/);
+  assert.match(insert.text, /ON CONFLICT \(source_external_id\) WHERE source_external_id IS NOT NULL DO NOTHING/);
+  assert.ok(insert.values?.includes("rec-1"));
+  assert.equal(statements.filter((statement) => statement.text.startsWith("INSERT INTO audit_events")).length, 1);
+  // 并发/重复读取：同一外部 ID 已存在时直接返回 replay，不再插入快照与作业。
+  existing = [{ id: "req-existing", platform_requirement_id: "RQ-000007" }];
+  const replay = await store.createBaseFormRequirement!(input);
+  assert.deepEqual(replay, { requirementId: "req-existing", platformRequirementId: "RQ-000007", created: false });
+  assert.equal(statements.filter((statement) => statement.text.startsWith("INSERT INTO requirements")).length, 1);
+});
+
 type DirectoryMapping = { normalized_name: string | null; teambition_user_id: string | null; display_name: string | null; feishu_user_id: string; feishu_id_type: string; updated_at: string; active: boolean; match_method?: string };
 function directoryPool(people: string[], mappings: DirectoryMapping[]) {
   const calls: Array<{ sql: string; values: unknown[] }> = [];

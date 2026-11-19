@@ -67,9 +67,25 @@ export interface SyncBatchRecord {
 }
 
 // requirements：当前规范化需求和 pull/AI/owner/push 独立状态。
-// 唯一约束：(source_config_id, teambition_requirement_id)。
+// 唯一约束：(source_config_id, teambition_requirement_id)；base_form 行用 source_external_id 部分唯一索引。
 // source_url 与 attachment_refs 在当前 Teambition 接口上未验证，保持可空、不推断。
-export type RequirementSourceType = "teambition" | "web_manual";
+export type RequirementSourceType = "teambition" | "web_manual" | "base_form";
+/** 5b：收集表行创建需求的已校验输入（外部身份是 Base record_id；提出人只做展示）。 */
+export interface BaseFormRequirementInput {
+  sourceExternalId: string;
+  title: string;
+  description: string;
+  sourceChannel: string;
+  requirementType: string | null;
+  productModel: string | null;
+  constraintNotes: string | null;
+  supplementUrl: string | null;
+  intakeModule: string | null;
+  proposerName: string | null;
+  /** 落 source_payload 的原始表单投影（不含飞书人员 ID、不含任何凭据）。 */
+  sourcePayload: Record<string, unknown>;
+  capturedAt: string;
+}
 /** 六层人群固定枚举（与 analysis/contract 的 AUDIENCE_LEVELS 同值；独立声明避免领域层反向依赖）。 */
 export type AudienceLevel = "L1" | "L2" | "L3" | "L4" | "L5" | "L6";
 /** PRD 4.1 固定八类；人工录入与后续 AI 建议分开（V02-T05-AC04）。 */

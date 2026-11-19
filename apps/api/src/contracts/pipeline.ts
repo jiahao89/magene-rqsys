@@ -44,6 +44,9 @@ export const RequirementListQuerySchema = z.object({
   processingState: z.enum(["active", "suppressed"]).optional(),
   // 优先级分诊视图（2026-11-06）：按生效优先级筛选；sort=priority_asc 时按 P0→P3 排序且不分页。
   priority: z.enum(["P0", "P1", "P2", "P3"]).optional(),
+  // 5c-1 来源筛选：chat_paste = source_type='web_manual' 且 source_payload.intakeOrigin='chat_paste'；
+  // base_form 为 5b 预留（当前无数据，筛选结果为空是正确行为）。
+  source: z.enum(["teambition", "web_manual", "base_form", "chat_paste"]).optional(),
   sort: z.enum(["created_desc", "priority_asc"]).optional(),
   batchId: z.uuid().optional(),
   since: z.iso.datetime({ offset: true }).optional(),

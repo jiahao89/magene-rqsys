@@ -173,7 +173,7 @@ describe("RQ-Sys local workbench", () => {
 
     render(<App />);
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("无法连接到本地 API");
+    expect(await screen.findByRole("alert")).toHaveTextContent("服务暂不可用，请稍后重试。");
     expect(screen.getByRole("button", { name: "重试连接" })).toBeInTheDocument();
   });
 

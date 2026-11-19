@@ -3,7 +3,7 @@
 // 由服务端环境注入；tenant_access_token 缓存至过期前 60 秒。
 // 测试用注入 fetch 的假实现；真实调用需部署环境凭证（工单 00/W7）。
 
-import type { BaseClient, BaseRecord, BaseRequirementKey, BaseWriteOptions } from "./client.js";
+import type { BaseClient, BaseListOptions, BaseRecord, BaseRecordPage, BaseRequirementKey, BaseWriteOptions } from "./client.js";
 
 export interface FetchLike {
   (input: string | URL, init?: RequestInit): Promise<Response>;
@@ -33,7 +33,7 @@ interface FeishuEnvelope {
   };
 }
 
-export type FeishuAction = "token endpoint" | "token request" | "field schema" | "records filter" | "record read" | "record create" | "record update";
+export type FeishuAction = "token endpoint" | "token request" | "field schema" | "records filter" | "records list" | "record read" | "record create" | "record update";
 export type FeishuFailureKind = "http" | "api" | "invalid_response" | "ambiguous_response";
 
 /** Structured safe error metadata; callers should use fields, never parse message text. */
@@ -240,6 +240,38 @@ export class FeishuBitableClient implements BaseClient {
     if (items.length > 1) throw new BaseKeyConflictError(`Base platform id lookup matched ${items.length} rows for ${platformRequirementId}`);
     const record = items[0];
     return record ? { recordId: record.record_id, fields: record.fields ?? {} } : null;
+  }
+
+  /**
+   * 5b：分页读取整表。空表时飞书不返回 items 字段（不是空数组），必须按 0 行处理；
+   * has_more=true 却没有 page_token 视为无效响应，避免同步循环空转。
+   */
+  async listRecords(options?: BaseListOptions): Promise<BaseRecordPage> {
+    const pageSize = Math.min(Math.max(options?.pageSize ?? 100, 1), 500);
+    const query = new URLSearchParams({ page_size: String(pageSize) });
+    if (options?.pageToken) query.set("page_token", options.pageToken);
+    const res = await this.authed(
+      `${this.baseUrl}/open-apis/bitable/v1/apps/${this.config.appToken}/tables/${this.config.tableId}/records?${query.toString()}`,
+      { method: "GET" },
+    );
+    if (!res.ok) throw await feishuHttpFailure(res, "records list");
+    const payload = (await res.json()) as FeishuEnvelope & { data?: { items?: unknown; has_more?: unknown; page_token?: unknown } };
+    this.assertOk(payload, "records list");
+    const rawItems = payload.data?.items;
+    if (rawItems !== undefined && !Array.isArray(rawItems)) throw new FeishuApiError("invalid_response", "records list");
+    const items = (rawItems ?? []).map((item) => {
+      const record = item as { record_id?: unknown; fields?: unknown };
+      if (typeof record.record_id !== "string" || record.record_id.length === 0) throw new FeishuApiError("invalid_response", "records list");
+      const fields = record.fields !== null && typeof record.fields === "object" && !Array.isArray(record.fields)
+        ? record.fields as Record<string, unknown>
+        : {};
+      return { recordId: record.record_id, fields };
+    });
+    const hasMore = payload.data?.has_more === true;
+    if (hasMore && (typeof payload.data?.page_token !== "string" || payload.data.page_token.length === 0)) {
+      throw new FeishuApiError("invalid_response", "records list");
+    }
+    return { items, hasMore, nextPageToken: hasMore ? String(payload.data?.page_token) : null };
   }
 
   async create(fields: Record<string, unknown>, options?: BaseWriteOptions): Promise<BaseRecord> {

@@ -934,6 +934,12 @@ html[data-theme="dark"] .field input[type="checkbox"] { accent-color: var(--rq-a
 }
 .qfield-search { flex: 1 1 260px; max-width: 360px; }
 .qfield-search > input { width: 100%; padding-left: 32px; background-image: url("data:image/svg+xml;charset=utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='15' height='15' viewBox='0 0 24 24' fill='none' stroke='%238b94a3' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M21 21l-4.3-4.3'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: 10px center; }
+/* 工具栏里的 Arco 搜索框/下拉与原生 34px 控件等高，避免同一行基线错位。 */
+.qfield .arco-input-wrapper,
+.qfield .arco-select,
+.qfield .arco-select .arco-select-view { height: 34px; }
+.qfield .arco-select .arco-select-view,
+.qfield .arco-input-wrapper .arco-input { font-size: 13px; }
 
 .qmore { position: relative; }
 .qmore-body {
@@ -1101,7 +1107,10 @@ html[data-theme="dark"] .nav-item.is-active::before { background: var(--rq-accen
 }
 
 /* ---------- 移动端溢出与吸顶高度（P2-5） ---------- */
-html, body, #root, .app-shell { max-width: 100%; overflow-x: clip; }
+/* overflow-x 用 clip 会裁剪挂在 body 上的 Arco 下拉浮层（.arco-trigger 是 body 的绝对定位子节点），
+   导致筛选下拉点开后看不到选项；改回 hidden 仍裁溢出的横向内容，但浮层由 Arco 弹层容器自行定位。 */
+html, body { max-width: 100%; overflow-x: hidden; }
+#root, .app-shell { max-width: 100%; overflow-x: clip; }
 .main-area, .content-area { min-width: 0; max-width: 100%; }
 .panel, .req-detail-page { min-width: 0; max-width: 100%; }
 .table-scroll { position: relative; max-width: 100%; overflow-x: auto; }

@@ -531,16 +531,16 @@ function buildSearch(query: Record<string, string | number | undefined>): string
 }
 
 /** I3-2：按当前筛选导出需求池 CSV（服务端上限 5000 条）。 */
-export async function exportRequirementsCsv(params: { q?: string; executorName?: string; pullState?: string; ownerState?: string; analysisState?: string; pushState?: string; processingState?: "active" | "suppressed"; priority?: string; sort?: string; batchId?: string; since?: string; until?: string; fetcher?: typeof fetch } = {}): Promise<{ csv: string; truncated: boolean }> {
+export async function exportRequirementsCsv(params: { q?: string; executorName?: string; pullState?: string; ownerState?: string; analysisState?: string; pushState?: string; processingState?: "active" | "suppressed"; priority?: string; source?: string; sort?: string; batchId?: string; since?: string; until?: string; fetcher?: typeof fetch } = {}): Promise<{ csv: string; truncated: boolean }> {
   const { fetcher = fetch, ...rest } = params;
   const response = await (fetcher as typeof fetch)(`/api/requirements/export${buildSearch(rest)}`);
   if (!response.ok) throw new ApiError("导出失败，请重试。", response.status, "EXPORT_FAILED");
   return { csv: await response.text(), truncated: response.headers.get("x-rq-truncated") === "true" };
 }
 
-export async function listRequirements(params: { q?: string; executorName?: string; pullState?: string; ownerState?: string; analysisState?: string; pushState?: string; processingState?: "active" | "suppressed"; priority?: "P0" | "P1" | "P2" | "P3"; sort?: "created_desc" | "priority_asc"; batchId?: string; since?: string; until?: string; limit?: number; cursor?: string; fetcher?: typeof fetch } = {}): Promise<{ items: RequirementSummary[]; nextCursor: string | null }> {
-  const { fetcher = fetch, q, executorName, pullState, ownerState, analysisState, pushState, processingState, priority, sort, batchId, since, until, limit, cursor } = params;
-  return requestJson<{ items: RequirementSummary[]; nextCursor: string | null }>(`/api/requirements${buildSearch({ q, executorName, pullState, ownerState, analysisState, pushState, processingState, priority, sort, batchId, since, until, limit, cursor })}`, fetcher);
+export async function listRequirements(params: { q?: string; executorName?: string; pullState?: string; ownerState?: string; analysisState?: string; pushState?: string; processingState?: "active" | "suppressed"; priority?: "P0" | "P1" | "P2" | "P3"; source?: "teambition" | "web_manual" | "base_form" | "chat_paste"; sort?: "created_desc" | "priority_asc"; batchId?: string; since?: string; until?: string; limit?: number; cursor?: string; fetcher?: typeof fetch } = {}): Promise<{ items: RequirementSummary[]; nextCursor: string | null }> {
+  const { fetcher = fetch, q, executorName, pullState, ownerState, analysisState, pushState, processingState, priority, source, sort, batchId, since, until, limit, cursor } = params;
+  return requestJson<{ items: RequirementSummary[]; nextCursor: string | null }>(`/api/requirements${buildSearch({ q, executorName, pullState, ownerState, analysisState, pushState, processingState, priority, source, sort, batchId, since, until, limit, cursor })}`, fetcher);
 }
 
 export async function listBatches(params: { status?: string; since?: string; until?: string; limit?: number; cursor?: string; fetcher?: typeof fetch } = {}): Promise<{ items: BatchSummary[]; nextCursor: string | null }> {
@@ -634,6 +634,8 @@ export interface OpsMetrics {
   push: { total: number; pushed: number; failed: number; successRate: number | null; avgDurationSeconds: number | null };
   duplicate: { confirmedSuppressed: number; suspected: number };
   scoring: { aiSuggested: number; manual: number; aiApplied: number; adoptionRate: number | null };
+  /** 5b：收集表同步的运维状态；未运行/未配置时为 null。 */
+  baseForm?: { lastRunAt: string | null; pages: number; scanned: number; skipped: number; created: number; recorded: number; rejected: number; writeBackFailed: number; readFailed: boolean; lastError: string | null } | null;
 }
 
 /** 运营指标（PRD §10）：窗口内成功率/耗时 + 当前快照。 */

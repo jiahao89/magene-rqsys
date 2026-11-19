@@ -7,7 +7,7 @@ import type {
   ModuleDictionaryVersionRecord, PersonMappingRecord, PmSnapshotRecord,
   PipelineJobRecord, PipelineJobType, PriorityLevel, PriorityRuleVersionRecord,
   RequirementManualOwner, RequirementRecord, SourceConfigRecord, SourceSnapshotRecord, SyncBatchRecord, SyncItemAction,
-  SyncItemRecord, SyncTrigger, AudienceLevel, RequirementScoreVersionRecord } from "../../domain/persistence.js";
+  SyncItemRecord, SyncTrigger, AudienceLevel, RequirementScoreVersionRecord, BaseFormRequirementInput } from "../../domain/persistence.js";
 import { normalizeScheduleTime, type AnalysisState, type OwnerState, type PullState, type PushState } from "../../domain/workflow.js";
 import { assertTransition, canTransition } from "../../domain/transitions.js";
 import type { ResolvedSourceConfigUpdate } from "../../contracts/source.js";
@@ -344,6 +344,41 @@ async createManualRequirement(p:{idempotencyKey:string;actorId:string;requestHas
 }
 async get(id:string){const{rows}=await this.pool.query("SELECT * FROM requirements WHERE id=$1",[id]);return rows[0]?requirement(rows[0]):null;}
 async findForSync(sourceConfigId:string,teambitionRequirementId:string){const{rows}=await this.pool.query("SELECT id,source_version,source_hash,substantive_hash,analysis_state FROM requirements WHERE source_config_id=$1 AND teambition_requirement_id=$2",[sourceConfigId,teambitionRequirementId]);return rows[0]?{id:String(rows[0].id),sourceVersion:Number(rows[0].source_version),sourceHash:String(rows[0].source_hash),substantiveHash:String(rows[0].substantive_hash),analysisState:String(rows[0].analysis_state) as AnalysisState}:null;}
+// 5b：收集表行 → 需求。来源身份是 Base record_id：同一行重复读取只建一次，平台编号与手工/TB 共用同一把事务锁。
+async findBaseFormRequirement(sourceExternalId:string){
+  const{rows}=await this.pool.query("SELECT id,platform_requirement_id FROM requirements WHERE source_type='base_form' AND source_external_id=$1",[sourceExternalId]);
+  return rows[0]?{id:String(rows[0].id),platformRequirementId:String(rows[0].platform_requirement_id??"")}:null;
+}
+async createBaseFormRequirement(p:BaseFormRequirementInput){
+  const c=await this.pool.connect();
+  try{
+    await c.query("BEGIN");
+    // 同一 Base 行串行处理：多实例并发时不会为同一行各建一条需求。
+    await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0)) IS NULL AS lock_acquired",[`rqsys:base-form:${p.sourceExternalId}`]);
+    const existing=await c.query("SELECT id,platform_requirement_id FROM requirements WHERE source_type='base_form' AND source_external_id=$1",[p.sourceExternalId]);
+    if(existing.rows[0]){await c.query("COMMIT");return{requirementId:String(existing.rows[0].id),platformRequirementId:String(existing.rows[0].platform_requirement_id??""),created:false};}
+    await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0)) IS NULL AS lock_acquired",["rqsys:platform-requirement-id"]);
+    const next=await c.query("SELECT COALESCE(MAX(SUBSTRING(platform_requirement_id FROM 4)::bigint),0)+1 AS next_number FROM requirements WHERE platform_requirement_id ~ '^RQ-[0-9]+$'");
+    const platformRequirementId=`RQ-${String(next.rows[0].next_number).padStart(6,"0")}`;
+    const payload={...p.sourcePayload,formRecordId:p.sourceExternalId};
+    const hash=stableHash(payload);
+    const sub=substantiveHash({title:p.title,description:p.description,scope:null,acceptanceCriteria:null,attachmentRefs:[]});
+    const id=randomUUID();
+    const inserted=await c.query("INSERT INTO requirements(id,source_type,source_channel,source_config_id,teambition_requirement_id,source_external_id,title,description,product_model,requirement_type,constraint_notes,supplement_url,intake_module,proposer_name,source_hash,substantive_hash,source_version,platform_requirement_id,pull_state,analysis_state,owner_state,push_state,source_payload) VALUES($1,'base_form',$2,NULL,NULL,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,1,$14,'collected','pending','not_required','pending',$15) ON CONFLICT (source_external_id) WHERE source_external_id IS NOT NULL DO NOTHING RETURNING id",[id,p.sourceChannel,p.sourceExternalId,p.title,p.description,p.productModel??null,p.requirementType??null,p.constraintNotes??null,p.supplementUrl??null,p.intakeModule??null,p.proposerName??null,hash,sub,platformRequirementId,JSON.stringify(payload)]);
+    if(!inserted.rows[0]){
+      // 并发实例先插入了同一行：读回已存在需求，不重复建快照/作业/审计。
+      const raced=await c.query("SELECT id,platform_requirement_id FROM requirements WHERE source_type='base_form' AND source_external_id=$1",[p.sourceExternalId]);
+      await c.query("COMMIT");
+      return{requirementId:String(raced.rows[0].id),platformRequirementId:String(raced.rows[0]?.platform_requirement_id??""),created:false};
+    }
+    const savedId=String(inserted.rows[0].id);
+    await c.query("INSERT INTO source_snapshots(id,requirement_id,source_version,source_hash,substantive_hash,payload,is_substantive_change,captured_at) VALUES($1,$2,1,$3,$4,$5,true,$6)",[randomUUID(),savedId,hash,sub,JSON.stringify(payload),p.capturedAt]);
+    await c.query("INSERT INTO pipeline_jobs(id,job_type,dedupe_key,payload,available_at,max_attempts) VALUES($1,'analysis',$2,$3,$4,5) ON CONFLICT(dedupe_key) DO NOTHING",[randomUUID(),`analysis:${savedId}:v1`,JSON.stringify({requirementId:savedId,sourceVersion:1,substantiveHash:sub,actorId:null}),p.capturedAt]);
+    await c.query("INSERT INTO audit_events(id,actor_id,event_type,entity_type,entity_id,result,safe_details,occurred_at) VALUES($1,NULL,'intake.created','requirement',$2,'succeeded',$3,$4)",[randomUUID(),savedId,JSON.stringify({sourceType:"base_form",sourceChannel:p.sourceChannel,sourceExternalId:p.sourceExternalId}),p.capturedAt]);
+    await c.query("COMMIT");
+    return{requirementId:savedId,platformRequirementId,created:true};
+  }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}
+}
 async getPipelineCounts(){
   // 只统计活跃需求（验收 #27）：已压制（重复/忽略）单独计数，不计入各阶段与优先级分布，
   // 否则总览的失败/待推送/分级数字会把不参与处理链路的需求算进去。
@@ -392,7 +427,8 @@ async getPipelineCounts(){
     },
   };
 }
-async search(q:{q?:string;executorName?:string;pullState?:PullState;analysisState?:AnalysisState;ownerState?:OwnerState;pushState?:PushState;processingState?:string;priority?:PriorityLevel;sort?:"created_desc"|"priority_asc";batchId?:string;since?:string;until?:string;limit:number;cursor?:RequirementSearchCursor}){const prioritySort=q.sort==='priority_asc',limit=prioritySort?Math.min(q.limit,100):q.limit,cursor=prioritySort?undefined:q.cursor;const values:unknown[]=[q.q===undefined?null:escapeIlikePattern(q.q),q.executorName??null,q.pullState??null,q.analysisState??null,q.ownerState??null,q.pushState??null,q.batchId??null,q.since??null,q.until??null,cursor?.createdAt??null,cursor?.id??null,limit+1,q.processingState??null,q.priority??null,prioritySort?"priority_asc":null];const{rows}=await this.pool.query("SELECT r.*, sv.priority AS current_score_priority FROM requirements r LEFT JOIN requirement_score_versions sv ON sv.id=r.current_score_version_id WHERE ($1::text IS NULL OR r.title ILIKE '%'||$1||'%') AND ($2::text IS NULL OR lower(btrim(r.executor_name))=lower(btrim($2))) AND ($3::text IS NULL OR r.pull_state=$3) AND ($4::text IS NULL OR r.analysis_state=$4) AND ($5::text IS NULL OR r.owner_state=$5) AND ($6::text IS NULL OR r.push_state=$6) AND ($7::uuid IS NULL OR r.latest_batch_id=$7) AND ($8::timestamptz IS NULL OR r.last_seen_at >= $8) AND ($9::timestamptz IS NULL OR r.last_seen_at <= $9) AND ($10::timestamptz IS NULL OR (date_trunc('milliseconds', r.created_at AT TIME ZONE 'UTC'),r.id)<(date_trunc('milliseconds',$10::timestamptz AT TIME ZONE 'UTC'),$11::uuid)) AND ($13::text IS NULL OR ($13::text='active' AND r.processing_state='active') OR ($13::text='suppressed' AND r.processing_state<>'active') OR r.processing_state=$13::text) AND ($14::text IS NULL OR COALESCE(r.priority_override, sv.priority)=$14::text) ORDER BY CASE WHEN $15::text='priority_asc' THEN CASE COALESCE(r.priority_override, sv.priority) WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 WHEN 'P3' THEN 3 ELSE 4 END ELSE 0 END, date_trunc('milliseconds', r.created_at AT TIME ZONE 'UTC') DESC,r.id DESC LIMIT $12",values);const more=rows.length>limit,page=rows.slice(0,limit);return{items:page.map(requirement),nextCursor:prioritySort||!more?null:encodeRequirementCursor({createdAt:asDate(page.at(-1)!.created_at)!,id:String(page.at(-1)!.id)})};}
+async search(q:{q?:string;executorName?:string;pullState?:PullState;analysisState?:AnalysisState;ownerState?:OwnerState;pushState?:PushState;processingState?:string;priority?:PriorityLevel;source?:"teambition"|"web_manual"|"base_form"|"chat_paste";sort?:"created_desc"|"priority_asc";batchId?:string;since?:string;until?:string;limit:number;cursor?:RequirementSearchCursor}){const prioritySort=q.sort==='priority_asc',limit=prioritySort?Math.min(q.limit,100):q.limit,cursor=prioritySort?undefined:q.cursor;const values:unknown[]=[q.q===undefined?null:escapeIlikePattern(q.q),q.executorName??null,q.pullState??null,q.analysisState??null,q.ownerState??null,q.pushState??null,q.batchId??null,q.since??null,q.until??null,cursor?.createdAt??null,cursor?.id??null,limit+1,q.processingState??null,q.priority??null,prioritySort?"priority_asc":null];let sourceFilter="";
+if(q.source!==undefined){values.push(q.source);const n=values.length;sourceFilter=` AND (($${n}::text='teambition' AND r.source_type='teambition') OR ($${n}::text='web_manual' AND r.source_type='web_manual' AND COALESCE(r.source_payload->>'intakeOrigin','')<>'chat_paste') OR ($${n}::text='base_form' AND r.source_type='base_form') OR ($${n}::text='chat_paste' AND r.source_type='web_manual' AND r.source_payload->>'intakeOrigin'='chat_paste'))`;}const{rows}=await this.pool.query("SELECT r.*, sv.priority AS current_score_priority FROM requirements r LEFT JOIN requirement_score_versions sv ON sv.id=r.current_score_version_id WHERE ($1::text IS NULL OR r.title ILIKE '%'||$1||'%') AND ($2::text IS NULL OR lower(btrim(r.executor_name))=lower(btrim($2))) AND ($3::text IS NULL OR r.pull_state=$3) AND ($4::text IS NULL OR r.analysis_state=$4) AND ($5::text IS NULL OR r.owner_state=$5) AND ($6::text IS NULL OR r.push_state=$6) AND ($7::uuid IS NULL OR r.latest_batch_id=$7) AND ($8::timestamptz IS NULL OR r.last_seen_at >= $8) AND ($9::timestamptz IS NULL OR r.last_seen_at <= $9) AND ($10::timestamptz IS NULL OR (date_trunc('milliseconds', r.created_at AT TIME ZONE 'UTC'),r.id)<(date_trunc('milliseconds',$10::timestamptz AT TIME ZONE 'UTC'),$11::uuid)) AND ($13::text IS NULL OR ($13::text='active' AND r.processing_state='active') OR ($13::text='suppressed' AND r.processing_state<>'active') OR r.processing_state=$13::text) AND ($14::text IS NULL OR COALESCE(r.priority_override, sv.priority)=$14::text)"+sourceFilter+" ORDER BY CASE WHEN $15::text='priority_asc' THEN CASE COALESCE(r.priority_override, sv.priority) WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 WHEN 'P3' THEN 3 ELSE 4 END ELSE 0 END, date_trunc('milliseconds', r.created_at AT TIME ZONE 'UTC') DESC,r.id DESC LIMIT $12",values);const more=rows.length>limit,page=rows.slice(0,limit);return{items:page.map(requirement),nextCursor:prioritySort||!more?null:encodeRequirementCursor({createdAt:asDate(page.at(-1)!.created_at)!,id:String(page.at(-1)!.id)})};}
 async updateAnalysisState(requirementId:string,to:AnalysisState){
     // CAS：并发迁移只允许一个写入成功；重读后若仍合法则重试，否则按原 transition 规则抛错。
     for(let attempt=0;attempt<3;attempt+=1){

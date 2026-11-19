@@ -462,6 +462,21 @@ test("batch and requirement list routes pass time, batch and stable cursor filte
  assert.equal(requirementResponse.status, 200);
  assert.deepEqual(requirementQuery, { batchId: batch.id, pullState: "synced", since: "2026-01-01T00:00:00Z", until: "2026-01-02T00:00:00Z", limit: 25 });
 });
+test("requirement list and export forward the source filter to repositories", async () => {
+ const d = makeDependencies(); const queries: unknown[] = [];
+ d.repositories!.requirements!.search = async (query) => { queries.push(query); return { items: [], nextCursor: null }; };
+ const listResponse = await handleApiRequest(new Request("http://localhost/api/requirements?source=chat_paste"), d);
+ assert.equal(listResponse.status, 200);
+ const exportResponse = await handleApiRequest(new Request("http://localhost/api/requirements/export?source=web_manual"), d);
+ assert.equal(exportResponse.status, 200);
+ assert.deepEqual(queries, [{ source: "chat_paste", limit: 25 }, { source: "web_manual", limit: 5001 }]);
+ const invalid = await handleApiRequest(new Request("http://localhost/api/requirements?source=base_form"), d);
+ assert.equal(invalid.status, 200);
+ assert.deepEqual(queries[2], { source: "base_form", limit: 25 });
+ const rejected = await handleApiRequest(new Request("http://localhost/api/requirements?source=unknown"), d);
+ assert.equal(rejected.status, 400);
+});
+
 test("V02-T02 manual requirements read back with source fields and no TB link fallback", async () => {
   const d = makeDependencies();
   const manual = { ...requirement, sourceType: "web_manual", sourceChannel: "售后", sourceConfigId: null, teambitionRequirementId: null, pipeline: { ...requirement.pipeline, pull: "collected" as const }, sourceUrl: null } as unknown as RequirementRecord;
@@ -586,6 +601,28 @@ test("ops metrics default to a 7-day window and validate the range", async () =>
  assert.equal((await handleApiRequest(new Request("http://localhost/api/ops/metrics?days=0"), d)).status, 400);
  assert.equal((await handleApiRequest(new Request("http://localhost/api/ops/metrics?days=91"), d)).status, 400);
  assert.equal((await handleApiRequest(new Request("http://localhost/api/ops/metrics"), unauthenticated)).status, 401);
+});
+
+test("ops metrics expose the base form sync state without leaking the table id", async () => {
+  const d = makeDependencies();
+  d.repositories!.ops = { getOpsMetrics: async (input) => ({ window: { days: input.days, since: input.now } } as never) };
+  d.repositories!.flags = {
+    get: async (name) => name === "base_form_sync_state"
+      ? { value: { tableId: "tbl_internal", lastRunAt: "2026-11-19T02:00:00.000Z", pages: 1, scanned: 3, skipped: 0, created: 2, recorded: 0, rejected: 1, writeBackFailed: 0, readFailed: false, lastError: null }, updatedAt: "2026-11-19T02:00:00.000Z" }
+      : null,
+    set: async () => undefined,
+  };
+  const response = await handleApiRequest(new Request("http://localhost/api/ops/metrics"), d);
+  assert.equal(response.status, 200);
+  const body = await response.json() as { metrics: { baseForm: Record<string, unknown> } };
+  assert.deepEqual(body.metrics.baseForm, { lastRunAt: "2026-11-19T02:00:00.000Z", pages: 1, scanned: 3, skipped: 0, created: 2, recorded: 0, rejected: 1, writeBackFailed: 0, readFailed: false, lastError: null });
+  // 表 ID 是内部标识，不回传；其它运营指标不受影响。
+  assert.equal(JSON.stringify(body.metrics.baseForm).includes("tbl_internal"), false);
+
+  const withoutFlags = makeDependencies();
+  withoutFlags.repositories!.ops = { getOpsMetrics: async (input) => ({ window: { days: input.days, since: input.now } } as never) };
+  const degraded = await (await handleApiRequest(new Request("http://localhost/api/ops/metrics"), withoutFlags)).json() as { metrics: { baseForm: unknown } };
+  assert.equal(degraded.metrics.baseForm, null);
 });
 
 test("ops job view lists failed and stuck jobs without leaking payload", async () => {

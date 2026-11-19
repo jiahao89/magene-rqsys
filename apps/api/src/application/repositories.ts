@@ -6,7 +6,7 @@
 import type { AuditEventRecord, BasePushRunRecord, BatchState, AnalysisRunRecord, FunctionModuleEntry, ModuleDictionaryVersionRecord, PersonMappingRecord, PmSnapshotRecord, PipelineJobRecord, PipelineJobType, PriorityLevel, PriorityRuleVersionRecord, SourceConfigRecord, SourceSnapshotRecord, SyncBatchRecord, SyncItemAction, SyncItemRecord, SyncTrigger, FeishuIdType, AudienceLevel, RiceDraftRecord, KanoEvidenceVersion, KanoRunRecord, RequirementScoreVersionRecord } from "../domain/persistence.js";
 import type { AnalysisState, OwnerState, PullState, PushState } from "../domain/workflow.js";
 import type { ResolvedSourceConfigUpdate } from "../contracts/source.js";
-import type { RequirementManualOwner, RequirementRecord, RequirementPriorityOverride, RequirementAnalysisContext } from "../domain/persistence.js";
+import type { RequirementManualOwner, RequirementRecord, RequirementPriorityOverride, RequirementAnalysisContext, BaseFormRequirementInput } from "../domain/persistence.js";
 import type { TeamPersonBindingInput, TeamPersonRecord } from "../domain/team-directory.js";
 
 export type AuditEventInput = Omit<AuditEventRecord, "entityId">;
@@ -517,6 +517,8 @@ export interface RequirementQueryRepository {
     pushState?: PushState;
     /** 生效优先级筛选：人工覆盖优先于当前评分版本。 */
     priority?: PriorityLevel;
+    /** 5c-1 来源筛选：chat_paste 由 web_manual + source_payload.intakeOrigin 判定。 */
+    source?: "teambition" | "web_manual" | "base_form" | "chat_paste";
     /** created_desc（默认，游标分页）/ priority_asc（分诊视图，单页最多 100 条，不分页）。 */
     sort?: "created_desc" | "priority_asc";
     batchId?: string;
@@ -534,6 +536,10 @@ export interface RequirementQueryRepository {
     substantiveHash: string;
     analysisState: AnalysisState;
   } | null>;
+  // 5b：收集表行按 Base record_id 查已建需求；同一行重复读取只建一次。
+  findBaseFormRequirement?(sourceExternalId: string): Promise<{ id: string; platformRequirementId: string } | null>;
+  // 5b：收集表行创建需求（来源类型 base_form，无 TB 身份；提出人只做展示）。
+  createBaseFormRequirement?(input: BaseFormRequirementInput): Promise<{ requirementId: string; platformRequirementId: string; created: boolean }>;
   // 状态迁移（内部走 domain/transitions 校验，非法迁移抛 InvalidTransitionError）
   updateAnalysisState(requirementId: string, to: AnalysisState): Promise<void>;
   // 负责人落库：feishuUserId 来自 person_mappings，本表只推进 owner 状态

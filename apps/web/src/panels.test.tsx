@@ -680,6 +680,40 @@ describe("RequirementsPanel (ticket 17)", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: "撤销判定（恢复活跃）" })).not.toBeInTheDocument());
   });
 
+  it("labels chat-paste rows and filters the pool by source", async () => {
+    const chatRow = { ...row, id: "req-chat", title: "聊天粘贴需求", sourceType: "web_manual", sourceChannel: "售后", source: { sourceType: "web_manual", intakeOrigin: "chat_paste" } };
+    const manualRow = { ...row, id: "req-manual", title: "手工录入需求", sourceType: "web_manual", sourceChannel: "销售", source: { sourceType: "web_manual" } };
+    const requested: string[] = [];
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      requested.push(path);
+      if (path === "/api/people") return jsonOk({ items: [] });
+      if (path.startsWith("/api/requirements/")) return jsonOk(detail());
+      return jsonOk({ items: [chatRow, manualRow], nextCursor: null });
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+
+    const chatTitle = await screen.findByText("聊天粘贴需求");
+    const chatLine = chatTitle.closest("tr");
+    if (!chatLine) throw new Error("chat-paste row was not rendered");
+    expect(within(chatLine).getByText("聊天粘贴")).toHaveAttribute("title", "来自聊天粘贴 · 售后");
+    const manualTitle = screen.getByText("手工录入需求").closest("tr");
+    if (!manualTitle) throw new Error("manual row was not rendered");
+    expect(within(manualTitle).getByText("手工")).toHaveAttribute("title", "来自 Web 收录 · 销售");
+
+    await chooseArcoOption("来源筛选", "聊天粘贴");
+    fireEvent.click(screen.getByRole("button", { name: "筛选" }));
+    await waitFor(() => expect(requested.some((path) => path.includes("/api/requirements?") && path.includes("source=chat_paste"))).toBe(true));
+  });
+
+  it("shows the chat-paste origin on the requirement detail", async () => {
+    const chatRow = { ...row, id: "req-chat", title: "聊天粘贴需求", sourceType: "web_manual", sourceChannel: "售后", source: { sourceType: "web_manual", intakeOrigin: "chat_paste" } };
+    mockPanel({ rows: [chatRow], detailBody: detail({ ...chatRow }) });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await openFirstRow("聊天粘贴需求");
+    expect(screen.getByText("来自聊天粘贴 · 售后")).toBeInTheDocument();
+  });
+
   it("opens the detail page with the owner picker from a pending-owner row action", async () => {
     const pending = { ...row, pipeline: { ...row.pipeline, owner: "pending_mapping", push: "pending" } };
     mockPanel({ rows: [pending], detailBody: detail({ pipeline: pending.pipeline, ownerName: null }) });

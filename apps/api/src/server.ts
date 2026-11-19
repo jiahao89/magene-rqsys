@@ -19,6 +19,7 @@ import { recheckOwnerMappings } from "./scheduler/owner-recheck.js";
 import { FeishuBasePushAdapter } from "./base/client.js";
 import { FeishuBitableClient } from "./base/transport.js";
 import { RateLimitedBaseClient } from "./base/rate-limit.js";
+import { DEFAULT_BASE_FORM_FIELDS, parseBaseFormFields, syncBaseFormIntake } from "./base/form-sync.js";
 import { FeishuUserDirectoryClient } from "./adapters/feishu/directory-client.js";
 import { PEER_ADDRESS_HEADER, createLocalIdentityProvider, describeLocalIdentity } from "./http/local-identity.js";
 import type { SourceProjectConfig } from "./domain/workflow.js";
@@ -141,6 +142,20 @@ const baseClient = process.env.FEISHU_APP_ID && process.env.FEISHU_APP_SECRET &&
       minIntervalMs: Number(process.env.BASE_MIN_INTERVAL_MS ?? 100),
     })
   : undefined;
+// 5b：收集表同步。表 ID 与 PM 的「数据表」完全分开（BASE_INTAKE_TABLE_ID），绝不覆盖 BASE_TABLE_ID。
+const baseIntakeFields = parseBaseFormFields(process.env.BASE_INTAKE_FIELDS_JSON);
+const baseIntakeTableId = process.env.BASE_INTAKE_TABLE_ID?.trim();
+const baseIntakeClient = process.env.FEISHU_APP_ID && process.env.FEISHU_APP_SECRET && process.env.BASE_APP_TOKEN && baseIntakeTableId && baseIntakeFields.fields
+  ? new RateLimitedBaseClient(new FeishuBitableClient({
+      appId: process.env.FEISHU_APP_ID, appSecret: process.env.FEISHU_APP_SECRET,
+      appToken: process.env.BASE_APP_TOKEN, tableId: baseIntakeTableId,
+      keyFields: { requirementId: DEFAULT_BASE_FORM_FIELDS.systemRequirementId },
+    }), { minIntervalMs: Number(process.env.BASE_MIN_INTERVAL_MS ?? 100) })
+  : undefined;
+if (baseIntakeFields.error) process.stderr.write(`base intake sync disabled: ${baseIntakeFields.error}\n`);
+if (baseIntakeTableId && !baseIntakeClient) process.stderr.write("base intake sync disabled: Base credentials are incomplete\n");
+const baseIntakeIntervalMs = Number(process.env.BASE_INTAKE_SYNC_INTERVAL_MS ?? 60_000);
+let lastBaseIntakeSyncAt = 0;
 // Q2：重复判定的 Base 标记（不通知）。未配置 Base 时整个能力关闭。
 const duplicateMarker = baseClient
   ? (input: Parameters<typeof markDuplicateInBase>[1]) => markDuplicateInBase({ base: baseClient, fields: baseFields, webBaseUrl: process.env.RQSYS_WEB_BASE_URL ?? null }, input)
@@ -275,6 +290,23 @@ if (worker && repositories && workerPollMs > 0) {
       for (const outcome of outcomes) {
         if (outcome.error) {
           process.stderr.write(`scheduled sync failed for source ${outcome.sourceConfigId}: ${outcome.error}\n`);
+        }
+      }
+      // 5b：收集表同步按固定间隔运行（默认 60s），与 TB 批次互不影响。
+      // 失败只落审计与 system_flags（运维页可见），不阻断本轮其它调度。
+      if (baseIntakeClient && baseIntakeFields.fields && Date.now() - lastBaseIntakeSyncAt >= baseIntakeIntervalMs) {
+        lastBaseIntakeSyncAt = Date.now();
+        try {
+          const report = await syncBaseFormIntake({
+            client: baseIntakeClient, requirements: repositories.requirements, audit: repositories.audit,
+            fields: baseIntakeFields.fields, now, tableId: baseIntakeTableId!, flags: repositories.flags,
+          });
+          if (report.created > 0 || report.rejected > 0 || report.writeBackFailed > 0 || report.readFailed) {
+            process.stdout.write(`base form sync: scanned=${report.scanned} created=${report.created} rejected=${report.rejected} writeBackFailed=${report.writeBackFailed}${report.readFailed ? " readFailed" : ""}\n`);
+          }
+          for (const error of report.errors) process.stderr.write(`base form sync item failed: ${error}\n`);
+        } catch (error) {
+          process.stderr.write(`base form sync failed: ${String(error)}\n`);
         }
       }
       // 分析阶段自动恢复：先收敛 running 崩溃残留（回退 failed_retryable），再补排可重试失败；

@@ -115,6 +115,16 @@ const ALLOWED_DETAIL_KEYS: readonly string[] = [
   // PRD-26 审计串联与可追溯：一次抽取的请求号、提示词版本、供应商状态码（都不含正文）
   "requestId",
   "promptVersion",
+  // 来源标记（5a/5b）：来源类型、业务渠道、聊天粘贴标记与外部行号——都是分类值，不含正文/PII
+  "sourceType",
+  "sourceChannel",
+  "intakeOrigin",
+  "sourceExternalId",
+  "formRecordId",
+  // Base 同步与诊断：阶段、失败类别、飞书状态码；不含请求/响应正文
+  "phase",
+  "kind",
+  "apiCode",
 ];
 
 // 判断 safeDetails 键是否命中禁止模式。

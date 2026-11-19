@@ -7,7 +7,7 @@
 // 用装饰器实现而不是散在业务代码里：所有路径（find/create/update/readPmFields）
 // 自动受限，推送适配器的逻辑不需要知道限流的存在。
 
-import type { BaseClient, BaseRecord, BaseRequirementKey, BaseWriteOptions } from "./client.js";
+import type { BaseClient, BaseListOptions, BaseRecord, BaseRecordPage, BaseRequirementKey, BaseWriteOptions } from "./client.js";
 
 export interface BaseRateLimitOptions {
   /** 两次调用之间的最小间隔（毫秒）。0 或省略表示不限制（仅串行化）。 */
@@ -63,6 +63,12 @@ export class RateLimitedBaseClient implements BaseClient {
     return this.schedule(() => this.inner.findByPlatformKey
       ? this.inner.findByPlatformKey(platformRequirementId)
       : Promise.resolve(null));
+  }
+
+  listRecords(options?: BaseListOptions): Promise<BaseRecordPage> {
+    return this.schedule(() => this.inner.listRecords
+      ? this.inner.listRecords(options)
+      : Promise.reject(new Error("Base listRecords is not supported by this client")));
   }
 
   readFieldType(fieldName: string): Promise<number> {

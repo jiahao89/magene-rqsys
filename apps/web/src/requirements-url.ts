@@ -20,6 +20,8 @@ export interface RequirementListFilters {
   processingState: RequirementProcessingView;
   /** 优先级分诊视图（2026-11-06）：P0–P3 生效优先级筛选。 */
   priority: string;
+  /** 5c-1 来源筛选：空=全部；teambition / web_manual / base_form / chat_paste。 */
+  source: string;
   /** 排序：空=默认（仅活跃的注意力排序由前端完成），priority_asc=按生效优先级 P0→P3 分诊。 */
   sort: string;
   batchId: string;
@@ -42,10 +44,17 @@ export function parseRequirementProcessingView(value: string | null | undefined)
 }
 
 const REQUIREMENT_PRIORITIES = ["P0", "P1", "P2", "P3"] as const;
+// 5c-1：来源筛选的合法取值。base_form 为 5b 预留；chat_paste 由 web_manual + source_payload.intakeOrigin 判定。
+const REQUIREMENT_SOURCES = ["teambition", "web_manual", "base_form", "chat_paste"] as const;
 
 /** 非法/未知优先级回落到空（不过滤），避免深链把任意文本发给服务端。 */
 export function parseRequirementPriority(value: string | null | undefined): string {
   return value && (REQUIREMENT_PRIORITIES as readonly string[]).includes(value) ? value : "";
+}
+
+/** 非法/未知来源回落到空（不过滤），避免深链把任意文本发给服务端。 */
+export function parseRequirementSource(value: string | null | undefined): string {
+  return value && (REQUIREMENT_SOURCES as readonly string[]).includes(value) ? value : "";
 }
 
 export const emptyRequirementListFilters: RequirementListFilters = {
@@ -57,6 +66,7 @@ export const emptyRequirementListFilters: RequirementListFilters = {
   push: "",
   processingState: DEFAULT_PROCESSING_VIEW,
   priority: "",
+  source: "",
   sort: "",
   batchId: "",
   from: "",
@@ -72,6 +82,7 @@ export const requirementFilterParams = [
   "push",
   "processingState",
   "priority",
+  "source",
   "sort",
   "batchId",
   "from",
@@ -89,6 +100,7 @@ export function readRequirementListFilters(search: string): RequirementListFilte
     push: params.get("push")?.trim() ?? "",
     processingState: parseRequirementProcessingView(params.get("processingState")),
     priority: parseRequirementPriority(params.get("priority")),
+    source: parseRequirementSource(params.get("source")),
     sort: params.get("sort") === "priority_asc" ? "priority_asc" : "",
     batchId: params.get("batchId")?.trim() ?? "",
     from: params.get("from")?.trim() ?? "",

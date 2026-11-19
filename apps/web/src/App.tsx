@@ -57,7 +57,7 @@ function formatApiError(cause: unknown): string {
     if (/[\u4e00-\u9fff]/.test(cause.message)) return cause.message;
     return API_ERROR_TEXT[cause.code] ?? `操作失败（${cause.code}）。`;
   }
-  return "无法连接到本地 API。请启动 API 服务后重试。";
+  return "服务暂不可用，请稍后重试。";
 }
 
 async function apiJson<T>(path: string): Promise<T> {

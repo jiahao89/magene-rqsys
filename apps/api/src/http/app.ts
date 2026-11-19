@@ -18,6 +18,7 @@ import { toCsv } from "../application/csv.js";
 import { SourceConfigUpdateSchema, normalizeSourceSchedule, type ResolvedSourceConfigUpdate } from "../contracts/source.js";
 import { DictionaryCreateSchema, PriorityRuleCreateSchema, TeamModulesSaveSchema, TeamPersonCreateSchema, TeamPersonFeishuBindSchema, TeamPersonRenameSchema } from "../contracts/rules.js";
 import { DEFAULT_TEAM_MEMBERS } from "../domain/team-directory.js";
+import { BASE_FORM_SYNC_STATE_FLAG } from "../base/form-sync.js";
 import { isDatabaseReady } from "../adapters/postgres/health.js";
 import { EXPECTED_LATEST_MIGRATION } from "../db/expected-migration.js";
 import { jsonError } from "./errors.js";
@@ -119,6 +120,22 @@ function safeCauseType(error: unknown): string {
     current = cause;
   }
   return causeType;
+}
+/** 5b：收集表同步的运维状态只读 system_flags；字段做类型收敛，读不到时 baseForm 为 null 不影响其它指标。 */
+function baseFormOpsState(value: Record<string, unknown>) {
+  const num = (candidate: unknown) => typeof candidate === "number" && Number.isFinite(candidate) ? candidate : 0;
+  return {
+    lastRunAt: typeof value.lastRunAt === "string" ? value.lastRunAt : null,
+    pages: num(value.pages),
+    scanned: num(value.scanned),
+    skipped: num(value.skipped),
+    created: num(value.created),
+    recorded: num(value.recorded),
+    rejected: num(value.rejected),
+    writeBackFailed: num(value.writeBackFailed),
+    readFailed: value.readFailed === true,
+    lastError: typeof value.lastError === "string" ? value.lastError.slice(0, 200) : null,
+  };
 }
 function reportAiStatsFailure(dependencies: ApiDependencies, stat: "analysis" | "intake", error: unknown): void {
   const details = { phase: "overview_ai_stats", stat, errorType: safeErrorType(error), databaseCode: safeDatabaseCode(error), causeType: safeCauseType(error) };
@@ -571,7 +588,15 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     const query = Object.fromEntries(url.searchParams.entries());
     const parsed = OpsMetricsQuerySchema.safeParse(query); if (!parsed.success) return jsonError("VALIDATION_FAILED");
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
-    return json({ metrics: await repositories.ops.getOpsMetrics({ days: parsed.data.days, now }) });
+    const metrics = await repositories.ops.getOpsMetrics({ days: parsed.data.days, now });
+    let baseForm = null;
+    if (repositories.flags) {
+      try {
+        const state = await repositories.flags.get(BASE_FORM_SYNC_STATE_FLAG);
+        if (state && state.value && typeof state.value === "object") baseForm = baseFormOpsState(state.value);
+      } catch { /* 同步状态不可用只让这一块为空，不影响其它运营指标 */ }
+    }
+    return json({ metrics: { ...metrics, baseForm } });
   }
   if (method === "GET" && url.pathname === "/api/rules/dictionary") {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
@@ -859,7 +884,7 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     const cursor = parsed.data.sort === "priority_asc" ? undefined : decodeRequirementCursor(parsed.data.cursor);
     if (parsed.data.sort !== "priority_asc" && parsed.data.cursor !== undefined && cursor === undefined) return jsonError("VALIDATION_FAILED", "Invalid cursor.");
     const page = await repositories.requirements.search({ ...(parsed.data.q === undefined ? {} : { q: parsed.data.q }), ...(parsed.data.executorName === undefined ? {} : { executorName: parsed.data.executorName }), ...(parsed.data.pullState === undefined ? {} : { pullState: parsed.data.pullState }), ...(parsed.data.analysisState === undefined ? {} : { analysisState: parsed.data.analysisState }), ...(parsed.data.ownerState === undefined ? {} : { ownerState: parsed.data.ownerState }), ...(parsed.data.pushState === undefined ? {} : { pushState: parsed.data.pushState }),
-      ...(parsed.data.processingState === undefined ? {} : { processingState: parsed.data.processingState }), ...(parsed.data.priority === undefined ? {} : { priority: parsed.data.priority }), ...(parsed.data.sort === undefined ? {} : { sort: parsed.data.sort }), ...(parsed.data.batchId === undefined ? {} : { batchId: parsed.data.batchId }), ...(parsed.data.since === undefined ? {} : { since: parsed.data.since }), ...(parsed.data.until === undefined ? {} : { until: parsed.data.until }), limit: parsed.data.limit, ...(cursor === undefined ? {} : { cursor }) });
+      ...(parsed.data.processingState === undefined ? {} : { processingState: parsed.data.processingState }), ...(parsed.data.priority === undefined ? {} : { priority: parsed.data.priority }), ...(parsed.data.source === undefined ? {} : { source: parsed.data.source }), ...(parsed.data.sort === undefined ? {} : { sort: parsed.data.sort }), ...(parsed.data.batchId === undefined ? {} : { batchId: parsed.data.batchId }), ...(parsed.data.since === undefined ? {} : { since: parsed.data.since }), ...(parsed.data.until === undefined ? {} : { until: parsed.data.until }), limit: parsed.data.limit, ...(cursor === undefined ? {} : { cursor }) });
     // 列表一次取回全部有效映射再按 TB 用户查名，避免逐行查询。
     // 空页时不能把空字符串传给 uuid 列：PostgreSQL 会以 22P02 拒绝，接口变成 500，
     // 因此只对页内真实出现过的来源查询映射。
@@ -886,6 +911,7 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
       ...(parsed.data.pullState === undefined ? {} : { pullState: parsed.data.pullState }), ...(parsed.data.analysisState === undefined ? {} : { analysisState: parsed.data.analysisState }),
       ...(parsed.data.ownerState === undefined ? {} : { ownerState: parsed.data.ownerState }), ...(parsed.data.pushState === undefined ? {} : { pushState: parsed.data.pushState }),
       ...(parsed.data.processingState === undefined ? {} : { processingState: parsed.data.processingState }), ...(parsed.data.priority === undefined ? {} : { priority: parsed.data.priority }),
+      ...(parsed.data.source === undefined ? {} : { source: parsed.data.source }),
       ...(parsed.data.sort === undefined ? {} : { sort: parsed.data.sort }), ...(parsed.data.batchId === undefined ? {} : { batchId: parsed.data.batchId }),
       ...(parsed.data.since === undefined ? {} : { since: parsed.data.since }), ...(parsed.data.until === undefined ? {} : { until: parsed.data.until }),
       limit: exportLimit + 1,
