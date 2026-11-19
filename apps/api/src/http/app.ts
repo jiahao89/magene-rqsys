@@ -938,6 +938,15 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
       },
     });
   }
+  // 5c-2：来源 Tab 计数。与列表默认范围一致（只统计 active），四种来源互斥；失败时前端隐藏计数，不影响列表。
+  if (method === "GET" && url.pathname === "/api/requirements/source-counts") {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.requirements?.sourceCounts) return jsonError("DEPENDENCY_UNAVAILABLE");
+    try {
+      const counts = await repositories.requirements.sourceCounts();
+      return json({ counts });
+    } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
+  }
   if (url.pathname === "/api/kano/evidence" && method === "GET") {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");

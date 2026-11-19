@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, getHealth, getOverviewMetrics, listBatches, listRequirements, listSources, retrySyncItem, revokeDuplicateDecision, runSync, searchFeishuUsers, type SourceConfig } from "./api";
+import { ApiError, getHealth, getOverviewMetrics, getRequirementSourceCounts, listBatches, listRequirements, listSources, retrySyncItem, revokeDuplicateDecision, runSync, searchFeishuUsers, type SourceConfig } from "./api";
 
 const source: SourceConfig = {
   id: "source-1", projectName: "Product",
@@ -112,6 +112,23 @@ describe("workbench API client", () => {
     await listBatches({ status: "failed", since: "2026-01-01T00:00:00Z", until: "2026-01-02T00:00:00Z", fetcher });
     const url = new URL(fetcher.mock.calls[0]![0] as string, "http://localhost");
     expect(Object.fromEntries(url.searchParams)).toEqual({ status: "failed", since: "2026-01-01T00:00:00Z", until: "2026-01-02T00:00:00Z" });
+  });
+
+  it("reads source counts for the requirement pool tabs", async () => {
+    const counts = { teambition: 320, web_manual: 4, base_form: 12, chat_paste: 4, all: 340 };
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ counts }));
+    await expect(getRequirementSourceCounts(fetcher)).resolves.toEqual(counts);
+    expect(fetcher).toHaveBeenCalledWith("/api/requirements/source-counts", expect.objectContaining({ headers: { accept: "application/json" } }));
+  });
+
+  it("hides source counts instead of showing partial numbers when the endpoint is unavailable or malformed", async () => {
+    const failed = vi.fn().mockResolvedValue(Response.json({ error: { code: "DEPENDENCY_UNAVAILABLE" } }, { status: 503 }));
+    await expect(getRequirementSourceCounts(failed)).resolves.toBeNull();
+    // 缺字段或负数都按「计数不可用」处理：Tab 照常可点，只是不显示数字。
+    const partial = vi.fn().mockResolvedValue(Response.json({ counts: { teambition: 1, web_manual: 2 } }));
+    await expect(getRequirementSourceCounts(partial)).resolves.toBeNull();
+    const negative = vi.fn().mockResolvedValue(Response.json({ counts: { teambition: -1, web_manual: 2, base_form: 0, chat_paste: 0, all: 1 } }));
+    await expect(getRequirementSourceCounts(negative)).resolves.toBeNull();
   });
 
   it("searches Feishu user candidates through the server API", async () => {

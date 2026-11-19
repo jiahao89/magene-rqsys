@@ -76,6 +76,7 @@ export function SopPanel() {
         <li><strong>等待同步：</strong>平台自动化每 30 分钟读取一次（实际可能因抖动略晚）；成功后「同步状态=已收录」、「系统需求 ID」有值；失败则「同步状态=校验失败」，按「同步说明」修正后等下一轮，<strong>不要新建重复行</strong>。</li>
         <li><strong>只收录一次：</strong>已收录的行后续修改不同步；需求内容要改，在 Web 详情或 Base 处理，不要改收集表行；删行不会删已创建的需求。</li>
         <li><strong>系统字段：</strong>不要手工改「系统需求 ID / 同步状态 / 同步说明」；长时间不更新或写回失败，联系运维。</li>
+        <li><strong>查原始行：</strong>详情页不提供 Base 记录链接；要核对收集表原文，用「系统需求 ID」在收集表里搜。</li>
       </ol>
       <p className="guide-note">收集表只负责「进入系统」；后续分析、负责人、推送、通知与其它来源完全一致。提出人只作展示，不参与负责人匹配、不通知。</p>
 
@@ -84,13 +85,13 @@ export function SopPanel() {
         <thead><tr><th>来源方式</th><th>怎么产生</th><th>在哪里看</th></tr></thead>
         <tbody>
           <tr><td>Teambition</td><td>从 TB 同步</td><td>默认来源，需求池不挂徽标</td></tr>
-          <tr><td>Web 手工</td><td>需求池「新建需求」手工填写</td><td>需求池徽标「手工」</td></tr>
-          <tr><td>聊天粘贴</td><td>「从聊天粘贴」整理后创建</td><td>需求池徽标「聊天粘贴」</td></tr>
-          <tr><td>多维表格</td><td>需求收集表同步创建</td><td>需求池徽标「多维表格」</td></tr>
+          <tr><td>Web 手工</td><td>需求池「新建需求」手工填写</td><td>需求池徽标「手工·渠道」+ 行首橙色条</td></tr>
+          <tr><td>聊天粘贴</td><td>「从聊天粘贴」整理后创建</td><td>需求池徽标「聊天粘贴·渠道」+ 行首紫色条</td></tr>
+          <tr><td>多维表格</td><td>需求收集表同步创建</td><td>需求池徽标「多维表格·渠道」+ 行首蓝色条</td></tr>
         </tbody>
       </table></div>
       <ul className="guide-steps">
-        <li><strong>筛选：</strong>需求池「来源筛选」可选全部 / Teambition / Web 手工 / 多维表格 / 聊天粘贴。</li>
+        <li><strong>筛选：</strong>需求池顶部「来源」Tab 可选全部来源 / Teambition / 多维表格 / 手工 / 聊天粘贴；详情页底部「这条需求怎么来的」显示来源、渠道、提出人、创建时间。</li>
         <li><strong>Base：</strong>「来源方式」是单选字段，由系统在推送时写入，取值同上；不要手工改。字段未配置时系统不写、不报错；看不到这一列就联系 PM Leader/管理员确认。</li>
         <li><strong>通知：</strong>来源方式写入不触发 PM 通知；通知仍只在负责人变化、需求实质变更等事件发送。</li>
         <li><strong>历史数据：</strong>2026-11-18 之前通过聊天粘贴创建、但当时还没有来源留痕的需求无法与手工区分，按「Web 手工」处理；Base 来源方式只覆盖新推送/回填范围，空白不代表数据丢失。</li>

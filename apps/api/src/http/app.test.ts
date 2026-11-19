@@ -478,6 +478,20 @@ test("requirement list and export forward the source filter to repositories", as
  assert.equal(rejected.status, 400);
 });
 
+test("requirement source counts return the five exclusive buckets and degrade when unavailable", async () => {
+  const d = makeDependencies();
+  const counts = { teambition: 10, web_manual: 2, base_form: 1, chat_paste: 3, all: 16 };
+  d.repositories!.requirements!.sourceCounts = async () => counts;
+  const response = await handleApiRequest(new Request("http://localhost/api/requirements/source-counts"), d);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { counts });
+  // 统计失败或仓储未实现时只让 Tab 计数降级，不能影响需求列表本身。
+  d.repositories!.requirements!.sourceCounts = async () => { throw new Error("db down"); };
+  assert.equal((await handleApiRequest(new Request("http://localhost/api/requirements/source-counts"), d)).status, 503);
+  delete d.repositories!.requirements!.sourceCounts;
+  assert.equal((await handleApiRequest(new Request("http://localhost/api/requirements/source-counts"), d)).status, 503);
+});
+
 test("V02-T02 manual requirements read back with source fields and no TB link fallback", async () => {
   const d = makeDependencies();
   const manual = { ...requirement, sourceType: "web_manual", sourceChannel: "售后", sourceConfigId: null, teambitionRequirementId: null, pipeline: { ...requirement.pipeline, pull: "collected" as const }, sourceUrl: null } as unknown as RequirementRecord;

@@ -322,6 +322,33 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: The version is PII-flagged; re-import a de-identified snapshot. }
+  /api/requirements/source-counts:
+    get:
+      summary: Count requirements by source for the source tabs (5c-2)
+      description: >-
+        Returns mutually exclusive counts for the four source tabs plus the active total.
+        Scope matches the list default (processing_state='active'); takes no query parameters.
+        The Web client hides the counters when this endpoint fails and keeps the list usable.
+      responses:
+        '200':
+          description: Source counts.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [counts]
+                properties:
+                  counts:
+                    type: object
+                    required: [teambition, web_manual, base_form, chat_paste, all]
+                    properties:
+                      teambition: { type: integer, minimum: 0 }
+                      web_manual: { type: integer, minimum: 0 }
+                      base_form: { type: integer, minimum: 0 }
+                      chat_paste: { type: integer, minimum: 0 }
+                      all: { type: integer, minimum: 0 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/DependencyUnavailable' }
   /api/requirements/export:
     get:
       summary: Export the filtered requirement pool as CSV (max 5000 rows)

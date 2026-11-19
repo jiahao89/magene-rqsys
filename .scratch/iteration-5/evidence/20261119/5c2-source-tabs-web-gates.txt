@@ -1,0 +1,32 @@
+5c-2 来源 Tab / 色条 / 详情来源行 —— 前端本地门禁（2026-11-19）
+
+## 测试
+apps/web: npx vitest run
+  Test Files  11 passed (11)
+       Tests  171 passed (171)
+  覆盖新增：来源 Tab 计数渲染、切换即生效且不带未提交草稿、深链预选、计数 503/缺字段降级、
+  非活跃处理视图隐藏计数、行首色条 + 徽标（含空渠道不出 ·null）、TB 行无徽标无色条、
+  详情「这条需求怎么来的」、source-counts 客户端解析与失败降级。
+
+## 类型 / 构建
+npm --workspace @rq-sys/web run typecheck  → 通过
+npm --workspace @rq-sys/web run build      → 通过（css 354.40 kB / js 887.54 kB）
+rq-sys-miaoda: npm run type:check:client   → 通过
+rq-sys-miaoda: npm run build:client        → 通过
+
+## 两仓与样式门禁
+npm run check:arco-styles  → 通过（apps/web 14/14，miaoda client 13/13）
+npm run check:alignment    → 逐字一致 54 模块；声明的共用逻辑 36/36；无未声明漂移
+git diff --check           → 两仓均干净
+
+## 视觉自检（仅本地静态渲染，不是目标环境证据）
+evidence/20261119/5c2-source-tabs-preview.png
+  用构建产物 apps/web/dist/assets/index-*.css 渲染 Tab（含/不含计数）、三种来源行色条与徽标、
+  详情来源行；确认：全部来源 Tab 计数对、多维表格蓝 / 手工橙 / 聊天粘贴紫、色条不挤占缩进、
+  待分配黄条与非默认来源色条可并存。
+
+## 未做 / 边界
+- 未提交、未 push、未发版。
+- 未改服务端；source-counts 由后端开发在同轮工作区实现（openapi 已含该路径与 schema）。
+- 目标环境验收未做：发布后需核对 活跃 333 = Teambition 332 + 手工 1（RQ-000316）+
+  多维表格 0 + 聊天粘贴 0，并逐项点 Tab / 深链 / 导出 / 详情 / TB 行无徽标。

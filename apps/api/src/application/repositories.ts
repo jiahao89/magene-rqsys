@@ -527,6 +527,8 @@ export interface RequirementQueryRepository {
     limit: number;
     cursor?: RequirementSearchCursor;
   }): Promise<{ items: RequirementRecord[]; nextCursor: string | null }>;
+  /** 5c-2：来源 Tab 计数。范围与列表默认一致（processing_state='active'），四种来源互斥。 */
+  sourceCounts?(): Promise<{ teambition: number; web_manual: number; base_form: number; chat_paste: number; all: number }>;
   get(id: string): Promise<RequirementRecord | null>;
   // 同步幂等查找：返回流水线推进所需的最小字段
   findForSync(sourceConfigId: string, teambitionRequirementId: string): Promise<{

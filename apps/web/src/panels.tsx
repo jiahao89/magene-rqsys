@@ -13,7 +13,7 @@ import { checkScheduleHealth } from "./schedule";
 import { readRequirementDeepLink } from "./deep-link";
 import { emptyRequirementListFilters, readRequirementListFilters, requirementFilterCount, requirementPoolUrl, type RequirementListFilters, type RequirementProcessingView } from "./requirements-url";
 import { formatDateTime, requirementDisplayId, requirementOwnerView, requirementSourceFacts, requirementTime, sortRequirementsForAttention } from "./requirement-view";
-import { AUDIT_PAGE_LIMIT, ApiError, addTeamPerson, applyRequirementAiScore, bindTeamPersonFeishu, createSource, deleteTeamPerson, getBatch, getFunctionModules, getRequirement, exportRequirementsCsv, getGates, getOpsJobs, getOpsMetrics, getReadiness, setGate, listAudit, listBatches, listDictionaryVersions, listMappings, listRequirements, listTeamPeople, pushRequirement, renameTeamPerson, revokeDuplicateDecision, saveAnalysisContext, saveFunctionModules, retryAnalysis, setPriorityOverride, retrySyncItem, saveRequirementScore, searchFeishuUsers, setDuplicateDecision, setOwner, unbindTeamPersonFeishu, updateSource, type AnalysisVersionSummary, type AuditEvent, type OpsJob, type OpsMetrics, type GatesResponse, type BatchDetail, type BatchSummary, type DictionaryVersion, type DuplicateDecision, type PersonMapping, type PublishStatus, type FeishuUserSelection, type FeishuUserCandidate, type FunctionModuleEntry, type RequirementDetail, type RequirementProcessingState, type RequirementResolution, type RequirementScoreVersion, type RequirementSummary, type ScoringInputs, type SourceConfig, type SourceConfigUpdate, type TeamPerson, clearOwner } from "./api";
+import { AUDIT_PAGE_LIMIT, ApiError, addTeamPerson, applyRequirementAiScore, bindTeamPersonFeishu, createSource, deleteTeamPerson, getBatch, getFunctionModules, getRequirement, exportRequirementsCsv, getGates, getOpsJobs, getOpsMetrics, getReadiness, getRequirementSourceCounts, setGate, listAudit, listBatches, listDictionaryVersions, listMappings, listRequirements, listTeamPeople, pushRequirement, renameTeamPerson, revokeDuplicateDecision, saveAnalysisContext, saveFunctionModules, retryAnalysis, setPriorityOverride, retrySyncItem, saveRequirementScore, searchFeishuUsers, setDuplicateDecision, setOwner, unbindTeamPersonFeishu, updateSource, type AnalysisVersionSummary, type AuditEvent, type OpsJob, type OpsMetrics, type GatesResponse, type BatchDetail, type BatchSummary, type DictionaryVersion, type DuplicateDecision, type PersonMapping, type PublishStatus, type FeishuUserSelection, type FeishuUserCandidate, type FunctionModuleEntry, type RequirementDetail, type RequirementProcessingState, type RequirementResolution, type RequirementScoreVersion, type RequirementSourceCounts, type RequirementSummary, type ScoringInputs, type SourceConfig, type SourceConfigUpdate, type TeamPerson, clearOwner } from "./api";
 import type { WorkbenchTab } from "./workbench-routing";
 
 export type LoadState = "loading" | "ready" | "error";
@@ -610,8 +610,20 @@ const priorityFilterOptions = [["", "全部优先级"], ["P0", "P0"], ["P1", "P1
 const prioritySortOptions = [["", "默认排序"], ["priority_asc", "按优先级（P0 → P3）"]] as const;
 const analysisStateOptions = [["", "全部分析状态"], ["analyzed", "已分析"], ["failed_retryable", "待重试"], ["pending", "等待中"], ["running", "进行中"]] as const;
 const pullStateOptions = [["", "全部同步状态"], ["pending", "等待同步"], ["running", "同步中"], ["synced", "已同步"], ["failed", "同步失败"], ["collected", "已收录"]] as const;
-// 5c-1：来源筛选。HTTP 值由 sourceType + source_payload.intakeOrigin 判定；base_form 为 5b 预留。
-const sourceFilterOptions = [["", "全部来源"], ["teambition", "Teambition"], ["web_manual", "Web 手工"], ["base_form", "多维表格"], ["chat_paste", "聊天粘贴"]] as const;
+// 5c-1 来源区分：来源是需求池的一等维度，用顶部 Tab 而不是下拉——筛选藏进下拉约等于没有。
+// Teambition 是默认来源（332/333 都是它），所以默认来源不挂徽标、不加色条。
+const SOURCE_TABS = [
+  { value: "", label: "全部来源" },
+  { value: "teambition", label: "Teambition" },
+  { value: "base_form", label: "多维表格" },
+  { value: "web_manual", label: "手工" },
+  { value: "chat_paste", label: "聊天粘贴" },
+] as const;
+
+/** 来源筛选值 → source-counts 响应里的键；未知值不显示计数。 */
+function sourceCountKey(value: string): keyof RequirementSourceCounts | null {
+  return value === "" ? "all" : value === "teambition" || value === "web_manual" || value === "base_form" || value === "chat_paste" ? value : null;
+}
 const pushStateOptions = [["", "全部推送状态"], ["pending", "等待推送"], ["running", "推送中"], ["pushed", "已推送"], ["failed", "推送失败"]] as const;
 
 // 详情/列表徽标按阶段取值：同一个原始枚举（pending/running/failed）在不同阶段含义不同，
@@ -777,6 +789,9 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
   const [processingState, setProcessingState] = useState(initialFilters.processingState);
   const [priorityFilter, setPriorityFilter] = useState(initialFilters.priority);
   const [sourceFilter, setSourceFilter] = useState(initialFilters.source);
+  // 5c-1：来源 Tab 计数。接口不可用时保持 null → 只显示 Tab 文字，不显示假数字。
+  const [sourceCounts, setSourceCounts] = useState<RequirementSourceCounts | null>(null);
+  const sourceTabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [prioritySort, setPrioritySort] = useState(initialFilters.sort);
   const [batchId, setBatchId] = useState(initialFilters.batchId);
   const [since, setSince] = useState(initialFilters.from);
@@ -829,6 +844,8 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
   const [exportBusy, setExportBusy] = useState(false);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
   const dateFilterCount = [since, until].filter(Boolean).length;
+  // 「更多筛选」角标只统计浮层里的条件：来源已经移到顶部 Tab，不再计入。
+  const moreFilterCount = [priorityFilter, prioritySort, ownerState, analysisState, pushState, batchId.trim(), since, until].filter(Boolean).length;
 
   const load = useCallback(async (filter: RequirementListFilters, nextCursor: string | null) => {
     appliedFiltersRef.current = filter;
@@ -850,10 +867,16 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
     }
   }, []);
 
+  // 来源计数只影响 Tab 上的数字：接口失败/未部署时静默降级，不打断列表。
+  const loadSourceCounts = useCallback(() => {
+    void getRequirementSourceCounts().then(setSourceCounts);
+  }, []);
+
   useEffect(() => {
     void load(initialFilters, null);
+    loadSourceCounts();
     void listTeamPeople().then(setPeople).catch((cause: unknown) => setPeopleError(errorText(cause)));
-  }, [load, initialFilters]);
+  }, [load, initialFilters, loadSourceCounts]);
 
   const open = useCallback(async (id: string, options?: { push?: boolean; openOwnerPicker?: boolean; silent?: boolean }) => {
     if (options?.push) {
@@ -952,6 +975,31 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
     void load(next, null);
   };
 
+  // 来源 Tab 切换：立即生效、重置游标；URL / 导出 / 分页继续共用同一个 source 参数。
+  // 只改来源，不顺手把用户还没点「筛选」的草稿输入发出去。
+  const applySourceFilter = (value: string) => {
+    const next: RequirementListFilters = { ...appliedFiltersRef.current, source: value };
+    setSourceFilter(value);
+    setAppliedFilterCount(requirementFilterCount(next));
+    window.history.replaceState(null, "", requirementPoolUrl(window.location.pathname || "/", next, null, window.location.hash));
+    void load(next, null);
+  };
+
+  // Tab 键盘流：←/→ 循环、Home/End 跳首尾，并立即切换（ARIA tabs 的自动激活模式）。
+  const onSourceTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    const last = SOURCE_TABS.length - 1;
+    let next: number;
+    if (event.key === "ArrowRight") next = index === last ? 0 : index + 1;
+    else if (event.key === "ArrowLeft") next = index === 0 ? last : index - 1;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = last;
+    else return;
+    event.preventDefault();
+    const tab = SOURCE_TABS[next]!;
+    applySourceFilter(tab.value);
+    sourceTabRefs.current[next]?.focus();
+  };
+
   // 清除筛选后立即回到无筛选的第一页，避免残留旧条件与旧游标。
   const clearFilters = () => {
     setAppliedFilterCount(0);
@@ -964,6 +1012,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
   const refresh = () => {
     // 手动刷新：列表与详情各自静默更新（不整页重载）；总览数据由 onRefresh 在后台静默刷新。
     void load(appliedFiltersRef.current, null);
+    loadSourceCounts();
     if (detailId) void open(detailId, { silent: true });
     onRefresh();
   };
@@ -1008,6 +1057,30 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
   }
 
   return <section className="panel requirements-panel">
+    {/* 5c-1：来源是一等维度。Tab 直接顶在列表上方，带计数、可深链；计数拿不到时只显示文字。 */}
+    <div className="source-tabs" role="tablist" aria-label="需求来源">
+      {SOURCE_TABS.map((tab, index) => {
+        const active = sourceFilter === tab.value;
+        const countKey = sourceCountKey(tab.value);
+        // 处理视图切到「全部/已压制重复」时隐藏计数：计数是活跃数，列表行数会更多，避免误读。
+        const count = sourceCounts && processingState === "active" && countKey ? sourceCounts[countKey] : null;
+        return <button
+          key={tab.value || "all"}
+          ref={(node) => { sourceTabRefs.current[index] = node; }}
+          type="button"
+          role="tab"
+          aria-selected={active}
+          aria-controls="requirement-tab-panel"
+          tabIndex={active ? 0 : -1}
+          className={`source-tab${active ? " is-active" : ""}`}
+          onClick={() => applySourceFilter(tab.value)}
+          onKeyDown={(event) => onSourceTabKeyDown(event, index)}
+        >
+          <span>{tab.label}</span>
+          {count !== null ? <span className="source-tab-count">{count}</span> : null}
+        </button>;
+      })}
+    </div>
     <div className="processing-view-switch" role="group" aria-label="重复处理视图">
       <span className="processing-view-switch-label">重复处理</span>
       {PROCESSING_VIEWS.map((view) => <ArcoButton
@@ -1031,13 +1104,9 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
           <span className="sr-only">同步状态</span>
           <ArcoSelect aria-label="同步状态筛选" value={pullState} onChange={(value: string) => setPullState(value)} style={{ minWidth: 130 }} options={pullStateOptions.map(([value, label]) => ({ label, value }))} />
         </div>
-        <div className="qfield">
-          <span className="sr-only">来源</span>
-          <ArcoSelect aria-label="来源筛选" value={sourceFilter} onChange={(value: string) => setSourceFilter(value)} style={{ minWidth: 130 }} options={sourceFilterOptions.map(([value, label]) => ({ label, value }))} />
-        </div>
         {/* ARCO-05：details/summary 改为受控按钮 + 条件渲染；aria-expanded/aria-controls 表达展开状态。 */}
         <div className="qmore" ref={moreFiltersRef}>
-          <ArcoButton ref={moreFiltersButtonRef} htmlType="button" size="small" aria-expanded={moreFiltersOpen} aria-controls="requirement-more-filters" onClick={() => setMoreFiltersOpen((open) => !open)}>更多筛选{activeFilterCount - (query.trim() ? 1 : 0) - (executorName ? 1 : 0) - (pullState ? 1 : 0) - (sourceFilter ? 1 : 0) > 0 ? `（${activeFilterCount - (query.trim() ? 1 : 0) - (executorName ? 1 : 0) - (pullState ? 1 : 0) - (sourceFilter ? 1 : 0)}）` : ""}</ArcoButton>
+          <ArcoButton ref={moreFiltersButtonRef} htmlType="button" size="small" aria-expanded={moreFiltersOpen} aria-controls="requirement-more-filters" onClick={() => setMoreFiltersOpen((open) => !open)}>更多筛选{moreFilterCount > 0 ? `（${moreFilterCount}）` : ""}</ArcoButton>
           {moreFiltersOpen && <div className="qmore-body" id="requirement-more-filters">
             <div className="qfield">
               <span className="sr-only">优先级</span>
@@ -1096,8 +1165,10 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
       <span className="list-summary-count">已加载 {sortedRows.length} 条{cursor ? "，还有更多" : ""}{activeFilterCount > 0 ? `（已应用 ${activeFilterCount} 个筛选）` : ""}</span>
       <span className="list-summary-sort">{prioritySort === "priority_asc" ? "分诊视图：按生效优先级 P0 → P3 排序，单页最多 100 条（不分页）" : "排序仅作用于已加载的记录：待分配 → 推送失败 → 待推送 → 已推送"}</span>
     </div>
-    <RequirementsTable rows={sortedRows} loading={loadState === "loading"} onOpen={(row) => void open(row.id, { push: true })} onAssign={(row) => void open(row.id, { push: true, openOwnerPicker: true })} />
-    {cursor && prioritySort !== "priority_asc" && <div className="rules-form"><Button onPress={() => void load(appliedFiltersRef.current, cursor)} isDisabled={loadState === "loading"} variant="secondary" size="small">加载更多</Button></div>}
+    <div id="requirement-tab-panel" role="tabpanel" aria-label="需求列表">
+      <RequirementsTable rows={sortedRows} loading={loadState === "loading"} onOpen={(row) => void open(row.id, { push: true })} onAssign={(row) => void open(row.id, { push: true, openOwnerPicker: true })} />
+      {cursor && prioritySort !== "priority_asc" && <div className="rules-form"><Button onPress={() => void load(appliedFiltersRef.current, cursor)} isDisabled={loadState === "loading"} variant="secondary" size="small">加载更多</Button></div>}
+    </div>
   </section>;
 }
 
@@ -1547,6 +1618,9 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
 
   const structured: AnalysisStructured = (detail.analysis ?? {}) as AnalysisStructured;
   const facts = requirementSourceFacts(detail);
+  // 5c-1：详情来源说明与列表徽标一致；TB 是默认来源，没有徽标但有同样的来源行。
+  const sourceInfo = requirementSourceInfo({ sourceType: detail.sourceType, sourceChannel: detail.sourceChannel, source: detail.source });
+  const sourceLabel = sourceInfo?.name ?? "Teambition";
   const owner = requirementOwnerView(detail);
   // P1 重复处理：压制态需求不进入 AI 分析 / Base 推送 / 通知，相关操作入口必须一并收敛。
   const processingState = requirementProcessingState(detail);
@@ -1732,7 +1806,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
     </div>}
 
     <section className="req-section" aria-labelledby="req-l1-heading">
-      <div className="req-section-head"><h3 id="req-l1-heading">需求信息</h3><span className="req-source-note">{(() => { const info = requirementSourceInfo({ sourceType: detail.sourceType, sourceChannel: detail.sourceChannel, source: detail.source }); return info ? info.note : "来自 Teambition"; })()}</span></div>
+      <div className="req-section-head"><h3 id="req-l1-heading">需求信息</h3><span className="req-source-note">{sourceInfo?.note ?? "来自 Teambition"}</span></div>
       <div className="req-field">
         <TbFieldLabel sourceType={detail.sourceType}>标题</TbFieldLabel>
         <p className="req-l1-title">{detail.title}</p>
@@ -1825,20 +1899,43 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
         </Collapse.Item>
       </Collapse>
     </section>
+    {/* 5c-1：详情底部只读区块，回答「这条需求怎么来的」。不展示 Base 表 ID / record URL / 原始 payload。 */}
+    <div className="req-origin-line" aria-label="这条需求怎么来的">
+      <strong>这条需求怎么来的</strong>
+      <span><em>来源</em>{sourceLabel}</span>
+      <span><em>来源渠道</em>{detail.sourceChannel || "未填写"}</span>
+      <span><em>提出人</em>{facts.proposerName || "未填写"}</span>
+      <span><em>创建时间</em>{createdAt ?? "未填写"}</span>
+    </div>
   </div>;
 }
 
-/** 5c-1：来源徽标/说明。Teambition 是默认来源，不挂徽标；聊天粘贴按 source_payload.intakeOrigin 区分。 */
-function requirementSourceInfo(row: { sourceType: string; sourceChannel: string | null; source?: Record<string, unknown> | null }): { label: string; note: string } | null {
+type RequirementSourceKind = "base_form" | "web_manual" | "chat_paste";
+
+/** 5c-1：来源判定。Teambition 是默认来源（返回 null）；聊天粘贴按 source_payload.intakeOrigin 区分。 */
+function requirementSourceKind(row: { sourceType?: string | null; source?: Record<string, unknown> | null }): RequirementSourceKind | null {
   // 兼容旧响应：没有 sourceType 的记录按 Teambition 处理（历史行默认来源）。
   const sourceType = row.sourceType ? String(row.sourceType) : "teambition";
-  if (sourceType === "teambition") return null;
-  const origin = row.source && typeof row.source === "object" ? row.source.intakeOrigin : undefined;
-  const channel = row.sourceChannel ? ` · ${row.sourceChannel}` : "";
-  if (sourceType === "web_manual" && origin === "chat_paste") return { label: "聊天粘贴", note: `来自聊天粘贴${channel}` };
-  if (sourceType === "web_manual") return { label: "手工", note: `来自 Web 收录${channel}` };
-  if (sourceType === "base_form") return { label: "多维表格", note: "来自多维表格" };
-  return { label: sourceType, note: `来自 ${sourceType}` };
+  if (sourceType === "base_form") return "base_form";
+  if (sourceType === "web_manual") {
+    const origin = row.source && typeof row.source === "object" ? row.source.intakeOrigin : undefined;
+    return origin === "chat_paste" ? "chat_paste" : "web_manual";
+  }
+  return null;
+}
+
+/**
+ * 5c-1：来源徽标/说明。Teambition 不挂徽标（默认来源，332/333 都是它）；
+ * 其余来源的文案带渠道细分（如「多维表格·销售」），扫视时能直接看出从哪来。
+ */
+function requirementSourceInfo(row: { sourceType?: string | null; sourceChannel?: string | null; source?: Record<string, unknown> | null }): { kind: RequirementSourceKind; name: string; channel: string | null; note: string } | null {
+  const kind = requirementSourceKind(row);
+  if (!kind) return null;
+  const name = kind === "chat_paste" ? "聊天粘贴" : kind === "web_manual" ? "手工" : "多维表格";
+  // 渠道为空时只显示来源名：不出现「·null」「·undefined」或空括号。
+  const channel = typeof row.sourceChannel === "string" && row.sourceChannel.trim() !== "" ? row.sourceChannel.trim() : null;
+  const noteName = kind === "web_manual" ? "手工录入" : name;
+  return { kind, name, channel, note: `来自${noteName}${channel ? ` · ${channel}` : ""}` };
 }
 
 function isRowActionTarget(target: EventTarget | null): boolean {
@@ -1860,7 +1957,7 @@ function RequirementsTable({ rows, loading, onOpen, onAssign }: { rows: Requirem
         const sourceInfo = requirementSourceInfo(row);
         return <div className="req-row-title-cell">
           <span className="req-row-title" title={row.title}>{row.title}</span>
-          {sourceInfo ? <span className="source-badge" title={sourceInfo.note}>{sourceInfo.label}</span> : null}
+          {sourceInfo ? <span className={`source-badge is-${sourceInfo.kind}`} title={sourceInfo.note}><span className="source-badge-name">{sourceInfo.name}</span>{sourceInfo.channel ? <span className="source-badge-channel">·{sourceInfo.channel}</span> : null}</span> : null}
           {badge ? <span className={`status-chip ${badge.className} processing-badge`} title={badge.title}>{badge.label}</span> : null}
           {row.sourceMissingSince ? <span className="status-chip processing-badge" title={`上次全量同步（${timeLabel(row.sourceMissingSince)}）未再出现该 TB 需求；记录保留，处理与推送状态不变`}>来源已移除</span> : null}
           {suppressed ? <span className="sr-only">（已压制：不进入 AI 分析/Base 推送/通知）</span> : null}
@@ -1935,7 +2032,9 @@ function RequirementsTable({ rows, loading, onOpen, onAssign }: { rows: Requirem
       rowClassName={(row: RequirementSummary) => {
         const owner = requirementOwnerView(row);
         const suppressed = requirementProcessingState(row) !== "active";
-        return `req-row${owner.unassigned ? " is-pending-owner" : ""}${suppressed ? " is-suppressed" : ""}`;
+        const sourceKind = requirementSourceKind(row);
+        // 非默认来源在行首加 3px 竖色条，扫视时比 chip 更快；TB 行不加，避免整屏噪音。
+        return `req-row${owner.unassigned ? " is-pending-owner" : ""}${sourceKind ? ` is-source-${sourceKind}` : ""}${suppressed ? " is-suppressed" : ""}`;
       }}
     />
   </div>;

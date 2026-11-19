@@ -379,11 +379,14 @@ describe("RequirementsPanel (ticket 17)", () => {
     return { ...row, analysis: null, analyses: [], ...overrides };
   }
 
-  function mockPanel(options: { rows?: unknown[]; detailBody?: unknown; people?: { name: string }[]; onDetail?: (path: string) => Response } = {}) {
+  function mockPanel(options: { rows?: unknown[]; detailBody?: unknown; people?: { name: string }[]; sourceCounts?: Record<string, number>; onDetail?: (path: string) => Response } = {}) {
     const rows = options.rows ?? [row];
     fetchMock.mockImplementation(async (input) => {
       const path = typeof input === "string" ? input : new Request(input).url;
       if (path === "/api/people") return jsonOk({ items: options.people ?? [] });
+      if (path === "/api/requirements/source-counts") return options.sourceCounts
+        ? jsonOk({ counts: options.sourceCounts })
+        : new Response("not found", { status: 404 });
       if (path.startsWith("/api/requirements/export")) {
         return new Response("\uFEFF平台ID,TB需求ID\r\nRQ-000001,tb-1", { status: 200, headers: { "content-type": "text/csv; charset=utf-8", "x-rq-truncated": "false" } });
       }
@@ -696,14 +699,20 @@ describe("RequirementsPanel (ticket 17)", () => {
     const chatTitle = await screen.findByText("聊天粘贴需求");
     const chatLine = chatTitle.closest("tr");
     if (!chatLine) throw new Error("chat-paste row was not rendered");
-    expect(within(chatLine).getByText("聊天粘贴")).toHaveAttribute("title", "来自聊天粘贴 · 售后");
+    const chatBadge = chatLine.querySelector(".source-badge");
+    expect(chatBadge).toHaveTextContent("聊天粘贴·售后");
+    expect(chatBadge).toHaveAttribute("title", "来自聊天粘贴 · 售后");
+    expect(chatLine.className).toContain("is-source-chat_paste");
     const manualTitle = screen.getByText("手工录入需求").closest("tr");
     if (!manualTitle) throw new Error("manual row was not rendered");
-    expect(within(manualTitle).getByText("手工")).toHaveAttribute("title", "来自 Web 收录 · 销售");
+    const manualBadge = manualTitle.querySelector(".source-badge");
+    expect(manualBadge).toHaveTextContent("手工·销售");
+    expect(manualBadge).toHaveAttribute("title", "来自手工录入 · 销售");
+    expect(manualTitle.className).toContain("is-source-web_manual");
 
-    await chooseArcoOption("来源筛选", "聊天粘贴");
-    fireEvent.click(screen.getByRole("button", { name: "筛选" }));
+    fireEvent.click(screen.getByRole("tab", { name: "聊天粘贴" }));
     await waitFor(() => expect(requested.some((path) => path.includes("/api/requirements?") && path.includes("source=chat_paste"))).toBe(true));
+    expect(screen.getByRole("tab", { name: "聊天粘贴" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("shows the chat-paste origin on the requirement detail", async () => {
@@ -712,6 +721,110 @@ describe("RequirementsPanel (ticket 17)", () => {
     render(<RequirementsPanel onRefresh={() => undefined} />);
     await openFirstRow("聊天粘贴需求");
     expect(screen.getByText("来自聊天粘贴 · 售后")).toBeInTheDocument();
+  });
+
+  it("explains where the requirement came from on the detail page", async () => {
+    const chatRow = { ...row, id: "req-chat", title: "聊天粘贴需求", sourceType: "web_manual", sourceChannel: "售后", source: { sourceType: "web_manual", intakeOrigin: "chat_paste", proposerName: "王工", createdAt: "2026-11-19T02:00:00.000Z" } };
+    mockPanel({ rows: [chatRow], detailBody: detail({ ...chatRow }) });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await openFirstRow("聊天粘贴需求");
+
+    // 5c-1：详情底部「这条需求怎么来的」，来源与渠道分列展示。
+    const origin = screen.getByLabelText("这条需求怎么来的");
+    expect(within(origin).getByText("聊天粘贴")).toBeInTheDocument();
+    expect(within(origin).getByText("售后")).toBeInTheDocument();
+    expect(within(origin).getByText("王工")).toBeInTheDocument();
+    expect(within(origin).getByText(/2026/)).toBeInTheDocument();
+  });
+
+  it("renders source tabs with counts and filters immediately without applying draft inputs", async () => {
+    const requested: string[] = [];
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      requested.push(path);
+      if (path === "/api/people") return jsonOk({ items: [] });
+      if (path === "/api/requirements/source-counts") return jsonOk({ counts: { teambition: 320, web_manual: 8, base_form: 5, chat_paste: 4, all: 337 } });
+      if (path.startsWith("/api/requirements/export")) return new Response("", { status: 200, headers: { "content-type": "text/csv; charset=utf-8" } });
+      if (path.startsWith("/api/requirements/")) return jsonOk(detail());
+      return jsonOk({ items: [row], nextCursor: null });
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+
+    const all = await screen.findByRole("tab", { name: /全部来源/ });
+    expect(within(all).getByText("337")).toBeInTheDocument();
+    expect(within(screen.getByRole("tab", { name: /^Teambition/ })).getByText("320")).toBeInTheDocument();
+    expect(within(screen.getByRole("tab", { name: /^多维表格/ })).getByText("5")).toBeInTheDocument();
+    expect(within(screen.getByRole("tab", { name: /^手工/ })).getByText("8")).toBeInTheDocument();
+    expect(within(screen.getByRole("tab", { name: /^聊天粘贴/ })).getByText("4")).toBeInTheDocument();
+    expect(all).toHaveAttribute("aria-selected", "true");
+
+    // 切换 Tab 立即生效；尚未点「筛选」的搜索框草稿不能一起发出去。
+    fireEvent.change(screen.getByLabelText("搜索需求标题"), { target: { value: "未提交的搜索" } });
+    fireEvent.click(screen.getByRole("tab", { name: /^多维表格/ }));
+    await waitFor(() => expect(requested.some((path) => path.includes("/api/requirements?") && path.includes("source=base_form") && !path.includes("q="))).toBe(true));
+    expect(window.location.search).toContain("source=base_form");
+    expect(screen.getByRole("tab", { name: /^多维表格/ })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("preselects the source tab from a deep link", async () => {
+    window.history.replaceState(null, "", "/?source=chat_paste");
+    mockPanel();
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+
+    expect(await screen.findByRole("tab", { name: "聊天粘贴" })).toHaveAttribute("aria-selected", "true");
+    await waitFor(() => expect(fetchMock.mock.calls.some(([input]) => typeof input === "string" && /\/api\/requirements\?.*source=chat_paste/.test(input))).toBe(true));
+  });
+
+  it("keeps the source tabs usable when the counts endpoint is unavailable", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/people") return jsonOk({ items: [] });
+      if (path === "/api/requirements/source-counts") return new Response("boom", { status: 500 });
+      return jsonOk({ items: [row], nextCursor: null });
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+
+    expect(await screen.findByText("需要报表")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "全部来源" })).toHaveAttribute("aria-selected", "true");
+    // 计数拿不到就不显示数字，不显示假的 0。
+    expect(document.querySelectorAll(".source-tab-count")).toHaveLength(0);
+  });
+
+  it("hides source counts outside the active processing view", async () => {
+    mockPanel({ sourceCounts: { teambition: 320, web_manual: 8, base_form: 5, chat_paste: 4, all: 337 } });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    expect(await screen.findByText("需要报表")).toBeInTheDocument();
+    await waitFor(() => expect(document.querySelectorAll(".source-tab-count")).toHaveLength(5));
+
+    // 计数是「活跃」口径；切到全部/已压制后列表行数会更多，隐藏计数避免误读。
+    fireEvent.click(screen.getByRole("button", { name: "全部" }));
+    await waitFor(() => expect(document.querySelectorAll(".source-tab-count")).toHaveLength(0));
+    fireEvent.click(screen.getByRole("button", { name: "仅活跃" }));
+    await waitFor(() => expect(document.querySelectorAll(".source-tab-count")).toHaveLength(5));
+  });
+
+  it("marks non-default sources with a row color bar but leaves Teambition rows plain", async () => {
+    const baseRow = { ...row, id: "req-base", title: "收集表需求", sourceType: "base_form", sourceChannel: "销售", source: { sourceType: "base_form" } };
+    const tbRow = { ...row, id: "req-tb", title: "TB需求", sourceType: "teambition", sourceChannel: null };
+    const noChannelRow = { ...row, id: "req-manual-nc", title: "无渠道手工需求", sourceType: "web_manual", sourceChannel: null, source: { sourceType: "web_manual" } };
+    mockPanel({ rows: [baseRow, tbRow, noChannelRow] });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+
+    const baseLine = (await screen.findByText("收集表需求")).closest("tr");
+    if (!baseLine) throw new Error("base-form row was not rendered");
+    expect(baseLine.querySelector(".source-badge")).toHaveTextContent("多维表格·销售");
+    expect(baseLine.className).toContain("is-source-base_form");
+    const tbLine = screen.getByText("TB需求").closest("tr");
+    if (!tbLine) throw new Error("TB row was not rendered");
+    expect(within(tbLine).queryByText(/多维表格|手工|聊天粘贴/)).not.toBeInTheDocument();
+    expect(tbLine.className).not.toContain("is-source-");
+
+    // 渠道为空时只显示来源名，不出现「·null」「·undefined」或空括号。
+    const noChannelLine = screen.getByText("无渠道手工需求").closest("tr");
+    if (!noChannelLine) throw new Error("no-channel row was not rendered");
+    const noChannelBadge = noChannelLine.querySelector(".source-badge");
+    expect(noChannelBadge).toHaveTextContent(/^手工$/);
+    expect(noChannelBadge?.querySelector(".source-badge-channel")).toBeNull();
   });
 
   it("opens the detail page with the owner picker from a pending-owner row action", async () => {

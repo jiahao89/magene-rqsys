@@ -370,6 +370,14 @@ html[data-theme="dark"] .field-error { color: var(--rq-danger); }
 .req-row { cursor: pointer; }
 .req-row:focus-visible { outline: 3px solid var(--rq-focus-ring); outline-offset: -3px; }
 .req-row.is-pending-owner td:first-child { box-shadow: inset 3px 0 0 var(--rq-warning); }
+/* 5c-1：来源语义色（PRD 4.9.3：多维表格=蓝、手工=橙、聊天粘贴=紫）。 */
+:root { --rq-source-base-form: #3971e8; --rq-source-manual: #e08a2e; --rq-source-chat-paste: #7c5cd6; }
+html[data-theme="dark"] { --rq-source-base-form: #7da6ff; --rq-source-manual: #f0b57a; --rq-source-chat-paste: #b9a2f2; }
+/* 非默认来源在行首加 3px 竖色条（TB 是默认来源，不加）。用背景渐变而不是 border/box-shadow：
+   不改变缩进与对齐，也不和「待分配负责人」的黄色 inset 阴影互相覆盖。 */
+.req-row.is-source-base_form td:first-child { background-image: linear-gradient(90deg, var(--rq-source-base-form) 0 3px, transparent 3px); }
+.req-row.is-source-web_manual td:first-child { background-image: linear-gradient(90deg, var(--rq-source-manual) 0 3px, transparent 3px); }
+.req-row.is-source-chat_paste td:first-child { background-image: linear-gradient(90deg, var(--rq-source-chat-paste) 0 3px, transparent 3px); }
 .req-row-title { display: block; overflow: hidden; color: var(--rq-text-strong); font-size: var(--rq-font-body); font-weight: 560; text-overflow: ellipsis; white-space: nowrap; }
 .req-row-stages { display: flex; flex-wrap: nowrap; gap: 5px; }
 .req-row-time { color: var(--rq-text-muted); font-size: var(--rq-font-caption); white-space: nowrap; }
@@ -1144,6 +1152,35 @@ html, body { max-width: 100%; overflow-x: hidden; }
 
 /* V02-T02：手工收录来源角标（TB 行不显示） */
 .source-badge { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: 12px; line-height: 18px; background: var(--rq-accent-soft); color: var(--rq-accent-text); vertical-align: 1px; }
+/* 5c-1：来源徽标。名称不可被截断，长渠道截断（PRD 4.9.3 / S6）。 */
+.req-row-title-cell { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-width: 0; }
+.req-row-title-cell .req-row-title { flex: 0 1 auto; min-width: 0; }
+.source-badge { display: inline-flex; align-items: baseline; max-width: 100%; min-width: 0; }
+.req-row-title-cell .source-badge { margin-left: 0; }
+.source-badge-name { flex: none; white-space: nowrap; }
+.source-badge-channel { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.source-badge.is-base_form { background: #e8f0fd; color: #2458ca; }
+.source-badge.is-web_manual { background: #fdf0e4; color: #9a5a1f; }
+.source-badge.is-chat_paste { background: #f1ecfb; color: #6445a8; }
+html[data-theme="dark"] .source-badge.is-base_form { background: #1b2c4d; color: #9ec5ff; }
+html[data-theme="dark"] .source-badge.is-web_manual { background: #3a2715; color: #f0b57a; }
+html[data-theme="dark"] .source-badge.is-chat_paste { background: #2b2340; color: #c9b6f5; }
+
+/* 5c-1：来源 Tab。比下拉显眼（筛选藏进下拉约等于没有），切换即生效并进 URL 可深链。 */
+.source-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; width: fit-content; max-width: 100%; margin: 0 0 10px; padding: 3px; border: 1px solid var(--rq-border); border-radius: var(--rq-radius-md); background: var(--rq-surface-subtle); }
+.source-tab { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 12px; border: 0; border-radius: var(--rq-radius-sm); color: var(--rq-text-muted); background: transparent; font-size: var(--rq-font-caption); font-weight: 560; white-space: nowrap; cursor: pointer; transition: color .15s, background .15s; }
+.source-tab:hover { color: var(--rq-text-strong); background: var(--rq-surface); }
+.source-tab.is-active { color: var(--rq-accent-text); background: var(--rq-surface); box-shadow: 0 1px 2px #18274414; font-weight: 650; }
+.source-tab-count { padding: 0 6px; border-radius: 999px; background: var(--rq-accent-soft); color: var(--rq-accent-text); font-size: 11px; line-height: 17px; font-variant-numeric: tabular-nums; }
+.source-tab:not(.is-active) .source-tab-count { background: #eef0f4; color: var(--rq-text-muted); }
+html[data-theme="dark"] .source-tab.is-active { box-shadow: none; background: var(--rq-accent-soft); }
+html[data-theme="dark"] .source-tab:not(.is-active) .source-tab-count { background: #2a3039; }
+
+/* 5c-1：详情「这条需求怎么来的」——与列表徽标同一口径，Base 记录链接不拼。 */
+.req-origin-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; margin: 14px 0 0; padding: 9px 12px; border: 1px solid var(--rq-border); border-radius: var(--rq-radius-md); background: var(--rq-surface-subtle); color: var(--rq-text-muted); font-size: var(--rq-font-caption); }
+.req-origin-line strong { color: var(--rq-text-strong); font-size: var(--rq-font-caption); font-weight: 650; }
+.req-origin-line span { display: inline-flex; align-items: baseline; gap: 5px; }
+.req-origin-line em { color: var(--rq-text-faint); font-style: normal; }
 
 /* ---------- 2026-10-28 详情信息架构：摘要评分卡 + 评分/AI 整合 ---------- */
 .req-detail-summary { position: static; top: auto; }

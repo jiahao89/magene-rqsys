@@ -543,6 +543,39 @@ export async function listRequirements(params: { q?: string; executorName?: stri
   return requestJson<{ items: RequirementSummary[]; nextCursor: string | null }>(`/api/requirements${buildSearch({ q, executorName, pullState, ownerState, analysisState, pushState, processingState, priority, source, sort, batchId, since, until, limit, cursor })}`, fetcher);
 }
 
+/**
+ * 5c-1：需求池来源 Tab 的计数（`GET /api/requirements/source-counts`）。
+ * 口径与服务端列表默认范围一致（仅活跃）；计数不可用时返回 null，
+ * Tab 照常可点、只是不显示数字，列表与分页不受影响。
+ */
+export interface RequirementSourceCounts {
+  teambition: number;
+  web_manual: number;
+  base_form: number;
+  chat_paste: number;
+  all: number;
+}
+
+export async function getRequirementSourceCounts(fetcher: typeof fetch = fetch): Promise<RequirementSourceCounts | null> {
+  try {
+    const result = await requestJson<{ counts?: Partial<Record<keyof RequirementSourceCounts, unknown>> | null }>("/api/requirements/source-counts", fetcher);
+    const counts = result?.counts;
+    if (!counts || typeof counts !== "object") return null;
+    const keys: Array<keyof RequirementSourceCounts> = ["teambition", "web_manual", "base_form", "chat_paste", "all"];
+    const normalized = {} as RequirementSourceCounts;
+    for (const key of keys) {
+      const value = counts[key];
+      // 缺字段或负数都按「计数不可用」降级：宁可不显示，也不显示假数字。
+      if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return null;
+      normalized[key] = Math.trunc(value);
+    }
+    return normalized;
+  } catch {
+    // 端点未部署、网络失败或非 2xx 都降级为不显示计数。
+    return null;
+  }
+}
+
 export async function listBatches(params: { status?: string; since?: string; until?: string; limit?: number; cursor?: string; fetcher?: typeof fetch } = {}): Promise<{ items: BatchSummary[]; nextCursor: string | null }> {
   const { fetcher = fetch, status, since, until, limit, cursor } = params;
   return requestJson<{ items: BatchSummary[]; nextCursor: string | null }>(`/api/batches${buildSearch({ status, since, until, limit, cursor })}`, fetcher);
