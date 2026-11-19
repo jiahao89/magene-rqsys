@@ -1,8 +1,8 @@
 # 5c-2 自测结果（2026-11-19）
 
-> 被测版本：根仓 `77798cb`（含 `7f41158` 推送映射 + `77798cb` 回填记录）；Base 字段 `fldyflUEVv`。
+> 被测版本：根仓 `77798cb`（含 `7f41158` 推送映射 + `77798cb` 回填记录）；C2-B05 复跑于 `6ed22c1`；Base 字段 `fldyflUEVv`。
 > 清单：[5C2-SELFTEST.md](</Volumes/Files/A_Projects/RQ-Sys/.scratch/iteration-5/5C2-SELFTEST.md>)；回填记录：[SOURCE-BACKFILL-20261119.md](</Volumes/Files/A_Projects/RQ-Sys/.scratch/iteration-5/evidence/SOURCE-BACKFILL-20261119.md>)。
-> 结论：**代码侧通过**；22 项中 19 PASS（C2-B05 基于后端工作区补丁）、1 PARTIAL（C2-10 设计取舍已接受）、2 N/A（回填执行未走脚本），无行为缺陷；剩余全部是目标环境动作。
+> 结论：**代码侧通过**；22 项中 19 PASS、1 PARTIAL（C2-10 设计取舍已接受）、2 N/A（回填执行未走脚本），无行为缺陷；剩余全部是目标环境动作。
 
 ## 1. 门禁
 
@@ -35,7 +35,7 @@
 | C2-B02 | PASS | CSV 列：平台 ID / sourceType / intakeOrigin / 期望值 / Base record / 当前值 / action；不含标题、描述、PII |
 | C2-B03 | PASS | `wouldWrite 333 / alreadyCorrect 0 / baseRowMissing 0 / noPlatformId 0 / unknownSource 0 / errors 0`；CSV 333 行与汇总一致 |
 | C2-B04 | PASS | 脚本只有 GET 路径，无 update/create 代码；目标证据也确认未写单元格 |
-| C2-B05 | PASS（工作区补丁） | 本地 mock Feishu 验证：字段 type=1 → 退出 1「类型必须是单选」；type=3 缺「聊天粘贴」→ 退出 1「选项不完整」；type=3 四选项齐全 → 正常输出 `already_correct` / `would_write`。证据 `evidence/20261119/c2-b05-mock.txt`、`c2-b05-mock-harness.mjs`；脚本 sha `c1f764e…`，后端提交后按最终版本复跑 |
+| C2-B05 | PASS（提交版 `6ed22c1`） | 本地 mock Feishu 五态：type=1 → 退出 1「类型必须是单选」；type=3 缺「聊天粘贴」→ 退出 1「选项不完整」；type=3 四选项齐全 → `already_correct` / `would_write`；字段缺失 + `--allow-missing-field` → 正常空跑，记录查询**不带缺失列名**（1254045 问题已修）。证据 `evidence/20261119/c2-b05-mock-6ed22c1.txt`、`c2-b05-mock-harness.mjs`；脚本 sha `c1f764e…` |
 | C2-B06 | PASS | 第二次只读 dry-run：`scanned 333 / alreadyCorrect 333 / wouldWrite 0 / errors 0`，两次结果一致、零写入；证据 `evidence/source-backfill-rerun-20261119.csv` |
 | C2-B07 | PASS | 对照表分布 Teambition 332、Web 手工 1（`RQ-000316`）、unknown 0；无 `chat_paste` 残留 |
 
@@ -54,7 +54,7 @@
 ## 4. 发现与建议
 
 1. **C2-10 映射副本（已接受）**：服务端与回填脚本各一份四行判定，当前完全一致。Chief 决定保留独立副本（脚本不依赖 TS 构建产物、可在无构建环境运行），漂移风险由清单约束；本轮不再改。
-2. **C2-B05 预检（工作区补丁已验）**：后端已补「类型=3、四选项齐全」检查；我用本地 mock 独立验了失败/成功四态（证据见上表），补丁提交后按最终版本复跑一次即可。
+2. **C2-B05 预检（提交版已验）**：`6ed22c1` 补了「类型=3、四选项齐全」检查；我用本地 mock 独立验了失败/成功五态（含 `--allow-missing-field` 空跑不带缺失列名），证据见上表。
 3. **C2-B06 / C2-E02 已闭合**：第二次只读 dry-run `scanned 333 / alreadyCorrect 333 / wouldWrite 0 / errors 0`，证明脚本可重复、回填后 0 写入；只读，无需再动 Base。
 4. **C2-04 无直接单测**：`parseBaseFields` 未导出，非法配置靠代码核对；风险低。
 
@@ -77,6 +77,6 @@
 
 ## 6. 判定
 
-- 5c-2 **代码侧可判通过**：22 项中 19 PASS（C2-B05 基于工作区补丁）、1 PARTIAL（C2-10 已接受）、2 N/A；映射、配置开关、推送、`base_form` 路径、回填 dry-run 与目标回填结果都有证据。
-- C2-10 是设计取舍，不按缺陷计；B05 补丁提交后复跑；E03/E05 因执行未走脚本记 N/A，不冒充通过。
+- 5c-2 **代码侧可判通过**：22 项中 19 PASS、1 PARTIAL（C2-10 已接受）、2 N/A；映射、配置开关、推送、`base_form` 路径、回填 dry-run 与目标回填结果都有证据。
+- C2-10 是设计取舍，不按缺陷计；C2-B05 已按提交版 `6ed22c1` 复验；E03/E05 因执行未走脚本记 N/A，不冒充通过。
 - 目标环境仍未证明「新推送写入 Base 来源方式」——需要 T-01/T-02 后做一次推送冒烟；不能拿历史回填代替。

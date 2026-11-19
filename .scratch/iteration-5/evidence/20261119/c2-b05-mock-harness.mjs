@@ -25,7 +25,7 @@ function startMock(fields, records) {
   const calls = [];
   const server = createServer((req, res) => {
     const url = new URL(req.url, "http://localhost");
-    calls.push(`${req.method} ${url.pathname}`);
+    calls.push(`${req.method} ${url.pathname}${url.search}`);
     res.setHeader("content-type", "application/json");
     if (url.pathname === "/open-apis/auth/v3/tenant_access_token/internal") {
       res.end(JSON.stringify({ code: 0, tenant_access_token: "t", expire: 7200 }));
@@ -47,14 +47,14 @@ function startMock(fields, records) {
   });
 }
 
-async function runCase(name, fields, records, expect) {
+async function runCase(name, fields, records, expect, extraArgs = []) {
   const mock = await startMock(fields, records);
   const csv = join(dir, `${name}.csv`);
   let stdout = "";
   let stderr = "";
   let status = 0;
   try {
-    const result = await exec("node", [scriptPath, "--requirements-file", reqsPath, "--csv", csv, "--delay-ms", "0"], {
+    const result = await exec("node", [scriptPath, "--requirements-file", reqsPath, "--csv", csv, "--delay-ms", "0", ...extraArgs], {
       encoding: "utf8",
       timeout: 20_000,
       maxBuffer: 4 * 1024 * 1024,
@@ -79,7 +79,7 @@ async function runCase(name, fields, records, expect) {
   }
   mock.server.close();
   const output = `${stdout}\n${stderr}`;
-  const ok = expect(status, output, csv);
+  const ok = expect(status, output, csv, mock.calls);
   console.log(`${ok ? "PASS" : "FAIL"} ${name} (exit=${status})`);
   if (!ok) console.log(output.slice(0, 1500));
   return ok;
@@ -104,6 +104,13 @@ allOk = await runCase(
   [{ field_name: "需求平台ID", type: 1 }, { field_name: "来源方式", type: 3, property: { options: fullOptions.map((name) => ({ name })) } }],
   [{ record_id: "rec1", fields: { 需求平台ID: "RQ-TEST", 来源方式: "Teambition" } }],
   (status, out, csv) => status === 0 && out.includes('"alreadyCorrect":1') && readFileSync(csv, "utf8").includes("already_correct"),
+) && allOk;
+allOk = await runCase(
+  "missing-field-allowed",
+  [{ field_name: "需求平台ID", type: 1 }],
+  [{ record_id: "rec1", fields: { 需求平台ID: "RQ-TEST" } }],
+  (status, out, csv, calls) => status === 0 && out.includes('"wouldWrite":1') && !calls.some((call) => decodeURIComponent(call).includes("来源方式")),
+  ["--allow-missing-field"],
 ) && allOk;
 allOk = await runCase(
   "ok-would-write",
