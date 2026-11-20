@@ -3,7 +3,7 @@
 // 幂等键在同一次提交意图内复用（失败重试不换键），成功或重新展开表单后重置。
 import { useEffect, useRef, useState } from "react";
 import { Button as ArcoButton, Input, Select } from "@arco-design/web-react";
-import { ApiError, AUDIENCE_LEVELS, AUDIENCE_LEVEL_NAMES, REQUIREMENT_INTAKE_CHANNELS, REQUIREMENT_INTAKE_TYPES, createRequirement, extractIntakeDraft, getFunctionModules, getRiceDraft, listKanoEvidence, listKanoRuns, listRequirements, saveRiceDraft, setAudienceTags, triggerKanoRun, updateRequirement, type ChatIntakeDraft, type ChatIntakeSimilar, type KanoEvidenceVersionDto, type KanoRunDto, type RequirementSummary, type RiceDraft } from "./api";
+import { ApiError, AUDIENCE_LEVELS, AUDIENCE_LEVEL_NAMES, REQUIREMENT_INTAKE_CHANNELS, REQUIREMENT_INTAKE_TYPES, createRequirement, extractIntakeDraft, getFunctionModules, getRiceDraft, listKanoEvidence, listKanoRuns, listRequirements, saveRiceDraft, setAudienceTags, triggerKanoRun, updateRequirement, type ChatIntakeDraft, type KanoEvidenceVersionDto, type KanoRunDto, type RequirementSummary, type RiceDraft } from "./api";
 import { ConfirmModal } from "./confirm-modal";
 import { requirementSourceName } from "./requirement-view";
 
@@ -57,10 +57,8 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
   const [chatError, setChatError] = useState<string | null>(null);
   const [aiFilled, setAiFilled] = useState<string[]>([]);
   const [proposer, setProposer] = useState<string | null>(null);
-  const [similar, setSimilar] = useState<ChatIntakeSimilar[]>([]);
-  // PRD-31：标题失焦/提交前按标题关键字查相似需求；只提示，不阻断提交、不写重复判定。
+  // PRD-31：草稿生成后/标题失焦/提交前按标题关键字查相似需求；只提示，不阻断提交、不写重复判定。
   const [similarRequirements, setSimilarRequirements] = useState<RequirementSummary[]>([]);
-  const [similarLookup, setSimilarLookup] = useState<"idle" | "loading" | "error">("idle");
   const similarQuery = useRef("");
   const similarRequest = useRef(0);
   // 只有走过聊天草稿的提交才带 intakeOrigin=chat_paste；用户手工填的表单仍是普通 Web 收录。
@@ -68,7 +66,7 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
   // 服务端 fallback=true：模型输出不可用，标题/描述取自掩码原文，必须明确告诉用户「未经过 AI 整理」。
   const [fallbackDraft, setFallbackDraft] = useState(false);
   // 草稿与已填内容冲突时先确认：合并（只补空白）或覆盖，不静默冲掉用户输入。
-  const [pendingDraft, setPendingDraft] = useState<{ draft: ChatIntakeDraft; similar: ChatIntakeSimilar[]; conflicts: string[] } | null>(null);
+  const [pendingDraft, setPendingDraft] = useState<{ draft: ChatIntakeDraft; conflicts: string[] } | null>(null);
   // 409：同一幂等键已用于不同内容（多半是上一次实际已创建、响应丢了）。给一个换新键重提的出口。
   const [conflict, setConflict] = useState(false);
   // 受控词典模块（G-MODULE）：只提供已发布选项；模块责任人仅作候选提示，不自动分配。
@@ -84,8 +82,8 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
 
   const reset = () => {
     setTitle(""); setDescription(""); setChannel(""); setProductModel(""); setRequirementType(""); setConstraintNotes(""); setSupplementUrl(""); setIntakeModule(""); setError(null);
-    setChatText(""); setChatOpen(false); setChatError(null); setAiFilled([]); setProposer(null); setSimilar([]);
-    setSimilarRequirements([]); setSimilarLookup("idle"); similarQuery.current = ""; similarRequest.current += 1;
+    setChatText(""); setChatOpen(false); setChatError(null); setAiFilled([]); setProposer(null);
+    setSimilarRequirements([]); similarQuery.current = ""; similarRequest.current += 1;
     setFromChatPaste(false); setFallbackDraft(false); setPendingDraft(null); setConflict(false);
     idempotencyKey.current = crypto.randomUUID();
   };
@@ -130,7 +128,7 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
     if (!chatText.trim()) { setChatError("请先粘贴聊天内容。"); return; }
     setExtracting(true); setChatError(null); setConflict(false);
     // 重新整理就是新的一次抽取：旧的相似需求提示必须清空，不能配着新错误继续展示。
-    setSimilar([]);
+    setSimilarRequirements([]); similarQuery.current = ""; similarRequest.current += 1;
     const controller = new AbortController();
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; controller.abort(); }, INTAKE_EXTRACT_TIMEOUT_MS);
@@ -138,8 +136,12 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
       const result = await extractIntakeDraft(chatText, undefined, controller.signal);
       setFallbackDraft(result.fallback === true);
       const conflicts = draftConflicts(result.draft);
-      if (conflicts.length > 0) setPendingDraft({ draft: result.draft, similar: result.similar, conflicts });
-      else { applyDraft(result.draft, "merge"); setSimilar(result.similar); }
+      if (conflicts.length > 0) setPendingDraft({ draft: result.draft, conflicts });
+      else {
+        applyDraft(result.draft, "merge");
+        // PRD-31：草稿生成后立即按草稿标题查一次；草稿自带的 similar 不直接展示。
+        void lookupSimilar(result.draft.title);
+      }
     } catch (cause) {
       setChatError(timedOut ? "整理超时，请重试或手工填写。" : intakeErrorMessage(cause, "整理", "无法整理聊天内容，请手工填写。"));
     } finally { clearTimeout(timer); setExtracting(false); }
@@ -147,26 +149,27 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
   const aiMark = (field: string) => aiFilled.includes(field) ? <small className="ai-filled-tag" title="由 AI 根据聊天内容填充，请核对后再提交"> AI 填充</small> : null;
 
   /**
-   * PRD-31：标题失焦或提交前按标题关键字查一次相似需求（最多 5 条）。
-   * 只做提示：查询失败/命中都不阻断提交，也不写 duplicate_of、不做压制。
+   * PRD-31：草稿生成后、标题失焦或提交前按标题关键字查一次相似需求（最多 5 条）。
+   * trim 后不足 2 字不查；2s 超时/4xx/5xx/网络错误一律静默隐藏，不影响提交、不重试。
    */
-  const lookupSimilar = async () => {
-    const query = title.trim();
-    if (!query) { setSimilarRequirements([]); setSimilarLookup("idle"); similarQuery.current = ""; return; }
+  const lookupSimilar = async (titleOverride?: string) => {
+    const query = (titleOverride ?? title).trim();
+    if (query.length < 2) { setSimilarRequirements([]); similarQuery.current = ""; return; }
     // 同一个标题只查一次；标题改动后 ref 会重置。
     if (query === similarQuery.current) return;
     similarQuery.current = query;
     const request = ++similarRequest.current;
-    setSimilarLookup("loading");
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 2000);
     try {
-      const result = await listRequirements({ q: query, limit: 5 });
+      const result = await listRequirements({ q: query, limit: 5, processingState: "active", signal: controller.signal });
       if (request !== similarRequest.current) return;
       setSimilarRequirements(result.items.slice(0, 5));
-      setSimilarLookup("idle");
     } catch {
       if (request !== similarRequest.current) return;
       setSimilarRequirements([]);
-      setSimilarLookup("error");
+    } finally {
+      window.clearTimeout(timer);
     }
   };
 
@@ -221,18 +224,13 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
     void submit();
   };
 
-  // 聊天草稿自带的 similar 与标题查询结果合并去重，最多展示 5 条。
-  const similarItems: Array<{ id: string; platformRequirementId: string | null; title: string; sourceLabel: string }> = [];
-  const seenSimilar = new Set<string>();
-  for (const item of similarRequirements) {
-    seenSimilar.add(item.id);
-    similarItems.push({ id: item.id, platformRequirementId: item.platformRequirementId ?? null, title: item.title, sourceLabel: requirementSourceName(item) });
-  }
-  for (const item of similar) {
-    if (seenSimilar.has(item.id)) continue;
-    similarItems.push({ id: item.id, platformRequirementId: item.platformRequirementId, title: item.title, sourceLabel: requirementSourceName({ sourceType: item.sourceType }) });
-  }
-  const visibleSimilar = similarItems.slice(0, 5);
+  // PRD-31：最多展示 5 条，按接口返回顺序；来源名与列表一致。
+  const visibleSimilar = similarRequirements.slice(0, 5).map((item) => ({
+    id: item.id,
+    platformRequirementId: item.platformRequirementId ?? null,
+    title: item.title,
+    sourceLabel: requirementSourceName(item),
+  }));
 
   return <>
     <div className="rules-form intake-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
@@ -257,20 +255,18 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
         <Input aria-label="新建需求标题" placeholder="一句话描述用户的问题或诉求" value={title} onChange={(value: string) => {
           setTitle(value); clearAiMark("title");
           // 标题一变，旧的相似结果就不再对应当前标题：立即清空并作废在途查询。
-          setSimilarRequirements([]); setSimilarLookup("idle"); similarQuery.current = ""; similarRequest.current += 1;
+          setSimilarRequirements([]); similarQuery.current = ""; similarRequest.current += 1;
         }} onBlur={() => void lookupSimilar()} disabled={busy} />
       </label>
       {visibleSimilar.length > 0 && <div className="status-hint" role="status" style={{ flexBasis: "100%" }}>
-        <strong>相似需求（最多 5 条，仅供参考；不会阻断提交）</strong>
+        <strong>相似需求（按标题关键字匹配，仅供参考，不代表重复；不会阻断提交）</strong>
         <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
           {visibleSimilar.map((item) => <li key={item.id}>
             <a href={`?requirement=${item.id}`} target="_blank" rel="noreferrer">{item.platformRequirementId ? `${item.platformRequirementId} · ` : ""}{item.title}</a>
-            <span className="subtle-text">（{item.sourceLabel}）</span>
+            <span className="subtle-text"> · {item.sourceLabel}</span>
           </li>)}
         </ul>
       </div>}
-      {similarLookup === "loading" ? <span className="status-hint" role="status" style={{ flexBasis: "100%" }}>正在查询相似需求…</span> : null}
-      {similarLookup === "error" ? <span className="status-hint" role="status" style={{ flexBasis: "100%" }}>相似需求查询失败，不影响提交。</span> : null}
       <div className="field">
         <span>来源渠道 *{aiMark("sourceChannel")}</span>
         <Select aria-label="新建来源渠道" value={channel} onChange={(value: string) => { setChannel(value); clearAiMark("sourceChannel"); }} disabled={busy} placeholder="请选择" style={{ minWidth: 160 }} options={[{ label: "请选择", value: "" }, ...REQUIREMENT_INTAKE_CHANNELS.map((item) => ({ label: item, value: item }))]} />
@@ -317,8 +313,8 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
       description={<>以下字段已经有内容：{pendingDraft?.conflicts.join("、")}。选择「只补空白字段」会保留你已填的内容；选择「覆盖已填字段」会按草稿替换这些字段。</>}
       okText="覆盖已填字段"
       cancelText="只补空白字段"
-      onOk={() => { if (pendingDraft) { applyDraft(pendingDraft.draft, "overwrite"); setSimilar(pendingDraft.similar); } setPendingDraft(null); }}
-      onCancel={() => { if (pendingDraft) { applyDraft(pendingDraft.draft, "merge"); setSimilar(pendingDraft.similar); } setPendingDraft(null); }}
+      onOk={() => { if (pendingDraft) { applyDraft(pendingDraft.draft, "overwrite"); void lookupSimilar(pendingDraft.draft.title); } setPendingDraft(null); }}
+      onCancel={() => { if (pendingDraft) { applyDraft(pendingDraft.draft, "merge"); void lookupSimilar(pendingDraft.draft.title); } setPendingDraft(null); }}
     />
   </>;
 }

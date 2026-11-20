@@ -1850,37 +1850,36 @@ function RequirementAssessmentSection({ requirementId }: { requirementId: string
 
 /**
  * PRD-31：多维表格来源的详情只读展示相似需求。
- * 复用现有列表接口按标题关键字查询，只做提示：不写 duplicate_of、不自动压制、不影响编辑与推送。
+ * 只查一次、最多 5 条、排除自身；2s 超时或失败静默隐藏，不写 duplicate_of、不自动压制。
  */
 function SimilarRequirementSection({ requirementId, title }: { requirementId: string; title: string }) {
   const [items, setItems] = useState<RequirementSummary[]>([]);
-  const [state, setState] = useState<LoadState>("loading");
   useEffect(() => {
     let cancelled = false;
-    setState("loading");
-    listRequirements({ q: title, limit: 5 })
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 2000);
+    setItems([]);
+    listRequirements({ q: title, limit: 5, processingState: "active", signal: controller.signal })
       .then((result) => {
         if (cancelled) return;
-        // 不把自己列进相似需求；最多 5 条。
+        // 不把自己列进相似需求；最多 5 条，按接口返回顺序。
         setItems(result.items.filter((item) => item.id !== requirementId).slice(0, 5));
-        setState("ready");
       })
-      .catch(() => { if (!cancelled) setState("error"); });
-    return () => { cancelled = true; };
+      .catch(() => { if (!cancelled) setItems([]); });
+    return () => { cancelled = true; window.clearTimeout(timer); controller.abort(); };
   }, [requirementId, title]);
 
+  // 0 条、查询中、超时或失败都整块不渲染（PRD-31 C）。
+  if (items.length === 0) return null;
   return <section className="req-section req-similar-section" aria-labelledby="req-similar-heading">
-    <div className="req-section-head"><h3 id="req-similar-heading">相似需求</h3><span className="req-source-note">按标题关键字匹配 · 只读</span></div>
+    <div className="req-section-head"><h3 id="req-similar-heading">相似需求（只读，仅供参考）</h3><span className="req-source-note">按标题关键字匹配</span></div>
     <p className="detail-note">相似需求只作参考：不会写回重复判定、不自动压制，也不影响本条需求的编辑与推送。</p>
-    {state === "loading" ? <p className="subtle-text" role="status">正在查询相似需求…</p> : null}
-    {state === "error" ? <p className="status-hint" role="status">相似需求查询失败，不影响查看本条需求。</p> : null}
-    {state === "ready" && items.length === 0 ? <p className="detail-note">没有找到标题相似的已有需求。</p> : null}
-    {items.length > 0 ? <ul className="similar-requirements-list" style={{ margin: 0, paddingLeft: 18 }}>
+    <ul className="similar-requirements-list" style={{ margin: 0, paddingLeft: 18 }}>
       {items.map((item) => <li key={item.id}>
-        <a href={`?requirement=${item.id}`}>{item.platformRequirementId ? `${item.platformRequirementId} · ` : ""}{item.title}</a>
-        <span className="subtle-text">（{requirementSourceName(item)}）</span>
+        <a href={`?requirement=${item.id}`} target="_blank" rel="noreferrer">{item.platformRequirementId ? `${item.platformRequirementId} · ` : ""}{item.title}</a>
+        <span className="subtle-text"> · {requirementSourceName(item)}</span>
       </li>)}
-    </ul> : null}
+    </ul>
   </section>;
 }
 

@@ -109,8 +109,8 @@ async function parseJsonResponse<T>(response: Response): Promise<T> {
   return body as T;
 }
 
-async function requestJson<T>(path: string, fetcher: typeof fetch): Promise<T> {
-  const response = await fetcher(path, { headers: { accept: "application/json" } });
+async function requestJson<T>(path: string, fetcher: typeof fetch, signal?: AbortSignal): Promise<T> {
+  const response = await fetcher(path, { headers: { accept: "application/json" }, ...(signal ? { signal } : {}) });
   return parseJsonResponse<T>(response);
 }
 
@@ -610,9 +610,9 @@ export async function exportRequirementsCsv(params: { q?: string; executorName?:
   return { csv: await response.text(), truncated: response.headers.get("x-rq-truncated") === "true" };
 }
 
-export async function listRequirements(params: { q?: string; executorName?: string; pullState?: string; ownerState?: string; analysisState?: string; pushState?: string; processingState?: "active" | "suppressed"; priority?: "P0" | "P1" | "P2" | "P3"; source?: "teambition" | "web_manual" | "base_form" | "chat_paste"; sort?: "created_desc" | "priority_asc"; batchId?: string; since?: string; until?: string; limit?: number; cursor?: string; fetcher?: typeof fetch } = {}): Promise<{ items: RequirementSummary[]; nextCursor: string | null }> {
-  const { fetcher = fetch, q, executorName, pullState, ownerState, analysisState, pushState, processingState, priority, source, sort, batchId, since, until, limit, cursor } = params;
-  return requestJson<{ items: RequirementSummary[]; nextCursor: string | null }>(`/api/requirements${buildSearch({ q, executorName, pullState, ownerState, analysisState, pushState, processingState, priority, source, sort, batchId, since, until, limit, cursor })}`, fetcher);
+export async function listRequirements(params: { q?: string; executorName?: string; pullState?: string; ownerState?: string; analysisState?: string; pushState?: string; processingState?: "active" | "suppressed"; priority?: "P0" | "P1" | "P2" | "P3"; source?: "teambition" | "web_manual" | "base_form" | "chat_paste"; sort?: "created_desc" | "priority_asc"; batchId?: string; since?: string; until?: string; limit?: number; cursor?: string; fetcher?: typeof fetch; signal?: AbortSignal } = {}): Promise<{ items: RequirementSummary[]; nextCursor: string | null }> {
+  const { fetcher = fetch, q, executorName, pullState, ownerState, analysisState, pushState, processingState, priority, source, sort, batchId, since, until, limit, cursor, signal } = params;
+  return requestJson<{ items: RequirementSummary[]; nextCursor: string | null }>(`/api/requirements${buildSearch({ q, executorName, pullState, ownerState, analysisState, pushState, processingState, priority, source, sort, batchId, since, until, limit, cursor })}`, fetcher, signal);
 }
 
 /**
