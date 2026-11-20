@@ -52,6 +52,7 @@ test("jsonError 返回注册表对应的 HTTP 状态", () => {
   assert.equal(jsonError("NOT_FOUND").status, 404);
   assert.equal(jsonError("VALIDATION_FAILED").status, 400);
   assert.equal(jsonError("CONFLICT").status, 409);
+  assert.equal(jsonError("ASSESSMENT_IN_PROGRESS").status, 409);
   assert.equal(jsonError("ROUTE_NOT_IMPLEMENTED").status, 501);
   assert.equal(jsonError("DEPENDENCY_UNAVAILABLE").status, 503);
   // 状态覆盖
@@ -64,6 +65,7 @@ test("ERROR_STATUS 与 openapi 错误契约对齐", () => {
   assert.equal(ERROR_STATUS.FORBIDDEN, 403);
   assert.equal(ERROR_STATUS.NOT_FOUND, 404);
   assert.equal(ERROR_STATUS.CONFLICT, 409);
+  assert.equal(ERROR_STATUS.ASSESSMENT_IN_PROGRESS, 409);
   assert.equal(ERROR_STATUS.INTERNAL, 500);
   assert.equal(ERROR_STATUS.ROUTE_NOT_IMPLEMENTED, 501);
   assert.equal(ERROR_STATUS.DEPENDENCY_UNAVAILABLE, 503);

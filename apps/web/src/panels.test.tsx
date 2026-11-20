@@ -397,6 +397,24 @@ describe("RequirementsPanel (ticket 17)", () => {
     });
   }
 
+  // PRD-28：需求评估契约夹具（一次调用同时产出结论与 Investigation 提示词）。
+  const assessmentOutputBase = {
+    background: "售后反馈夜间骑行提示音过大，影响队友。",
+    goal: "降低夜间场景的提示音干扰。",
+    scope: { in: ["音量分级", "夜间静音模式"], out: ["更改硬件扬声器"] },
+    value: "提升夜间骑行体验，减少售后投诉。",
+    feasibility: { technical: "固件可调音量曲线", cost: "约 3 人日", dependency: "依赖 C706 固件 2.3", risk: "法规提示音要求" },
+    verdict: "advance",
+    verdictReason: "场景明确，改动在固件范围内。",
+    confidence: "high",
+    assumptions: ["夜间骑行占比约 15%"],
+    openQuestions: ["是否需要保留最低提示音量？"],
+    investigationPrompt: "请调查夜间骑行用户对提示音的接受度，并输出 PRD 章节建议。",
+  };
+  function assessmentVersion(version: number, outputPatch: Record<string, unknown> = {}) {
+    return { id: `assessment-${version}`, requirementId: "req-1", version, status: "succeeded", promptVersion: "rq-assessment-v1", model: "stub-model", inputs: { background: "", goal: "", scenario: "" }, output: { ...assessmentOutputBase, ...outputPatch }, errorCode: null, createdBy: null, createdAt: `2026-11-20T0${version}:00:00.000Z` };
+  }
+
   async function openFirstRow(title = "需要报表") {
     fireEvent.click(await screen.findByText(title));
     return screen.findByRole("heading", { name: title });
@@ -546,6 +564,147 @@ describe("RequirementsPanel (ticket 17)", () => {
     expect(screen.queryByText("更新时间")).not.toBeInTheDocument();
     // 重复判定按 (来源配置, TB 需求ID) 保存，手工需求没有这个身份、后端会 404：不渲染该区块。
     expect(screen.queryByRole("heading", { name: "重复处理" })).not.toBeInTheDocument();
+  });
+
+  it("renders the assessment contract, switches versions, and copies the investigation prompt", async () => {
+    const v1 = assessmentVersion(1, { background: "第一版背景", verdict: "advance" });
+    const v2 = assessmentVersion(2, { background: "第二版背景", verdict: "investigate" });
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/people") return jsonOk({ items: [] });
+      if (path === "/api/requirements/req-1/assessments") return jsonOk({ items: [v1, v2] });
+      if (path.startsWith("/api/requirements/")) return jsonOk(detail());
+      return jsonOk({ items: [row], nextCursor: null });
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await openFirstRow();
+
+    // 默认选最新版本；结论、置信度、假设按契约渲染。
+    expect(await screen.findByText("第二版背景")).toBeInTheDocument();
+    expect(screen.getByText("需要调查")).toBeInTheDocument();
+    expect(screen.getByText("置信度：高")).toBeInTheDocument();
+    expect(screen.getByText("夜间骑行占比约 15%")).toBeInTheDocument();
+    expect(screen.getByText("是否需要保留最低提示音量？")).toBeInTheDocument();
+
+    // 版本切换只换展示，不重新请求。
+    fireEvent.click(screen.getByRole("button", { name: "v1" }));
+    expect(await screen.findByText("第一版背景")).toBeInTheDocument();
+    expect(screen.getByText("建议推进")).toBeInTheDocument();
+
+    // Investigation 提示词默认折叠，展开后可复制。
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    fireEvent.click(screen.getByRole("button", { name: "展开提示词" }));
+    expect(screen.getByText(/请调查夜间骑行用户/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "复制提示词" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(expect.stringContaining("请调查夜间骑行用户")));
+    expect(await screen.findByRole("button", { name: "已复制" })).toBeInTheDocument();
+  });
+
+  it("generates an assessment on demand and posts the supplementary inputs", async () => {
+    let posted: unknown = null;
+    const created = assessmentVersion(2, { background: "生成后的背景", verdict: "hold" });
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/people") return jsonOk({ items: [] });
+      if (path === "/api/requirements/req-1/assessments" && init?.method === "POST") {
+        posted = JSON.parse(String(init.body));
+        return jsonOk({ assessment: created });
+      }
+      if (path === "/api/requirements/req-1/assessments") return jsonOk({ items: [assessmentVersion(1)] });
+      if (path.startsWith("/api/requirements/")) return jsonOk(detail());
+      return jsonOk({ items: [row], nextCursor: null });
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await openFirstRow();
+
+    fireEvent.change(screen.getByRole("textbox", { name: "需求背景" }), { target: { value: "售后反馈" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "需求目标" }), { target: { value: "降低投诉" } });
+    fireEvent.click(screen.getByRole("button", { name: "生成评估" }));
+
+    await waitFor(() => expect(posted).toEqual({ background: "售后反馈", goal: "降低投诉", scenario: "" }));
+    expect(await screen.findByText("评估 v2 已生成。")).toBeInTheDocument();
+    expect(screen.getByText("建议暂缓")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "v2" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("allows empty supplements and surfaces the 429 wait time on assessment generation", async () => {
+    let posted: unknown = null;
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/people") return jsonOk({ items: [] });
+      if (path === "/api/requirements/req-1/assessments" && init?.method === "POST") {
+        posted = JSON.parse(String(init.body));
+        return new Response(JSON.stringify({ error: { code: "RATE_LIMITED", message: "操作太频繁，请稍后再试。" } }), { status: 429, headers: { "content-type": "application/json", "retry-after": "42" } });
+      }
+      if (path === "/api/requirements/req-1/assessments") return jsonOk({ items: [] });
+      if (path.startsWith("/api/requirements/")) return jsonOk(detail());
+      return jsonOk({ items: [row], nextCursor: null });
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await openFirstRow();
+
+    expect(await screen.findByText(/还没有评估结果/)).toBeInTheDocument();
+    // PRD 4.10.3：三项补充都可为空，全空也允许生成（空输入不是错误）。
+    fireEvent.click(screen.getByRole("button", { name: "生成评估" }));
+    await waitFor(() => expect(posted).toEqual({ background: "", goal: "", scenario: "" }));
+    expect(await screen.findByText(/还需等待约 42 秒/)).toBeInTheDocument();
+  });
+
+  it("shows a running assessment as generating and disables the generate button", async () => {
+    const running = { ...assessmentVersion(2), status: "running", output: null };
+    const done = assessmentVersion(1);
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/people") return jsonOk({ items: [] });
+      if (path === "/api/requirements/req-1/assessments") return jsonOk({ items: [running, done] });
+      if (path.startsWith("/api/requirements/")) return jsonOk(detail());
+      return jsonOk({ items: [row], nextCursor: null });
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await openFirstRow();
+
+    expect(await screen.findByRole("button", { name: "v2 生成中" })).toBeInTheDocument();
+    expect(screen.getByText("这一版正在生成")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "正在生成，请稍候" })).toBeDisabled();
+  });
+
+  it("shows a 409 single-flight wait and keeps generation blocked", async () => {
+    let posts = 0;
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/people") return jsonOk({ items: [] });
+      if (path === "/api/requirements/req-1/assessments" && init?.method === "POST") {
+        posts += 1;
+        return new Response(JSON.stringify({ error: { code: "ASSESSMENT_IN_PROGRESS", message: "该需求已有正在生成的评估。" } }), { status: 409, headers: { "content-type": "application/json" } });
+      }
+      if (path === "/api/requirements/req-1/assessments") return jsonOk({ items: [assessmentVersion(1)] });
+      if (path.startsWith("/api/requirements/")) return jsonOk(detail());
+      return jsonOk({ items: [row], nextCursor: null });
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await openFirstRow();
+
+    fireEvent.click(screen.getByRole("button", { name: "生成评估" }));
+    expect(await screen.findByText("正在生成，请稍候。")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "正在生成，请稍候" })).toBeDisabled();
+    expect(posts).toBe(1);
+  });
+
+  it("keeps the detail usable when the assessment history cannot load", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/people") return jsonOk({ items: [] });
+      if (path === "/api/requirements/req-1/assessments") return new Response(JSON.stringify({ error: { code: "DEPENDENCY_UNAVAILABLE", message: "Dependency unavailable" } }), { status: 503, headers: { "content-type": "application/json" } });
+      if (path.startsWith("/api/requirements/")) return jsonOk(detail());
+      return jsonOk({ items: [row], nextCursor: null });
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await openFirstRow();
+
+    expect(await screen.findByText(/评估历史读取失败/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "需求信息" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "需求评估" })).toBeInTheDocument();
   });
 
   it("puts requirements waiting for human handling first, then sorts each group by update time", async () => {

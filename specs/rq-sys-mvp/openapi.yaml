@@ -850,6 +850,77 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Requirement' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /api/requirements/{id}/assessments:
+    get:
+      summary: List requirement assessment versions (0030)
+      description: >-
+        Newest first. Assessments are generated on demand and stored in their own table; the
+        requirement row itself is never modified.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Assessment version list, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/RequirementAssessment' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/DependencyUnavailable' }
+    post:
+      summary: Generate a new assessment version on demand (0030)
+      description: >-
+        One model call returns both the assessment conclusion and a ready-to-copy investigation
+        prompt. The new version is persisted even when the model call fails (status=failed with
+        errorCode), so history stays traceable.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                background: { type: string, maxLength: 2000 }
+                goal: { type: string, maxLength: 1000 }
+                scenario: { type: string, maxLength: 2000 }
+      responses:
+        '201':
+          description: New assessment version
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RequirementAssessment' }
+        '400': { $ref: '#/components/responses/Validation' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: >-
+            This requirement already has a non-stale running assessment. No model call is made and
+            no version is created; the error code is ASSESSMENT_IN_PROGRESS.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: AI provider is rate limited. Retry-After carries the wait in seconds.
+          headers:
+            Retry-After: { schema: { type: integer } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '500':
+          description: AI provider credential or request configuration error.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '503': { $ref: '#/components/responses/DependencyUnavailable' }
   /api/requirements/{id}/priority-override:
     put:
       summary: Set or clear the manual priority override
@@ -1590,6 +1661,27 @@ components:
             timezone: { type: [string, 'null'] }
           required: [enabled, weekday, time, timezone]
       required: [projectName, enabled, schedule]
+    RequirementAssessment:
+      type: object
+      required: [id, requirementId, version, status, promptVersion, model, inputs, output, errorCode, createdAt, completedAt]
+      properties:
+        id: { type: string, format: uuid }
+        requirementId: { type: string, format: uuid }
+        version: { type: integer, minimum: 1 }
+        status: { type: string, enum: [running, succeeded, failed] }
+        promptVersion: { type: string }
+        model: { type: [string, 'null'] }
+        inputs: { type: object, additionalProperties: true }
+        output:
+          type: [object, 'null']
+          additionalProperties: true
+          description: >-
+            background, goal, scope.in/out, value, feasibility{technical,cost,dependency,risk},
+            verdict(advance|hold|investigate), verdictReason, confidence(high|medium|low),
+            assumptions[], openQuestions[], investigationPrompt.
+        errorCode: { type: [string, 'null'] }
+        createdAt: { type: string, format: date-time }
+        completedAt: { type: [string, 'null'], format: date-time }
     Requirement:
       type: object
       properties:

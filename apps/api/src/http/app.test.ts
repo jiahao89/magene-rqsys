@@ -492,6 +492,70 @@ test("requirement source counts return the five exclusive buckets and degrade wh
   assert.equal((await handleApiRequest(new Request("http://localhost/api/requirements/source-counts"), d)).status, 503);
 });
 
+test("requirement assessments list history, create on demand and map provider failures", async () => {
+  const d = makeDependencies();
+  const record = {
+    id: "assessment-1", requirementId: requirement.id, version: 1, status: "succeeded" as const,
+    promptVersion: "rq-assessment-v1", model: "m", inputs: { background: "补充" }, output: { verdict: "advance" }, errorCode: null,
+    createdBy: "actor-1", createdAt: "2026-11-20T00:00:00.000Z", completedAt: "2026-11-20T00:00:10.000Z",
+  };
+  const runs: unknown[] = [];
+  const expirations: string[][] = [];
+  d.repositories!.assessments = {
+    create: async () => ({ outcome: "created" as const, record }),
+    complete: async () => record,
+    fail: async () => null,
+    list: async () => [record],
+    expireStaleRunning: async (id: string, before: string, at: string) => { expirations.push([id, before, at]); return 0; },
+  };
+  d.assessments = { run: async (input) => { runs.push(input); return record; } };
+  const list = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/assessments`), d);
+  assert.equal(list.status, 200);
+  const { createdBy: _createdBy, ...dto } = record;
+  assert.deepEqual(await list.json(), { items: [dto] });
+  assert.deepEqual(expirations, [[requirement.id, "2026-10-07T23:58:00.000Z", "2026-10-08T00:00:00.000Z"]]);
+  const created = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/assessments`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ background: "补充", goal: "", extra: 1 }),
+  }), d);
+  assert.equal(created.status, 400, "strict schema rejects unknown keys");
+  const ok = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/assessments`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ background: "补充背景", scenario: "通勤" }),
+  }), d);
+  assert.equal(ok.status, 201);
+  assert.deepEqual(await ok.json(), dto);
+  assert.deepEqual(runs, [{ requirement, inputs: { background: "补充背景", scenario: "通勤" }, actorId: "actor-1", analysis: analysisRun }]);
+  const missing = await handleApiRequest(new Request("http://localhost/api/requirements/77777777-7777-4777-8777-777777777777/assessments"), d);
+  assert.equal(missing.status, 404);
+  const noRunner = makeDependencies();
+  const unavailable = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/assessments`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+  }), noRunner);
+  assert.equal(unavailable.status, 503);
+  const limited = { ...d, assessments: { run: async () => { throw Object.assign(new Error("busy"), { code: "rate_limited" }); } } };
+  const limitedResponse = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/assessments`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+  }), limited);
+  assert.equal(limitedResponse.status, 429);
+  assert.equal(limitedResponse.headers.get("retry-after"), "60");
+  const timeout = { ...d, assessments: { run: async () => { throw Object.assign(new Error("slow"), { code: "timeout" }); } } };
+  const timeoutResponse = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/assessments`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+  }), timeout);
+  assert.equal(timeoutResponse.status, 503);
+  // 同需求未超时的 running 版本：409 ASSESSMENT_IN_PROGRESS，不产生新版本。
+  const inProgress = { ...d, assessments: { run: async () => { throw Object.assign(new Error("running"), { code: "assessment_in_progress" }); } } };
+  const inProgressResponse = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/assessments`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+  }), inProgress);
+  assert.equal(inProgressResponse.status, 409);
+  assert.equal((await inProgressResponse.json() as { error: { code: string } }).error.code, "ASSESSMENT_IN_PROGRESS");
+  // PRD 输入上限：背景 2,000 / 目标 1,000 / 场景 2,000。
+  const tooLong = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/assessments`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ goal: "x".repeat(1001) }),
+  }), d);
+  assert.equal(tooLong.status, 400);
+});
+
 test("V02-T02 manual requirements read back with source fields and no TB link fallback", async () => {
   const d = makeDependencies();
   const manual = { ...requirement, sourceType: "web_manual", sourceChannel: "售后", sourceConfigId: null, teambitionRequirementId: null, pipeline: { ...requirement.pipeline, pull: "collected" as const }, sourceUrl: null } as unknown as RequirementRecord;

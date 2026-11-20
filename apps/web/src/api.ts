@@ -272,6 +272,76 @@ export function getRequirement(id: string, fetcher: typeof fetch = fetch): Promi
   return requestJson<RequirementDetail>(`/api/requirements/${id}`, fetcher);
 }
 
+
+// ---------- PRD-28：需求评估（独立表 requirement_assessments；不改需求本体、不写 Base） ----------
+
+export interface RequirementAssessmentInputs {
+  background: string;
+  goal: string;
+  scenario: string;
+}
+
+export type AssessmentVerdict = "advance" | "hold" | "investigate";
+export type AssessmentConfidence = "high" | "medium" | "low";
+
+/** 评估输出契约 v0：一次模型调用同时产出结论与 Investigation 提示词。 */
+export interface RequirementAssessmentOutput {
+  background: string;
+  goal: string;
+  scope: { in: string[]; out: string[] };
+  value: string;
+  feasibility: { technical: string; cost: string; dependency: string; risk: string };
+  verdict: AssessmentVerdict;
+  verdictReason: string;
+  confidence: AssessmentConfidence;
+  assumptions: string[];
+  openQuestions: string[];
+  investigationPrompt: string;
+}
+
+export interface RequirementAssessment {
+  id: string;
+  requirementId: string;
+  version: number;
+  status: "succeeded" | "failed" | string;
+  promptVersion: string | null;
+  model: string | null;
+  inputs: RequirementAssessmentInputs;
+  output: RequirementAssessmentOutput | null;
+  errorCode: string | null;
+  createdBy: string | null;
+  createdAt: string;
+}
+
+/** 评估历史：服务端可能返回 `{items}` 或裸数组，两种都接受。 */
+export async function listRequirementAssessments(id: string, fetcher: typeof fetch = fetch): Promise<RequirementAssessment[]> {
+  const result = await requestJson<{ items?: RequirementAssessment[] } | RequirementAssessment[]>(`/api/requirements/${id}/assessments`, fetcher);
+  const items = Array.isArray(result) ? result : result?.items;
+  return Array.isArray(items) ? items : [];
+}
+
+/**
+ * 按需生成一条新评估版本。body 用扁平三段补充内容（background / goal / scenario），
+ * 服务端落到 inputs jsonb；失败沿用现有口径（429 / 503 / 500）。
+ */
+export async function createRequirementAssessment(
+  id: string,
+  inputs: RequirementAssessmentInputs,
+  fetcher: typeof fetch = fetch,
+  signal?: AbortSignal,
+): Promise<RequirementAssessment> {
+  const body = await postJson<RequirementAssessment | { assessment?: RequirementAssessment }>(
+    `/api/requirements/${id}/assessments`,
+    { background: inputs.background, goal: inputs.goal, scenario: inputs.scenario },
+    fetcher,
+    {},
+    signal,
+  );
+  const assessment = (body as { assessment?: RequirementAssessment })?.assessment ?? (body as RequirementAssessment);
+  if (!assessment || typeof assessment.version !== "number") throw new ApiError("评估接口返回了无法识别的结果。", 502, "INVALID_ASSESSMENT_RESPONSE");
+  return assessment;
+}
+
 export function retryAnalysis(id: string, options: { force?: boolean } = {}, fetcher: typeof fetch = fetch): Promise<{ requirementId: string; status: string }> {
   return postJson<{ requirementId: string; status: string }>(`/api/analysis/${id}/retry`, options.force ? { force: true } : null, fetcher);
 }

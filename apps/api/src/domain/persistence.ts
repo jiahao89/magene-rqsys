@@ -250,6 +250,23 @@ export interface AnalysisRunRecord {
   completedAt: string | null;
 }
 
+// 0030：需求评估版本（按需生成；用户补充的输入只存在本表，不改需求本体）。
+export type RequirementAssessmentStatus = "running" | "succeeded" | "failed";
+export interface RequirementAssessmentRecord {
+  id: string;
+  requirementId: string;
+  version: number;
+  status: RequirementAssessmentStatus;
+  promptVersion: string;
+  model: string | null;
+  inputs: Record<string, unknown>;
+  output: Record<string, unknown> | null;
+  errorCode: string | null;
+  createdBy: string;
+  createdAt: string;
+  completedAt: string | null;
+}
+
 // V02-S06：需求评分版本（AI 建议、人工确认、历史）。
 export type ScoreVersionStatus = "ai_suggested" | "current" | "confirmed" | "superseded";
 export type ScoreOrigin = "ai" | "manual" | "ai_applied";

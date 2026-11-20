@@ -95,6 +95,15 @@ export const SyncIdempotencyHeaderSchema = IdempotencyKeySchema;
 export type SyncRunRequest = z.infer<typeof SyncRunRequestSchema>;
 export type OwnerMappingUpdate = z.infer<typeof OwnerMappingUpdateSchema>;
 export type BatchListQuery = z.infer<typeof BatchListQuerySchema>;
+// 0030：需求评估输入。用户补充的背景/目标/场景均可选；服务端只存非空字符串。
+// 0030：PRD §4.10.3 的输入上限（背景 2,000 / 目标 1,000 / 场景 2,000）；三项均可不填。
+export const RequirementAssessmentInputSchema = z.strictObject({
+  background: z.string().trim().max(2000).optional(),
+  goal: z.string().trim().max(1000).optional(),
+  scenario: z.string().trim().max(2000).optional(),
+});
+export type RequirementAssessmentInput = z.infer<typeof RequirementAssessmentInputSchema>;
+
 export type RequirementListQuery = z.infer<typeof RequirementListQuerySchema>;
 export type AuditListQuery = z.infer<typeof AuditListQuerySchema>;
 

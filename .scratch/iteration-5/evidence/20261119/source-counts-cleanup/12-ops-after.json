@@ -1,0 +1,18 @@
+{
+  "audit": {
+    "status": 200,
+    "body": {
+      "items": []
+    }
+  },
+  "jobs": {
+    "status": 200,
+    "body": {
+      "now": "2026-11-20T01:32:56.734Z",
+      "items": {
+        "failed": [],
+        "stuck": []
+      }
+    }
+  }
+}

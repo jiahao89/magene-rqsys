@@ -1182,6 +1182,54 @@ html[data-theme="dark"] .source-tab:not(.is-active) .source-tab-count { backgrou
 .req-origin-line span { display: inline-flex; align-items: baseline; gap: 5px; }
 .req-origin-line em { color: var(--rq-text-faint); font-style: normal; }
 
+/* ---------- PRD-28：需求评估 ---------- */
+.req-assessment-section .assessment-inputs { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px 14px; margin: 10px 0 6px; }
+.req-assessment-section .assessment-inputs .field { flex: 1 1 240px; }
+.req-assessment-section .assessment-inputs .arco-textarea-wrapper,
+.req-assessment-section .assessment-inputs .rules-textarea { width: 100%; }
+.req-assessment-section .assessment-inputs .rules-textarea { min-height: 76px; }
+.assessment-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 8px 0 4px; }
+.assessment-versions { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.assessment-version { min-height: 26px; padding: 0 9px; border: 1px solid var(--rq-border); border-radius: 999px; color: var(--rq-text-muted); background: var(--rq-surface); font-size: var(--rq-font-caption); cursor: pointer; }
+.assessment-version:hover { color: var(--rq-text-strong); border-color: var(--rq-focus-border); }
+.assessment-version.is-active { color: var(--rq-accent-text); border-color: var(--rq-accent-text); background: var(--rq-accent-soft); font-weight: 650; }
+.assessment-version.is-running { color: var(--rq-warning-text-strong); border-color: var(--rq-warning-border); }
+html[data-theme="dark"] .assessment-version.is-running { color: var(--rq-warning); }
+
+.assessment-result { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--rq-divider); }
+.assessment-result[role="alert"] { color: var(--rq-danger-text-strong); }
+.assessment-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.assessment-verdict { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px; font-size: var(--rq-font-caption); font-weight: 700; }
+.assessment-verdict.is-advance { color: #146c43; background: #e7f6ee; }
+.assessment-verdict.is-hold { color: #8a5c12; background: #fdf0d5; }
+.assessment-verdict.is-investigate { color: #2458ca; background: #e8f0fd; }
+.assessment-verdict.is-unknown { color: var(--rq-text-muted); background: var(--rq-surface-subtle); }
+.assessment-confidence, .assessment-meta { color: var(--rq-text-muted); font-size: var(--rq-font-caption); }
+.assessment-grid, .assessment-scope { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px 14px; }
+.assessment-block { padding: 10px 12px; border: 1px solid var(--rq-border); border-radius: var(--rq-radius-md); background: var(--rq-surface-subtle); }
+.assessment-block h4 { margin: 0 0 6px; color: var(--rq-text-strong); font-size: var(--rq-font-caption); font-weight: 700; }
+.assessment-block p { margin: 0; line-height: 1.65; white-space: pre-wrap; }
+.assessment-block.is-out { background: #fff8f7; border-color: #f0d9d6; }
+.assessment-list { display: flex; flex-direction: column; gap: 3px; margin: 0; padding-left: 17px; line-height: 1.6; }
+.assessment-assumption-tag { display: inline-block; margin-right: 6px; padding: 0 5px; border-radius: 4px; color: #8a5c12; background: #fdf0d5; font-size: 11px; font-weight: 700; }
+.assessment-feasibility { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px 16px; margin: 0; }
+.assessment-feasibility > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.assessment-feasibility dt { color: var(--rq-text-muted); font-size: var(--rq-font-caption); font-weight: 650; }
+.assessment-feasibility dd { margin: 0; line-height: 1.6; }
+.assessment-prompt { border: 1px solid var(--rq-border); border-radius: var(--rq-radius-md); background: var(--rq-surface-subtle); overflow: hidden; }
+.assessment-prompt-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 9px 12px; }
+.assessment-prompt-head strong { color: var(--rq-text-strong); font-size: var(--rq-font-caption); font-weight: 700; }
+.assessment-prompt-actions { display: inline-flex; gap: 6px; margin-left: auto; }
+.assessment-prompt-body { max-height: 340px; margin: 0; padding: 10px 12px; border-top: 1px solid var(--rq-border); background: var(--rq-surface); color: var(--rq-foreground); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.65; white-space: pre-wrap; word-break: break-word; overflow: auto; }
+.assessment-copy-error { display: block; padding: 0 12px 9px; color: var(--rq-danger-text-strong); font-size: var(--rq-font-caption); }
+html[data-theme="dark"] .assessment-verdict.is-advance { color: var(--rq-success-on-dark); background: var(--rq-success-bg-on-dark); }
+html[data-theme="dark"] .assessment-verdict.is-hold { color: var(--rq-warning); background: #332b1b; }
+html[data-theme="dark"] .assessment-verdict.is-investigate { color: var(--rq-link-on-dark); background: var(--rq-info-surface-on-dark); }
+html[data-theme="dark"] .assessment-block.is-out { background: var(--rq-danger-surface); border-color: var(--rq-danger-border-on-dark); }
+html[data-theme="dark"] .assessment-assumption-tag { color: var(--rq-warning); background: #332b1b; }
+@media (max-width: 760px) { .assessment-grid, .assessment-scope { grid-template-columns: 1fr; } }
+
+
 /* ---------- 2026-10-28 详情信息架构：摘要评分卡 + 评分/AI 整合 ---------- */
 .req-detail-summary { position: static; top: auto; }
 .req-summary-backbar { display: flex; align-items: center; gap: 8px; margin: -2px 0 -2px; }

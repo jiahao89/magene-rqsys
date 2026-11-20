@@ -5,10 +5,10 @@ import { SourceProjectResolutionError, type FeishuUserDirectory, type FeishuUser
 import { isIntakeComplete, normalizeScheduleTime } from "../domain/workflow.js";
 import { stableJson } from "../sync/hashes.js";
 import { RICE_CONFIG_VERSION, RICE_EFFORT_UNIT, RICE_IMPACT_LEVELS, RICE_REACH_UNIT, computeRiceScore } from "../beta/rice.js";
-import type { AuditEventRepository, AnalysisRunRepository, PipelineJobRepository, SourceConfigRepository, SyncBatchRepository, SyncItemRepository, PersonMappingRepository, RequirementQueryRepository, BasePushRunRepository, ModuleDictionaryRepository, PriorityRuleRepository, SourceSnapshotRepository, TeamDirectoryRepository, RequirementScoringRepository } from "../application/repositories.js";
-import type { PersonMappingRecord, AnalysisRunRecord, ModuleDictionaryVersionRecord, PriorityRuleVersionRecord, RequirementRecord, SourceConfigRecord, SyncBatchRecord, PipelineJobRecord } from "../domain/persistence.js";
+import type { AuditEventRepository, AnalysisRunRepository, PipelineJobRepository, SourceConfigRepository, SyncBatchRepository, SyncItemRepository, PersonMappingRepository, RequirementQueryRepository, BasePushRunRepository, ModuleDictionaryRepository, PriorityRuleRepository, SourceSnapshotRepository, TeamDirectoryRepository, RequirementScoringRepository, RequirementAssessmentRepository } from "../application/repositories.js";
+import type { PersonMappingRecord, AnalysisRunRecord, ModuleDictionaryVersionRecord, PriorityRuleVersionRecord, RequirementRecord, RequirementAssessmentRecord, SourceConfigRecord, SyncBatchRecord, PipelineJobRecord } from "../domain/persistence.js";
 import type { TeamPersonRecord } from "../domain/team-directory.js";
-import { AnalysisContextUpdateSchema, AuditListQuerySchema, GateConfirmSchema, OpsJobsQuerySchema, OpsMetricsQuerySchema, RequirementExportQuerySchema, ClearDuplicateDecisionSchema, DuplicateDecisionSchema, PriorityOverrideUpdateSchema, RetryAnalysisRequestSchema, KanoEvidenceImportSchema, KanoRunRequestSchema, AudienceUpdateSchema, BatchListQuerySchema, RiceDraftUpdateSchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementIntakeEditSchema, RequirementIntakeSchema, RequirementListQuerySchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
+import { AnalysisContextUpdateSchema, AuditListQuerySchema, GateConfirmSchema, OpsJobsQuerySchema, OpsMetricsQuerySchema, RequirementExportQuerySchema, ClearDuplicateDecisionSchema, DuplicateDecisionSchema, PriorityOverrideUpdateSchema, RetryAnalysisRequestSchema, KanoEvidenceImportSchema, KanoRunRequestSchema, AudienceUpdateSchema, BatchListQuerySchema, RiceDraftUpdateSchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementIntakeEditSchema, RequirementIntakeSchema, RequirementListQuerySchema, RequirementAssessmentInputSchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
 import { createHash, randomUUID } from "node:crypto";
 import { ApplyAiScoringSchema, ManualScoringUpdateSchema, SCORING_FORMULA_TEXT, SCORING_THRESHOLDS, computeUmcScore } from "../analysis/scoring.js";
 import { maskPii } from "../analysis/contract.js";
@@ -23,6 +23,7 @@ import { isDatabaseReady } from "../adapters/postgres/health.js";
 import { EXPECTED_LATEST_MIGRATION } from "../db/expected-migration.js";
 import { jsonError } from "./errors.js";
 import { CHAT_PROMPT_VERSION, ChatDraftRequestSchema, createDraftRateLimiter, type ChatIntakeExtractor, type DraftRateLimit } from "../intake/chat-extract.js";
+import { ASSESSMENT_RUNNING_STALE_MS, type AssessmentRunner } from "../assessment/service.js";
 import { readAiPause } from "../ops/ai-pause.js";
 import { decodeRequirementCursor } from "../application/requirement-cursor.js";
 import { decodeBatchCursor } from "../application/batch-cursor.js";
@@ -38,6 +39,7 @@ export interface ApiRepositories {
   requirements?: RequirementQueryRepository;
   basePushes?: BasePushRunRepository;
   analyses?: AnalysisRunRepository;
+  assessments?: RequirementAssessmentRepository;
   sourceSnapshots?: SourceSnapshotRepository;
   dictionaries?: ModuleDictionaryRepository;
   priorityRules?: PriorityRuleRepository;
@@ -59,6 +61,8 @@ export interface ApiDependencies {
   duplicateMarker?: (input: import("../base/duplicate-marker.js").DuplicateMarkInput) => Promise<import("../base/duplicate-marker.js").DuplicateMarkResult>;
   /** PRD-26：聊天一键复制的草稿抽取；未注入时接口返回 503，用户仍可手工填写。 */
   chatIntake?: { extractor: ChatIntakeExtractor; limit?: DraftRateLimit };
+  /** 0030：按需需求评估；未注入时接口返回 503，详情页不可用。 */
+  assessments?: AssessmentRunner;
   /** 目标环境的脱敏诊断通道；未注入时诊断落 stderr。只写错误类、SQLSTATE、状态码、字符数与请求号，不写 SQL、参数或聊天正文。 */
   diagnostics?: {
     error(event: "intake_draft_failed" | "overview_ai_stats_failed", details: {
@@ -329,6 +333,9 @@ function mappingDto(m: PersonMappingRecord) {
 // 人员页展示：名单 + 飞书账号绑定关系；bindingConflict 表示同名映射指向多个账号，需人工核对。
 function personDto(person: TeamPersonRecord) {
   return { name: person.name, feishuUserId: person.binding?.feishuUserId ?? null, feishuIdType: person.binding?.feishuIdType ?? null, boundAt: person.binding?.boundAt ?? null, bindingConflict: person.bindingConflict };
+}
+function assessmentDto(r: RequirementAssessmentRecord) {
+  return { id: r.id, requirementId: r.requirementId, version: r.version, status: r.status, promptVersion: r.promptVersion, model: r.model, inputs: r.inputs, output: r.output, errorCode: r.errorCode, createdAt: r.createdAt, completedAt: r.completedAt };
 }
 function requirementSearchDto(req: RequirementRecord) { return requirementDto(req); }
 // 逐条人工负责人优先于 TB 执行人映射；两者都没有时为空。
@@ -1139,6 +1146,46 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     const auditFailure = await appendAudit(repositories, { id: randomUUID(), actorId: auth.actor.id, eventType: "requirement.analysis_context_updated", entityType: "requirement", entityId: req.id, result: "succeeded", safeDetails: { cleared: parsed.data.context === null, at: now }, occurredAt: now });
     if (auditFailure) return auditFailure;
     return json({ requirementId: req.id, analysisContext: result.context });
+  }
+  // 0030：需求评估（按需生成）。GET 列历史版本；POST 生成一条新版本（同步调用模型，失败也保留 failed 版本）。
+  const assessmentMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/assessments$/);
+  if (assessmentMatch && (method === "GET" || method === "POST")) {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const assessmentRequirementId = pathUuid(assessmentMatch[1]!, dependencies); if (!assessmentRequirementId) return jsonError("NOT_FOUND");
+    let assessmentRequirement: RequirementRecord | null;
+    try { assessmentRequirement = await repositories.requirements.get(assessmentRequirementId); } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
+    if (!assessmentRequirement) return jsonError("NOT_FOUND");
+    if (method === "GET") {
+      if (!repositories.assessments) return jsonError("DEPENDENCY_UNAVAILABLE");
+      try {
+        // PRD §4.10.5：running 超过 2 分钟不允许永久停在「生成中」，读取时兜底转 failed/timeout。
+        const listNow = (dependencies.now ?? (() => new Date()))().toISOString();
+        await repositories.assessments.expireStaleRunning(assessmentRequirementId, new Date(Date.parse(listNow) - ASSESSMENT_RUNNING_STALE_MS).toISOString(), listNow);
+        return json({ items: (await repositories.assessments.list(assessmentRequirementId)).map(assessmentDto) });
+      } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
+    }
+    if (!dependencies.assessments) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const parsedAssessmentBody = RequirementAssessmentInputSchema.safeParse(await readJson(request)); if (!parsedAssessmentBody.success) return jsonError("VALIDATION_FAILED");
+    const inputs = {
+      ...(typeof parsedAssessmentBody.data.background === "string" && parsedAssessmentBody.data.background !== "" ? { background: parsedAssessmentBody.data.background } : {}),
+      ...(typeof parsedAssessmentBody.data.goal === "string" && parsedAssessmentBody.data.goal !== "" ? { goal: parsedAssessmentBody.data.goal } : {}),
+      ...(typeof parsedAssessmentBody.data.scenario === "string" && parsedAssessmentBody.data.scenario !== "" ? { scenario: parsedAssessmentBody.data.scenario } : {}),
+    };
+    try {
+      // 评估在现有 AI 分析之上做判断；分析读取失败不阻塞评估，按「未提供」处理。
+      const assessmentAnalysis = repositories.analyses
+        ? await repositories.analyses.latest(assessmentRequirementId).catch(() => null)
+        : null;
+      return json(assessmentDto(await dependencies.assessments.run({ requirement: assessmentRequirement, inputs, actorId: auth.actor.id, analysis: assessmentAnalysis })), 201);
+    } catch (cause) {
+      // 与 intake 口径一致：单飞 409；限流 429 + Retry-After；密钥/请求配置事故 500；其余按依赖暂不可用。
+      const errorClass = String((cause as { code?: unknown })?.code ?? "unknown");
+      if (errorClass === "assessment_in_progress") return jsonError("ASSESSMENT_IN_PROGRESS");
+      if (errorClass === "rate_limited") return rateLimited(PROVIDER_RATE_LIMIT_RETRY_AFTER_SECONDS, "AI 评估请求太频繁，请稍后再试。");
+      if (errorClass === "auth_error" || errorClass === "request_error") return jsonError("INTERNAL", "AI 评估服务异常，请稍后重试。");
+      return jsonError("DEPENDENCY_UNAVAILABLE", "AI 评估暂时不可用，请稍后重试。");
+    }
   }
   const requirementMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)$/);
   if (method === "GET" && requirementMatch) {

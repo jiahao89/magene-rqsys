@@ -6,7 +6,7 @@
 import type { AuditEventRecord, BasePushRunRecord, BatchState, AnalysisRunRecord, FunctionModuleEntry, ModuleDictionaryVersionRecord, PersonMappingRecord, PmSnapshotRecord, PipelineJobRecord, PipelineJobType, PriorityLevel, PriorityRuleVersionRecord, SourceConfigRecord, SourceSnapshotRecord, SyncBatchRecord, SyncItemAction, SyncItemRecord, SyncTrigger, FeishuIdType, AudienceLevel, RiceDraftRecord, KanoEvidenceVersion, KanoRunRecord, RequirementScoreVersionRecord } from "../domain/persistence.js";
 import type { AnalysisState, OwnerState, PullState, PushState } from "../domain/workflow.js";
 import type { ResolvedSourceConfigUpdate } from "../contracts/source.js";
-import type { RequirementManualOwner, RequirementRecord, RequirementPriorityOverride, RequirementAnalysisContext, BaseFormRequirementInput } from "../domain/persistence.js";
+import type { RequirementManualOwner, RequirementRecord, RequirementPriorityOverride, RequirementAnalysisContext, BaseFormRequirementInput, RequirementAssessmentRecord } from "../domain/persistence.js";
 import type { TeamPersonBindingInput, TeamPersonRecord } from "../domain/team-directory.js";
 
 export type AuditEventInput = Omit<AuditEventRecord, "entityId">;
@@ -132,6 +132,30 @@ export interface AnalysisRunRepository {
   countRecentFailures?(safeErrorCode: string, since: string): Promise<number>;
   /** 总览 AI 区：全部调用次数、今日调用次数、最近一次调用的时间与状态（无调用则 null）。 */
   aiCallStats?(since: string): Promise<{ total: number; today: number; lastAt: string | null; lastStatus: string | null }>;
+}
+
+/** 0030：需求评估版本。按需生成；同一需求版本号递增，失败版本保留 errorCode。 */
+// 0030：同需求单飞。create 在事务锁内先清理超过 staleAfterMs 的 running，再判断是否已有 running：
+// 有则返回 in_progress（不新建版本），否则新建 running 版本返回 created。
+export type RequirementAssessmentCreateResult =
+  | { outcome: "created"; record: RequirementAssessmentRecord }
+  | { outcome: "in_progress"; record: RequirementAssessmentRecord };
+
+export interface RequirementAssessmentRepository {
+  create(input: {
+    requirementId: string;
+    promptVersion: string;
+    model: string | null;
+    inputs: Record<string, unknown>;
+    createdBy: string;
+    at: string;
+    staleAfterMs: number;
+  }): Promise<RequirementAssessmentCreateResult>;
+  complete(id: string, output: Record<string, unknown>, at: string): Promise<RequirementAssessmentRecord | null>;
+  fail(id: string, errorCode: string, at: string): Promise<RequirementAssessmentRecord | null>;
+  list(requirementId: string): Promise<RequirementAssessmentRecord[]>;
+  /** GET 兜底：把开始时间早于 before 的 running 版本标为 failed/timeout，返回处理条数。 */
+  expireStaleRunning(requirementId: string, before: string, at: string): Promise<number>;
 }
 
 /** I3-3：全局运行开关（如 AI 暂停）。value 为扁平 JSON 对象。 */

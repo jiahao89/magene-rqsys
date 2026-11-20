@@ -13,7 +13,7 @@ import { checkScheduleHealth } from "./schedule";
 import { readRequirementDeepLink } from "./deep-link";
 import { emptyRequirementListFilters, readRequirementListFilters, requirementFilterCount, requirementPoolUrl, type RequirementListFilters, type RequirementProcessingView } from "./requirements-url";
 import { formatDateTime, requirementDisplayId, requirementOwnerView, requirementSourceFacts, requirementTime, sortRequirementsForAttention } from "./requirement-view";
-import { AUDIT_PAGE_LIMIT, ApiError, addTeamPerson, applyRequirementAiScore, bindTeamPersonFeishu, createSource, deleteTeamPerson, getBatch, getFunctionModules, getRequirement, exportRequirementsCsv, getGates, getOpsJobs, getOpsMetrics, getReadiness, getRequirementSourceCounts, setGate, listAudit, listBatches, listDictionaryVersions, listMappings, listRequirements, listTeamPeople, pushRequirement, renameTeamPerson, revokeDuplicateDecision, saveAnalysisContext, saveFunctionModules, retryAnalysis, setPriorityOverride, retrySyncItem, saveRequirementScore, searchFeishuUsers, setDuplicateDecision, setOwner, unbindTeamPersonFeishu, updateSource, type AnalysisVersionSummary, type AuditEvent, type OpsJob, type OpsMetrics, type GatesResponse, type BatchDetail, type BatchSummary, type DictionaryVersion, type DuplicateDecision, type PersonMapping, type PublishStatus, type FeishuUserSelection, type FeishuUserCandidate, type FunctionModuleEntry, type RequirementDetail, type RequirementProcessingState, type RequirementResolution, type RequirementScoreVersion, type RequirementSourceCounts, type RequirementSummary, type ScoringInputs, type SourceConfig, type SourceConfigUpdate, type TeamPerson, clearOwner } from "./api";
+import { AUDIT_PAGE_LIMIT, ApiError, addTeamPerson, applyRequirementAiScore, bindTeamPersonFeishu, createSource, createRequirementAssessment, deleteTeamPerson, getBatch, getFunctionModules, getRequirement, exportRequirementsCsv, getGates, getOpsJobs, getOpsMetrics, getReadiness, getRequirementSourceCounts, listRequirementAssessments, setGate, listAudit, listBatches, listDictionaryVersions, listMappings, listRequirements, listTeamPeople, pushRequirement, renameTeamPerson, revokeDuplicateDecision, saveAnalysisContext, saveFunctionModules, retryAnalysis, setPriorityOverride, retrySyncItem, saveRequirementScore, searchFeishuUsers, setDuplicateDecision, setOwner, unbindTeamPersonFeishu, updateSource, type AnalysisVersionSummary, type AuditEvent, type OpsJob, type OpsMetrics, type GatesResponse, type AssessmentConfidence, type AssessmentVerdict, type BatchDetail, type BatchSummary, type DictionaryVersion, type DuplicateDecision, type PersonMapping, type PublishStatus, type FeishuUserSelection, type FeishuUserCandidate, type FunctionModuleEntry, type RequirementDetail, type RequirementProcessingState, type RequirementResolution, type RequirementAssessment, type RequirementScoreVersion, type RequirementSourceCounts, type RequirementSummary, type ScoringInputs, type SourceConfig, type SourceConfigUpdate, type TeamPerson, clearOwner } from "./api";
 import type { WorkbenchTab } from "./workbench-routing";
 
 export type LoadState = "loading" | "ready" | "error";
@@ -1585,6 +1585,231 @@ export function AnalysisContextSection({ detail, onSaved }: { detail: Requiremen
   </section>;
 }
 
+// ---------- PRD-28：需求评估（按需生成 · 落 requirement_assessments · 不写需求本体/Base） ----------
+
+const ASSESSMENT_VERDICTS: Record<AssessmentVerdict, { label: string; className: string; hint: string }> = {
+  advance: { label: "建议推进", className: "is-advance", hint: "信息足够，可以进入 PRD 编写" },
+  hold: { label: "建议暂缓", className: "is-hold", hint: "当前价值或时机不足" },
+  investigate: { label: "需要调查", className: "is-investigate", hint: "关键信息不足，先做调查" },
+};
+const ASSESSMENT_CONFIDENCES: Record<AssessmentConfidence, string> = { high: "高", medium: "中", low: "低" };
+
+function assessmentWaitLabel(seconds: number): string {
+  if (seconds >= 3600) return `${Math.ceil(seconds / 3600)} 小时`;
+  if (seconds >= 60) return `${Math.ceil(seconds / 60)} 分钟`;
+  return `${seconds} 秒`;
+}
+
+/** 评估失败提示：沿用 intake 口径；429 读 Retry-After 说明还要等多久。 */
+function assessmentErrorMessage(cause: unknown): string {
+  if (!(cause instanceof ApiError)) return "评估生成失败，请重试。";
+  if (cause.status === 429) {
+    if (!cause.retryAfterSeconds) return cause.message;
+    return `${cause.message}（还需等待约 ${assessmentWaitLabel(cause.retryAfterSeconds)}）`;
+  }
+  if (cause.status === 500) return "服务端暂时无法完成这次评估，请稍后重试。";
+  if (cause.status === 503) return "服务暂时不可用，请稍后重试；已保存的评估不受影响。";
+  return cause.message;
+}
+
+/** 单条评估结论：按契约 v0 渲染，未知/缺失字段显示「未提供」，不补造内容。 */
+function AssessmentResult({ assessment }: { assessment: RequirementAssessment }) {
+  const promptBodyId = useId();
+  const [promptOpen, setPromptOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState<string | null>(null);
+  useEffect(() => { setPromptOpen(false); setCopied(false); setCopyError(null); }, [assessment.id]);
+
+  const output = assessment.output;
+  if (assessment.status === "running") {
+    return <div className="assessment-result" role="status">
+      <strong>这一版正在生成</strong>
+      <span>生成完成后会自动刷新；期间请勿重复生成。</span>
+    </div>;
+  }
+  if (assessment.status !== "succeeded" || !output) {
+    return <div className="assessment-result" role="alert">
+      <strong>本次评估没有生成可用结论</strong>
+      <span>{assessment.errorCode ? `错误码：${assessment.errorCode}。` : "服务端未返回评估内容。"}调整补充内容后可重新生成。</span>
+    </div>;
+  }
+
+  const prompt = analysisText(output.investigationPrompt) ?? "";
+  const verdict = output.verdict && ASSESSMENT_VERDICTS[output.verdict] ? output.verdict : null;
+  const confidence = typeof output.confidence === "string" ? (ASSESSMENT_CONFIDENCES as Record<string, string>)[output.confidence] ?? null : null;
+  const scopeIn = analysisStrings(output.scope?.in);
+  const scopeOut = analysisStrings(output.scope?.out);
+  const assumptions = analysisStrings(output.assumptions);
+  const openQuestions = analysisStrings(output.openQuestions);
+  const feasibility = output.feasibility ?? { technical: "", cost: "", dependency: "", risk: "" };
+  const copyPrompt = async () => {
+    try {
+      await navigator.clipboard.writeText(prompt);
+      setCopied(true); setCopyError(null);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch { setCopyError("复制失败，请展开后手动选中复制。"); }
+  };
+
+  return <div className="assessment-result">
+    <div className="assessment-head">
+      {verdict ? <span className={`assessment-verdict ${ASSESSMENT_VERDICTS[verdict].className}`} title={ASSESSMENT_VERDICTS[verdict].hint}>{ASSESSMENT_VERDICTS[verdict].label}</span> : <span className="assessment-verdict is-unknown">未给出结论</span>}
+      {confidence ? <span className="assessment-confidence">置信度：{confidence}</span> : null}
+      <span className="assessment-meta">v{assessment.version} · {timeLabel(assessment.createdAt)}{assessment.promptVersion ? ` · ${assessment.promptVersion}` : ""}{assessment.model ? ` · ${assessment.model}` : ""}</span>
+    </div>
+    <p className="subtle-text">AI 建议，非结论；请结合下方依据与待确认问题人工判断。</p>
+    <div className="assessment-grid">
+      <div className="assessment-block"><h4>背景</h4><p>{analysisText(output.background) ?? "未提供"}</p></div>
+      <div className="assessment-block"><h4>目标</h4><p>{analysisText(output.goal) ?? "未提供"}</p></div>
+      <div className="assessment-block"><h4>业务价值</h4><p>{analysisText(output.value) ?? "未提供"}</p></div>
+    </div>
+    <div className="assessment-scope">
+      <div className="assessment-block"><h4>范围：要做</h4>{scopeIn.length ? <ul className="assessment-list">{scopeIn.map((item, index) => <li key={index}>{item}</li>)}</ul> : <p className="subtle-text">未提供</p>}</div>
+      <div className="assessment-block is-out"><h4>范围：不做</h4>{scopeOut.length ? <ul className="assessment-list">{scopeOut.map((item, index) => <li key={index}>{item}</li>)}</ul> : <p className="subtle-text">未提供</p>}</div>
+    </div>
+    <div className="assessment-block">
+      <h4>可行性</h4>
+      <dl className="assessment-feasibility">
+        <div><dt>技术</dt><dd>{analysisText(feasibility.technical) ?? "未提供"}</dd></div>
+        <div><dt>成本</dt><dd>{analysisText(feasibility.cost) ?? "未提供"}</dd></div>
+        <div><dt>依赖</dt><dd>{analysisText(feasibility.dependency) ?? "未提供"}</dd></div>
+        <div><dt>风险</dt><dd>{analysisText(feasibility.risk) ?? "未提供"}</dd></div>
+      </dl>
+    </div>
+    {verdict ? <div className="assessment-block"><h4>结论依据</h4><p>{analysisText(output.verdictReason) ?? "未提供"}</p></div> : null}
+    <div className="assessment-grid">
+      <div className="assessment-block"><h4>假设（AI 推断）</h4>{assumptions.length ? <ul className="assessment-list">{assumptions.map((item, index) => <li key={index}><span className="assessment-assumption-tag">假设</span>{item.replace(/^(假设|推断)[：:]\s*/, "")}</li>)}</ul> : <p className="subtle-text">未列出假设</p>}</div>
+      <div className="assessment-block"><h4>待确认问题</h4>{openQuestions.length ? <ol className="assessment-list">{openQuestions.map((item, index) => <li key={index}>{item}</li>)}</ol> : <p className="subtle-text">暂无待确认问题</p>}</div>
+    </div>
+    {prompt ? <div className="assessment-prompt">
+      <div className="assessment-prompt-head">
+        <strong>Investigation 提示词</strong>
+        <span className="subtle-text">复制后带到你的 Agent 继续调查、写 PRD</span>
+        <span className="assessment-prompt-actions">
+          <ArcoButton size="small" htmlType="button" aria-expanded={promptOpen} aria-controls={promptBodyId} onClick={() => setPromptOpen((open) => !open)}>{promptOpen ? "收起提示词" : "展开提示词"}</ArcoButton>
+          <ArcoButton size="small" type="primary" htmlType="button" onClick={() => void copyPrompt()}>{copied ? "已复制" : "复制提示词"}</ArcoButton>
+        </span>
+      </div>
+      {promptOpen && <pre className="assessment-prompt-body" id={promptBodyId}>{prompt}</pre>}
+      {copyError ? <span className="assessment-copy-error" role="alert">{copyError}</span> : null}
+    </div> : null}
+  </div>;
+}
+
+/**
+ * 需求评估区：补充背景/目标/场景后按需生成；
+ * 历史版本来自独立表，不修改需求本体，也不回写 Base。
+ */
+function RequirementAssessmentSection({ requirementId }: { requirementId: string }) {
+  const [history, setHistory] = useState<RequirementAssessment[]>([]);
+  const [loadState, setLoadState] = useState<LoadState>("loading");
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
+  const [background, setBackground] = useState("");
+  const [goal, setGoal] = useState("");
+  const [scenario, setScenario] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [conflict, setConflict] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const load = useCallback(async (silent = false) => {
+    if (!silent) { setLoadState("loading"); setLoadError(null); }
+    try {
+      // 防御：历史接口若返回错形状（如被通用列表路由兜底），不把无 version 的条目当成评估版本。
+      const items = (await listRequirementAssessments(requirementId)).filter((item) => item && typeof item.version === "number");
+      setHistory(items);
+      setSelectedVersion((current) => current !== null && items.some((item) => item.version === current)
+        ? current
+        : items.reduce((max, item) => Math.max(max, item.version), 0) || null);
+      setLoadState("ready");
+    } catch (cause) {
+      if (!silent) { setLoadError(errorText(cause)); setLoadState("error"); }
+    }
+  }, [requirementId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  // 有 running 版本时每 5 秒静默刷新一次：生成完成后自动换成结论，期间保持按钮禁用。
+  const hasRunning = history.some((item) => item.status === "running");
+  useEffect(() => {
+    if (!hasRunning) return;
+    const timer = window.setInterval(() => { void load(true); }, 5000);
+    return () => window.clearInterval(timer);
+  }, [hasRunning, load]);
+
+  // 409 单飞提示保留一小段时间：避免服务端 running 行还没被历史接口返回时按钮立刻可点。
+  useEffect(() => {
+    if (!conflict) return;
+    const timer = window.setTimeout(() => setConflict(false), 15000);
+    return () => window.clearTimeout(timer);
+  }, [conflict]);
+
+  // 后台轮询看到 running 结束（成功或失败）后，解除 409 的等待提示，避免残留「正在生成」。
+  const sawRunning = useRef(false);
+  useEffect(() => {
+    if (hasRunning) { sawRunning.current = true; return; }
+    if (!sawRunning.current) return;
+    sawRunning.current = false;
+    setConflict(false);
+    setNotice((current) => current === "正在生成，请稍候。" ? null : current);
+  }, [hasRunning]);
+
+  // 切换需求时清空草稿输入，避免把上一条需求的背景带过去。
+  useEffect(() => { setBackground(""); setGoal(""); setScenario(""); setError(null); setNotice(null); }, [requirementId]);
+
+  const versions = [...history].sort((left, right) => right.version - left.version);
+  const selected = versions.find((item) => item.version === selectedVersion) ?? versions[0] ?? null;
+
+  const generate = async () => {
+    // 三项补充都可为空（PRD 4.10.3：全空也允许生成，结果更多落到 investigate）。
+    const inputs = { background: background.trim(), goal: goal.trim(), scenario: scenario.trim() };
+    setBusy(true); setError(null); setNotice(null);
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 60000);
+    try {
+      const created = await createRequirementAssessment(requirementId, inputs, fetch, controller.signal);
+      setHistory((previous) => [created, ...previous.filter((item) => item.version !== created.version)]);
+      setSelectedVersion(created.version);
+      setNotice(created.status === "succeeded"
+        ? `评估 v${created.version} 已生成。`
+        : `评估 v${created.version} 生成失败（${created.errorCode ?? "未知原因"}）。`);
+    } catch (cause) {
+      // 同一需求已有未超时的 running 版本（409 单飞）：提示等待并禁用按钮，不重复烧 token。
+      if (cause instanceof ApiError && cause.status === 409) {
+        setConflict(true);
+        setNotice("正在生成，请稍候。");
+        setError(null);
+        void load(true);
+      } else {
+        setError(controller.signal.aborted ? "评估生成超时，请稍后重试。" : assessmentErrorMessage(cause));
+      }
+    } finally {
+      window.clearTimeout(timer);
+      setBusy(false);
+    }
+  };
+
+  return <section className="req-section req-assessment-section" aria-labelledby="req-assessment-heading">
+    <div className="req-section-head"><h3 id="req-assessment-heading">需求评估</h3><span className="req-source-note">AI 建议 · 非结论 · 按需生成</span></div>
+    <p className="detail-note">补充背景、目标、使用场景后生成评估；补充内容只保存在评估记录里，不修改需求本体，也不写 Base。评估按需生成，不会自动消耗模型调用。</p>
+    <div className="assessment-inputs">
+      <label className="field"><span>需求背景（不超过 2000 字）</span><ArcoInput.TextArea aria-label="需求背景" className="rules-textarea" rows={3} maxLength={2000} showWordLimit value={background} onChange={(value: string) => setBackground(value)} disabled={busy} placeholder="为什么要做：用户场景、当前问题、触发来源。" /></label>
+      <label className="field"><span>目标（不超过 1000 字）</span><ArcoInput.TextArea aria-label="需求目标" className="rules-textarea" rows={3} maxLength={1000} showWordLimit value={goal} onChange={(value: string) => setGoal(value)} disabled={busy} placeholder="希望达成什么结果；尽量可度量。" /></label>
+      <label className="field"><span>使用场景（不超过 2000 字）</span><ArcoInput.TextArea aria-label="使用场景" className="rules-textarea" rows={3} maxLength={2000} showWordLimit value={scenario} onChange={(value: string) => setScenario(value)} disabled={busy} placeholder="谁在什么情况下使用；包含环境、硬件型号、频率等约束。" /></label>
+    </div>
+    <div className="assessment-actions">
+      <ArcoButton type="primary" htmlType="button" size="small" onClick={() => void generate()} disabled={busy || conflict || hasRunning}>{busy ? "生成中…（约 30 秒）" : conflict || hasRunning ? "正在生成，请稍候" : "生成评估"}</ArcoButton>
+      {loadState === "loading" ? <span className="subtle-text">正在读取评估历史…</span> : null}
+      {loadState === "error" ? <span className="status-hint" role="alert">评估历史读取失败：{loadError} <ArcoButton type="text" size="small" htmlType="button" onClick={() => void load()}>重试</ArcoButton></span> : null}
+      {versions.length > 0 ? <div className="assessment-versions" role="group" aria-label="评估版本">
+        {versions.map((item) => <button key={item.id} type="button" className={`assessment-version${item.version === selected?.version ? " is-active" : ""}${item.status === "running" ? " is-running" : ""}`} aria-pressed={item.version === selected?.version} onClick={() => setSelectedVersion(item.version)}>v{item.version}{item.status === "running" ? " 生成中" : item.status !== "succeeded" ? "（失败）" : ""}</button>)}
+      </div> : null}
+    </div>
+    <StateBanner loadError={error} notice={notice} onCloseNotice={() => setNotice(null)} />
+    {selected ? <AssessmentResult assessment={selected} /> : loadState === "ready" ? <p className="detail-note">还没有评估结果。补充背景、目标或使用场景后生成第一版。</p> : null}
+  </section>;
+}
+
 function RequirementDetailPage({ detail, detailId, loading, error, notice, busy, autoOpenOwnerPicker, onCloseNotice, onBack, onRefresh, onAct, onSaved }: {
   detail: RequirementDetail | null;
   detailId: string;
@@ -1862,6 +2087,8 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
     <PriorityOverrideSection detail={detail} onSaved={() => onSaved(detail.id)} />
 
     <AnalysisContextSection detail={detail} onSaved={() => onSaved(detail.id)} />
+
+    <RequirementAssessmentSection requirementId={detail.id} />
 
     <section className="req-section" aria-labelledby="req-status-heading">
       <div className="req-section-head"><h3 id="req-status-heading">处理与推送</h3><span className="req-source-note">系统状态</span></div>

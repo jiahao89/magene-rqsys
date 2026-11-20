@@ -1,0 +1,53 @@
+PRD-28 需求评估 · 前端本地门禁（2026-11-20，含 409/running 对齐）
+
+## 改动
+详情页在「补充上下文」之后新增「需求评估」按需生成区块：
+- 三个补充输入：需求背景（≤2000）、需求目标（≤1000）、使用场景（≤2000）；
+  PRD 4.10.3 明确三项都可空、全空也允许生成（空输入不是错误），客户端不再拦截空输入。
+- 「生成评估」调用 POST /api/requirements/:id/assessments，body 为扁平三段
+  {background, goal, scenario}（后端 strictObject 三个都 optional，空字符串合法）；60 秒超时保护。
+- 历史版本 GET /api/requirements/:id/assessments（{items} 或裸数组都接受）；版本 chips 切换：
+  succeeded → vN；running → 「vN 生成中」（琥珀色）；failed → 「vN（失败）」。
+- running 版本：结果区显示「这一版正在生成」，按钮禁用，每 5 秒静默刷新历史直到完成。
+- 409 ASSESSMENT_IN_PROGRESS（单飞）：提示「正在生成，请稍候。」并禁用按钮 15 秒，
+  同时静默刷新历史（把服务端 running 行显示成「生成中」），避免重复调用模型烧 token。
+- 结论按契约 v1 渲染：verdict（建议推进/暂缓/需要调查）+ 置信度 + vN/promptVersion/model/时间，
+  background / goal / value、scope.in / scope.out、feasibility（技术/成本/依赖/风险）、
+  verdictReason、assumptions、openQuestions。
+- assumptions 条目显示「假设」标签；若模型文本自带「假设：/推断：」前缀会先去掉再显示，避免重复。
+- Investigation 提示词默认折叠、展开查看、一键复制（复制失败提示手动复制）。
+- 状态：加载中、空历史、历史读取失败（可重试，只影响本区块）、生成失败（错误码）、
+  429 读 Retry-After 显示等待时间、超时提示、缺 version 的畸形历史条目不渲染。
+
+## 测试（apps/web: npx vitest run）
+Test Files 11 passed (11)
+     Tests 178 passed (178)
+评估相关 6 条：
+1) 契约渲染 + 默认最新版本 + 版本切换 + 提示词展开/复制；
+2) 生成评估 → 断言 POST body 三段、新版本自动选中并展示结论；
+3) 空输入允许生成（断言 POST body 为空字符串三段）+ 429 Retry-After 42 秒文案；
+4) running 版本显示「v2 生成中」、结果区生成中、按钮禁用；
+5) 409 单飞 → 提示「正在生成，请稍候。」、按钮禁用、只发一次 POST；
+6) 历史接口 503 → 区块报错可重试，详情页其余部分正常。
+
+## 类型 / 构建
+npm --workspace @rq-sys/web run typecheck  → 通过
+npm --workspace @rq-sys/web run build      → 通过（css 358.9 kB / js 898 kB 量级）
+rq-sys-miaoda: type:check:client / build:client → 通过
+
+## 两仓门禁
+check:arco-styles → 通过
+两仓 git diff --check → 干净
+assessment 组件两仓逐字一致；CSS 新增行一致；api 仅已声明的默认 fetcher 差异。
+check:alignment 当前 FAIL（2 项，均在后端、非前端改动）：
+  - assessment/prompt.ts、assessment/service.ts 出现未声明漂移；
+    根仓已是 skill 同源 prompt + 409 单飞/stale 逻辑，妙搭镜像仍是 v0.1 骨架。
+  后端完成这两文件的两仓镜像并登记差异后应恢复 36/36；前端未改这两个文件。
+
+## 视觉自检（本地静态渲染，非目标环境证据）
+assessment-preview.png：三输入 + 「正在生成，请稍候」禁用按钮 + v3 生成中/v2/v1 版本 chips +
+verdict/置信度 + 三列结论 + 范围双栏 + 可行性四列 + 「假设」标签 + 提示词栏排版正常。
+
+## 边界
+- 未提交、未 push、未发版；0030 迁移与接口由后端负责。
+- 目标环境验收：生成一次、切版本、复制提示词、429 文案、并发点两次出 409 提示且只留一条版本。

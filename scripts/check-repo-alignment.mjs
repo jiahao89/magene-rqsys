@@ -62,6 +62,7 @@ const DECLARED = {
   "adapters/postgres/pool.ts": "root 自建 pg Pool；app 复用妙搭注入的 Drizzle 连接",
   "adapters/postgres/repositories.ts": "驱动差异：pg 参数化查询 vs Drizzle 查询构建",
   "adapters/postgres/analysis-run-repository.ts": "驱动差异",
+  "adapters/postgres/requirement-assessment-repository.ts": "驱动差异",
   "adapters/postgres/sync-persistence.ts": "驱动差异",
   "adapters/postgres/health.ts": "驱动差异",
   "adapters/teambition/client.ts": "凭据/网关注入来源不同（本地 env vs 妙搭 env）",

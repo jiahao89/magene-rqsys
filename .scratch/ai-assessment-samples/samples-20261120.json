@@ -1,0 +1,216 @@
+{
+  "version": "2026-11-20",
+  "contract": "assessment-final-2026-11-20",
+  "note": "全部为虚构验收样例；不写 Base、不触发 PM 通知。输入字段按需求原文 + 三个补充输入组织，接口字段名以最终契约为准。",
+  "cases": [
+    {
+      "id": "A01",
+      "name": "信息完整：OTA 弱网断点续传与失败回滚",
+      "requirement": {
+        "title": "C606 码表 OTA 升级弱网断点续传与失败回滚",
+        "description": "售后反馈：骑行途中用手机热点给 C606 升级固件，进隧道断网后升级失败，码表停在升级界面无法开机；希望支持断点续传，失败后能回到旧版本并重试。",
+        "sourceChannel": "售后",
+        "productModel": "C606"
+      },
+      "inputs": {
+        "background": "2026 Q3 售后记录 18 起 OTA 失败，其中 11 起返厂；多数发生在山区/隧道，用户用手机热点。当前 OTA 是单分区整包下载，失败后只能返厂重刷。已知约束：不改硬件；bootloader 已有 A/B 双分区但未启用；flash 余量 128KB；OTA 服务端可配合；目标 Q2 前完成。",
+        "goal": "下一季度把 OTA 失败从 18 起降到 5 起以下；失败时自动回滚到上一版，用户可重试，不返厂。",
+        "scenario": "C606 户外骑行，手机热点信号断续；升级时电量在 20% 以上；用户不熟悉刷机。"
+      },
+      "expected": {
+        "verdict": "advance",
+        "confidence": [
+          "high"
+        ],
+        "mustMention": [
+          "18 起",
+          "5 起以下",
+          "11 起返厂",
+          "A/B 双分区",
+          "128KB",
+          "断点续传",
+          "回滚"
+        ],
+        "mustNot": [
+          "编造返修成本或用户规模",
+          "编造竞品 OTA 指标",
+          "把 4G 或整机改版写进本期范围",
+          "把 A/B 双分区说成当前已启用"
+        ],
+        "openQuestionsMin": 1,
+        "openQuestionsMax": 3,
+        "evidenceAnchors": [
+          "18 起 OTA 失败",
+          "11 起返厂",
+          "单分区整包下载",
+          "A/B 双分区未启用",
+          "flash 128KB",
+          "Q2 前完成"
+        ]
+      }
+    },
+    {
+      "id": "A02",
+      "name": "信息严重缺失：App 不好用，优化一下",
+      "requirement": {
+        "title": "App 体验优化",
+        "description": "用户说 App 不好用，让优化一下。",
+        "sourceChannel": "运营/用研",
+        "productModel": null
+      },
+      "inputs": {
+        "background": "领导转述，具体哪里不好用没说；没有用户原声、截图、埋点或客服记录。",
+        "goal": "",
+        "scenario": ""
+      },
+      "expected": {
+        "verdict": "investigate",
+        "confidence": [
+          "low"
+        ],
+        "mustMention": [
+          "信息不足",
+          "待确认",
+          "无法评估"
+        ],
+        "mustNot": [
+          "给出具体功能或页面优化方案",
+          "编造性能数字或用户比例",
+          "把领导转述当用户原话",
+          "在信息不足时判 advance"
+        ],
+        "openQuestionsMin": 4,
+        "openQuestionsMax": 8,
+        "evidenceAnchors": [
+          "领导转述",
+          "无用户原声/截图/埋点/客服记录",
+          "目标为空",
+          "场景为空"
+        ],
+        "scopeInPlaceholderOnly": true
+      }
+    },
+    {
+      "id": "A03",
+      "name": "技术不可行：C606 增加 4G 与在线音乐且不改硬件",
+      "requirement": {
+        "title": "C606 增加 4G 独立联网与在线音乐",
+        "description": "希望码表不依赖手机，自己插 SIM 卡上网，并能在线听音乐；不改硬件、不改外壳、不增加功耗。",
+        "sourceChannel": "销售",
+        "productModel": "C606"
+      },
+      "inputs": {
+        "background": "销售希望对标竞品。C606 现有硬件只有 BLE 5.0，没有蜂窝 modem、没有扬声器；整机 IPX7 密封；电池 600mAh；当前功耗预算已接近上限。",
+        "goal": "骑行时独立联网、在线听歌。",
+        "scenario": "长途骑行，手机可能没电。"
+      },
+      "expected": {
+        "verdict": "hold",
+        "confidence": [
+          "high",
+          "medium"
+        ],
+        "mustMention": [
+          "无蜂窝 modem",
+          "无扬声器",
+          "IPX7",
+          "600mAh",
+          "功耗预算",
+          "不改硬件"
+        ],
+        "mustNot": [
+          "声称仅靠固件即可支持 4G/在线音乐",
+          "假设存在未提供的 modem/扬声器/电池余量",
+          "编造续航/成本/认证周期",
+          "否定用户的长途联网需求本身"
+        ],
+        "openQuestionsMin": 1,
+        "openQuestionsMax": 4,
+        "evidenceAnchors": [
+          "BLE 5.0",
+          "无蜂窝 modem",
+          "无扬声器",
+          "IPX7",
+          "600mAh",
+          "功耗预算接近上限"
+        ]
+      }
+    },
+    {
+      "id": "A04",
+      "name": "价值存疑：C606 增加 FM 收音机",
+      "requirement": {
+        "title": "C606 增加 FM 收音机",
+        "description": "骑行时想听广播，希望码表内置 FM 收音机。",
+        "sourceChannel": "终端用户",
+        "productModel": "C606"
+      },
+      "inputs": {
+        "background": "过去 12 个月收到 3 次相关请求；现有用户以训练/导航为主；产品路线已明确 2026–2027 聚焦训练/导航，不做娱乐硬件；加 FM 芯片和扬声器约增加 6 美元 BOM，需要改外壳并重新做防水；手机已可听广播/音乐。",
+        "goal": "增加骑行娱乐功能，提升活跃。",
+        "scenario": "休闲骑、通勤。"
+      },
+      "expected": {
+        "verdict": "hold",
+        "confidence": [
+          "medium",
+          "low"
+        ],
+        "mustMention": [
+          "3 次",
+          "12 个月",
+          "6 美元",
+          "BOM",
+          "改外壳",
+          "防水",
+          "手机替代",
+          "训练/导航",
+          "路线"
+        ],
+        "mustNot": [
+          "把价值存疑判成技术不可行",
+          "编造市场规模/渗透率/收入增量",
+          "用未提供的市场数据证明大市场",
+          "因 3 次请求直接判 advance"
+        ],
+        "openQuestionsMin": 2,
+        "openQuestionsMax": 6,
+        "evidenceAnchors": [
+          "12 个月 3 次请求",
+          "训练/导航用户为主",
+          "路线聚焦训练/导航",
+          "+6 美元 BOM",
+          "改外壳/重新防水",
+          "手机可听广播/音乐"
+        ]
+      }
+    }
+  ],
+  "contractChecks": {
+    "inputLimits": {
+      "background": 2000,
+      "goal": 1000,
+      "scenario": 2000
+    },
+    "valueType": "string",
+    "assumptionPrefix": "假设：",
+    "scopeInMin": 1,
+    "scopeInMax": 8,
+    "scopeOutMin": 0,
+    "scopeOutMax": 8,
+    "assumptionsMax": 8,
+    "openQuestionsMax": 8,
+    "investigationPromptMin": 100,
+    "investigationPromptMax": 5000,
+    "verdictEnum": [
+      "advance",
+      "hold",
+      "investigate"
+    ],
+    "confidenceEnum": [
+      "high",
+      "medium",
+      "low"
+    ]
+  }
+}
