@@ -1,0 +1,12 @@
+{
+  "status": 200,
+  "body": {
+    "counts": {
+      "teambition": 332,
+      "web_manual": 1,
+      "base_form": 1,
+      "chat_paste": 0,
+      "all": 334
+    }
+  }
+}

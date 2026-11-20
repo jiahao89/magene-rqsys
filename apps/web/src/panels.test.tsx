@@ -537,9 +537,13 @@ describe("RequirementsPanel (ticket 17)", () => {
     // 已分析完成时不能提示“AI 分析未完成”；仍保留人工重跑入口。
     expect(screen.queryByText(/AI 分析未完成/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "重新分析" })).toBeInTheDocument();
-    // 手工来源字段不再使用 TB 徽标，改用手工徽标。
+    // 非 TB 来源不挂字段来源徽标：整页没有 TB，也没有字段徽标，只保留字段名。
     expect(screen.queryAllByText("TB")).toHaveLength(0);
-    expect(screen.getAllByText("手工").length).toBeGreaterThanOrEqual(8);
+    expect(document.querySelectorAll(".req-field-label .tb-badge")).toHaveLength(0);
+    expect(screen.getAllByText("标题").length).toBeGreaterThan(0);
+    // 非 TB 来源不再渲染执行人/状态/链接/更新时间这些 TB 专属空字段；没有提出人时整块不渲染。
+    expect(screen.queryByText("执行人")).not.toBeInTheDocument();
+    expect(screen.queryByText("更新时间")).not.toBeInTheDocument();
     // 重复判定按 (来源配置, TB 需求ID) 保存，手工需求没有这个身份、后端会 404：不渲染该区块。
     expect(screen.queryByRole("heading", { name: "重复处理" })).not.toBeInTheDocument();
   });
@@ -721,6 +725,45 @@ describe("RequirementsPanel (ticket 17)", () => {
     render(<RequirementsPanel onRefresh={() => undefined} />);
     await openFirstRow("聊天粘贴需求");
     expect(screen.getByText("来自聊天粘贴 · 售后")).toBeInTheDocument();
+    // 非 TB 来源不挂字段徽标；没有提出人时来源网格整块不渲染。
+    expect(screen.queryAllByText("TB")).toHaveLength(0);
+    expect(document.querySelectorAll(".req-field-label .tb-badge")).toHaveLength(0);
+    expect(screen.queryByText("执行人")).not.toBeInTheDocument();
+  });
+
+  it("labels base-form fields by source and hides Teambition-only empty fields", async () => {
+    const baseRow = {
+      ...row,
+      id: "req-base",
+      sourceRequirementId: null,
+      sourceType: "base_form",
+      sourceChannel: "售后",
+      title: "收集表需求",
+      pipeline: { pull: "collected", analysis: "analyzed", owner: "not_required", push: "pushed" },
+    };
+    mockPanel({
+      rows: [baseRow],
+      detailBody: detail({
+        ...baseRow,
+        source: { sourceType: "base_form", proposerName: "贾浩" },
+        analysis: { module: "码表", confidence: "中", priority: "P3" },
+      }),
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await openFirstRow("收集表需求");
+
+    // 非 TB 来源不挂字段来源徽标，整页没有 TB；标签只保留字段名。
+    expect(screen.queryAllByText("TB")).toHaveLength(0);
+    expect(document.querySelectorAll(".req-field-label .tb-badge")).toHaveLength(0);
+    expect(screen.getAllByText("标题").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("描述").length).toBeGreaterThan(0);
+    // 提出人有值 → 保留；TB 专属的五个字段（执行人/状态/链接/创建时间/更新时间）不渲染。
+    // 提出人有值 → 保留（原始 payload 快照里也有该名字，这里只断言至少出现一次）。
+    expect(screen.getAllByText("贾浩").length).toBeGreaterThan(0);
+    expect(screen.queryByText("执行人")).not.toBeInTheDocument();
+    expect(screen.queryByText("状态")).not.toBeInTheDocument();
+    expect(screen.queryByText("链接")).not.toBeInTheDocument();
+    expect(screen.queryByText("更新时间")).not.toBeInTheDocument();
   });
 
   it("explains where the requirement came from on the detail page", async () => {

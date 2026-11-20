@@ -726,9 +726,15 @@ function StageBadge({ stage, state }: { stage: PipelineStage; state: string }) {
   >{pipelineLabel(stage, state)}</Chip>;
 }
 
-function TbFieldLabel({ children, sourceType = "teambition" }: { children: ReactNode; sourceType?: "teambition" | "web_manual" }) {
-  const manual = sourceType === "web_manual";
-  return <span className="req-field-label"><span className={`tb-badge${manual ? " is-manual" : ""}`} title={manual ? "来自 Web 手工录入的原始字段" : "来自 Teambition 的原始字段"}>{manual ? "手工" : "TB"}</span>{children}</span>;
+type RequirementFieldSource = "teambition" | "web_manual" | "base_form" | "chat_paste";
+
+/**
+ * 字段来源标签：只有 Teambition 挂「TB」徽标。
+ * 非 TB 来源不再挂来源徽标——区块右上角与底部「这条需求怎么来的」已经说明来源，
+ * 再显示「多维表格 标题」既重复又占宽。
+ */
+function TbFieldLabel({ children, kind = "teambition" }: { children: ReactNode; kind?: RequirementFieldSource }) {
+  return <span className="req-field-label">{kind === "teambition" ? <span className="tb-badge" title="来自 Teambition 的原始字段">TB</span> : null}{children}</span>;
 }
 
 function OwnerBadge({ owner }: { owner: ReturnType<typeof requirementOwnerView> }) {
@@ -1621,6 +1627,9 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
   // 5c-1：详情来源说明与列表徽标一致；TB 是默认来源，没有徽标但有同样的来源行。
   const sourceInfo = requirementSourceInfo({ sourceType: detail.sourceType, sourceChannel: detail.sourceChannel, source: detail.source });
   const sourceLabel = sourceInfo?.name ?? "Teambition";
+  // 非 Teambition 来源没有 TB 执行人/状态/链接/更新时间：详情只保留有值的提出人，避免一整排「—」。
+  const sourceKind = sourceInfo?.kind ?? "teambition";
+  const isTbSource = sourceKind === "teambition";
   const owner = requirementOwnerView(detail);
   // P1 重复处理：压制态需求不进入 AI 分析 / Base 推送 / 通知，相关操作入口必须一并收敛。
   const processingState = requirementProcessingState(detail);
@@ -1808,27 +1817,29 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
     <section className="req-section" aria-labelledby="req-l1-heading">
       <div className="req-section-head"><h3 id="req-l1-heading">需求信息</h3><span className="req-source-note">{sourceInfo?.note ?? "来自 Teambition"}</span></div>
       <div className="req-field">
-        <TbFieldLabel sourceType={detail.sourceType}>标题</TbFieldLabel>
+        <TbFieldLabel kind={sourceKind}>标题</TbFieldLabel>
         <p className="req-l1-title">{detail.title}</p>
       </div>
       <div className="req-field req-description-field">
-        <TbFieldLabel sourceType={detail.sourceType}>描述</TbFieldLabel>
+        <TbFieldLabel kind={sourceKind}>描述</TbFieldLabel>
         {facts.description ? <>
           <p className={`req-description${descriptionExpanded ? " is-expanded" : ""}`}>{facts.description}</p>
           {facts.description.length > 140 && <Button className="link-button" onPress={() => setDescriptionExpanded((expanded) => !expanded)}>{descriptionExpanded ? "收起描述" : "展开全部"}</Button>}
         </> : <span className="req-empty-value" title="Teambition 未提供该字段">—</span>}
       </div>
-      <div className="req-l1-meta">
+      {(isTbSource || facts.proposerName) ? <div className="req-l1-meta">
         {/* 负责人与四阶段状态已在顶部摘要栏常驻，这里不再重复，避免稀释重点。 */}
         <dl className="req-source-grid">
-          <div><dt><TbFieldLabel sourceType={detail.sourceType}>提出人</TbFieldLabel></dt><dd><SourceValue value={facts.proposerName} /></dd></div>
-          <div><dt><TbFieldLabel sourceType={detail.sourceType}>执行人</TbFieldLabel></dt><dd><SourceValue value={facts.executorName} /></dd></div>
-          <div><dt><TbFieldLabel sourceType={detail.sourceType}>状态</TbFieldLabel></dt><dd><SourceValue value={facts.tbStatus} emptyHint="Teambition 未提供该字段；工作台不推断状态名称" /></dd></div>
-          <div><dt><TbFieldLabel sourceType={detail.sourceType}>链接</TbFieldLabel></dt><dd><SourceValue value={facts.tbUrl} href emptyHint="Teambition 未提供该字段" /></dd></div>
-          <div><dt><TbFieldLabel sourceType={detail.sourceType}>创建时间</TbFieldLabel></dt><dd><SourceValue value={createdAt ?? facts.createdAt} emptyHint="Teambition 未提供该字段" /></dd></div>
-          <div><dt><TbFieldLabel sourceType={detail.sourceType}>更新时间</TbFieldLabel></dt><dd><SourceValue value={updatedAt ?? facts.updatedAt} emptyHint="Teambition 未提供该字段" /></dd></div>
+          <div><dt><TbFieldLabel kind={sourceKind}>提出人</TbFieldLabel></dt><dd><SourceValue value={facts.proposerName} /></dd></div>
+          {isTbSource ? <>
+            <div><dt><TbFieldLabel kind={sourceKind}>执行人</TbFieldLabel></dt><dd><SourceValue value={facts.executorName} /></dd></div>
+            <div><dt><TbFieldLabel kind={sourceKind}>状态</TbFieldLabel></dt><dd><SourceValue value={facts.tbStatus} emptyHint="Teambition 未提供该字段；工作台不推断状态名称" /></dd></div>
+            <div><dt><TbFieldLabel kind={sourceKind}>链接</TbFieldLabel></dt><dd><SourceValue value={facts.tbUrl} href emptyHint="Teambition 未提供该字段" /></dd></div>
+            <div><dt><TbFieldLabel kind={sourceKind}>创建时间</TbFieldLabel></dt><dd><SourceValue value={createdAt ?? facts.createdAt} emptyHint="Teambition 未提供该字段" /></dd></div>
+            <div><dt><TbFieldLabel kind={sourceKind}>更新时间</TbFieldLabel></dt><dd><SourceValue value={updatedAt ?? facts.updatedAt} emptyHint="Teambition 未提供该字段" /></dd></div>
+          </> : null}
         </dl>
-      </div>
+      </div> : null}
       {(detail.intakeModule || detail.productModel || detail.requirementType || detail.constraintNotes || detail.supplementUrl) ? (
         <dl className="req-source-grid" aria-label="录入上下文">
           {detail.intakeModule ? <div><dt>模块（录入）</dt><dd>{detail.intakeModule}</dd></div> : null}
