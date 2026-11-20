@@ -37,7 +37,8 @@ export class PostgresRequirementAssessmentRepository implements RequirementAsses
     const c = await this.pool.connect();
     try {
       await c.query("BEGIN");
-      await c.query("SELECT pg_advisory_xact_lock(hashtextextended('rqsys:requirement-assessment:'||$1,0))", [p.requirementId]);
+      // pg_advisory_xact_lock 返回 void；妙搭的池包装层会对结果做 JSON 解析，必须转成 text 列。
+      await c.query("SELECT pg_advisory_xact_lock(hashtextextended('rqsys:requirement-assessment:'||$1,0))::text AS locked", [p.requirementId]);
       const staleBefore = new Date(Date.parse(p.at) - p.staleAfterMs).toISOString();
       await c.query(
         "UPDATE requirement_assessments SET status='failed', error_code='timeout', completed_at=$3 WHERE requirement_id=$1 AND status='running' AND created_at <= $2",
