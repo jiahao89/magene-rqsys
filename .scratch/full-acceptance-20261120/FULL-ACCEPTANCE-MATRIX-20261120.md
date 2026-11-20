@@ -58,3 +58,28 @@
 | 409 单飞 | 已验 | **PASS**：并发两次 POST → 201 v2 + 409，历史仅 v2 | 接口实测 |
 | chat_paste 详情补验 | 无数据 | **PASS**：RQ-000336 来源/字段/编辑入口/徽标/创建时间均正确，来源方式=聊天粘贴、通知事件ID 为空；数据已删 | [rv-02](rv-02-chatpaste-detail.png)、[rv-04](rv-04-pool-chatpaste.png) |
 | 清理后基线 | — | **PASS**：334/333/0/1/0、PM 334、收集表 0、评估全表 0、旧 UUID 404 | 本节 + 后端复核 |
+
+## 6. 遗留补跑（2026-11-20 下午，发版 `7710120419668593957` / `6f2942a`）
+
+| 项 | 结果 | 证据 |
+|---|---|---|
+| A12 四条样例 | **PASS（RUBRIC v1）**：A01 `investigate/medium` 两项风险点名 → PASS；A02 94、A03 96、A04 93（`confidence=high` 记 P3）；契约四条全过，假设全角归一化生效 | [A12-RESULT](A12-RESULT-20261120.md)、[原始 JSON](</Volumes/Files/A_Projects/RQ-Sys/.scratch/ai-assessment-samples/a12-raw-20261120.json>) |
+| 块 3 AI 草稿 | PASS：3 次调用均 200、`fallback=false`、`aiFilledCount` 6/3/3、不写库；审计只记 `requestId/promptVersion/textLength` | A12-RESULT §3.1 |
+| 块 3 重复提示（草稿 `similar`） | **部分验证**：3 次真实草稿 `similar` 均为空，线上未触发渲染；组件用例覆盖非空分支 | A12-RESULT §3.2 |
+| 评估切版本回填（A16） | **PASS**：默认载入最新版；切 v1 回填 v1 三输入 + 提示；切回 v2 一致；切换不发 POST；输入可编辑 | [rv-06-backfill-v1.png](rv-06-backfill-v1.png) |
+| base_form 详情编辑（S15） | **PASS**：入口存在 + 固定提示「修改只保存在需求平台，不会写回多维表格收集表。」；元数据编辑保存成功，`sourceVersion` 仍 1、`formRecordId` 保留、`sourceType` 仍 base_form，只重推一次（`replay=true`）、未重跑分析 | [rv-07-baseform-edit.png](rv-07-baseform-edit.png) |
+| base_form 重复处理区块 | **P3 OBS**：base_form 详情渲染「确认重复/确认非重复/忽略」，但对非 TB 来源 `PUT /duplicate-decision` 返回 **404**（`requirement_resolutions` 需要 TB 身份）；建议非 TB 来源隐藏该区块 | 接口探针 404 |
+| 清理 | RQ-000336–340 + 5 行评估 + 派生行 + PM 5 行已删，基线回 334/333/0/1/0；base_form 那条待删 | 后端脚本 + 测试复核 |
+
+## 7. 最终基线核对（全部清理后，2026-11-20 13:5x）
+
+| 项 | 期望 | 实测 | 结论 |
+|---|---|---|---|
+| App `source-counts` | 334 / 333 / 手工 1 / 多维表格 0 / 聊天粘贴 0 | **334 / 333 / 1 / 0 / 0** | PASS |
+| 已删需求 UUID | 404 | `d02816cb…`、`dddd77dd…` 等全 404 | PASS |
+| base_form 列表 | 0 | 0 | PASS |
+| 评估表 | 0 行 | 0（后端 SQL；RQ-000308 接口 `items: []`） | PASS |
+| PM 表 | 334 | 334（平台 ID 集合 md5 `34dcc5…`） | PASS |
+| 收集表 | 0 行 | 0（创建/收录/删除历史已留档） | PASS |
+
+**收尾结论**：本轮新增功能（评估按需生成、版本回填、base_form 编辑、假设归一化）全部线上验收通过；遗留 A12 四条样例按 RUBRIC v1 全 PASS；验收数据全部删除，应用库、PM 表、收集表均回到验收前基线，无孤儿行、无 PM 通知（首推静默）。
