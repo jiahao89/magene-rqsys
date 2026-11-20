@@ -5,6 +5,7 @@ import type { AuditEventRecord, RequirementRecord, SourceConfigRecord, SyncBatch
 import type { ApiDependencies, ApiRepositories } from "./app.js";
 import { handleApiRequest, MAX_JSON_BODY_BYTES } from "./app.js";
 import { AiProviderError } from "../analysis/provider.js";
+import { AssessmentContractError } from "../assessment/service.js";
 import { CHAT_PROMPT_VERSION } from "../intake/chat-extract.js";
 // AI 状态区读 process.env.AI_API_KEY；测试里显式设置并还原，避免依赖跑测试机器的环境。
 async function withAiKey<T>(value: string | undefined, run: () => Promise<T>): Promise<T> {
@@ -549,6 +550,18 @@ test("requirement assessments list history, create on demand and map provider fa
   }), inProgress);
   assert.equal(inProgressResponse.status, 409);
   assert.equal((await inProgressResponse.json() as { error: { code: string } }).error.code, "ASSESSMENT_IN_PROGRESS");
+  // 契约失败只落字段路径（字段名），不落模型内容。
+  const logged: Array<{ event: string; details: Record<string, unknown> }> = [];
+  const contract = {
+    ...d,
+    diagnostics: { error: (event: string, details: Record<string, unknown>) => { logged.push({ event, details }); } },
+    assessments: { run: async () => { throw new AssessmentContractError(["background", "feasibility.cost"]); } },
+  };
+  const contractResponse = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/assessments`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+  }), contract);
+  assert.equal(contractResponse.status, 503);
+  assert.deepEqual(logged, [{ event: "assessment_failed", details: { errorClass: "analysis_failure", fields: "background,feasibility.cost" } }]);
   // PRD 输入上限：背景 2,000 / 目标 1,000 / 场景 2,000。
   const tooLong = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/assessments`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ goal: "x".repeat(1001) }),

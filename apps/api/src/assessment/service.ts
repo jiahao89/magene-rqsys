@@ -24,8 +24,22 @@ export class AssessmentInProgressError extends Error {
   }
 }
 
+/** 输出契约不匹配：只携带字段路径（字段名，不含模型内容），路由据此落脱敏日志。 */
+export class AssessmentContractError extends AiProviderError {
+  constructor(public readonly fields: string[]) {
+    super("analysis_failure", `AI provider returned an invalid assessment contract (${fields.join(", ") || "root"}).`);
+    this.name = "AssessmentContractError";
+  }
+}
+
+/** 只取字段路径并去重排序；数组下标保留为 scope.in，避免把模型正文带进日志。 */
+function contractFieldPaths(error: z.ZodError): string[] {
+  return [...new Set(error.issues.map((issue) => issue.path.map(String).join(".")).filter(Boolean))].sort();
+}
+
 // 与 skill §6 / PRD §4.10.4 逐键一致（dependency/risk 为单数，前端按同一契约渲染）。
-const AssessmentOutputSchema = z.strictObject({
+// z.object 默认忽略未知键：模型偶尔多写一个字段不再整条失败；已知字段仍严格校验。
+const AssessmentOutputSchema = z.object({
   background: z.string().min(1),
   goal: z.string().min(1),
   scope: z.object({ in: z.array(z.string().min(1)).min(1).max(8), out: z.array(z.string().min(1)).max(8) }),
@@ -78,11 +92,17 @@ export function createAssessmentRunner(options: {
     async run({ requirement, inputs, actorId, analysis }) {
       if (!config.apiKey) throw new AiProviderError("auth_error", "AI provider credential is not configured.");
       const startedAt = now().toISOString();
+      // PRD §4.10.3：inputs 固定落三个键，空字符串保留（全空也允许生成），便于版本追溯与 hash 对比。
+      const storedInputs = {
+        background: inputs.background ?? "",
+        goal: inputs.goal ?? "",
+        scenario: inputs.scenario ?? "",
+      };
       const claim = await options.assessments.create({
         requirementId: requirement.id,
         promptVersion: ASSESSMENT_PROMPT_VERSION,
         model: config.model,
-        inputs: { ...inputs },
+        inputs: storedInputs,
         createdBy: actorId,
         at: startedAt,
         staleAfterMs: ASSESSMENT_RUNNING_STALE_MS,
@@ -103,7 +123,7 @@ export function createAssessmentRunner(options: {
             constraintNotes: requirement.constraintNotes,
             intakeModule: requirement.intakeModule,
           },
-          supplements: inputs,
+          supplements: storedInputs,
           analysis,
         });
         const maskedUser = maskPii(messages.user, []);
@@ -141,7 +161,7 @@ export function createAssessmentRunner(options: {
           throw new AiProviderError("analysis_failure", "AI provider returned non-JSON content.");
         }
         const parsed = AssessmentOutputSchema.safeParse(raw);
-        if (!parsed.success) throw new AiProviderError("analysis_failure", "AI provider returned an invalid assessment contract.");
+        if (!parsed.success) throw new AssessmentContractError(contractFieldPaths(parsed.error));
         const completed = await options.assessments.complete(record.id, parsed.data as Record<string, unknown>, now().toISOString());
         // 版本在本次调用期间被判超时（已被标 failed）：不把迟到结果写回成功。
         if (!completed) throw new AiProviderError("timeout", "Assessment version is no longer running.");

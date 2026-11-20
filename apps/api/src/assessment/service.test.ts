@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { AiProviderError } from "../analysis/provider.js";
 import { ASSESSMENT_PROMPT_VERSION } from "./prompt.js";
-import { createAssessmentRunner } from "./service.js";
+import { AssessmentContractError, createAssessmentRunner } from "./service.js";
 import type { RequirementAssessmentRecord, RequirementRecord } from "../domain/persistence.js";
 
 const requirement = {
@@ -95,7 +95,7 @@ test("assessment runner stores a running version, masks PII, validates the contr
     requirementId: requirement.id,
     promptVersion: ASSESSMENT_PROMPT_VERSION,
     model: "m",
-    inputs: { background: "客户说冬天掉电快" },
+    inputs: { background: "客户说冬天掉电快", goal: "", scenario: "" },
     createdBy: "actor-1",
     at: "2026-11-20T00:00:10.000Z",
     staleAfterMs: 120_000,
@@ -164,4 +164,33 @@ test("assessment runner passes the existing analysis into the model input", asyn
   assert.match(user, /零下十度骑三小时关机/);
   assert.match(user, /低温剩余电量曲线/);
   assert.match(user, /性能优化/);
+});
+
+test("assessment runner ignores unknown output keys but still validates known fields", async () => {
+  const h = harness(() => envelope({ ...output, extra: "ignored", feasibility: { ...output.feasibility, notes: "ignored" } }));
+  const result = await h.runner.run({ requirement, inputs: {}, actorId: "actor-1" });
+  assert.equal(result.status, "succeeded");
+  const completed = h.calls.completed[0] as Record<string, unknown>;
+  assert.equal("extra" in completed, false);
+  assert.equal("notes" in (completed.feasibility as Record<string, unknown>), false);
+});
+
+test("assessment contract failures report only field paths", async () => {
+  const h = harness(() => envelope({ ...output, scope: { in: [], out: [] }, feasibility: { ...output.feasibility, cost: "" } }));
+  await assert.rejects(
+    () => h.runner.run({ requirement, inputs: {}, actorId: "actor-1" }),
+    (error: unknown) => error instanceof AssessmentContractError
+      && error.fields.includes("scope.in")
+      && error.fields.includes("feasibility.cost"),
+  );
+  assert.deepEqual(h.calls.failed, ["analysis_failure"]);
+});
+
+test("assessment stores all three input keys, keeping empty strings", async () => {
+  const h = harness(() => envelope(output));
+  await h.runner.run({ requirement, inputs: {}, actorId: "actor-1" });
+  assert.deepEqual((h.calls.created[0] as { inputs: unknown }).inputs, { background: "", goal: "", scenario: "" });
+  const partial = harness(() => envelope(output));
+  await partial.runner.run({ requirement, inputs: { background: "冬季投诉", scenario: "通勤" }, actorId: "actor-1" });
+  assert.deepEqual((partial.calls.created[0] as { inputs: unknown }).inputs, { background: "冬季投诉", goal: "", scenario: "通勤" });
 });

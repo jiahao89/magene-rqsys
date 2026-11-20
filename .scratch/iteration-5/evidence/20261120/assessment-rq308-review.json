@@ -1,0 +1,80 @@
+{
+  "reviewedAt": "2026-11-20T11:00:00+08:00",
+  "requirementId": "a2573c66-5887-45f7-a793-7805d54f1e88",
+  "platformRequirementId": "RQ-000308",
+  "versions": [
+    {
+      "version": 3,
+      "status": "succeeded",
+      "errorCode": null,
+      "verdict": "investigate",
+      "confidence": "medium"
+    },
+    {
+      "version": 2,
+      "status": "failed",
+      "errorCode": "analysis_failure",
+      "verdict": null,
+      "confidence": null
+    },
+    {
+      "version": 1,
+      "status": "succeeded",
+      "errorCode": null,
+      "verdict": "investigate",
+      "confidence": "low"
+    }
+  ],
+  "input_sha256": {
+    "v1": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "v2": "24bd7e23e3d71f3d1a4bdc6ade45ebbe2458ca7c4b7f1ed31ff5300932da4a72",
+    "v3": "24bd7e23e3d71f3d1a4bdc6ade45ebbe2458ca7c4b7f1ed31ff5300932da4a72"
+  },
+  "v2_inputs_equal_v3": true,
+  "v1_inputs": {},
+  "v3_inputs_keys": [
+    "background",
+    "goal"
+  ],
+  "contract_checks": {
+    "v1": {
+      "status": "succeeded",
+      "keys_ok": true,
+      "value_is_string": true,
+      "verdict_ok": true,
+      "confidence_ok": true,
+      "assumptions_prefix_ok": true,
+      "scope_in": 3,
+      "scope_out": 0,
+      "assumptions": 3,
+      "openQuestions": 8,
+      "prompt_length": 1234,
+      "null_fields": [],
+      "pii_hit": false,
+      "base_id_hit": false
+    },
+    "v3": {
+      "status": "succeeded",
+      "keys_ok": true,
+      "value_is_string": true,
+      "verdict_ok": true,
+      "confidence_ok": true,
+      "assumptions_prefix_ok": true,
+      "scope_in": 4,
+      "scope_out": 0,
+      "assumptions": 5,
+      "openQuestions": 8,
+      "prompt_length": 1298,
+      "null_fields": [],
+      "pii_hit": false,
+      "base_id_hit": false
+    }
+  },
+  "observations": [
+    "v1 空输入判 investigate/low，明确写依据不足，无编造。",
+    "v3 补充背景/目标后判 investigate/medium，假设均以「假设：」开头，提示词含调查目标/样本/问题/证据/时间盒/约束。",
+    "v2/v3 inputs 完全相同，v2 仍以 analysis_failure 失败，属模型偶发契约不符，不是输入差异。",
+    "inputs 只落非空键：v1 为 {}，v3 缺 scenario；PRD §4.10.3 要求三个键、空字符串保留，存在契约偏差（非内容质量问题）。",
+    "v3 详情页展示时，补充输入框是空的（0/2000），历史 inputs 未回填到表单；不影响本次清理，前端可另评。"
+  ]
+}

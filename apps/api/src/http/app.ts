@@ -23,7 +23,7 @@ import { isDatabaseReady } from "../adapters/postgres/health.js";
 import { EXPECTED_LATEST_MIGRATION } from "../db/expected-migration.js";
 import { jsonError } from "./errors.js";
 import { CHAT_PROMPT_VERSION, ChatDraftRequestSchema, createDraftRateLimiter, type ChatIntakeExtractor, type DraftRateLimit } from "../intake/chat-extract.js";
-import { ASSESSMENT_RUNNING_STALE_MS, type AssessmentRunner } from "../assessment/service.js";
+import { ASSESSMENT_RUNNING_STALE_MS, AssessmentContractError, type AssessmentRunner } from "../assessment/service.js";
 import { readAiPause } from "../ops/ai-pause.js";
 import { decodeRequirementCursor } from "../application/requirement-cursor.js";
 import { decodeBatchCursor } from "../application/batch-cursor.js";
@@ -65,9 +65,11 @@ export interface ApiDependencies {
   assessments?: AssessmentRunner;
   /** 目标环境的脱敏诊断通道；未注入时诊断落 stderr。只写错误类、SQLSTATE、状态码、字符数与请求号，不写 SQL、参数或聊天正文。 */
   diagnostics?: {
-    error(event: "intake_draft_failed" | "overview_ai_stats_failed", details: {
+    error(event: "intake_draft_failed" | "overview_ai_stats_failed" | "assessment_failed", details: {
       errorClass?: string; textLength?: number; httpStatus?: number; requestId?: string;
       phase?: string; stat?: "analysis" | "intake"; errorType?: string; databaseCode?: string; causeType?: string;
+      /** 评估输出契约不匹配时的字段路径（只含字段名，不含模型内容）。 */
+      fields?: string;
     }): void;
   };
 }
@@ -93,6 +95,14 @@ function reportIntakeFailure(dependencies: ApiDependencies, details: { errorClas
     return;
   }
   process.stderr.write(`intake draft failed ${JSON.stringify(details)}\n`);
+}
+/** 评估输出契约失败：只落字段路径（字段名），不落模型返回内容。 */
+function reportAssessmentFailure(dependencies: ApiDependencies, details: { errorClass: string; fields: string }): void {
+  if (dependencies.diagnostics) {
+    try { dependencies.diagnostics.error("assessment_failed", details); } catch { /* 诊断失败不影响响应 */ }
+    return;
+  }
+  process.stderr.write(`assessment failed ${JSON.stringify(details)}\n`);
 }
 /** 统计失败诊断只取错误类型与 SQLSTATE（沿 cause 链）；SQL 文本、参数和正文一律不落日志——它们可能含需求正文或 ID。 */
 function safeErrorType(error: unknown): string {
@@ -1181,6 +1191,7 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     } catch (cause) {
       // 与 intake 口径一致：单飞 409；限流 429 + Retry-After；密钥/请求配置事故 500；其余按依赖暂不可用。
       const errorClass = String((cause as { code?: unknown })?.code ?? "unknown");
+      if (cause instanceof AssessmentContractError) reportAssessmentFailure(dependencies, { errorClass, fields: cause.fields.join(",") || "root" });
       if (errorClass === "assessment_in_progress") return jsonError("ASSESSMENT_IN_PROGRESS");
       if (errorClass === "rate_limited") return rateLimited(PROVIDER_RATE_LIMIT_RETRY_AFTER_SECONDS, "AI 评估请求太频繁，请稍后再试。");
       if (errorClass === "auth_error" || errorClass === "request_error") return jsonError("INTERNAL", "AI 评估服务异常，请稍后重试。");
