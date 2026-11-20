@@ -289,15 +289,23 @@ describe("SourcesPanel (ticket 16)", () => {
     });
     render(<SourcesPanel sources={[source]} loadState="ready" onRefresh={() => undefined} />);
 
+    expect(screen.getByRole("heading", { name: "多维表格需求收集表" })).toBeInTheDocument();
+    expect(screen.getByText("只读")).toBeInTheDocument();
     expect(await screen.findByText(shareUrl)).toBeInTheDocument();
+    expect(screen.getByText("需使用公司飞书登录（仅本租户可访问）。")).toBeInTheDocument();
     expect(screen.getByText("同步规则")).toBeInTheDocument();
-    expect(screen.getByText(/平台每 30 分钟触发一次同步/)).toBeInTheDocument();
+    expect(screen.getByText(/平台自动化每 30 分钟读取一次/)).toBeInTheDocument();
     expect(screen.getByText("最近一次同步")).toBeInTheDocument();
-    expect(screen.getByText("扫描行数")).toBeInTheDocument();
-    expect(screen.getByText("新建需求")).toBeInTheDocument();
-    // 只读：不暴露 Base 表 ID 或 record ID。
-    expect(document.body.textContent).not.toMatch(/tbl[A-Za-z0-9]/);
-    expect(document.body.textContent).not.toMatch(/rec[A-Za-z0-9]{6,}/);
+    expect(screen.getByText("最后运行")).toBeInTheDocument();
+    expect(screen.getByText("扫描")).toBeInTheDocument();
+    expect(screen.getByText("新建")).toBeInTheDocument();
+    // PRD §4.11.4：不展示 pages / skipped / recorded 等内部计数。
+    expect(screen.queryByText("扫描行数")).not.toBeInTheDocument();
+    expect(screen.queryByText("已收录")).not.toBeInTheDocument();
+    // 只读：不暴露 Base 表 ID、field ID 或 record ID。
+    expect(document.body.textContent).not.toMatch(/tbl[A-Za-z0-9]{8,}/);
+    expect(document.body.textContent).not.toMatch(/rec[A-Za-z0-9]{8,}/);
+    expect(document.body.textContent).not.toMatch(/fld[A-Za-z0-9]{8,}/);
 
     fireEvent.click(screen.getByRole("button", { name: "复制链接" }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(shareUrl));
@@ -312,11 +320,62 @@ describe("SourcesPanel (ticket 16)", () => {
     });
     render(<SourcesPanel sources={[source]} loadState="ready" onRefresh={() => undefined} />);
 
-    // 地址未配置时整行隐藏；统计拿不到只显示暂无，不报错、不影响来源配置。
-    expect(await screen.findByText("暂无同步记录或统计暂不可用。")).toBeInTheDocument();
+    // 地址未配置时整行隐藏；统计拿不到只显示降级文案，不报错、不影响来源配置。
+    expect(await screen.findByText("同步统计暂不可用")).toBeInTheDocument();
     expect(screen.queryByText("来源地址")).not.toBeInTheDocument();
-    expect(screen.queryByText("扫描行数")).not.toBeInTheDocument();
+    expect(screen.queryByText("扫描")).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("shows '尚未运行' with zero counts for a configured but never-run collection table", async () => {
+    const shareUrl = "https://aimagene.feishu.cn/share/base/shrcn6eOMLqHxXb302ggnGAyvvZ";
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/ops/metrics") return jsonOk({ metrics: { baseForm: {
+        shareUrl, lastRunAt: null, pages: 0, scanned: 0, skipped: 0, created: 0, recorded: 0, rejected: 0, writeBackFailed: 0, readFailed: false, lastError: null,
+      } } });
+      return jsonOk({ items: [] });
+    });
+    render(<SourcesPanel sources={[source]} loadState="ready" onRefresh={() => undefined} />);
+
+    expect(await screen.findByText("尚未运行")).toBeInTheDocument();
+    expect(screen.getByText("0 行")).toBeInTheDocument();
+    expect(screen.queryByText("同步统计暂不可用")).not.toBeInTheDocument();
+  });
+
+  it("falls back to the unavailable copy when the sync stats fields are missing", async () => {
+    const shareUrl = "https://aimagene.feishu.cn/share/base/shrcn6eOMLqHxXb302ggnGAyvvZ";
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/ops/metrics") return jsonOk({ metrics: { baseForm: { shareUrl, lastRunAt: null } } });
+      return jsonOk({ items: [] });
+    });
+    render(<SourcesPanel sources={[source]} loadState="ready" onRefresh={() => undefined} />);
+
+    expect(await screen.findByText(shareUrl)).toBeInTheDocument();
+    expect(await screen.findByText("同步统计暂不可用")).toBeInTheDocument();
+    expect(screen.queryByText("尚未运行")).not.toBeInTheDocument();
+  });
+
+  it("masks record/table IDs and URLs in the last sync error", async () => {
+    const shareUrl = "https://aimagene.feishu.cn/share/base/shrcn6eOMLqHxXb302ggnGAyvvZ";
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/ops/metrics") return jsonOk({ metrics: { baseForm: {
+        shareUrl, lastRunAt: "2026-11-20T09:16:32.000Z", pages: 1, scanned: 1, skipped: 0, created: 0, recorded: 0, rejected: 0, writeBackFailed: 1, readFailed: false,
+        lastError: "写回失败：recABC123456、tblXYZ789012 https://example.com/x?token=abc",
+      } } });
+      return jsonOk({ items: [] });
+    });
+    render(<SourcesPanel sources={[source]} loadState="ready" onRefresh={() => undefined} />);
+
+    const errorRow = (await screen.findByText("最后错误")).closest("div");
+    expect(errorRow).toHaveTextContent("rec…");
+    expect(errorRow).toHaveTextContent("tbl…");
+    expect(errorRow).toHaveTextContent("链接已隐藏");
+    expect(errorRow).not.toHaveTextContent("recABC123456");
+    expect(errorRow).not.toHaveTextContent("tblXYZ789012");
+    expect(errorRow).not.toHaveTextContent("https://example.com");
   });
 });
 

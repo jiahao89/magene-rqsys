@@ -238,17 +238,15 @@ export function SourcesPanel({ sources, loadState, onRefresh }: { sources: Sourc
   return <>{panel}<BaseFormReadonlyPanel /></>;
 }
 
-/**
- * 数据源页的多维表格只读区块：来源地址（可复制）、固定同步规则、最近一次同步统计。
- * 统计未返回/接口失败时只隐藏数字，不报错；不展示 Base 表 ID 或记录 ID。
- */
+/** 数据源页的多维表格收集表只读卡片：来源地址、同步规则、最近一次同步（PRD §4.11）。 */
 function BaseFormReadonlyPanel() {
   const [baseForm, setBaseForm] = useState<OpsMetrics["baseForm"]>(null);
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState<string | null>(null);
+  const shareUrlRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
     let cancelled = false;
-    // 运营指标失败只影响本区块：地址/规则照常展示，统计显示为暂无。
+    // 进入页面只读一次，不轮询；失败只降级本卡片。
     void getOpsMetrics().then((metrics) => { if (!cancelled) setBaseForm(metrics.baseForm ?? null); }).catch(() => { if (!cancelled) setBaseForm(null); });
     return () => { cancelled = true; };
   }, []);
@@ -259,47 +257,77 @@ function BaseFormReadonlyPanel() {
       await navigator.clipboard.writeText(shareUrl);
       setCopied(true); setCopyError(null);
       window.setTimeout(() => setCopied(false), 2000);
-    } catch { setCopyError("复制失败，请手动选中链接复制。"); }
+    } catch {
+      // 剪贴板不可用：选中只读文本，供手动复制（PRD §4.11.2）。
+      const node = shareUrlRef.current;
+      if (node) {
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+      }
+      setCopyError("复制失败，已选中链接，请手动复制。");
+    }
   };
   const stats = baseForm;
+  // 0 是有效值不隐藏；关键字段缺失时才整体降级（PRD DS3）。
+  const statsAvailable = Boolean(stats)
+    && typeof stats?.scanned === "number"
+    && typeof stats?.created === "number"
+    && typeof stats?.rejected === "number"
+    && typeof stats?.writeBackFailed === "number"
+    && typeof stats?.readFailed === "boolean";
+  const lastError = sanitizeBaseFormError(stats?.lastError ?? null);
   return <section className="panel requirements-panel" aria-labelledby="baseform-source-heading">
-    <div className="panel-heading"><div><h2 id="baseform-source-heading">多维表格来源</h2><p>收集表分享页与同步状态，只读；不展示 Base 表 ID 或记录 ID。</p></div></div>
+    <div className="panel-heading">
+      <div><h2 id="baseform-source-heading">多维表格需求收集表</h2><p>销售、售后等通过飞书收集表提交需求；系统自动同步到需求池，本页只读。</p></div>
+      <span className="status-chip status-muted"><span />只读</span>
+    </div>
     <div className="baseform-readonly-grid">
       {shareUrl ? <div className="baseform-block">
         <h3>来源地址</h3>
-        <code className="baseform-share-url">{shareUrl}</code>
+        <code className="baseform-share-url" ref={shareUrlRef}>{shareUrl}</code>
         <div className="baseform-share-actions">
           <ArcoButton size="small" htmlType="button" onClick={() => void copyShareUrl()}>{copied ? "已复制" : "复制链接"}</ArcoButton>
-          <span className="subtle-text">需在本租户内登录飞书后访问。</span>
+          <span className="subtle-text">需使用公司飞书登录（仅本租户可访问）。</span>
         </div>
         {copyError ? <span className="status-hint" role="alert">{copyError}</span> : null}
       </div> : null}
       <div className="baseform-block">
         <h3>同步规则</h3>
-        <ul className="baseform-rules">
-          <li>平台每 30 分钟触发一次同步（时区 Asia/Shanghai）；实际投递时间可能有偏移，偶尔会漏掉一轮。</li>
-          <li>扫描到新行后依次执行：收录需求 → 回写「已收录 + 系统需求 ID」→ AI 分析 → 推送 PM「数据表」。</li>
-          <li>收集表只作一次性收录凭证：已回写系统需求 ID 的行不会重复创建；后续修改请在需求详情里做。</li>
-        </ul>
+        <p className="baseform-rule-text">平台自动化每 30 分钟读取一次（Asia/Shanghai）；实际投递时间可能有偏移，偶尔会漏一轮。扫描到新行后依次校验、收录、回写「已收录 + 系统需求 ID」、AI 分析、推送 PM 数据表。已收录的行不再重复处理；校验失败的行按「同步说明」修正后等下一轮。提交不等于立即进池。</p>
       </div>
       <div className="baseform-block">
         <h3>最近一次同步</h3>
-        {stats ? <dl className="req-system-grid">
-          {stats.lastRunAt ? <div><dt>最后运行时间</dt><dd>{formatDateTime(stats.lastRunAt) ?? stats.lastRunAt}</dd></div> : null}
-          {typeof stats.scanned === "number" ? <div><dt>扫描行数</dt><dd>{stats.scanned}</dd></div> : null}
-          {typeof stats.created === "number" ? <div><dt>新建需求</dt><dd>{stats.created}</dd></div> : null}
-          {typeof stats.recorded === "number" ? <div><dt>已收录</dt><dd>{stats.recorded}</dd></div> : null}
-          {typeof stats.rejected === "number" ? <div><dt>校验失败</dt><dd>{stats.rejected}</dd></div> : null}
-          {typeof stats.writeBackFailed === "number" ? <div><dt>写回失败</dt><dd>{stats.writeBackFailed}</dd></div> : null}
-          {typeof stats.readFailed === "boolean" ? <div><dt>读取失败</dt><dd>{stats.readFailed ? "是" : "否"}</dd></div> : null}
-          {stats.lastError ? <div><dt>最后错误</dt><dd>{stats.lastError}</dd></div> : null}
-        </dl> : <p className="detail-note">暂无同步记录或统计暂不可用。</p>}
-        {stats?.readFailed ? <p className="status-hint" role="status">最近一次读取收集表失败，详见「最后错误」。</p> : null}
-        {typeof stats?.writeBackFailed === "number" && stats.writeBackFailed > 0 ? <p className="status-hint" role="status">有 {stats.writeBackFailed} 行写回收集表失败。</p> : null}
+        {stats && statsAvailable ? <dl className="req-system-grid">
+          <div><dt>最后运行</dt><dd>{stats.lastRunAt ? formatDateTime(stats.lastRunAt) ?? stats.lastRunAt : "尚未运行"}</dd></div>
+          <div><dt>扫描</dt><dd>{stats.scanned} 行</dd></div>
+          <div><dt>新建</dt><dd>{stats.created}</dd></div>
+          <div><dt>校验失败</dt><dd>{stats.rejected}</dd></div>
+          <div><dt>写回失败</dt><dd>{stats.writeBackFailed}</dd></div>
+          <div><dt>读取失败</dt><dd>{stats.readFailed ? <span className="baseform-read-failed">是</span> : "否"}</dd></div>
+          {lastError ? <div><dt>最后错误</dt><dd>{lastError}</dd></div> : null}
+        </dl> : <p className="detail-note">同步统计暂不可用</p>}
       </div>
     </div>
   </section>;
 }
+
+/** PRD §4.11.4：lastError 只展示归一化摘要；前端兜底掩码，仍不安全时给统一文案。 */
+function sanitizeBaseFormError(value: string | null): string | null {
+  if (!value) return null;
+  const masked = value
+    .replace(/\brec[A-Za-z0-9]{6,}\b/g, "rec…")
+    .replace(/\btbl[A-Za-z0-9]{6,}\b/g, "tbl…")
+    .replace(/\bfld[A-Za-z0-9]{6,}\b/g, "fld…")
+    .replace(/https?:\/\/\S+/gi, "链接已隐藏")
+    .replace(/\b[A-Za-z0-9_-]{24,}\b/g, "…")
+    .slice(0, 200);
+  if (/\brec[A-Za-z0-9]{6,}|\btbl[A-Za-z0-9]{6,}|\bfld[A-Za-z0-9]{6,}|https?:\/\//i.test(masked)) return "同步失败，请到作业运维查看";
+  return masked;
+}
+
 
 // ---------- 人员与功能模块字典 ----------
 
