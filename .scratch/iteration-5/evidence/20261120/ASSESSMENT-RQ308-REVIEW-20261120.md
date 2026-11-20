@@ -84,3 +84,11 @@ PRD §4.10.3 写的是「三个键，空字符串保留」。当前服务端代�
 - [assessment-rq308-review.json](assessment-rq308-review.json)：机器可读复核结果（含 inputs hash、契约检查）。
 - [assessment-rq308-summary.png](assessment-rq308-summary.png)：版本 chips + v3 结论/范围/可行性。
 - [assessment-rq308-detail.png](assessment-rq308-detail.png)：假设、openQuestions、Investigation 提示词折叠区。
+
+## 8. 清理后复核（2026-11-20 11:14 完成）
+
+- [x] `GET /api/requirements/a2573c66-5887-45f7-a793-7805d54f1e88/assessments` → `{items: []}`（[assessment-rq308-after-cleanup.json](assessment-rq308-after-cleanup.json)）
+- [x] `requirement_assessments` 全表 **0 行**；该需求 **0 行**（只读 SQL 复核）
+- [x] RQ-000308 本体仍在，`processing_state=active`，流水线 `synced/analyzed/manually_mapped/pushed` 未受影响
+- [x] 详情页「需求评估」回到空态「还没有评估结果」，不报错（[assessment-rq308-after-cleanup.png](assessment-rq308-after-cleanup.png)）
+- [x] 本轮只删 `requirement_assessments` 的 v1–v4 四行，未动 Base/通知/需求本体

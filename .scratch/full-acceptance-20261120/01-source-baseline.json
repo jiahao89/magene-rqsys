@@ -1,0 +1,71 @@
+{
+  "counts": {
+    "status": 200,
+    "body": {
+      "counts": {
+        "teambition": 333,
+        "web_manual": 1,
+        "base_form": 0,
+        "chat_paste": 0,
+        "all": 334
+      }
+    }
+  },
+  "lists": {
+    "all": {
+      "total": 334,
+      "pages": 4,
+      "nextCursor": false,
+      "firstIds": [
+        "RQ-000335",
+        "RQ-000333",
+        "RQ-000332"
+      ],
+      "lastIds": [
+        "RQ-000003",
+        "RQ-000002",
+        "RQ-000001"
+      ]
+    },
+    "teambition": {
+      "total": 333,
+      "pages": 4,
+      "nextCursor": false,
+      "firstIds": [
+        "RQ-000335",
+        "RQ-000333",
+        "RQ-000332"
+      ],
+      "lastIds": [
+        "RQ-000003",
+        "RQ-000002",
+        "RQ-000001"
+      ]
+    },
+    "web_manual": {
+      "total": 1,
+      "pages": 1,
+      "nextCursor": false,
+      "firstIds": [
+        "RQ-000316"
+      ],
+      "lastIds": [
+        "RQ-000316"
+      ]
+    },
+    "base_form": {
+      "total": 0,
+      "pages": 1,
+      "nextCursor": false,
+      "firstIds": [],
+      "lastIds": []
+    },
+    "chat_paste": {
+      "total": 0,
+      "pages": 1,
+      "nextCursor": false,
+      "firstIds": [],
+      "lastIds": []
+    }
+  }
+}

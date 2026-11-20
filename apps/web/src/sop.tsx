@@ -5,7 +5,7 @@ export function SopPanel() {
     <div className="panel-heading">
       <div>
         <h2>SOP 与培训</h2>
-        <p>试点角色标准作业流程 · 版本 v2（2026-11-19）· 建议培训时长 30 分钟 · 新增聊天粘贴、需求收集表、来源方式</p>
+        <p>试点角色标准作业流程 · 版本 v3（2026-11-20）· 建议培训时长 30 分钟 · 新增聊天粘贴、需求收集表、来源方式、需求评估</p>
       </div>
       <span className="status-chip status-live"><span />试点材料</span>
     </div>
@@ -16,13 +16,13 @@ export function SopPanel() {
       <div className="guide-table"><table>
         <thead><tr><th>角色</th><th>主要工作</th><th>系统入口</th><th>不负责</th></tr></thead>
         <tbody>
-          <tr><td><strong>PM Leader</strong></td><td>分诊与优先级把关、负责人分配、周度质量复盘、需求收集表运营、试点节奏</td><td>总览、需求池、需求收集表、Base「TB需求池」、上线 Gate</td><td>不代替执行 PM 做逐条 PM 确认；不手工改 TB</td></tr>
-          <tr><td><strong>执行 PM</strong></td><td>逐条确认模块/优先级、处理负责人通知、新来源需求确认、反馈 AI 结论偏差</td><td>需求池详情、「从聊天粘贴」、来源筛选、Base</td><td>不改评分规则、不改 Base 系统字段、不重复推送</td></tr>
+          <tr><td><strong>PM Leader</strong></td><td>分诊与优先级把关、负责人分配、周度质量复盘、需求收集表运营、评估结论抽查、试点节奏</td><td>总览、需求池、需求评估、需求收集表、Base「TB需求池」、上线 Gate</td><td>不代替执行 PM 做逐条 PM 确认；不手工改 TB</td></tr>
+          <tr><td><strong>执行 PM</strong></td><td>逐条确认模块/优先级、处理负责人通知、新来源需求确认、按需生成需求评估、反馈 AI 结论偏差</td><td>需求池详情、「从聊天粘贴」、来源筛选、需求评估、Base</td><td>不改评分规则、不改 Base 系统字段、不重复推送</td></tr>
           <tr><td><strong>运维</strong></td><td>同步/分析/推送健康、需求收集表同步状态、失败作业、告警、备份与发布</td><td>作业运维、运维指标（含多维表格同步）、告警群、发布记录</td><td>不修改需求内容与 PM 结论</td></tr>
         </tbody>
       </table></div>
       <p className="guide-note">当前试点维持“登录即全权限”，角色只用于职责分工，系统不强制权限。正式上线前如需权限矩阵，另立需求。</p>
-      <p className="guide-note">新来源（聊天粘贴 / 需求收集表）不改变角色分工；来源只影响入口和标识，PM 确认、负责人、推送口径不变。</p>
+      <p className="guide-note">新来源（聊天粘贴 / 需求收集表）不改变角色分工；来源只影响入口和标识。需求评估是详情页的按需辅助，AI 建议非结论，也不改变 PM 确认、负责人、推送口径。</p>
     </div>
 
     <div className="guide-section">
@@ -52,8 +52,8 @@ export function SopPanel() {
     </div>
 
     <div className="guide-section">
-      <h3>四、新增来源入口（聊天粘贴 / 需求收集表 / 来源方式）</h3>
-      <p className="guide-lead">除 Teambition 同步外，系统支持两种新来源：Web「从聊天粘贴」和飞书 Base「需求收集表」；加上手工录入，共四种来源。四种来源进入后走同一条 分析 → 负责人 → 推送 链路；来源只影响入口和来源标识，不改变 PM 确认口径。</p>
+      <h3>四、来源入口与需求评估</h3>
+      <p className="guide-lead">除 Teambition 同步外，系统支持两种新来源：Web「从聊天粘贴」和飞书 Base「需求收集表」；加上手工录入，共四种来源。四种来源进入后走同一条 分析 → 负责人 → 推送 链路；来源只影响入口和来源标识，不改变 PM 确认口径。4.1–4.3 讲来源入口，4.4 讲详情页的按需需求评估。</p>
 
       <h4 style={{ fontSize: "13px", fontWeight: 650, margin: "18px 0 8px" }}>4.1 聊天粘贴（Web 需求池）</h4>
       <ol className="guide-steps">
@@ -95,8 +95,21 @@ export function SopPanel() {
         <li><strong>Base：</strong>「来源方式」是单选字段，由系统在推送时写入，取值同上；不要手工改。字段未配置时系统不写、不报错；看不到这一列就联系 PM Leader/管理员确认。</li>
         <li><strong>通知：</strong>来源方式写入不触发 PM 通知；通知仍只在负责人变化、需求实质变更等事件发送。</li>
         <li><strong>历史数据：</strong>2026-11-18 之前通过聊天粘贴创建、但当时还没有来源留痕的需求无法与手工区分，按「Web 手工」处理；Base 来源方式只覆盖新推送/回填范围，空白不代表数据丢失。</li>
+        <li><strong>文案差异：</strong>Base「来源方式」写「Web 手工」；需求池徽标写「手工·渠道」，两者指同一来源。</li>
       </ul>
       <p className="guide-note">Base 来源方式字段与历史回填由管理员按计划执行：先 dry-run 对照，确认后只写「来源方式」，不碰 PM 字段、不触发通知。回填前会先确认通知工作流条件。</p>
+
+      <h4 style={{ fontSize: "13px", fontWeight: 650, margin: "18px 0 8px" }}>4.4 需求评估与 Investigation 提示词（详情页，按需）</h4>
+      <ol className="guide-steps">
+        <li><strong>什么时候用：</strong>需要判断「值不值得做、做不做得成」，或准备写 PRD 前；不是每条需求都必须跑，不自动生成。</li>
+        <li><strong>补充：</strong>在需求详情「需求评估」里填需求背景、目标、使用场景（三项都可空）；补充只保存在评估记录里，不改需求本体、不写 Base。</li>
+        <li><strong>生成：</strong>点「生成评估」，一次生成评估结论和 Investigation 提示词；通常约 30 秒，最长 60 秒；正在生成时按钮禁用，不要连续点。</li>
+        <li><strong>看结论：</strong>结论是「建议推进 / 建议暂缓 / 需要调查」+ 置信度；重点看背景、目标、范围（要做/不做）、业务价值、可行性（技术/成本/依赖/风险）、假设和待确认问题。AI 建议不是结论，PM 自己判断。</li>
+        <li><strong>版本：</strong>每次生成是新版本，历史可切换；失败版本会保留，可重试；同一需求已有生成中的版本时再次点会提示稍候，不会重复消耗模型调用。</li>
+        <li><strong>提示词：</strong>展开「Investigation 提示词」→「复制提示词」，带到自己的 Agent 做调查、写 PRD；系统不直接发起调查。</li>
+        <li><strong>不要：</strong>不要粘客户姓名、电话、邮箱、订单号、密钥；不要把评估结论直接当 PM 结论或排期承诺；不要为同一条需求反复生成。</li>
+      </ol>
+      <p className="guide-note">评估用独立表按版本保存，不写 Base、不发通知；信息不足时结论应偏向「需要调查」。切换版本时输入框暂不回填历史值（下一轮处理），不影响查看历史结论。</p>
     </div>
 
     <div className="guide-section">
@@ -121,11 +134,12 @@ export function SopPanel() {
           <tr><td>5–10 分钟</td><td>总览四项健康度；需求池筛选/详情/证据</td><td>演示</td></tr>
           <tr><td>10–18 分钟</td><td>Base 逐条 PM 确认（模块/优先级/PM 状态）；AI 建议只作输入</td><td>演示 + 跟做</td></tr>
           <tr><td>18–23 分钟</td><td>负责人分配、通知触发规则、空负责人与待匹配处理</td><td>演示 + 跟做</td></tr>
-          <tr><td>23–27 分钟</td><td>新增来源入口：聊天粘贴、需求收集表、来源方式</td><td>演示 + 跟做</td></tr>
-          <tr><td>27–30 分钟</td><td>失败重试、告警（含 AI 额度暂停）与答疑；反馈入口、试点周会节奏</td><td>场景演练 + 讨论</td></tr>
+          <tr><td>23–26 分钟</td><td>新增来源入口：聊天粘贴、需求收集表、来源方式</td><td>演示 + 跟做</td></tr>
+          <tr><td>26–29 分钟</td><td>需求评估：按需生成、结论解读、Investigation 提示词复制</td><td>演示 + 跟做</td></tr>
+          <tr><td>29–30 分钟</td><td>失败重试、告警（含 AI 额度暂停）与答疑；反馈入口、试点周会节奏</td><td>场景演练 + 讨论</td></tr>
         </tbody>
       </table></div>
-      <p className="guide-note">培训验收：每位角色能独立完成本角色 SOP 的“每日清单”；执行 PM 能在 Base 完成 3 条需求确认，并完成一次聊天粘贴草稿的核对；PM Leader 能读出总览四项指标与 Gate 状态，并把一条需求收集表行跑到「已收录」。</p>
+      <p className="guide-note">培训验收：每位角色能独立完成本角色 SOP 的“每日清单”；执行 PM 能在 Base 完成 3 条需求确认，并完成一次聊天粘贴草稿的核对、对一条需求生成评估并复制 Investigation 提示词，能说出 AI 建议非结论；PM Leader 能读出总览四项指标与 Gate 状态，并把一条需求收集表行跑到「已收录」。</p>
     </div>
 
     <div className="guide-section">
@@ -137,6 +151,7 @@ export function SopPanel() {
           <tr><td>需求收集表读取 / 写回失败</td><td>Base 权限、字段是否存在、收集表是否被删/改名</td><td>运维 → 研发</td></tr>
           <tr><td>需求收集表行校验失败</td><td>同步说明（标题/渠道/链接/必填）</td><td>填表人修正 → PM Leader；持续失败 → 运维</td></tr>
           <tr><td>聊天粘贴整理失败 / 超时 / 限流</td><td>页面错误、AI 状态卡、是否 429</td><td>手工填写；持续失败 → 运维</td></tr>
+          <tr><td>需求评估失败 / 超时 / 429 / 409</td><td>AI 状态、错误码、是否已有生成中版本、补充内容是否超长</td><td>稍后重试/手工判断；持续失败 → 运维</td></tr>
           <tr><td>来源方式缺失 / 与入口不符</td><td>记录来源、Base 字段是否配置、回填范围</td><td>运维</td></tr>
           <tr><td>AI 分析长期失败或额度告警</td><td>作业运维错误码、AI 暂停标记</td><td>运维 → 研发/AI 供应商</td></tr>
           <tr><td>单条 Base 推送失败</td><td>详情页失败原因、Base 字段/人员 ID</td><td>运维</td></tr>
