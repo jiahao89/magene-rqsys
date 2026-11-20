@@ -1,7 +1,8 @@
 # 全量验收矩阵（2026-11-20）
 
 - 环境：线上 `https://ecn8egz1lhkq.feishuapp.com/app/app_17fqkjwyx1u`
-- 发版：`7710084772375416077`（commit `3422425`）
+- 首次验收发版：`7710084772375416077`（commit `3422425`）
+- 修复后复验发版：`7710101227455401251`（commit `c99a0e6`）；复验记录见 §5
 - 数据基线：需求 **334** = TB 333 + 手工 1 + 多维表格 0 + 聊天粘贴 0；PM 表 334；`requirement_assessments` 0 行
 - 数据安全：全轮无生产数据新增；未触发 Base 写入/PM 通知；评估表 0 行
 
@@ -10,10 +11,10 @@
 | # | 验收块 | 结论 | 关键证据 | 失败/阻塞项 | 责任方 |
 |---|---|---|---|---|---|
 | 1 | 需求池：列表、筛选、来源 Tab、徽标/色条、导出 | **PASS** | [测试块文档](FULL-ACCEPTANCE-TEST-20261120.md) §1；[01-source-baseline.json](01-source-baseline.json)、[03-export-webmanual.csv](03-export-webmanual.csv) | S8 故障降级未注入；base/chat 0 行用本地用例 | 测试 |
-| 2 | 需求详情：四来源字段、编辑、负责人、重复处理 | **FAIL** | [前端文档](02-frontend-detail-and-intake-20261120.md) §1 | **F1（P2）** 手工/多维表格「创建时间 未填写」，DTO 无 `createdAt`；base/chat 详情 0 行 BLOCKED | 后端+前端 |
+| 2 | 需求详情：四来源字段、编辑、负责人、重复处理 | **PASS**（复验后） | [前端文档](02-frontend-detail-and-intake-20261120.md) §1；[复验](NARROW-REVERIFY-RESULT-20261120.md) §2 | F1（P2）已修：DTO 补 `createdAt`、前端改读，手工详情有值、TB 区块不变；chat_paste 详情已造数补验；base_form 详情仍 0 行（产品口径待定） | 后端+前端 |
 | 3 | 新建需求：手工表单、聊天粘贴草稿、长度校验、重复提示 | **PASS（有 BLOCKED）** | [前端文档](02-frontend-detail-and-intake-20261120.md) §2；[测试块文档](FULL-ACCEPTANCE-TEST-20261120.md) §2 | N6 AI 草稿/重复提示未造数，BLOCKED；手工校验、长度、链接格式全 PASS | 前端+测试 |
 | 4 | AI 分析、评分、优先级覆盖 | **PASS** | [测试块文档](FULL-ACCEPTANCE-TEST-20261120.md) §3；[14-block4-detail.json](14-block4-detail.json) | 优先级覆盖只开不写；RQ-000335 分析 502 为上游 OBS | 测试 |
-| 5 | 需求评估（本轮新功能） | **FAIL** | [测试块文档](FULL-ACCEPTANCE-TEST-20261120.md) §4；[RQ-000308 复核](</Volumes/Files/A_Projects/RQ-Sys/.scratch/iteration-5/evidence/20261120/ASSESSMENT-RQ308-REVIEW-20261120.md>) | **F2（P2）** 非 409 失败后不刷新历史，failed 版本不出现；**F1（P3）** UI 60s vs PRD 65s；A12 四条样例未跑 | 前端 |
+| 5 | 需求评估（本轮新功能） | **PASS**（复验后，真失败路径单测覆盖） | [测试块文档](FULL-ACCEPTANCE-TEST-20261120.md) §4；[复验](NARROW-REVERIFY-RESULT-20261120.md) §3 | F2/F1 已修并在产物确认（`65e3`、非 409 静默刷新），线上 409 单飞正常；A12 四条样例未跑；`analysis_failure`/超时生产不可控，记单测+走查 | 前端 |
 | 6 | Base 同步链路 | **PASS** | [后端文档](</Volumes/Files/A_Projects/RQ-Sys/.scratch/iteration-5/evidence/20261120/FULL-ACCEPTANCE-BACKEND-20261120.md>) | 本轮未造新行复跑端到端 | 后端 |
 | 7 | 运维与管理页 | **PASS** | 同上 | 审计近 3 天失败 4 条有解释 | 后端 |
 | 8 | 工程门禁 | **PASS** | 同上；Web 178/178、API 668（59 条本机无 PG）、alignment 36/36 | `check:contract` 1 条 PG ENOENT + trigger 提醒，非契约失败 | 后端 |
@@ -34,14 +35,26 @@
 ## 3. 未执行 / 待确认（不算 FAIL）
 
 - **BLOCKED**：聊天粘贴 AI 草稿、重复提示（块 3 N6）——会消耗模型并写 `intake.*` 审计，本轮未造数；存量 PRD-26 验收与组件用例覆盖。
-- **BLOCKED**：多维表格/聊天粘贴详情（块 2 D8）——线上各 0 行；本地 178 条组件用例覆盖。
+- **已补验**：多维表格/聊天粘贴详情（块 2 D8）——chat_paste 已造 1 条 `[验收]` 行线上验证并删除；base_form 详情仍无线上数据，待产品口径确认后补。
 - **NOT RUN**：评估四条样例 A12——样例集已备（[SAMPLES-20261120.md](</Volumes/Files/A_Projects/RQ-Sys/.scratch/ai-assessment-samples/SAMPLES-20261120.md>)），本轮未跑 4 条模型调用。
 - **OBS**：`base_form` 详情无「编辑需求」入口（前端 F2/OBS），需产品确认是否与「要改去 App 改」口径一致；本轮无数据未线上验。
-- **OBS**：RQ-000335 AI 分析三次上游 502，`failed_retryable`；推送正常。属供应商故障，是否手动补分析请 Chief 定。
-- **OBS**：任务写「S1–S15」，PRD §4.9 实际 S1–S14、§4.10 是 A1–A15，无 S15；按实际编号对账，待确认是否笔误。
+- **OBS（已关闭）**：RQ-000335 AI 分析三次上游 502（`failed_retryable`），11-20 12:01 补跑成功、`analysis_state=analyzed`；补跑按设计写了一次 `ai_retry_success` 通知（无负责人 → PM Leader），属预期副作用。
+- **OBS**：任务写「S1–S15」，PRD §4.9 实际 S1–S14、§4.10 是 A1–A15，无 S15；软件产品确认笔误并已在 PRD 更正。
+- **OBS（P3，下轮）**：评估 `assumptions` 偶发半角「假设:」，契约写全角「假设：」；前端两种都兼容，服务端 schema 不校验前缀，建议归一化。
 
 ## 4. 总体结论
 
-**全量验收未通过：10 块中 8 块 PASS、2 块 FAIL（块 2、块 5），共 2 个 P2 + 1 个 P3，均有明确复现与责任方；无 P0/P1，无数据/通知副作用。**
+**复验后全量验收通过：10 块全部 PASS（块 2、块 5 经修复复验转 PASS），无 P0/P1/P2 遗留，无数据或通知副作用（复验前后需求 334、评估表 0 行）。**
 
-建议：前端修 F1/F2、后端补 `createdAt` 后，只复验「手工详情创建时间」和「评估失败/超时」两组，再跑 Web/API 定向用例，即可转 PASS；无需重跑 Base 与门禁全量。
+遗留均为非阻塞项：A12 四条样例未跑（需模型调用，未授权）、块 3 AI 草稿/重复提示未造数、`base_form` 详情编辑入口待产品口径、评估假设前缀冒号为 P3 归一化。
+
+## 5. 复验记录（2026-11-20，发版 `7710101227455401251` / `c99a0e6`）
+
+| 项 | 修复前 | 复验结果 | 证据 |
+|---|---|---|---|
+| 块 2 F1 手工详情创建时间 | 「未填写」 | **PASS**：`2026/11/2 11:28:47`（`createdAt=2026-11-02T03:28:47.292Z`）；TB 区块不变 | [rv-01-manual-createdat.png](rv-01-manual-createdat.png) |
+| 块 5 F2 失败后历史刷新 | 非 409 不刷新 | **PASS**：产物非 409 分支 `w(!0,!0)`；503 单测断言「v2（失败）」可见；`panels.test.tsx` 88/88 | [复验 §3](NARROW-REVERIFY-RESULT-20261120.md) |
+| 块 5 F1 评估超时 | `6e4`（60s） | **PASS**：产物 `abort(),65e3`；64.999s 不中断 / 65s 中断用例通过 | 产物走查 + 单测 |
+| 409 单飞 | 已验 | **PASS**：并发两次 POST → 201 v2 + 409，历史仅 v2 | 接口实测 |
+| chat_paste 详情补验 | 无数据 | **PASS**：RQ-000336 来源/字段/编辑入口/徽标/创建时间均正确，来源方式=聊天粘贴、通知事件ID 为空；数据已删 | [rv-02](rv-02-chatpaste-detail.png)、[rv-04](rv-04-pool-chatpaste.png) |
+| 清理后基线 | — | **PASS**：334/333/0/1/0、PM 334、收集表 0、评估全表 0、旧 UUID 404 | 本节 + 后端复核 |
