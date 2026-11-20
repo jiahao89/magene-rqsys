@@ -317,6 +317,8 @@ function requirementDto(req: RequirementRecord, analysis: Record<string, unknown
     // PR-05：TB 执行人原始姓名（未映射时用于“待匹配负责人”分组；不替代映射后的 ownerName）。
     executorName: req.executorName ?? null,
     sourceVersion: req.sourceVersion,
+    // 0030/F1：详情页「创建时间」读服务端字段；四种来源统一返回（加法，不替代 updatedAt）。
+    createdAt: req.createdAt,
     updatedAt: req.updatedAt,
     sourceUrl: req.sourceType === "teambition" ? req.sourceUrl ?? `${TEAMBITION_TASK_BASE_URL}/${req.teambitionRequirementId}` : req.sourceUrl,
     lastPushedAt: req.lastPushedAt,

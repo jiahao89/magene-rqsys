@@ -582,6 +582,9 @@ test("V02-T02 manual requirements read back with source fields and no TB link fa
   // 手工需求不拼接 TB 地址兜底（AC05）
   assert.equal(body.sourceUrl, null);
   assert.equal((body.pipeline as Record<string, string>).pull, "collected");
+  // F1：详情 DTO 必须返回服务端创建时间（四种来源统一），前端不再退回 source.createdAt。
+  assert.equal(body.createdAt, requirement.createdAt);
+  assert.equal(body.updatedAt, requirement.updatedAt);
 });
 
 test("empty requirement search returns an empty page without querying mappings with an empty source id", async () => {
