@@ -12,7 +12,7 @@ import { RequirementDetailSkeleton, SkeletonBlock, SkeletonTableRows } from "./s
 import { checkScheduleHealth } from "./schedule";
 import { readRequirementDeepLink } from "./deep-link";
 import { emptyRequirementListFilters, readRequirementListFilters, requirementFilterCount, requirementPoolUrl, type RequirementListFilters, type RequirementProcessingView } from "./requirements-url";
-import { formatDateTime, requirementDisplayId, requirementOwnerView, requirementSourceFacts, requirementTime, sortRequirementsForAttention } from "./requirement-view";
+import { formatDateTime, requirementDisplayId, requirementOwnerView, requirementSourceFacts, requirementSourceName, requirementTime, sortRequirementsForAttention } from "./requirement-view";
 import { AUDIT_PAGE_LIMIT, ApiError, addTeamPerson, applyRequirementAiScore, bindTeamPersonFeishu, createSource, createRequirementAssessment, deleteTeamPerson, getBatch, getFunctionModules, getRequirement, exportRequirementsCsv, getGates, getOpsJobs, getOpsMetrics, getReadiness, getRequirementSourceCounts, listRequirementAssessments, setGate, listAudit, listBatches, listDictionaryVersions, listMappings, listRequirements, listTeamPeople, pushRequirement, renameTeamPerson, revokeDuplicateDecision, saveAnalysisContext, saveFunctionModules, retryAnalysis, setPriorityOverride, retrySyncItem, saveRequirementScore, searchFeishuUsers, setDuplicateDecision, setOwner, unbindTeamPersonFeishu, updateSource, type AnalysisVersionSummary, type AuditEvent, type OpsJob, type OpsMetrics, type GatesResponse, type AssessmentConfidence, type AssessmentVerdict, type BatchDetail, type BatchSummary, type DictionaryVersion, type DuplicateDecision, type PersonMapping, type PublishStatus, type FeishuUserSelection, type FeishuUserCandidate, type FunctionModuleEntry, type RequirementDetail, type RequirementProcessingState, type RequirementResolution, type RequirementAssessment, type RequirementScoreVersion, type RequirementSourceCounts, type RequirementSummary, type ScoringInputs, type SourceConfig, type SourceConfigUpdate, type TeamPerson, clearOwner } from "./api";
 import type { WorkbenchTab } from "./workbench-routing";
 
@@ -1848,6 +1848,42 @@ function RequirementAssessmentSection({ requirementId }: { requirementId: string
   </section>;
 }
 
+/**
+ * PRD-31：多维表格来源的详情只读展示相似需求。
+ * 复用现有列表接口按标题关键字查询，只做提示：不写 duplicate_of、不自动压制、不影响编辑与推送。
+ */
+function SimilarRequirementSection({ requirementId, title }: { requirementId: string; title: string }) {
+  const [items, setItems] = useState<RequirementSummary[]>([]);
+  const [state, setState] = useState<LoadState>("loading");
+  useEffect(() => {
+    let cancelled = false;
+    setState("loading");
+    listRequirements({ q: title, limit: 5 })
+      .then((result) => {
+        if (cancelled) return;
+        // 不把自己列进相似需求；最多 5 条。
+        setItems(result.items.filter((item) => item.id !== requirementId).slice(0, 5));
+        setState("ready");
+      })
+      .catch(() => { if (!cancelled) setState("error"); });
+    return () => { cancelled = true; };
+  }, [requirementId, title]);
+
+  return <section className="req-section req-similar-section" aria-labelledby="req-similar-heading">
+    <div className="req-section-head"><h3 id="req-similar-heading">相似需求</h3><span className="req-source-note">按标题关键字匹配 · 只读</span></div>
+    <p className="detail-note">相似需求只作参考：不会写回重复判定、不自动压制，也不影响本条需求的编辑与推送。</p>
+    {state === "loading" ? <p className="subtle-text" role="status">正在查询相似需求…</p> : null}
+    {state === "error" ? <p className="status-hint" role="status">相似需求查询失败，不影响查看本条需求。</p> : null}
+    {state === "ready" && items.length === 0 ? <p className="detail-note">没有找到标题相似的已有需求。</p> : null}
+    {items.length > 0 ? <ul className="similar-requirements-list" style={{ margin: 0, paddingLeft: 18 }}>
+      {items.map((item) => <li key={item.id}>
+        <a href={`?requirement=${item.id}`}>{item.platformRequirementId ? `${item.platformRequirementId} · ` : ""}{item.title}</a>
+        <span className="subtle-text">（{requirementSourceName(item)}）</span>
+      </li>)}
+    </ul> : null}
+  </section>;
+}
+
 function RequirementDetailPage({ detail, detailId, loading, error, notice, busy, autoOpenOwnerPicker, onCloseNotice, onBack, onRefresh, onAct, onSaved }: {
   detail: RequirementDetail | null;
   detailId: string;
@@ -2117,8 +2153,13 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
       <ManualEditSection detail={detail} onSaved={() => onSaved(detail.id)} />
     </section>
 
-    {/* 决策按 (来源配置, TB 需求ID) 保存，手工需求没有这个身份、后端会 404：只在明确是手工来源时隐藏。 */}
-    {detail.sourceType === "web_manual" ? null : <DuplicateDecisionSection detail={detail} onSaved={() => onSaved(detail.id)} />}
+    {/* 决策按 (来源配置, TB 需求ID) 保存，非 Teambition 来源没有这个身份、后端会 404：仅 TB 显示。
+        PRD-31：base_form 详情改为只读展示相似需求；手工/聊天粘贴不展示重复处理。 */}
+    {isTbSource
+      ? <DuplicateDecisionSection detail={detail} onSaved={() => onSaved(detail.id)} />
+      : sourceKind === "base_form"
+        ? <SimilarRequirementSection requirementId={detail.id} title={detail.title} />
+        : null}
 
     <ScoringPanel requirementId={detail.id} scoring={detail.scoring} dimensionInsights={dimensionInsights} onSaved={() => onSaved(detail.id)}>
       {aiAnalysisContent}

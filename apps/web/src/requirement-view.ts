@@ -253,6 +253,17 @@ export function sortRequirementsForAttention<T extends RequirementLike>(rows: re
   });
 }
 
+/** PRD-31：相似需求提示只需要来源名（不展开渠道）；未知来源按默认 Teambition 处理。 */
+export function requirementSourceName(row: { sourceType?: string | null; source?: Record<string, unknown> | null }): string {
+  const sourceType = row.sourceType ? String(row.sourceType) : "teambition";
+  if (sourceType === "base_form") return "多维表格";
+  if (sourceType === "web_manual") {
+    const origin = row.source && typeof row.source === "object" ? row.source.intakeOrigin : undefined;
+    return origin === "chat_paste" ? "聊天粘贴" : "手工";
+  }
+  return "Teambition";
+}
+
 export interface RequirementSourceFacts {
   description: string | null;
   proposerName: string | null;

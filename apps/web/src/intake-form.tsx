@@ -3,8 +3,9 @@
 // 幂等键在同一次提交意图内复用（失败重试不换键），成功或重新展开表单后重置。
 import { useEffect, useRef, useState } from "react";
 import { Button as ArcoButton, Input, Select } from "@arco-design/web-react";
-import { ApiError, AUDIENCE_LEVELS, AUDIENCE_LEVEL_NAMES, REQUIREMENT_INTAKE_CHANNELS, REQUIREMENT_INTAKE_TYPES, createRequirement, extractIntakeDraft, getFunctionModules, getRiceDraft, listKanoEvidence, listKanoRuns, saveRiceDraft, setAudienceTags, triggerKanoRun, updateRequirement, type ChatIntakeDraft, type ChatIntakeSimilar, type KanoEvidenceVersionDto, type KanoRunDto, type RiceDraft } from "./api";
+import { ApiError, AUDIENCE_LEVELS, AUDIENCE_LEVEL_NAMES, REQUIREMENT_INTAKE_CHANNELS, REQUIREMENT_INTAKE_TYPES, createRequirement, extractIntakeDraft, getFunctionModules, getRiceDraft, listKanoEvidence, listKanoRuns, listRequirements, saveRiceDraft, setAudienceTags, triggerKanoRun, updateRequirement, type ChatIntakeDraft, type ChatIntakeSimilar, type KanoEvidenceVersionDto, type KanoRunDto, type RequirementSummary, type RiceDraft } from "./api";
 import { ConfirmModal } from "./confirm-modal";
+import { requirementSourceName } from "./requirement-view";
 
 /** PRD-26 5a 补丁：服务端与客户端共用同一组上限，提交前拦截，避免落到英文通用校验错误。 */
 const INTAKE_LIMITS = { title: 200, description: 20_000, productModel: 100, constraintNotes: 2_000, supplementUrl: 500, proposerName: 100 } as const;
@@ -57,6 +58,11 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
   const [aiFilled, setAiFilled] = useState<string[]>([]);
   const [proposer, setProposer] = useState<string | null>(null);
   const [similar, setSimilar] = useState<ChatIntakeSimilar[]>([]);
+  // PRD-31：标题失焦/提交前按标题关键字查相似需求；只提示，不阻断提交、不写重复判定。
+  const [similarRequirements, setSimilarRequirements] = useState<RequirementSummary[]>([]);
+  const [similarLookup, setSimilarLookup] = useState<"idle" | "loading" | "error">("idle");
+  const similarQuery = useRef("");
+  const similarRequest = useRef(0);
   // 只有走过聊天草稿的提交才带 intakeOrigin=chat_paste；用户手工填的表单仍是普通 Web 收录。
   const [fromChatPaste, setFromChatPaste] = useState(false);
   // 服务端 fallback=true：模型输出不可用，标题/描述取自掩码原文，必须明确告诉用户「未经过 AI 整理」。
@@ -79,6 +85,7 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
   const reset = () => {
     setTitle(""); setDescription(""); setChannel(""); setProductModel(""); setRequirementType(""); setConstraintNotes(""); setSupplementUrl(""); setIntakeModule(""); setError(null);
     setChatText(""); setChatOpen(false); setChatError(null); setAiFilled([]); setProposer(null); setSimilar([]);
+    setSimilarRequirements([]); setSimilarLookup("idle"); similarQuery.current = ""; similarRequest.current += 1;
     setFromChatPaste(false); setFallbackDraft(false); setPendingDraft(null); setConflict(false);
     idempotencyKey.current = crypto.randomUUID();
   };
@@ -139,6 +146,30 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
   };
   const aiMark = (field: string) => aiFilled.includes(field) ? <small className="ai-filled-tag" title="由 AI 根据聊天内容填充，请核对后再提交"> AI 填充</small> : null;
 
+  /**
+   * PRD-31：标题失焦或提交前按标题关键字查一次相似需求（最多 5 条）。
+   * 只做提示：查询失败/命中都不阻断提交，也不写 duplicate_of、不做压制。
+   */
+  const lookupSimilar = async () => {
+    const query = title.trim();
+    if (!query) { setSimilarRequirements([]); setSimilarLookup("idle"); similarQuery.current = ""; return; }
+    // 同一个标题只查一次；标题改动后 ref 会重置。
+    if (query === similarQuery.current) return;
+    similarQuery.current = query;
+    const request = ++similarRequest.current;
+    setSimilarLookup("loading");
+    try {
+      const result = await listRequirements({ q: query, limit: 5 });
+      if (request !== similarRequest.current) return;
+      setSimilarRequirements(result.items.slice(0, 5));
+      setSimilarLookup("idle");
+    } catch {
+      if (request !== similarRequest.current) return;
+      setSimilarRequirements([]);
+      setSimilarLookup("error");
+    }
+  };
+
   /** 提交前按服务端契约做本地校验（上限来自 pipeline.ts / PRD-26），给出中文字段级提示。 */
   const validateIntake = (): string | null => {
     if (!title.trim() || !description.trim() || !channel) return "请填写标题、需求描述，并选择来源渠道。";
@@ -154,6 +185,8 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
   const submit = async () => {
     const problem = validateIntake();
     if (problem) { setError(problem); return; }
+    // 提交前再查一次相似需求；不 await、不阻断提交（PRD-31）。
+    void lookupSimilar();
     setBusy(true); setError(null); setConflict(false);
     const proposerName = proposer && !isMaskedPlaceholder(proposer) ? proposer.trim().slice(0, INTAKE_LIMITS.proposerName) : null;
     try {
@@ -188,6 +221,19 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
     void submit();
   };
 
+  // 聊天草稿自带的 similar 与标题查询结果合并去重，最多展示 5 条。
+  const similarItems: Array<{ id: string; platformRequirementId: string | null; title: string; sourceLabel: string }> = [];
+  const seenSimilar = new Set<string>();
+  for (const item of similarRequirements) {
+    seenSimilar.add(item.id);
+    similarItems.push({ id: item.id, platformRequirementId: item.platformRequirementId ?? null, title: item.title, sourceLabel: requirementSourceName(item) });
+  }
+  for (const item of similar) {
+    if (seenSimilar.has(item.id)) continue;
+    similarItems.push({ id: item.id, platformRequirementId: item.platformRequirementId, title: item.title, sourceLabel: requirementSourceName({ sourceType: item.sourceType }) });
+  }
+  const visibleSimilar = similarItems.slice(0, 5);
+
   return <>
     <div className="rules-form intake-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
       <div className="field" style={{ flexBasis: "100%" }}>
@@ -205,14 +251,26 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
             </>}
         {fallbackDraft && <div className="field-error" role="alert" style={{ display: "block", marginTop: 4 }}>AI 没能整理这段聊天，标题和描述已按脱敏原文填入（未经过 AI 整理），请核对或改写后再提交。</div>}
         {proposer && !isMaskedPlaceholder(proposer) && <span className="status-hint" style={{ display: "block", marginTop: 4 }}>聊天中的提出人：{proposer}（只做展示，不进负责人匹配、不发通知；提交后显示在需求详情里）</span>}
-        {similar.length > 0 && <div className="status-hint" role="status" style={{ marginTop: 4 }}>可能相似的已有需求（按标题关键字匹配，请自行判断是否重复）：
-          <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>{similar.map((item) => <li key={item.id}>{item.platformRequirementId} · {item.title}</li>)}</ul>
-        </div>}
       </div>
       <label className="field" style={{ flex: 2, minWidth: 240 }}>
         <span>标题 *{aiMark("title")}</span>
-        <Input aria-label="新建需求标题" placeholder="一句话描述用户的问题或诉求" value={title} onChange={(value: string) => { setTitle(value); clearAiMark("title"); }} disabled={busy} />
+        <Input aria-label="新建需求标题" placeholder="一句话描述用户的问题或诉求" value={title} onChange={(value: string) => {
+          setTitle(value); clearAiMark("title");
+          // 标题一变，旧的相似结果就不再对应当前标题：立即清空并作废在途查询。
+          setSimilarRequirements([]); setSimilarLookup("idle"); similarQuery.current = ""; similarRequest.current += 1;
+        }} onBlur={() => void lookupSimilar()} disabled={busy} />
       </label>
+      {visibleSimilar.length > 0 && <div className="status-hint" role="status" style={{ flexBasis: "100%" }}>
+        <strong>相似需求（最多 5 条，仅供参考；不会阻断提交）</strong>
+        <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+          {visibleSimilar.map((item) => <li key={item.id}>
+            <a href={`?requirement=${item.id}`} target="_blank" rel="noreferrer">{item.platformRequirementId ? `${item.platformRequirementId} · ` : ""}{item.title}</a>
+            <span className="subtle-text">（{item.sourceLabel}）</span>
+          </li>)}
+        </ul>
+      </div>}
+      {similarLookup === "loading" ? <span className="status-hint" role="status" style={{ flexBasis: "100%" }}>正在查询相似需求…</span> : null}
+      {similarLookup === "error" ? <span className="status-hint" role="status" style={{ flexBasis: "100%" }}>相似需求查询失败，不影响提交。</span> : null}
       <div className="field">
         <span>来源渠道 *{aiMark("sourceChannel")}</span>
         <Select aria-label="新建来源渠道" value={channel} onChange={(value: string) => { setChannel(value); clearAiMark("sourceChannel"); }} disabled={busy} placeholder="请选择" style={{ minWidth: 160 }} options={[{ label: "请选择", value: "" }, ...REQUIREMENT_INTAKE_CHANNELS.map((item) => ({ label: item, value: item }))]} />

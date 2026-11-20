@@ -566,6 +566,8 @@ describe("RequirementsPanel (ticket 17)", () => {
     expect(screen.queryByText("更新时间")).not.toBeInTheDocument();
     // 重复判定按 (来源配置, TB 需求ID) 保存，手工需求没有这个身份、后端会 404：不渲染该区块。
     expect(screen.queryByRole("heading", { name: "重复处理" })).not.toBeInTheDocument();
+    // PRD-31：相似需求只读区块只用于 base_form 详情，手工来源不渲染。
+    expect(screen.queryByRole("heading", { name: "相似需求" })).not.toBeInTheDocument();
     // 手工来源可编辑，但没有「收集表」这回事：不显示多维表格专属提示。
     fireEvent.click(screen.getByRole("button", { name: "编辑需求" }));
     expect(screen.getByLabelText("编辑需求标题")).toBeInTheDocument();
@@ -595,6 +597,45 @@ describe("RequirementsPanel (ticket 17)", () => {
     expect(screen.getByRole("button", { name: "保存（基于 v2）" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
     expect(screen.queryByLabelText("编辑需求标题")).not.toBeInTheDocument();
+  });
+
+  it("hides duplicate decisions for non-TB details and shows read-only similar requirements for base_form (PRD-31)", async () => {
+    const baseRow = {
+      ...row,
+      id: "req-base-similar",
+      sourceRequirementId: null,
+      sourceType: "base_form",
+      sourceChannel: "销售",
+      title: "收集表相似需求验证",
+      source: { sourceType: "base_form", proposerName: "贾浩" },
+    };
+    const other = {
+      ...row,
+      id: "req-other",
+      sourceRequirementId: "tb-9",
+      platformRequirementId: "RQ-000099",
+      title: "收集表相似需求验证（旧）",
+      sourceType: "teambition",
+    };
+    const requested: string[] = [];
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      requested.push(path);
+      if (path === "/api/people") return jsonOk({ items: [] });
+      if (path.startsWith("/api/requirements?")) return jsonOk({ items: [baseRow, other], nextCursor: null });
+      if (path === "/api/requirements/source-counts") return new Response("not found", { status: 404 });
+      if (path.startsWith("/api/requirements/")) return jsonOk(detail({ ...baseRow, analysis: null, analyses: [] }));
+      return jsonOk({ items: [baseRow], nextCursor: null });
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await openFirstRow("收集表相似需求验证");
+
+    // PRD-31：非 TB 来源没有重复判定身份，不再渲染确认/忽略入口。
+    expect(screen.queryByRole("heading", { name: "重复处理" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "确认重复" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "相似需求" })).toBeInTheDocument();
+    expect(await screen.findByText("RQ-000099 · 收集表相似需求验证（旧）")).toBeInTheDocument();
+    expect(requested.some((path) => path.includes("/api/requirements?") && path.includes("limit=5"))).toBe(true);
   });
 
   it("reads the detail creation time from the server DTO for non-Teambition sources (F1)", async () => {
@@ -1994,6 +2035,59 @@ describe("RequirementsPanel intake (V02-T04)", () => {
     fireEvent.click(screen.getByRole("button", { name: "整理成需求草稿" }));
     expect(await screen.findByText("AI 暂时无法整理聊天内容，请手工填写需求。")).toBeInTheDocument();
     expect(screen.queryByText(/RQ-000009/)).not.toBeInTheDocument();
+  });
+
+  it("shows title-based similar requirements on blur and never blocks submission (PRD-31)", async () => {
+    const similarRow = { id: "req-9", platformRequirementId: "RQ-000009", title: "导出报表", sourceType: "teambition", sourceChannel: null };
+    let posted = false;
+    const onCreated = vi.fn();
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/requirements" && init?.method === "POST") {
+        posted = true;
+        return Response.json({ requirementId: "req-new" }, { status: 201 });
+      }
+      if (path.startsWith("/api/requirements?")) return Response.json({ items: [similarRow], nextCursor: null });
+      if (path === "/api/function-modules") return Response.json({ items: [] });
+      return Response.json({ items: [] });
+    });
+    render(<IntakeForm onCreated={onCreated} />);
+    fireEvent.click(screen.getByRole("button", { name: "新建需求" }));
+    fireEvent.change(screen.getByLabelText("新建需求标题"), { target: { value: "导出报表" } });
+    fireEvent.blur(screen.getByLabelText("新建需求标题"));
+
+    expect(await screen.findByText(/RQ-000009 · 导出报表/)).toBeInTheDocument();
+    const link = screen.getByRole("link", { name: /RQ-000009 · 导出报表/ });
+    // 点开相似需求走新标签页，不丢当前表单。
+    expect(link).toHaveAttribute("href", "?requirement=req-9");
+    expect(link).toHaveAttribute("target", "_blank");
+
+    fireEvent.change(screen.getByLabelText("新建需求描述"), { target: { value: "希望导出骑行报表" } });
+    await chooseArcoOption("新建来源渠道", "售后");
+    fireEvent.click(screen.getByRole("button", { name: "提交并进入分析" }));
+    await waitFor(() => expect(posted).toBe(true));
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith("req-new"));
+  });
+
+  it("keeps creation possible when the similar-requirement lookup fails (PRD-31)", async () => {
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/requirements" && init?.method === "POST") return Response.json({ requirementId: "req-new-2" }, { status: 201 });
+      if (path.startsWith("/api/requirements?")) return new Response(JSON.stringify({ error: { code: "DEPENDENCY_UNAVAILABLE", message: "upstream" } }), { status: 503, headers: { "content-type": "application/json" } });
+      if (path === "/api/function-modules") return Response.json({ items: [] });
+      return Response.json({ items: [] });
+    });
+    const onCreated = vi.fn();
+    render(<IntakeForm onCreated={onCreated} />);
+    fireEvent.click(screen.getByRole("button", { name: "新建需求" }));
+    fireEvent.change(screen.getByLabelText("新建需求标题"), { target: { value: "查询会失败的需求" } });
+    fireEvent.blur(screen.getByLabelText("新建需求标题"));
+    expect(await screen.findByText("相似需求查询失败，不影响提交。")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("新建需求描述"), { target: { value: "描述" } });
+    await chooseArcoOption("新建来源渠道", "售后");
+    fireEvent.click(screen.getByRole("button", { name: "提交并进入分析" }));
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith("req-new-2"));
   });
 
   // 客户端 30 秒超时：中断请求、给明确文案、按钮恢复可点。
