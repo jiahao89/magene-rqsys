@@ -132,7 +132,7 @@ export const RequirementIntakeSchema = z.strictObject({
     tbDisplayName: z.string().trim().max(100).nullish(),
   }).nullish(),
 });
-// V02-T07：手工编辑（仅 web_manual）。全部字段可选（未传=保持不变，null=清空可选值）；
+// V02-T07/PRD-30：手工与多维表格编辑（web_manual/base_form）。全部字段可选（未传=保持不变，null=清空可选值）；
 // 期望源版本做乐观并发；渠道/类型仍受固定枚举约束。
 export const RequirementIntakeEditSchema = z.strictObject({
   expectedSourceVersion: z.number().int().min(1),

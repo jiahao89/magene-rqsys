@@ -108,7 +108,7 @@ test("assessment runner stores a running version, masks PII, validates the contr
   assert.match(system, /需求评估 Skill/);
   assert.match(system, /investigationPrompt/);
   assert.match(system, /assumptions/);
-  assert.deepEqual(h.calls.completed[0], output);
+  assert.deepEqual(h.calls.completed[0], { ...output, assumptions: ["假设：电量百分比在当前平台可读"] });
   assert.deepEqual(h.calls.failed, []);
 });
 
@@ -193,4 +193,12 @@ test("assessment stores all three input keys, keeping empty strings", async () =
   const partial = harness(() => envelope(output));
   await partial.runner.run({ requirement, inputs: { background: "冬季投诉", scenario: "通勤" }, actorId: "actor-1" });
   assert.deepEqual((partial.calls.created[0] as { inputs: unknown }).inputs, { background: "冬季投诉", goal: "", scenario: "通勤" });
+});
+
+test("assessment normalizes assumption prefixes to full-width 假设： before persisting", async () => {
+  const h = harness(() => envelope({ ...output, assumptions: ["假设: 低温电量估算偏差", "低温下电量曲线需要标定", "假设：已有平台能力"] }));
+  const result = await h.runner.run({ requirement, inputs: {}, actorId: "actor-1" });
+  const stored = (h.calls.completed[0] as { assumptions: string[] }).assumptions;
+  assert.deepEqual(stored, ["假设：低温电量估算偏差", "假设：低温下电量曲线需要标定", "假设：已有平台能力"]);
+  assert.deepEqual((result.output as { assumptions: string[] }).assumptions, stored);
 });

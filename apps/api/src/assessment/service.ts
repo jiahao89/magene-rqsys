@@ -32,6 +32,12 @@ export class AssessmentContractError extends AiProviderError {
   }
 }
 
+/** PRD §4.10.4：assumptions 统一全角「假设：」前缀（模型偶尔输出半角冒号或漏掉前缀）。 */
+export function normalizeAssumption(value: string): string {
+  const body = value.trim().replace(/^假设\s*[:：]?\s*/, "");
+  return `假设：${body.trim()}`;
+}
+
 /** 只取字段路径并去重排序；数组下标保留为 scope.in，避免把模型正文带进日志。 */
 function contractFieldPaths(error: z.ZodError): string[] {
   return [...new Set(error.issues.map((issue) => issue.path.map(String).join(".")).filter(Boolean))].sort();
@@ -162,7 +168,9 @@ export function createAssessmentRunner(options: {
         }
         const parsed = AssessmentOutputSchema.safeParse(raw);
         if (!parsed.success) throw new AssessmentContractError(contractFieldPaths(parsed.error));
-        const completed = await options.assessments.complete(record.id, parsed.data as Record<string, unknown>, now().toISOString());
+        // 落库前归一化假设前缀，保证历史版本都满足契约；其余字段保持模型输出。
+        const output = { ...parsed.data, assumptions: parsed.data.assumptions.map(normalizeAssumption) };
+        const completed = await options.assessments.complete(record.id, output as Record<string, unknown>, now().toISOString());
         // 版本在本次调用期间被判超时（已被标 failed）：不把迟到结果写回成功。
         if (!completed) throw new AiProviderError("timeout", "Assessment version is no longer running.");
         return completed;

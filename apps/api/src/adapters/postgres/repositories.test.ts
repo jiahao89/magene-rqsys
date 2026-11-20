@@ -539,3 +539,69 @@ test("enqueue reopens a terminally failed job for an explicit same-key retry", a
   assert.match(calls[0]!.sql,/status IN \('failed','cancelled'\)/);
   assert.match(calls[0]!.sql,/attempt_count=0/);
 });
+
+// PRD-30：base_form 编辑只改平台侧；source_payload 保留 formRecordId 与原始表单投影。
+type EditRow = Record<string, unknown>;
+function editPool(row: EditRow) {
+  const statements: Array<{ text: string; values: unknown[] }> = [];
+  const query = async (text: string, values: unknown[] = []) => {
+    statements.push({ text, values });
+    if (/^(BEGIN|COMMIT|ROLLBACK)$/i.test(text.trim())) return { rows: [], rowCount: 0 };
+    if (text.includes("FROM requirements WHERE id=$1 FOR UPDATE")) return { rows: [row], rowCount: 1 };
+    if (text.includes("FROM requirement_edit_receipts WHERE idempotency_key=$1")) return { rows: [], rowCount: 0 };
+    if (text.includes("COALESCE(MAX(analysis_version)")) return { rows: [{ v: 2 }], rowCount: 1 };
+    return { rows: [], rowCount: 0 };
+  };
+  const store = new PostgresRepositories({ query, connect: async () => ({ query, release() {} }) } as never).requirements;
+  return { store, statements };
+}
+
+function baseFormEditRow() {
+  return {
+    id: "req-1", source_type: "base_form", source_version: 1, title: "旧标题", description: "旧描述",
+    source_channel: "售后", product_model: "C706", requirement_type: "新增功能", constraint_notes: null,
+    supplement_url: null, intake_module: null, proposer_name: "张骑", source_hash: "old-source-hash",
+    substantive_hash: substantiveHash({ title: "旧标题", description: "旧描述", scope: null, acceptanceCriteria: null, attachmentRefs: [] }),
+    source_payload: { sourceType: "base_form", formRecordId: "rec-1", title: "旧标题", description: "旧描述", sourceChannel: "售后" },
+  };
+}
+
+test("base_form substantive edit bumps the version, keeps formRecordId provenance and re-runs analysis", async () => {
+  const { store, statements } = editPool(baseFormEditRow());
+  const result = await store.updateManualRequirement({
+    requirementId: "req-1", expectedSourceVersion: 1, idempotencyKey: "key-1", actorId: "actor-1", requestHash: "hash-1", title: "新标题",
+  });
+  assert.deepEqual(result, { outcome: "updated", sourceVersion: 2, substantiveChanged: true, replay: false });
+  const snapshot = statements.find((statement) => statement.text.startsWith("INSERT INTO source_snapshots"))!;
+  const snapshotPayload = JSON.parse(String(snapshot.values[5]));
+  assert.equal(snapshotPayload.formRecordId, "rec-1");
+  assert.equal(snapshotPayload.title, "旧标题", "source_payload 保留收集表原文，不改写成平台编辑值");
+  const update = statements.find((statement) => statement.text.startsWith("UPDATE requirements SET title=$2"))!;
+  assert.equal(update.values[10], 2);
+  assert.equal(JSON.parse(String(update.values[11])).formRecordId, "rec-1");
+  const analysis = statements.find((statement) => statement.text.includes("'analysis',$2"))!;
+  assert.equal(analysis.values[1], "analysis:req-1:v2");
+  assert.equal(statements.some((statement) => statement.text.includes("'base_push',$2")), false);
+});
+
+test("base_form metadata edit keeps the version and only enqueues a re-push with preserved provenance", async () => {
+  const { store, statements } = editPool(baseFormEditRow());
+  const result = await store.updateManualRequirement({
+    requirementId: "req-1", expectedSourceVersion: 1, idempotencyKey: "key-2", actorId: "actor-1", requestHash: "hash-2", sourceChannel: "销售",
+  });
+  assert.deepEqual(result, { outcome: "updated", sourceVersion: 1, substantiveChanged: false, replay: false });
+  const update = statements.find((statement) => statement.text.startsWith("UPDATE requirements SET source_channel=$2"))!;
+  assert.equal(JSON.parse(String(update.values[5])).formRecordId, "rec-1");
+  const push = statements.find((statement) => statement.text.includes("'base_push',$2"))!;
+  assert.match(String(push.values[1]), /^base-push:req-1:sv1:av2:meta:/);
+  assert.equal(statements.some((statement) => statement.text.includes("'analysis',$2")), false);
+});
+
+test("Teambition facts remain non-editable", async () => {
+  const { store, statements } = editPool({ ...baseFormEditRow(), source_type: "teambition" });
+  const result = await store.updateManualRequirement({
+    requirementId: "req-1", expectedSourceVersion: 1, idempotencyKey: "key-3", actorId: "actor-1", requestHash: "hash-3", title: "新标题",
+  });
+  assert.deepEqual(result, { outcome: "not_manual" });
+  assert.equal(statements.some((statement) => statement.text.startsWith("UPDATE requirements")), false);
+});

@@ -508,10 +508,12 @@ paths:
         '413': { $ref: '#/components/responses/PayloadTooLarge' }
         '503': { $ref: '#/components/responses/DependencyUnavailable' }
     patch:
-      summary: Edit a web-manual requirement with optimistic versioning (V02-T07)
+      summary: Edit a web-manual or base-form requirement with optimistic versioning (V02-T07/PRD-30)
       description: >-
-        Only web_manual requirements are editable; Teambition facts stay read-only. Requires
-        an Idempotency-Key and expectedSourceVersion. Definition changes (title/description/
+        web_manual and base_form requirements are editable; Teambition facts stay read-only.
+        base_form edits change the platform side only and never write back to the collection
+        table; source_payload keeps formRecordId and the original form projection for provenance.
+        Requires an Idempotency-Key and expectedSourceVersion. Definition changes (title/description/
         product/constraints) atomically create a new source version, snapshot, audit event and
         analysis job and reset the push; metadata changes (channel/type/link) only update the
         projection and queue a non-substantive push; a normalized no-op returns unchanged.

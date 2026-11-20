@@ -868,7 +868,7 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
   }
   const intakeEditMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)$/);
   if (method === "PATCH" && intakeEditMatch) {
-    // V02-T07：手工编辑（仅 web_manual）。TB 事实只读；期望源版本 + 幂等键。
+    // V02-T07/PRD-30：手工与多维表格编辑（base_form 只改平台侧，不回写收集表）。TB 事实只读；期望源版本 + 幂等键。
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
     const requirementId = pathUuid(intakeEditMatch[1]!, dependencies); if (!requirementId) return jsonError("NOT_FOUND");
@@ -888,7 +888,7 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
         ...(body.supplementUrl !== undefined ? { supplementUrl: body.supplementUrl } : {}),
       });
       if (result.outcome === "not_found") return jsonError("NOT_FOUND");
-      if (result.outcome === "not_manual") return jsonError("CONFLICT", "Teambition 来源的事实由 Teambition 维护，Web 仅编辑手工需求。");
+      if (result.outcome === "not_manual") return jsonError("CONFLICT", "Teambition 来源的事实由 Teambition 维护，Web 仅编辑手工/多维表格需求。");
       if (result.outcome === "key_conflict") return jsonError("CONFLICT", "该幂等键已用于不同的提交内容。");
       if (result.outcome === "version_conflict") return jsonError("CONFLICT", `版本冲突：该需求已被更新到源版本 ${result.currentSourceVersion}，请刷新后重试。`);
       return json({ requirementId, outcome: result.outcome, sourceVersion: result.sourceVersion, ...(result.outcome === "updated" || result.outcome === "replay" ? { substantiveChanged: result.substantiveChanged } : {}) }, 200);
