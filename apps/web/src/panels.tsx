@@ -1712,15 +1712,17 @@ function RequirementAssessmentSection({ requirementId }: { requirementId: string
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const load = useCallback(async (silent = false) => {
+  // preferLatest：生成失败后刷新时直接选中最新（失败）版本，避免结论区还停在旧版本。
+  const load = useCallback(async (silent = false, preferLatest = false) => {
     if (!silent) { setLoadState("loading"); setLoadError(null); }
     try {
       // 防御：历史接口若返回错形状（如被通用列表路由兜底），不把无 version 的条目当成评估版本。
       const items = (await listRequirementAssessments(requirementId)).filter((item) => item && typeof item.version === "number");
+      const latest = items.reduce((max, item) => Math.max(max, item.version), 0) || null;
       setHistory(items);
-      setSelectedVersion((current) => current !== null && items.some((item) => item.version === current)
-        ? current
-        : items.reduce((max, item) => Math.max(max, item.version), 0) || null);
+      setSelectedVersion((current) => preferLatest || current === null || !items.some((item) => item.version === current)
+        ? latest
+        : current);
       setLoadState("ready");
     } catch (cause) {
       if (!silent) { setLoadError(errorText(cause)); setLoadState("error"); }
@@ -1765,7 +1767,8 @@ function RequirementAssessmentSection({ requirementId }: { requirementId: string
     const inputs = { background: background.trim(), goal: goal.trim(), scenario: scenario.trim() };
     setBusy(true); setError(null); setNotice(null);
     const controller = new AbortController();
-    const timer = window.setTimeout(() => controller.abort(), 60000);
+    // 服务端排队上限 60s：客户端留 5s 余量，避免在服务端刚好完成时抢跑。PRD 4.10 A5。
+    const timer = window.setTimeout(() => controller.abort(), 65000);
     try {
       const created = await createRequirementAssessment(requirementId, inputs, fetch, controller.signal);
       setHistory((previous) => [created, ...previous.filter((item) => item.version !== created.version)]);
@@ -1782,6 +1785,9 @@ function RequirementAssessmentSection({ requirementId }: { requirementId: string
         void load(true);
       } else {
         setError(controller.signal.aborted ? "评估生成超时，请稍后重试。" : assessmentErrorMessage(cause));
+        // 429/503/500/超时也由服务端保留 failed 版本（可能稍后才可见）：静默刷新历史并选中最新版本，
+        // 避免用户只看到报错、却在版本列表里找不到这次失败记录。
+        void load(true, true);
       }
     } finally {
       window.clearTimeout(timer);
@@ -1924,7 +1930,9 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
       detail.pipeline.analysis === "failed" ? "AI 分析失败且不可自动重试；失败摘要见「查看依据与历史」中的分析版本记录。" : "",
     ]).filter(Boolean).join(" ") || "当前没有待重试的失败项；如需换人可在此变更负责人。";
 
-  const createdAt = formatDateTime(facts.createdAt);
+  // TB「创建时间」仍取源快照；底部「这条需求怎么来的」取服务端创建时间（平台收录时间，四种来源一致，F1）。
+  const sourceCreatedAt = formatDateTime(facts.createdAt);
+  const platformCreatedAt = formatDateTime(detail.createdAt ?? null) ?? sourceCreatedAt;
   const updatedAt = formatDateTime(facts.updatedAt);
   const analysisVersions = [...detail.analyses].reverse();
   const failedAnalysis = analysisVersions.find((version) => version.safeErrorSummary !== null);
@@ -2060,7 +2068,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
             <div><dt><TbFieldLabel kind={sourceKind}>执行人</TbFieldLabel></dt><dd><SourceValue value={facts.executorName} /></dd></div>
             <div><dt><TbFieldLabel kind={sourceKind}>状态</TbFieldLabel></dt><dd><SourceValue value={facts.tbStatus} emptyHint="Teambition 未提供该字段；工作台不推断状态名称" /></dd></div>
             <div><dt><TbFieldLabel kind={sourceKind}>链接</TbFieldLabel></dt><dd><SourceValue value={facts.tbUrl} href emptyHint="Teambition 未提供该字段" /></dd></div>
-            <div><dt><TbFieldLabel kind={sourceKind}>创建时间</TbFieldLabel></dt><dd><SourceValue value={createdAt ?? facts.createdAt} emptyHint="Teambition 未提供该字段" /></dd></div>
+            <div><dt><TbFieldLabel kind={sourceKind}>创建时间</TbFieldLabel></dt><dd><SourceValue value={sourceCreatedAt} emptyHint="Teambition 未提供该字段" /></dd></div>
             <div><dt><TbFieldLabel kind={sourceKind}>更新时间</TbFieldLabel></dt><dd><SourceValue value={updatedAt ?? facts.updatedAt} emptyHint="Teambition 未提供该字段" /></dd></div>
           </> : null}
         </dl>
@@ -2143,7 +2151,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
       <span><em>来源</em>{sourceLabel}</span>
       <span><em>来源渠道</em>{detail.sourceChannel || "未填写"}</span>
       <span><em>提出人</em>{facts.proposerName || "未填写"}</span>
-      <span><em>创建时间</em>{createdAt ?? "未填写"}</span>
+      <span><em>创建时间</em>{platformCreatedAt ?? "未填写"}</span>
     </div>
   </div>;
 }

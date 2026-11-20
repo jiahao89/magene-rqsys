@@ -575,6 +575,8 @@ export interface RequirementDetail {
   duplicateOf?: string | null;
   duplicates?: Array<{ id: string; title: string; teambitionRequirementId: string }>;
   scoring?: ScoringData | null;
+  /** 服务端创建时间（四种来源都返回）；非 TB 来源没有 payload 创建时间，必须读这里。 */
+  createdAt?: string | null;
   updatedAt?: string | null;
   lastPushedAt?: string | null;
 }

@@ -566,6 +566,38 @@ describe("RequirementsPanel (ticket 17)", () => {
     expect(screen.queryByRole("heading", { name: "重复处理" })).not.toBeInTheDocument();
   });
 
+  it("reads the detail creation time from the server DTO for non-Teambition sources (F1)", async () => {
+    const manualRow = {
+      ...row,
+      id: "req-manual-created",
+      sourceRequirementId: null,
+      sourceType: "web_manual",
+      sourceChannel: "终端用户",
+      title: "手工创建时间需求",
+      description: "手工描述",
+      createdAt: "2026-11-01T09:30:00.000Z",
+    };
+    mockPanel({
+      rows: [manualRow],
+      detailBody: detail({
+        ...manualRow,
+        source: { sourceType: "web_manual", title: "手工创建时间需求", description: "手工描述" },
+        analysis: null,
+        analyses: [],
+      }),
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await openFirstRow("手工创建时间需求");
+
+    // 服务端 createdAt 优先；手工来源的 source_payload 没有创建时间，不能再显示「未填写」。
+    const origin = screen.getByLabelText("这条需求怎么来的");
+    const expected = new Date("2026-11-01T09:30:00.000Z").toLocaleString("zh-CN");
+    const creation = within(origin).getByText("创建时间").closest("span");
+    expect(creation).not.toBeNull();
+    expect(creation).toHaveTextContent(expected);
+    expect(creation).not.toHaveTextContent("未填写");
+  });
+
   it("renders the assessment contract, switches versions, and copies the investigation prompt", async () => {
     const v1 = assessmentVersion(1, { background: "第一版背景", verdict: "advance" });
     const v2 = assessmentVersion(2, { background: "第二版背景", verdict: "investigate" });
@@ -689,6 +721,67 @@ describe("RequirementsPanel (ticket 17)", () => {
     expect(await screen.findByText("正在生成，请稍候。")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "正在生成，请稍候" })).toBeDisabled();
     expect(posts).toBe(1);
+  });
+
+  it("refreshes assessment history after a non-409 failure so the failed version stays visible", async () => {
+    let historyCalls = 0;
+    const failed = { ...assessmentVersion(2), status: "failed", output: null, errorCode: "analysis_failure" };
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/people") return jsonOk({ items: [] });
+      if (path === "/api/requirements/req-1/assessments" && init?.method === "POST") {
+        return new Response(JSON.stringify({ error: { code: "DEPENDENCY_UNAVAILABLE", message: "Dependency unavailable" } }), { status: 503, headers: { "content-type": "application/json" } });
+      }
+      if (path === "/api/requirements/req-1/assessments") {
+        historyCalls += 1;
+        return jsonOk({ items: historyCalls === 1 ? [assessmentVersion(1)] : [failed, assessmentVersion(1)] });
+      }
+      if (path.startsWith("/api/requirements/")) return jsonOk(detail());
+      return jsonOk({ items: [row], nextCursor: null });
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await openFirstRow();
+    expect(await screen.findByRole("button", { name: "v1" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "生成评估" }));
+
+    expect(await screen.findByText("服务暂时不可用，请稍后重试；已保存的评估不受影响。")).toBeInTheDocument();
+    // 503 后服务端保留了 failed 版本：静默刷新历史即可看到它，而不是只剩一句报错。
+    expect(await screen.findByRole("button", { name: "v2（失败）" })).toBeInTheDocument();
+    expect(screen.getByText(/错误码：analysis_failure/)).toBeInTheDocument();
+    expect(historyCalls).toBeGreaterThanOrEqual(2);
+  });
+
+  it("times out an assessment generation after 65 seconds, not before", async () => {
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/people") return jsonOk({ items: [] });
+      if (path === "/api/requirements/req-1/assessments" && init?.method === "POST") {
+        return new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () => reject(new DOMException("The operation was aborted.", "AbortError")));
+        });
+      }
+      if (path === "/api/requirements/req-1/assessments") return jsonOk({ items: [] });
+      if (path.startsWith("/api/requirements/")) return jsonOk(detail());
+      return jsonOk({ items: [row], nextCursor: null });
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await openFirstRow();
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "生成评估" }));
+      // PRD 4.10 A5：服务端 60s，客户端 65s；64.999s 时不能抢跑。
+      await act(async () => { await vi.advanceTimersByTimeAsync(64_999); });
+      expect(screen.queryByText("评估生成超时，请稍后重试。")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "生成中…（约 30 秒）" })).toBeDisabled();
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+      expect(screen.getByText("评估生成超时，请稍后重试。")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "生成评估" })).toBeEnabled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps the detail usable when the assessment history cannot load", async () => {
