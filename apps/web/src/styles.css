@@ -1672,3 +1672,12 @@ html[data-theme="dark"] input[type="datetime-local"] { color-scheme: dark; }
 .gate-evidence { display: inline-flex; align-items: center; gap: 6px; color: var(--rq-text-muted); font-size: var(--rq-font-caption); }
 .gate-form { flex-basis: 100%; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .gate-form input { flex: 1; min-width: 240px; }
+
+/* 数据源页：多维表格来源与同步状态（只读）。 */
+.baseform-readonly-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.baseform-block { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1px solid var(--rq-border); border-radius: var(--rq-radius-md); background: var(--rq-surface); }
+.baseform-block h3 { margin: 0; color: var(--rq-text-strong); font-size: var(--rq-font-body); }
+.baseform-share-url { display: block; padding: 8px 10px; border: 1px solid var(--rq-border); border-radius: var(--rq-radius-sm); background: var(--rq-surface-subtle); color: var(--rq-text-strong); font-family: var(--rq-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: var(--rq-font-caption); overflow-wrap: anywhere; }
+.baseform-share-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.baseform-rules { display: flex; flex-direction: column; gap: 6px; margin: 0; padding-left: 18px; color: var(--rq-text-muted); font-size: var(--rq-font-caption); }
+.baseform-block .req-system-grid { margin: 0; }

@@ -208,7 +208,7 @@ export function SourcesPanel({ sources, loadState, onRefresh }: { sources: Sourc
     finally { setBusy(false); }
   };
 
-  return <section className="panel requirements-panel">
+  const panel = <section className="panel requirements-panel">
     <div className="panel-heading"><div><h2>连接与数据源</h2><p>填写 Teambition 项目名称；系统会自动匹配项目及需求任务类型。凭据保存在服务端。</p></div>{existing && <span className={`status-chip ${existing.enabled ? "status-live" : "status-muted"}`}><span />{existing.enabled ? "已启用" : "已停用"}</span>}</div>
     <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
     <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
@@ -234,6 +234,70 @@ export function SourcesPanel({ sources, loadState, onRefresh }: { sources: Sourc
       border={false}
       columns={[{ title: "项目", dataIndex: "project" }, { title: "定时同步", dataIndex: "schedule" }]}
     />}
+  </section>;
+  return <>{panel}<BaseFormReadonlyPanel /></>;
+}
+
+/**
+ * 数据源页的多维表格只读区块：来源地址（可复制）、固定同步规则、最近一次同步统计。
+ * 统计未返回/接口失败时只隐藏数字，不报错；不展示 Base 表 ID 或记录 ID。
+ */
+function BaseFormReadonlyPanel() {
+  const [baseForm, setBaseForm] = useState<OpsMetrics["baseForm"]>(null);
+  const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    // 运营指标失败只影响本区块：地址/规则照常展示，统计显示为暂无。
+    void getOpsMetrics().then((metrics) => { if (!cancelled) setBaseForm(metrics.baseForm ?? null); }).catch(() => { if (!cancelled) setBaseForm(null); });
+    return () => { cancelled = true; };
+  }, []);
+  const shareUrl = baseForm?.shareUrl ?? null;
+  const copyShareUrl = async () => {
+    if (!shareUrl) return;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setCopied(true); setCopyError(null);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch { setCopyError("复制失败，请手动选中链接复制。"); }
+  };
+  const stats = baseForm;
+  return <section className="panel requirements-panel" aria-labelledby="baseform-source-heading">
+    <div className="panel-heading"><div><h2 id="baseform-source-heading">多维表格来源</h2><p>收集表分享页与同步状态，只读；不展示 Base 表 ID 或记录 ID。</p></div></div>
+    <div className="baseform-readonly-grid">
+      {shareUrl ? <div className="baseform-block">
+        <h3>来源地址</h3>
+        <code className="baseform-share-url">{shareUrl}</code>
+        <div className="baseform-share-actions">
+          <ArcoButton size="small" htmlType="button" onClick={() => void copyShareUrl()}>{copied ? "已复制" : "复制链接"}</ArcoButton>
+          <span className="subtle-text">需在本租户内登录飞书后访问。</span>
+        </div>
+        {copyError ? <span className="status-hint" role="alert">{copyError}</span> : null}
+      </div> : null}
+      <div className="baseform-block">
+        <h3>同步规则</h3>
+        <ul className="baseform-rules">
+          <li>平台每 30 分钟触发一次同步（时区 Asia/Shanghai）；实际投递时间可能有偏移，偶尔会漏掉一轮。</li>
+          <li>扫描到新行后依次执行：收录需求 → 回写「已收录 + 系统需求 ID」→ AI 分析 → 推送 PM「数据表」。</li>
+          <li>收集表只作一次性收录凭证：已回写系统需求 ID 的行不会重复创建；后续修改请在需求详情里做。</li>
+        </ul>
+      </div>
+      <div className="baseform-block">
+        <h3>最近一次同步</h3>
+        {stats ? <dl className="req-system-grid">
+          {stats.lastRunAt ? <div><dt>最后运行时间</dt><dd>{formatDateTime(stats.lastRunAt) ?? stats.lastRunAt}</dd></div> : null}
+          {typeof stats.scanned === "number" ? <div><dt>扫描行数</dt><dd>{stats.scanned}</dd></div> : null}
+          {typeof stats.created === "number" ? <div><dt>新建需求</dt><dd>{stats.created}</dd></div> : null}
+          {typeof stats.recorded === "number" ? <div><dt>已收录</dt><dd>{stats.recorded}</dd></div> : null}
+          {typeof stats.rejected === "number" ? <div><dt>校验失败</dt><dd>{stats.rejected}</dd></div> : null}
+          {typeof stats.writeBackFailed === "number" ? <div><dt>写回失败</dt><dd>{stats.writeBackFailed}</dd></div> : null}
+          {typeof stats.readFailed === "boolean" ? <div><dt>读取失败</dt><dd>{stats.readFailed ? "是" : "否"}</dd></div> : null}
+          {stats.lastError ? <div><dt>最后错误</dt><dd>{stats.lastError}</dd></div> : null}
+        </dl> : <p className="detail-note">暂无同步记录或统计暂不可用。</p>}
+        {stats?.readFailed ? <p className="status-hint" role="status">最近一次读取收集表失败，详见「最后错误」。</p> : null}
+        {typeof stats?.writeBackFailed === "number" && stats.writeBackFailed > 0 ? <p className="status-hint" role="status">有 {stats.writeBackFailed} 行写回收集表失败。</p> : null}
+      </div>
+    </div>
   </section>;
 }
 

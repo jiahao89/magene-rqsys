@@ -740,7 +740,7 @@ export interface OpsMetrics {
   duplicate: { confirmedSuppressed: number; suspected: number };
   scoring: { aiSuggested: number; manual: number; aiApplied: number; adoptionRate: number | null };
   /** 5b：收集表同步的运维状态；未运行/未配置时为 null。 */
-  baseForm?: { lastRunAt: string | null; pages: number; scanned: number; skipped: number; created: number; recorded: number; rejected: number; writeBackFailed: number; readFailed: boolean; lastError: string | null } | null;
+  baseForm?: { lastRunAt: string | null; pages: number; scanned: number; skipped: number; created: number; recorded: number; rejected: number; writeBackFailed: number; readFailed: boolean; lastError: string | null; /** 收集表分享地址（只读）；未配置时不返回。 */ shareUrl?: string | null } | null;
 }
 
 /** 运营指标（PRD §10）：窗口内成功率/耗时 + 当前快照。 */

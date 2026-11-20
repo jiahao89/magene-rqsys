@@ -275,6 +275,49 @@ describe("SourcesPanel (ticket 16)", () => {
     expect(within(selfCheck).getByText("周一 09:00 Asia/Shanghai")).toBeInTheDocument();
     expect(within(selfCheck).queryByText(/周计划未启用/)).not.toBeInTheDocument();
   });
+
+  it("shows the multi-dimensional source address and read-only sync information", async () => {
+    const shareUrl = "https://aimagene.feishu.cn/share/base/shrcn6eOMLqHxXb302ggnGAyvvZ";
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/ops/metrics") return jsonOk({ metrics: { baseForm: {
+        lastRunAt: "2026-11-20T08:41:02.000Z", pages: 1, scanned: 1, skipped: 0, created: 1, recorded: 1, rejected: 0, writeBackFailed: 0, readFailed: false, lastError: null, shareUrl,
+      } } });
+      return jsonOk({ items: [] });
+    });
+    render(<SourcesPanel sources={[source]} loadState="ready" onRefresh={() => undefined} />);
+
+    expect(await screen.findByText(shareUrl)).toBeInTheDocument();
+    expect(screen.getByText("同步规则")).toBeInTheDocument();
+    expect(screen.getByText(/平台每 30 分钟触发一次同步/)).toBeInTheDocument();
+    expect(screen.getByText("最近一次同步")).toBeInTheDocument();
+    expect(screen.getByText("扫描行数")).toBeInTheDocument();
+    expect(screen.getByText("新建需求")).toBeInTheDocument();
+    // 只读：不暴露 Base 表 ID 或 record ID。
+    expect(document.body.textContent).not.toMatch(/tbl[A-Za-z0-9]/);
+    expect(document.body.textContent).not.toMatch(/rec[A-Za-z0-9]{6,}/);
+
+    fireEvent.click(screen.getByRole("button", { name: "复制链接" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(shareUrl));
+    expect(await screen.findByRole("button", { name: "已复制" })).toBeInTheDocument();
+  });
+
+  it("hides multi-dimensional sync numbers without erroring when stats are unavailable", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/ops/metrics") return new Response(JSON.stringify({ error: { code: "DEPENDENCY_UNAVAILABLE", message: "upstream" } }), { status: 503, headers: { "content-type": "application/json" } });
+      return jsonOk({ items: [] });
+    });
+    render(<SourcesPanel sources={[source]} loadState="ready" onRefresh={() => undefined} />);
+
+    // 地址未配置时整行隐藏；统计拿不到只显示暂无，不报错、不影响来源配置。
+    expect(await screen.findByText("暂无同步记录或统计暂不可用。")).toBeInTheDocument();
+    expect(screen.queryByText("来源地址")).not.toBeInTheDocument();
+    expect(screen.queryByText("扫描行数")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
 });
 
 describe("BatchesPanel (ticket 16)", () => {
