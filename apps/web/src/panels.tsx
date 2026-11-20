@@ -1850,23 +1850,46 @@ function RequirementAssessmentSection({ requirementId }: { requirementId: string
 
 /**
  * PRD-31：多维表格来源的详情只读展示相似需求。
- * 只查一次、最多 5 条、排除自身；2s 超时或失败静默隐藏，不写 duplicate_of、不自动压制。
+ * R8 两段查询：先用整条标题；0 条且标题超过 8 字时，去掉【…】前缀取前 8 字再查一次。
+ * 每次渲染最多 2 次请求，2s 超时或失败静默隐藏，不写 duplicate_of、不自动压制。
  */
 function SimilarRequirementSection({ requirementId, title }: { requirementId: string; title: string }) {
   const [items, setItems] = useState<RequirementSummary[]>([]);
+  const controllerRef = useRef<AbortController | null>(null);
   useEffect(() => {
     let cancelled = false;
-    const controller = new AbortController();
-    const timer = window.setTimeout(() => controller.abort(), 2000);
     setItems([]);
-    listRequirements({ q: title, limit: 5, processingState: "active", signal: controller.signal })
-      .then((result) => {
-        if (cancelled) return;
-        // 不把自己列进相似需求；最多 5 条，按接口返回顺序。
-        setItems(result.items.filter((item) => item.id !== requirementId).slice(0, 5));
-      })
-      .catch(() => { if (!cancelled) setItems([]); });
-    return () => { cancelled = true; window.clearTimeout(timer); controller.abort(); };
+
+    // 单次查询：2s 超时中断；异常交给 run() 统一静默隐藏。
+    const search = async (query: string) => {
+      const controller = new AbortController();
+      controllerRef.current = controller;
+      const timer = window.setTimeout(() => controller.abort(), 2000);
+      try {
+        const result = await listRequirements({ q: query, limit: 5, processingState: "active", signal: controller.signal });
+        return result.items;
+      } finally {
+        window.clearTimeout(timer);
+        if (controllerRef.current === controller) controllerRef.current = null;
+      }
+    };
+
+    const run = async () => {
+      const fullTitle = title.trim();
+      if (!fullTitle) return;
+      const matches = (await search(fullTitle)).filter((item) => item.id !== requirementId);
+      if (cancelled) return;
+      if (matches.length > 0) { setItems(matches.slice(0, 5)); return; }
+      // 第二段只对长标题生效；避免与第一段完全相同的查询。
+      if (Array.from(fullTitle).length <= 8) return;
+      const fallbackQuery = Array.from(fullTitle.replace(/^【[^】]*】\s*/, "")).slice(0, 8).join("").trim();
+      if (!fallbackQuery || fallbackQuery === fullTitle) return;
+      const fallbackMatches = (await search(fallbackQuery)).filter((item) => item.id !== requirementId);
+      if (!cancelled) setItems(fallbackMatches.slice(0, 5));
+    };
+
+    void run().catch(() => { if (!cancelled) setItems([]); });
+    return () => { cancelled = true; controllerRef.current?.abort(); };
   }, [requirementId, title]);
 
   // 0 条、查询中、超时或失败都整块不渲染（PRD-31 C）。

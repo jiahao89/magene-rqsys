@@ -641,6 +641,49 @@ describe("RequirementsPanel (ticket 17)", () => {
     expect(requested.some((path) => path.includes("/api/requirements?") && path.includes("limit=5") && path.includes("processingState=active"))).toBe(true);
   });
 
+  it("falls back to the first 8 title characters when a long title has no similar match (PRD-31 R8)", async () => {
+    const longTitle = "【验收】C606 多维表格相似需求验证";
+    const baseRow = {
+      ...row,
+      id: "req-base-r8",
+      sourceRequirementId: null,
+      sourceType: "base_form",
+      sourceChannel: "售后",
+      title: longTitle,
+      source: { sourceType: "base_form", proposerName: "贾浩" },
+    };
+    const other = {
+      ...row,
+      id: "req-r8-match",
+      sourceRequirementId: "tb-200",
+      platformRequirementId: "RQ-000200",
+      title: "C606 相关旧需求",
+      sourceType: "teambition",
+    };
+    const queries: string[] = [];
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/people") return jsonOk({ items: [] });
+      if (path.startsWith("/api/requirements?") && path.includes("q=")) {
+        const query = new URL(path, "http://localhost").searchParams.get("q") ?? "";
+        queries.push(query);
+        // 整条标题只命中自己 → 触发 R8 降级；降级查询命中另一条。
+        if (query === longTitle) return jsonOk({ items: [baseRow], nextCursor: null });
+        if (query === "C606 多维表") return jsonOk({ items: [other], nextCursor: null });
+        return jsonOk({ items: [], nextCursor: null });
+      }
+      if (path === "/api/requirements/source-counts") return new Response("not found", { status: 404 });
+      if (path.startsWith("/api/requirements/")) return jsonOk(detail({ ...baseRow, analysis: null, analyses: [] }));
+      return jsonOk({ items: [baseRow], nextCursor: null });
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await openFirstRow(longTitle);
+
+    // R8：整条标题无命中（只有自己）→ 去【…】前缀取前 8 字再查一次，最多 2 次请求。
+    expect(await screen.findByRole("link", { name: /RQ-000200 · C606 相关旧需求/ })).toBeInTheDocument();
+    expect(queries).toEqual([longTitle, "C606 多维表"]);
+  });
+
   it("reads the detail creation time from the server DTO for non-Teambition sources (F1)", async () => {
     const manualRow = {
       ...row,
