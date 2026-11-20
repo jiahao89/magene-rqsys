@@ -268,7 +268,7 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
 export interface ManualEditSource {
   id: string;
   sourceVersion: number;
-  sourceType: "teambition" | "web_manual";
+  sourceType: "teambition" | "web_manual" | "base_form";
   title: string;
   description: string | null;
   sourceChannel: string | null;
@@ -278,7 +278,7 @@ export interface ManualEditSource {
   supplementUrl: string | null;
 }
 
-/** V02-T07：手工需求编辑（仅 web_manual）。版本冲突时保留未提交内容并提示刷新。 */
+/** V02-T07：手工需求编辑；PRD-30 起多维表格来源同样可编辑（只改平台侧，不回写收集表）。版本冲突时保留未提交内容并提示刷新。 */
 export function ManualEditSection({ detail, onSaved }: { detail: ManualEditSource; onSaved: () => void }) {
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState(detail.title);
@@ -300,7 +300,8 @@ export function ManualEditSection({ detail, onSaved }: { detail: ManualEditSourc
     setConstraintNotes(detail.constraintNotes ?? ""); setSupplementUrl(detail.supplementUrl ?? "");
     setError(null); setNotice(null); idempotencyKey.current = crypto.randomUUID();
   }, [open, detail]);
-  if (detail.sourceType !== "web_manual") return null;
+  // 手工与多维表格来源都可编辑；聊天粘贴属 web_manual，沿用同一入口；Teambition 只读。
+  if (detail.sourceType !== "web_manual" && detail.sourceType !== "base_form") return null;
   if (!open) return <ArcoButton size="small" htmlType="button" onClick={() => setOpen(true)}>编辑需求</ArcoButton>;
   const submit = async () => {
     if (!title.trim() || !description.trim() || !channel) { setError("标题、需求描述与来源渠道不能为空。"); return; }
@@ -323,6 +324,7 @@ export function ManualEditSection({ detail, onSaved }: { detail: ManualEditSourc
     } finally { setBusy(false); }
   };
   return <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap", borderTop: "1px solid rgba(125,131,140,.25)", paddingTop: 12 }}>
+    {detail.sourceType === "base_form" ? <p className="detail-note" role="note" style={{ flexBasis: "100%", margin: 0 }}>修改只保存在需求平台，不会写回多维表格收集表。</p> : null}
     <label className="field" style={{ flex: 2, minWidth: 240 }}><span>标题 *</span><Input aria-label="编辑需求标题" value={title} onChange={(value: string) => setTitle(value)} disabled={busy} /></label>
     <div className="field"><span>来源渠道 *</span>
       <Select aria-label="编辑来源渠道" value={channel} onChange={(value: string) => setChannel(value)} disabled={busy} placeholder="请选择" style={{ minWidth: 160 }} options={[{ label: "请选择", value: "" }, ...REQUIREMENT_INTAKE_CHANNELS.map((item) => ({ label: item, value: item }))]} />

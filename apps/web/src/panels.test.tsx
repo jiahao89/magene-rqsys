@@ -492,6 +492,8 @@ describe("RequirementsPanel (ticket 17)", () => {
     expect(screen.getByText("查看依据与历史")).toBeInTheDocument();
     // TB 原始字段同时使用「TB」小徽标与分区来源标注。
     expect(screen.getAllByText("TB").length).toBeGreaterThanOrEqual(8);
+    // Teambition 来源只读，不提供「编辑需求」入口。
+    expect(screen.queryByRole("button", { name: "编辑需求" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /返回需求池/ }));
     expect(await screen.findByText("需要报表")).toBeInTheDocument();
@@ -564,6 +566,35 @@ describe("RequirementsPanel (ticket 17)", () => {
     expect(screen.queryByText("更新时间")).not.toBeInTheDocument();
     // 重复判定按 (来源配置, TB 需求ID) 保存，手工需求没有这个身份、后端会 404：不渲染该区块。
     expect(screen.queryByRole("heading", { name: "重复处理" })).not.toBeInTheDocument();
+    // 手工来源可编辑，但没有「收集表」这回事：不显示多维表格专属提示。
+    fireEvent.click(screen.getByRole("button", { name: "编辑需求" }));
+    expect(screen.getByLabelText("编辑需求标题")).toBeInTheDocument();
+    expect(screen.queryByText("修改只保存在需求平台，不会写回多维表格收集表。")).not.toBeInTheDocument();
+  });
+
+  it("allows editing base_form requirements with a platform-only note (PRD-30)", async () => {
+    const baseRow = {
+      ...row,
+      id: "req-base-edit",
+      sourceRequirementId: null,
+      sourceType: "base_form",
+      sourceChannel: "销售",
+      title: "收集表需求",
+      source: { sourceType: "base_form", proposerName: "贾浩", formRecordId: "rec-1" },
+    };
+    mockPanel({
+      rows: [baseRow],
+      detailBody: detail({ ...baseRow, analysis: null, analyses: [] }),
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await openFirstRow("收集表需求");
+
+    fireEvent.click(screen.getByRole("button", { name: "编辑需求" }));
+    expect(await screen.findByText("修改只保存在需求平台，不会写回多维表格收集表。")).toBeInTheDocument();
+    expect(screen.getByLabelText("编辑需求标题")).toHaveValue("收集表需求");
+    expect(screen.getByRole("button", { name: "保存（基于 v2）" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(screen.queryByLabelText("编辑需求标题")).not.toBeInTheDocument();
   });
 
   it("reads the detail creation time from the server DTO for non-Teambition sources (F1)", async () => {
@@ -681,6 +712,49 @@ describe("RequirementsPanel (ticket 17)", () => {
     fireEvent.click(screen.getByRole("button", { name: "生成评估" }));
     await waitFor(() => expect(posted).toEqual({ background: "", goal: "", scenario: "" }));
     expect(await screen.findByText(/还需等待约 42 秒/)).toBeInTheDocument();
+  });
+
+  it("prefills the latest assessment inputs when the detail opens (PRD 4.10.7)", async () => {
+    const v1 = { ...assessmentVersion(1), inputs: { background: "第一版背景输入", goal: "第一版目标输入", scenario: "第一版场景输入" } };
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/people") return jsonOk({ items: [] });
+      if (path === "/api/requirements/req-1/assessments") return jsonOk({ items: [v1] });
+      if (path.startsWith("/api/requirements/")) return jsonOk(detail());
+      return jsonOk({ items: [row], nextCursor: null });
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await openFirstRow();
+
+    expect(await screen.findByDisplayValue("第一版背景输入")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("第一版目标输入")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("第一版场景输入")).toBeInTheDocument();
+  });
+
+  it("backfills a version's inputs when switching versions and shows the loaded hint", async () => {
+    const v1 = { ...assessmentVersion(1), inputs: { background: "v1 背景", goal: "v1 目标", scenario: "v1 场景" } };
+    const v2 = { ...assessmentVersion(2), inputs: { background: "v2 背景", goal: "", scenario: "" } };
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/people") return jsonOk({ items: [] });
+      if (path === "/api/requirements/req-1/assessments") return jsonOk({ items: [v1, v2] });
+      if (path.startsWith("/api/requirements/")) return jsonOk(detail());
+      return jsonOk({ items: [row], nextCursor: null });
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await openFirstRow();
+    expect(await screen.findByDisplayValue("v2 背景")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "v1" }));
+
+    expect(await screen.findByDisplayValue("v1 背景")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("v1 目标")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("v1 场景")).toBeInTheDocument();
+    expect(screen.getByText("已载入 v1 的输入，可改后重新生成。")).toBeInTheDocument();
+    // 不做只读锁：回填后仍可修改并重新生成。
+    expect(screen.getByRole("textbox", { name: "需求背景" })).not.toBeDisabled();
+    expect(screen.getByRole("textbox", { name: "需求目标" })).not.toBeDisabled();
+    expect(screen.getByRole("textbox", { name: "使用场景" })).not.toBeDisabled();
   });
 
   it("shows a running assessment as generating and disables the generate button", async () => {

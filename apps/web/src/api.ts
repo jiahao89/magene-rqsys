@@ -456,7 +456,7 @@ export interface RequirementSummary {
   /** RQ-Sys 展示编号（RQ-000001）；列表行优先显示它，缺失时才退回 TB 来源 ID。 */
   platformRequirementId?: string | null;
   sourceRequirementId: string | null;
-  sourceType: "teambition" | "web_manual";
+  sourceType: "teambition" | "web_manual" | "base_form";
   sourceChannel: string | null;
   productModel: string | null;
   requirementType: string | null;
@@ -541,7 +541,7 @@ export interface RequirementDetail {
   sourceUrl?: string | null;
   id: string;
   sourceRequirementId: string | null;
-  sourceType: "teambition" | "web_manual";
+  sourceType: "teambition" | "web_manual" | "base_form";
   sourceChannel: string | null;
   productModel: string | null;
   requirementType: string | null;

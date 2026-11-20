@@ -1711,6 +1711,17 @@ function RequirementAssessmentSection({ requirementId }: { requirementId: string
   const [conflict, setConflict] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // 切版本后回填的版本号：提示「已载入 vN 的输入，可改后重新生成」。
+  const [loadedVersion, setLoadedVersion] = useState<number | null>(null);
+  // 首次打开详情时默认载入最新版本的输入；静默轮询/用户已开始输入时不覆盖。
+  const pendingInitialInputs = useRef(true);
+  const inputsEdited = useRef(false);
+  const applyInputs = useCallback((assessment: RequirementAssessment) => {
+    const inputs = assessment.inputs ?? { background: "", goal: "", scenario: "" };
+    setBackground(inputs.background ?? "");
+    setGoal(inputs.goal ?? "");
+    setScenario(inputs.scenario ?? "");
+  }, []);
 
   // preferLatest：生成失败后刷新时直接选中最新（失败）版本，避免结论区还停在旧版本。
   const load = useCallback(async (silent = false, preferLatest = false) => {
@@ -1723,11 +1734,16 @@ function RequirementAssessmentSection({ requirementId }: { requirementId: string
       setSelectedVersion((current) => preferLatest || current === null || !items.some((item) => item.version === current)
         ? latest
         : current);
+      // PRD 4.10.7：打开详情时默认带上最新版本的补充输入；只在首次成功载入时做，静默刷新不覆盖草稿。
+      if (pendingInitialInputs.current && items.length > 0) {
+        pendingInitialInputs.current = false;
+        if (!inputsEdited.current) applyInputs(items.reduce((left, right) => (right.version > left.version ? right : left)));
+      }
       setLoadState("ready");
     } catch (cause) {
       if (!silent) { setLoadError(errorText(cause)); setLoadState("error"); }
     }
-  }, [requirementId]);
+  }, [applyInputs, requirementId]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -1756,16 +1772,31 @@ function RequirementAssessmentSection({ requirementId }: { requirementId: string
     setNotice((current) => current === "正在生成，请稍候。" ? null : current);
   }, [hasRunning]);
 
-  // 切换需求时清空草稿输入，避免把上一条需求的背景带过去。
-  useEffect(() => { setBackground(""); setGoal(""); setScenario(""); setError(null); setNotice(null); }, [requirementId]);
+  // 切换需求时清空草稿输入，避免把上一条需求的背景带过去；下一条继续默认载入自己的最新输入。
+  useEffect(() => {
+    setBackground(""); setGoal(""); setScenario(""); setError(null); setNotice(null); setLoadedVersion(null);
+    pendingInitialInputs.current = true;
+    inputsEdited.current = false;
+  }, [requirementId]);
 
   const versions = [...history].sort((left, right) => right.version - left.version);
   const selected = versions.find((item) => item.version === selectedVersion) ?? versions[0] ?? null;
 
+  // 切版本：把该版本的 inputs 载入输入框（可改后重新生成），不做只读锁。
+  const switchVersion = (version: number) => {
+    setSelectedVersion(version);
+    const target = history.find((item) => item.version === version);
+    if (!target) return;
+    applyInputs(target);
+    setLoadedVersion(version);
+  };
+
   const generate = async () => {
     // 三项补充都可为空（PRD 4.10.3：全空也允许生成，结果更多落到 investigate）。
     const inputs = { background: background.trim(), goal: goal.trim(), scenario: scenario.trim() };
-    setBusy(true); setError(null); setNotice(null);
+    setBusy(true); setError(null); setNotice(null); setLoadedVersion(null);
+    // 用户已经主动填写/生成，之后不再用历史版本覆盖输入框。
+    pendingInitialInputs.current = false;
     const controller = new AbortController();
     // 服务端排队上限 60s：客户端留 5s 余量，避免在服务端刚好完成时抢跑。PRD 4.10 A5。
     const timer = window.setTimeout(() => controller.abort(), 65000);
@@ -1799,16 +1830,17 @@ function RequirementAssessmentSection({ requirementId }: { requirementId: string
     <div className="req-section-head"><h3 id="req-assessment-heading">需求评估</h3><span className="req-source-note">AI 建议 · 非结论 · 按需生成</span></div>
     <p className="detail-note">补充背景、目标、使用场景后生成评估；补充内容只保存在评估记录里，不修改需求本体，也不写 Base。评估按需生成，不会自动消耗模型调用。</p>
     <div className="assessment-inputs">
-      <label className="field"><span>需求背景（不超过 2000 字）</span><ArcoInput.TextArea aria-label="需求背景" className="rules-textarea" rows={3} maxLength={2000} showWordLimit value={background} onChange={(value: string) => setBackground(value)} disabled={busy} placeholder="为什么要做：用户场景、当前问题、触发来源。" /></label>
-      <label className="field"><span>目标（不超过 1000 字）</span><ArcoInput.TextArea aria-label="需求目标" className="rules-textarea" rows={3} maxLength={1000} showWordLimit value={goal} onChange={(value: string) => setGoal(value)} disabled={busy} placeholder="希望达成什么结果；尽量可度量。" /></label>
-      <label className="field"><span>使用场景（不超过 2000 字）</span><ArcoInput.TextArea aria-label="使用场景" className="rules-textarea" rows={3} maxLength={2000} showWordLimit value={scenario} onChange={(value: string) => setScenario(value)} disabled={busy} placeholder="谁在什么情况下使用；包含环境、硬件型号、频率等约束。" /></label>
+      <label className="field"><span>需求背景（不超过 2000 字）</span><ArcoInput.TextArea aria-label="需求背景" className="rules-textarea" rows={3} maxLength={2000} showWordLimit value={background} onChange={(value: string) => { inputsEdited.current = true; setBackground(value); }} disabled={busy} placeholder="为什么要做：用户场景、当前问题、触发来源。" /></label>
+      <label className="field"><span>目标（不超过 1000 字）</span><ArcoInput.TextArea aria-label="需求目标" className="rules-textarea" rows={3} maxLength={1000} showWordLimit value={goal} onChange={(value: string) => { inputsEdited.current = true; setGoal(value); }} disabled={busy} placeholder="希望达成什么结果；尽量可度量。" /></label>
+      <label className="field"><span>使用场景（不超过 2000 字）</span><ArcoInput.TextArea aria-label="使用场景" className="rules-textarea" rows={3} maxLength={2000} showWordLimit value={scenario} onChange={(value: string) => { inputsEdited.current = true; setScenario(value); }} disabled={busy} placeholder="谁在什么情况下使用；包含环境、硬件型号、频率等约束。" /></label>
     </div>
+    {loadedVersion !== null ? <p className="detail-note" role="status">已载入 v{loadedVersion} 的输入，可改后重新生成。</p> : null}
     <div className="assessment-actions">
       <ArcoButton type="primary" htmlType="button" size="small" onClick={() => void generate()} disabled={busy || conflict || hasRunning}>{busy ? "生成中…（约 30 秒）" : conflict || hasRunning ? "正在生成，请稍候" : "生成评估"}</ArcoButton>
       {loadState === "loading" ? <span className="subtle-text">正在读取评估历史…</span> : null}
       {loadState === "error" ? <span className="status-hint" role="alert">评估历史读取失败：{loadError} <ArcoButton type="text" size="small" htmlType="button" onClick={() => void load()}>重试</ArcoButton></span> : null}
       {versions.length > 0 ? <div className="assessment-versions" role="group" aria-label="评估版本">
-        {versions.map((item) => <button key={item.id} type="button" className={`assessment-version${item.version === selected?.version ? " is-active" : ""}${item.status === "running" ? " is-running" : ""}`} aria-pressed={item.version === selected?.version} onClick={() => setSelectedVersion(item.version)}>v{item.version}{item.status === "running" ? " 生成中" : item.status !== "succeeded" ? "（失败）" : ""}</button>)}
+        {versions.map((item) => <button key={item.id} type="button" className={`assessment-version${item.version === selected?.version ? " is-active" : ""}${item.status === "running" ? " is-running" : ""}`} aria-pressed={item.version === selected?.version} onClick={() => switchVersion(item.version)}>v{item.version}{item.status === "running" ? " 生成中" : item.status !== "succeeded" ? "（失败）" : ""}</button>)}
       </div> : null}
     </div>
     <StateBanner loadError={error} notice={notice} onCloseNotice={() => setNotice(null)} />
