@@ -376,6 +376,9 @@ export interface PrdPromptVersion {
   version: number;
   status: "running" | "succeeded" | "failed";
   output: PrdPromptOutput | null;
+  /** 服务端返回的本次调研结论与评估版本（顶层字段）；inputs 为兼容旧形状。 */
+  investigationNotes?: string | null;
+  assessmentVersion?: number | null;
   inputs?: PrdPromptInputs;
   errorCode: string | null;
   model: string | null;

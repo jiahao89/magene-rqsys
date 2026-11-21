@@ -36,6 +36,11 @@ const ERROR_LABELS: Record<string, string> = {
   PRD_PROMPT_IN_PROGRESS: "已有生成中的版本",
 };
 
+/** 调研结论：后端顶层字段优先，兼容旧的 inputs 嵌套形状。 */
+function investigationNotesOf(item: PrdPromptVersion): string {
+  return item.investigationNotes ?? item.inputs?.investigationNotes ?? "";
+}
+
 function formatTime(value?: string | null): string {
   if (!value) return "—";
   const time = new Date(value);
@@ -91,7 +96,7 @@ export function PrdPromptSection({ requirementId, timeoutMs = 95_000 }: { requir
       if (!historyInitialized.current) {
         historyInitialized.current = true;
         const latest = list[0];
-        if (latest) setNotes((previous) => previous === "" ? latest.inputs?.investigationNotes ?? "" : previous);
+        if (latest) setNotes((previous) => previous === "" ? investigationNotesOf(latest) : previous);
       }
     } catch (cause) {
       setItems([]);
@@ -113,7 +118,7 @@ export function PrdPromptSection({ requirementId, timeoutMs = 95_000 }: { requir
 
   const selectVersion = (item: PrdPromptVersion) => {
     setSelectedVersion(item.version);
-    setNotes(item.inputs?.investigationNotes ?? "");
+    setNotes(investigationNotesOf(item));
     setExpanded(false);
     setError(null);
     setNotice(null);
@@ -165,7 +170,7 @@ export function PrdPromptSection({ requirementId, timeoutMs = 95_000 }: { requir
     }
   };
 
-  const emptyNotes = current?.status === "succeeded" && !(current.inputs?.investigationNotes ?? "").trim();
+  const emptyNotes = current?.status === "succeeded" && !investigationNotesOf(current).trim();
 
   return <section className="req-section req-prd-prompt-section" aria-labelledby="req-prd-prompt-heading">
     <div className="req-section-head">
