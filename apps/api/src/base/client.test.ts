@@ -4,10 +4,11 @@ import { FeishuBasePushAdapter, baseSourceMethodValue, type BaseClient } from ".
 import { BaseKeyConflictError, FeishuApiError } from "./transport.js";
 import { RateLimitedBaseClient } from "./rate-limit.js";
 
-function fakeBase(initial?: { recordId: string; fields: Record<string, unknown> }) {
+function fakeBase(initial?: { recordId: string; fields: Record<string, unknown> }, fieldTypes: Record<string, number> = {}) {
   const calls: string[] = [];
   let row = initial ?? null;
   const client: BaseClient = {
+    async readFieldType(fieldName) { return fieldTypes[fieldName] ?? 1; },
     async findByRequirementKey(key) { calls.push("find"); return row && row.fields["TB需求ID"] === key.requirementId ? row : null; },
     async findByPlatformKey(platformId) { calls.push("find-platform"); return row && row.fields["需求平台ID"] === platformId ? row : null; },
     async create(fields) { calls.push("create"); row = { recordId: "record-new", fields: { ...fields } }; return row; },
@@ -652,18 +653,29 @@ test("V02-T03 create-timeout recovery: a landed row is reused by the platform ke
   assert.equal(createCalls, 1);
 });
 
-test("URL 类型的来源链接写成 {link,text}，普通文本字段仍是字符串", async () => {
-  const fake = fakeBase();
-  await new FeishuBasePushAdapter(fake.client, {
-    requirementId: "TB需求ID", platformRequirementId: "需求平台ID", owner: "执行人",
-    source: { title: "标题", sourceUrl: "TB链接" }, ai: {}, pm: [],
-  }).push({
+test("URL 类型的来源字段写成 {link,text}，普通文本字段仍是字符串", async () => {
+  const fake = fakeBase(undefined, { "TB链接": 15 });
+  const input = {
     projectId: "p", requirementId: "tb-1", platformRequirementId: "RQ-000051",
     requirementDbId: "11111111-2222-4333-8444-555555555555", title: "Group requirement",
     owner: null, sourceVersion: 1, substantiveChanged: false, idempotencyKey: "group:v1",
     sourceValues: { createdAt: Date.parse("2026-01-02T03:04:05Z"), sourceUrl: "https://teambition.magene.cn/task/tb-1" },
-  });
+  };
+  await new FeishuBasePushAdapter(fake.client, {
+    requirementId: "TB需求ID", platformRequirementId: "需求平台ID", owner: "执行人",
+    source: { title: "标题", sourceUrl: "TB链接" }, ai: {}, pm: [],
+  }).push(input);
   const fields = fake.row()!.fields as Record<string, unknown>;
-  assert.deepEqual(fields["TB链接"], { link: "https://teambition.magene.cn/task/tb-1", text: "https://teambition.magene.cn/task/tb-1" });
+  const url = "https://teambition.magene.cn/task/tb-1";
+  assert.deepEqual(fields["TB链接"], { link: url, text: url });
   assert.equal(fields["标题"], "Group requirement");
+
+  // 注入客户端没有字段元数据时退回字符串：老路径行为不变，不因读不到类型而改变写入形状。
+  const legacy = fakeBase();
+  delete (legacy.client as { readFieldType?: unknown }).readFieldType;
+  await new FeishuBasePushAdapter(legacy.client, {
+    requirementId: "TB需求ID", platformRequirementId: "需求平台ID", owner: "执行人",
+    source: { title: "标题", sourceUrl: "TB链接" }, ai: {}, pm: [],
+  }).push(input);
+  assert.equal((legacy.row()!.fields as Record<string, unknown>)["TB链接"], url);
 });

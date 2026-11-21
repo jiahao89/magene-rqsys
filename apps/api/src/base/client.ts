@@ -186,14 +186,8 @@ function baseUserFieldValue(value: unknown): { userId: string; idType: "open_id"
   return idType ? { userId: id, idType } : null;
 }
 
-/**
- * URL 类型文本字段（如集团表「TB链接」）的值形状：飞书要 {link,text}，直接给字符串会
- * 1254068 URLFieldConvFail。空值原样返回，让调用方按空单元格处理。
- */
-function urlFieldValue(value: unknown): unknown {
-  const text = typeof value === "string" ? value.trim() : "";
-  return text ? { link: text, text } : value;
-}
+/** 飞书多维表格 URL 字段类型；写入必须是 { link, text }，纯字符串会被 1254068 URLFieldConvFail 拒绝。 */
+const BASE_FIELD_TYPE_URL = 15;
 
 export class FeishuBasePushAdapter {
   constructor(private readonly client: BaseClient, private readonly fields: BaseFieldMap, private readonly snapshots?: PmSnapshotWriter) {}
@@ -251,6 +245,23 @@ export class FeishuBasePushAdapter {
     return legacy;
   }
 
+  /**
+   * 来源字段取值：按字段元数据判断类型，URL 字段（如集团表「TB链接」）写 { link, text }，
+   * 其它文本字段仍写字符串。字段类型由传输层读取并缓存（5 分钟），不会每次推送都打字段列表。
+   * 读取失败或注入客户端未实现时退回原值：交给既有 1254045（字段不存在）路径处理，不因元数据抖动阻断推送。
+   */
+  private async sourceFieldValue(field: string, value: unknown): Promise<unknown> {
+    if (typeof value !== "string" || value.trim() === "" || !this.client.readFieldType) return value;
+    const text = value.trim();
+    let type: number;
+    try {
+      type = await this.client.readFieldType(field);
+    } catch {
+      return value;
+    }
+    return type === BASE_FIELD_TYPE_URL ? { link: text, text } : value;
+  }
+
   async push(input: BasePushInput): Promise<BasePushResult> {
     const omittedFields: OmittedField[] = [];
     const existing = await this.resolveExisting(input);
@@ -268,9 +279,8 @@ export class FeishuBasePushAdapter {
     const sourceValues = { title: input.title, ...(input.description === undefined ? {} : { description: input.description }), ...input.sourceValues };
     for (const [name, value] of Object.entries(sourceValues)) {
       const field = this.fields.source[name];
-      if (!field) continue;
-      // 集团表「TB链接」是 URL 类型字段：飞书只接受 {link,text}，直接写字符串会 1254068 URLFieldConvFail。
-      delta[field] = name === "sourceUrl" ? urlFieldValue(value) : value;
+      // 集团表「TB链接」是 URL 类型字段：飞书只接受 {link,text}；按字段类型判断，其它文本字段写字符串。
+      if (field) delta[field] = await this.sourceFieldValue(field, value);
     }
     for (const [name, value] of Object.entries(input.aiValues ?? {})) {
       const field = this.fields.ai[name];
