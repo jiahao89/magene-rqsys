@@ -26,19 +26,19 @@ ALTER TABLE sync_batches DROP CONSTRAINT IF EXISTS sync_batches_filtered_count_c
 ALTER TABLE sync_batches ADD CONSTRAINT sync_batches_filtered_count_check CHECK (filtered_count >= 0);
 
 CREATE SEQUENCE IF NOT EXISTS requirement_platform_id_seq;
--- 只在序列尚未使用过时初始化，重复执行迁移不会把已发放的编号往回拨（避免复用历史号码）。
-DO $$
-DECLARE
-  max_number bigint;
-BEGIN
-  IF (SELECT is_called FROM requirement_platform_id_seq) THEN
-    RETURN;
-  END IF;
-  SELECT COALESCE(MAX(SUBSTRING(platform_requirement_id FROM 4)::bigint), 0)
-    INTO max_number
-    FROM requirements
-   WHERE platform_requirement_id ~ '^RQ-[0-9]+$';
-  PERFORM setval('requirement_platform_id_seq', max_number + 1, false);
-END $$;
+-- 平台 SQL 解析器不支持 DO 块，这里用等价的单条 SELECT setval 完成初始化：
+-- 取「现有最大号 + 1」与「序列自身进度」的较大值，并以 is_called=false 写入，
+-- 因此重复执行不会把已发放的编号往回拨，下一次 nextval 也不会复用历史号码。
+SELECT setval(
+  'requirement_platform_id_seq',
+  GREATEST(
+    COALESCE((SELECT MAX(SUBSTRING(platform_requirement_id FROM 4)::bigint)
+                FROM requirements
+               WHERE platform_requirement_id ~ '^RQ-[0-9]+$'), 0) + 1,
+    (SELECT CASE WHEN is_called THEN last_value + 1 ELSE last_value END
+       FROM requirement_platform_id_seq)
+  ),
+  false
+);
 
 COMMIT;
