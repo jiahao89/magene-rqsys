@@ -26,6 +26,8 @@ export function createPostgresSyncPersistence(
         // creator_id 是记录创建者，不等于业务提出人；提出人来自获批 lookup 字段的 meta.userid。
         proposerUserId: typeof input.mappedFields.proposerUserId === "string" ? input.mappedFields.proposerUserId : null,
         proposerName: typeof input.mappedFields.proposerName === "string" ? input.mappedFields.proposerName : null,
+        // 0031：集团池映射「关联产品的具体信息」；产品池没有该映射时保持 null。
+        productModel: typeof input.mappedFields.productModel === "string" ? input.mappedFields.productModel : null,
         executorUserId: input.sourceExecutorId,
         executorName: typeof input.mappedFields.executorName === "string" ? input.mappedFields.executorName : null,
         statusId: input.sourceStatusId,

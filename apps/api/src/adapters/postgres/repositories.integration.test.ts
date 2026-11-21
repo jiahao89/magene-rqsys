@@ -54,9 +54,13 @@ test("product and group pools each keep one source and stay isolated by scope",a
     await assert.rejects(()=>ctx.repos.sources.create({...config,projectId:"another-product"}),{code:"23505"});
     await assert.rejects(()=>ctx.repos.sources.create({...config,pool:"group",projectId:"another-group"}),{code:"23505"});
     const batch=await ctx.repos.batches.create({sourceConfigId:group.id,triggerType:"manual",actorId:null,idempotencyKey:"group-batch-0001",startedAt:"2026-10-08T00:00:00Z"});
-    await ctx.repos.requirements.upsertRequirement(group.id,"group-task",requirementWrite(group.id,batch.id,{teambitionRequirementId:"group-task"}));
+    // 0031：集团池默认字段映射归一化出的三个字段要真正落库（描述/提出人/产品型号）。
+    await ctx.repos.requirements.upsertRequirement(group.id,"group-task",requirementWrite(group.id,batch.id,{teambitionRequirementId:"group-task",description:"集团需求描述",proposerName:"刘媛媛",proposerUserId:"tb-user-1",productModel:"MG-100"}));
     const groupPage=await ctx.repos.requirements.search({pool:"group",limit:10});
     assert.equal(groupPage.items.length,1);
+    assert.equal(groupPage.items[0]?.description,"集团需求描述");
+    assert.equal(groupPage.items[0]?.proposerName,"刘媛媛");
+    assert.equal(groupPage.items[0]?.productModel,"MG-100");
     const productPage=await ctx.repos.requirements.search({pool:"product",limit:10});
     assert.equal(productPage.items.length,0);
     assert.equal((await ctx.repos.requirements.sourceCounts("group")).all,1);

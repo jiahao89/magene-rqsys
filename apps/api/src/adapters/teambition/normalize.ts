@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { NormalizedTeambitionRequirement } from "../../domain/workflow.js";
+import type { SourcePool } from "../../domain/persistence.js";
 import type {
   TeambitionCustomField,
   TeambitionFieldMap,
@@ -107,6 +108,26 @@ function allowlistedSourcePayload(
     duedate: task.duedate ?? null,
     custom_fields: allowed,
   };
+}
+
+/**
+ * 集团池默认字段映射（P0 已核对：需求收集与管理 项目内字段 ID）。
+ * 需求类型/功能模块/约束没有 1:1 映射，保持 null，原文仍在 source_payload。
+ */
+export const GROUP_POOL_DEFAULT_FIELD_MAP: Readonly<TeambitionFieldMap> = Object.freeze({
+  description: "674e7c2ceed2e651764a0d6f", // 需求描述
+  proposerName: "68be4f5f4f5b7255e6fda8d6", // 需求提出人
+  productModel: "6755a2581f580fe19bfaf70f", // 关联产品的具体信息
+});
+
+/**
+ * 同步时使用的字段映射：集团池未在来源配置里写映射（{}）时回落到集团池默认值，
+ * 这样已有记录下次同步会按新映射重算哈希并回填；产品池保持原样（空映射仍为空）。
+ * 显式配置了任意映射时以配置为准，不混入默认值。
+ */
+export function resolveFieldMap(pool: SourcePool | undefined, fieldMap: TeambitionFieldMap): TeambitionFieldMap {
+  if ((pool ?? "product") === "group" && Object.keys(fieldMap).length === 0) return { ...GROUP_POOL_DEFAULT_FIELD_MAP };
+  return fieldMap;
 }
 
 export function normalizeTeambitionTask(

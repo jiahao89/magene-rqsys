@@ -11,6 +11,7 @@ import { errorBody } from "./http/errors.js";
 import { PipelineJobWorker } from "./jobs/worker.js";
 import { SyncOrchestrator, shouldProcessSyncDownstream, type SyncJobRunner } from "./sync/service.js";
 import { TeambitionClient } from "./adapters/teambition/client.js";
+import { resolveFieldMap } from "./adapters/teambition/normalize.js";
 import { createRequirementWorkflow } from "./requirements/processing.js";
 import { createDueSyncJobs } from "./scheduler/due-jobs.js";
 import { readOpsAlertConfig, runOpsAlert } from "./ops/alerts.js";
@@ -66,7 +67,8 @@ const syncJobRunner: SyncJobRunner | undefined = repositories ? async (job) => {
     id: source.id, projectId: source.externalProjectId, projectName: source.externalProjectName,
     requirementTypeId: source.requirementTypeId, enabled: source.enabled,
     schedule: { enabled: source.scheduleEnabled, weekday: source.scheduleWeekday, weekdays: source.scheduleWeekdays ?? (source.scheduleWeekday === null ? null : [source.scheduleWeekday]), time: source.scheduleLocalTime, timezone: source.scheduleTimezone },
-    ownerNames: source.ownerNames, fieldMap: source.fieldMap,
+    // 0031：集团池无显式映射时回落到集团池默认三字段（描述/提出人/产品型号）。
+    ownerNames: source.ownerNames, fieldMap: resolveFieldMap(source.pool, source.fieldMap),
   };
   // 0031：集团池执行人名单（已解析 user_id）；为空表示不过滤（产品池恒为空）。
   const executorAllowlist = (source.executorAllowlist ?? []).map((binding) => binding.userId);
