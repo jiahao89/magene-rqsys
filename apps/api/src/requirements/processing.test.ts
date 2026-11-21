@@ -80,7 +80,6 @@ function harness(options: { providerResult?: ValidatedAnalysis | Error } = {}) {
   const deps: RequirementWorkflowDeps = {
     repositories,
     baseFields: { requirementId: "TB需求ID", owner: "执行人", source: {}, ai: {}, pm: [] },
-    fixtureEnvironment: {},
     createProvider: () => ({
       name: "stub", model: "stub-model", promptVersion: "p1",
       async analyze(input: ProviderAnalysisInput) {

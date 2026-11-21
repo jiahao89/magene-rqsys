@@ -30,7 +30,6 @@ import { createDeepSeekProvider, type AiProvider } from "../analysis/provider.js
 import { createAnalysisAdvancer, createSourceMetadataAdvancer } from "../pipeline/advance.js";
 import { createBasePushService, type BasePushServiceDeps } from "../base/push-service.js";
 import { basePushIdempotencyKey } from "../jobs/idempotency.js";
-import { assertFixtureWorkAllowed, isSyntheticFixtureRequirement } from "../sync/test-fixture.js";
 import { KANO_PROMPT_VERSION, buildKanoRequest, createDeepSeekKanoProvider, kanoPrompt, validateKanoReport, KanoProviderError } from "../beta/kano.js";
 import type { FeishuBasePushAdapter } from "../base/client.js";
 import { noteAiQuotaFailure, readAiPause } from "../ops/ai-pause.js";
@@ -76,7 +75,6 @@ export interface RequirementWorkflowDeps {
    */
   baseTargets?: Partial<Record<SourcePool, { base: FeishuBasePushAdapter; baseFields: BasePushServiceDeps["baseFields"] }>>;
   /** 夹具守卫环境（各组合根从同一组环境变量构建，作业体在每个外部调用前复检）。 */
-  fixtureEnvironment: NodeJS.ProcessEnv;
   /** 默认按环境构造 DeepSeek；测试可注入受控 provider。 */
   createProvider?: (() => AiProvider) | undefined;
   /** 入队分析上限（root 本地开发 RQSYS_MAX_ANALYSIS_PER_SYNC；0/缺省不限制）。 */
@@ -220,7 +218,6 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
       if (!requirement) throw new Error("Analysis requirement was not found");
       // 重复/忽略已确认：不进入 AI 分析（作业可能早于决策入队，这里再拦一次）。
       if ((requirement.processingState ?? "active") !== "active") return;
-      assertFixtureWorkAllowed({ sourceId: requirement.sourceConfigId ?? "", fixture: isSyntheticFixtureRequirement(requirement.teambitionRequirementId) }, deps.fixtureEnvironment, new Date());
       const expectedSubstantiveHash = job.payload.substantiveHash;
       if (typeof expectedSubstantiveHash === "string" && expectedSubstantiveHash !== requirement.substantiveHash) return;
       // 手工来源没有 TB 来源配置：不依赖它加载（V02-T04 起花名册改由团队目录提供）。
@@ -315,8 +312,7 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
         if (!run || run.status !== "running") return;
         const requirement = await deps.repositories.requirements.get(run.requirementId);
         if (!requirement) { await failSafe("KANO_REQUIREMENT_MISSING", "Kano requirement was not found."); return; }
-        assertFixtureWorkAllowed({ sourceId: requirement.sourceConfigId ?? "", fixture: isSyntheticFixtureRequirement(requirement.teambitionRequirementId) }, deps.fixtureEnvironment, new Date());
-        const evidence = ((await deps.repositories.requirements.listKanoEvidence?.() ?? []).find((version) => version.version === run.evidenceVersion)) ?? null;
+          const evidence = ((await deps.repositories.requirements.listKanoEvidence?.() ?? []).find((version) => version.version === run.evidenceVersion)) ?? null;
         // 输入门禁：资料必须仍是 approved 且未标记 PII（导入后被退休/标记的版本不再可用）。
         if (!evidence || evidence.status !== "approved" || evidence.piiFlagged) {
           await failSafe("KANO_EVIDENCE_UNAVAILABLE", "选定资料版本不可用（未批准或含未脱敏内容）。");
@@ -349,7 +345,6 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
       if (!requirement) throw new Error("Base push requirement was not found");
       // 重复/忽略已确认：不推送 Base、不生成通知。
       if ((requirement.processingState ?? "active") !== "active") return;
-      assertFixtureWorkAllowed({ sourceId: requirement.sourceConfigId ?? "", fixture: isSyntheticFixtureRequirement(requirement.teambitionRequirementId) }, deps.fixtureEnvironment, new Date());
       // TB 行推送使用来源项目 ID 作为 Base 项目字段；手工行无来源配置，
       // 平台键切换前的过渡空值由 V02-T03 以需求平台 ID 替代。
       const source = requirement.sourceConfigId ? await deps.repositories.sources.get(requirement.sourceConfigId) : null;

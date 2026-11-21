@@ -24,19 +24,10 @@ export async function createDueSyncJobs(params: {
   batches: SyncBatchRepository;
   jobs: PipelineJobRepository;
   now: Date;
-  /** 已通过服务端 POC/时效守卫的合成验收来源；未设置时保持正式行为。 */
-  fixtureSourceId?: string;
 }): Promise<DueSyncJobOutcome[]> {
   const outcomes: DueSyncJobOutcome[] = [];
   const sources = await params.sources.list();
-  if (params.fixtureSourceId && !sources.some((source) => source.id === params.fixtureSourceId)) {
-    throw new Error("Scheduled fixture source was not found");
-  }
   for (const source of sources) {
-    if (params.fixtureSourceId && source.id !== params.fixtureSourceId) {
-      outcomes.push({ sourceConfigId: source.id, batchId: null, window: null, enabled: false });
-      continue;
-    }
     if (!source.enabled || !source.scheduleEnabled) {
       outcomes.push({ sourceConfigId: source.id, batchId: null, window: null, enabled: false });
       continue;
@@ -61,7 +52,7 @@ export async function createDueSyncJobs(params: {
         continue;
       }
       // 批次级幂等键：同一调度窗口的重复触发复用同一批次（sync_batches 唯一约束兜底）
-      const idempotencyKey = `${params.fixtureSourceId ? "fixture-sched" : "sched"}:${source.id}:_batch_:${window.start}`;
+      const idempotencyKey = `sched:${source.id}:_batch_:${window.start}`;
       // 先探测是否已存在同窗口批次：只有本次新建的批次才允许在入队失败时就地标记失败，
       // 复用的既有批次可能已有在跑的任务，不能覆盖它的状态。
       // 无法确认批次是否本次新建时（仓储未实现该查询）返回 null 以外的未知值，
@@ -82,7 +73,7 @@ export async function createDueSyncJobs(params: {
       // 任务幂等键按批次去重：同批次的重复入队复用同一任务
       await params.jobs.enqueue({
         jobType: "sync", dedupeKey: `sync:${batch.id}`,
-        payload: { batchId: batch.id, sourceId: source.id, triggerType: "scheduled", actorId: null, ...(params.fixtureSourceId ? { testFixture: true } : {}) },
+        payload: { batchId: batch.id, sourceId: source.id, triggerType: "scheduled", actorId: null },
         availableAt: params.now.toISOString(),
       });
       outcomes.push({ sourceConfigId: source.id, batchId: batch.id, window: window.start, enabled: true });

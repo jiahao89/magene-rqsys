@@ -108,32 +108,6 @@ test("未启用/未配置调度的来源跳过", async () => {
   assert.equal(disabled.calls.length, 0); // 无批次/任务创建
 });
 
-test("定时合成验收只调度指定来源，并隔离正式窗口幂等键", async () => {
-  const h = harness([source({ id: "other-source" }), source()]);
-  const queued: Array<{ dedupeKey: string; payload: Record<string, unknown> }> = [];
-  const params = {
-    sources: h.repos.sources as never,
-    batches: h.repos.batches as never,
-    jobs: { async enqueue(input: { dedupeKey: string; payload: Record<string, unknown> }) { queued.push(input); return input; } } as never,
-    now: NOW,
-    fixtureSourceId: "src-1",
-  };
-  const first = await createDueSyncJobs(params);
-  const replay = await createDueSyncJobs(params);
-
-  assert.deepEqual(h.batchKeys(), ["fixture-sched:src-1:_batch_:2026-01-01T08:00:00.000Z"]);
-  assert.equal(first.find((row) => row.sourceConfigId === "other-source")?.batchId, null);
-  assert.equal(replay.find((row) => row.sourceConfigId === "src-1")?.batchId, "batch-1");
-  assert.ok(queued.every((row) => row.payload.testFixture === true && row.payload.sourceId === "src-1"));
-});
-
-test("合成来源不存在时，在其他来源入队前失败", async () => {
-  const h = harness([source()]);
-  const params = { sources: h.repos.sources as never, batches: h.repos.batches as never, jobs: h.repos.jobs as never, now: NOW, fixtureSourceId: "missing-source" };
-  await assert.rejects(createDueSyncJobs(params), /fixture source was not found/);
-  assert.equal(h.calls.length, 0);
-});
-
 test("单个来源入队失败不中断其他来源，且不留孤儿批次", async () => {
   // src-1 入队抛错，src-2 正常。此前一次抛错会让整个 tick 失败并把批次永远留在 running。
   const h = harness([source({ id: "src-1" }), source({ id: "src-2" })]);

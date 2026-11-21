@@ -5,7 +5,6 @@ import type { PipelineJobRepository } from "../application/repositories.js";
 import type { SyncJobRunner } from "../sync/service.js";
 import { PipelineJobWorker } from "./worker.js";
 import { JobDeferredError } from "./deferred.js";
-import { assertFixtureWorkAllowed, FixturePolicyError } from "../sync/test-fixture.js";
 import { FeishuApiError } from "../base/transport.js";
 import { AiProviderError } from "../analysis/provider.js";
 
@@ -44,13 +43,6 @@ test("worker preserves the explicit source-only mode for a manual import", async
   const worker = new PipelineJobWorker({ jobs: h.jobs, sync: h.sync, workerId: "local-worker", leaseMs: 30_000, now: () => new Date(NOW) });
   assert.equal((await worker.runOnce()).kind, "succeeded");
   assert.deepEqual(h.calls[1], ["sync", { batchId: "batch-1", sourceConfigId: "source-1", trigger: "manual", actorId: null, mode: "source_only" }]);
-});
-
-test("worker preserves the explicit scheduled fixture marker for the safe sync reader", async () => {
-  const h = harness(job({ payload: { batchId: "batch-1", sourceId: "source-1", triggerType: "scheduled", actorId: null, testFixture: true } }));
-  const worker = new PipelineJobWorker({ jobs: h.jobs, sync: h.sync, workerId: "local-worker", leaseMs: 30_000, now: () => new Date(NOW) });
-  assert.equal((await worker.runOnce()).kind, "succeeded");
-  assert.deepEqual(h.calls[1], ["sync", { batchId: "batch-1", sourceConfigId: "source-1", trigger: "scheduled", actorId: null, mode: "full_pipeline", testFixture: true }]);
 });
 
 test("迟到的 worker 结果被 fencing 拒绝：不覆盖新认领者的状态（不变量，工单 15）", async () => {
@@ -100,31 +92,6 @@ test("不变量4：max attempts reached completes the job as failed terminal", a
   const completion = (h.calls[2] as unknown[])[2] as Record<string, unknown>;
   assert.equal(completion.status, "failed");
   assert.equal(completion.errorCode, "max_attempts_reached");
-});
-
-test("fixture policy denial is terminal and never schedules an unsafe retry", async () => {
-  const h = harness(job(), { handlerError: new FixturePolicyError("Unsafe fixture target") });
-  const worker = new PipelineJobWorker({ jobs: h.jobs, sync: h.sync, workerId: "worker", leaseMs: 30_000, now: () => new Date(NOW) });
-  assert.equal((await worker.runOnce()).kind, "failed");
-  assert.deepEqual(h.calls.map((call) => (call as unknown[])[0]), ["claim", "sync", "complete"]);
-  assert.equal(((h.calls.at(-1) as unknown[])[2] as Record<string, unknown>).errorCode, "fixture_policy_denied");
-});
-
-test("fixture rejection persists a bounded reason without disclosing environment values", async () => {
-  let policyError: Error | undefined;
-  try {
-    assertFixtureWorkAllowed({ sourceId: "source-1", fixture: true }, {
-      RQSYS_ENABLE_TEST_FIXTURES: "true", BASE_APP_TOKEN: "secret-formal-base", BASE_TABLE_ID: "private-table",
-    }, new Date(NOW));
-  } catch (error) { policyError = error as Error; }
-  assert.ok(policyError instanceof FixturePolicyError);
-  const h = harness(job(), { handlerError: policyError });
-  const worker = new PipelineJobWorker({ jobs: h.jobs, sync: h.sync, workerId: "worker", leaseMs: 30_000, now: () => new Date(NOW) });
-  await worker.runOnce();
-  const result = (h.calls.at(-1) as unknown[])[2] as Record<string, unknown>;
-  assert.match(String(result.errorSummary), /base_app_not_poc/);
-  assert.equal(JSON.stringify(result).includes("secret-formal-base"), false);
-  assert.equal(JSON.stringify(result).includes("private-table"), false);
 });
 
 test("partial_failure sync is retryable; job types without a handler fail closed (terminal)", async () => {
@@ -183,7 +150,7 @@ test("延后信号把作业记为 cancelled（可被同键入队重置），不�
 });
 
 test("sync 作业的任意终态失败都收敛批次，不留下永久 running 的孤儿批次", async () => {
-  // 回归：此前只在 FixturePolicyError 时传 settleSyncBatch。网关 5xx / 网络 / 数据库
+  // 回归：此前只在特定错误类型时传 settleSyncBatch。网关 5xx / 网络 / 数据库
   // 异常走到终态 failed 时批次不被收敛，永远停在 running，后续同步被并发守卫拒绝（409），
   // 只能手工改库恢复。这里用一个普通错误（非夹具策略错误）覆盖该路径。
   const h = harness(job({ attemptCount: 4, maxAttempts: 4 }), { handlerError: new Error("gateway 503") });
@@ -195,20 +162,6 @@ test("sync 作业的任意终态失败都收敛批次，不留下永久 running 
   const payload = terminal[2] as Record<string, unknown>;
   assert.equal(payload.status, "failed");
   assert.equal(payload.errorCode, "max_attempts_reached");
-  assert.equal(payload.settleSyncBatch, true);
-});
-
-test("夹具策略拒绝仍然收敛批次（原有行为不回退）", async () => {
-  let policyError: Error | undefined;
-  try {
-    assertFixtureWorkAllowed({ sourceId: "source-1", fixture: true }, { RQSYS_ENABLE_TEST_FIXTURES: "true", BASE_APP_TOKEN: "formal" }, new Date(NOW));
-  } catch (error) { policyError = error as Error; }
-  assert.ok(policyError instanceof FixturePolicyError);
-  const h = harness(job(), { handlerError: policyError });
-  const worker = new PipelineJobWorker({ jobs: h.jobs, sync: h.sync, workerId: "worker", leaseMs: 30_000, now: () => new Date(NOW) });
-  await worker.runOnce();
-  const payload = (h.calls.at(-1) as unknown[])[2] as Record<string, unknown>;
-  assert.equal(payload.errorCode, "fixture_policy_denied");
   assert.equal(payload.settleSyncBatch, true);
 });
 

@@ -58,7 +58,6 @@ export interface ApiDependencies {
   teambitionMembers?: TeambitionMemberDirectory;
   feishuUsers?: FeishuUserDirectory;
   feishuUserSelections?: FeishuUserSelectionResolver;
-  enableTestFixtures?: boolean;
   now: (() => Date) | undefined;
   /** Q2：Base 重复行标记；组合根未注入时判定不触达 Base。 */
   duplicateMarker?: (input: import("../base/duplicate-marker.js").DuplicateMarkInput) => Promise<import("../base/duplicate-marker.js").DuplicateMarkResult>;
@@ -591,10 +590,6 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
       },
       ai,
     });
-  }
-  if (method === "GET" && url.pathname === "/api/dev/fixtures/status") {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    return json({ enabled: dependencies.enableTestFixtures === true });
   }
   if (method === "GET" && url.pathname === "/api/sources") {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;

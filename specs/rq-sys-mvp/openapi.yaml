@@ -1242,23 +1242,6 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/DependencyUnavailable' }
-  /api/dev/fixtures/status:
-    get:
-      summary: Report whether synthetic test fixtures are enabled
-      description: >-
-        仅用于验收环境判断是否允许提交合成夹具；只读，不触发任何同步或写入。
-        enabled 由服务端配置决定，默认关闭。
-      responses:
-        '200':
-          description: Fixture switch state
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  enabled: { type: boolean }
-                required: [enabled]
-        '401': { $ref: '#/components/responses/Unauthorized' }
   /api/ops/jobs:
     get:
       summary: Read-only ops view of failed and exhausted running pipeline jobs

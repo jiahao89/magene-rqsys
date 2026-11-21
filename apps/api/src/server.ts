@@ -27,12 +27,10 @@ import { DEFAULT_BASE_FORM_FIELDS, parseBaseFormFields, publishedModuleNames, sy
 import { FeishuUserDirectoryClient } from "./adapters/feishu/directory-client.js";
 import { PEER_ADDRESS_HEADER, createLocalIdentityProvider, describeLocalIdentity } from "./http/local-identity.js";
 import type { SourceProjectConfig } from "./domain/workflow.js";
-import { assertFixtureWorkAllowed, createSyntheticFixtureTasks, isSyntheticFixtureSyncJob, readScheduledFixtureSource } from "./sync/test-fixture.js";
 
 const port = Number(process.env.PORT ?? 8787);
 const database = createPool(process.env.DATABASE_URL);
 const repositories = database ? new PostgresRepositories(database) : undefined;
-const fixtureEnvironment = { RQSYS_ENABLE_TEST_FIXTURES: process.env.RQSYS_ENABLE_TEST_FIXTURES, BASE_APP_TOKEN: process.env.BASE_APP_TOKEN, BASE_TABLE_ID: process.env.BASE_TABLE_ID, RQSYS_SCHEDULE_FIXTURE: process.env.RQSYS_SCHEDULE_FIXTURE };
 // 身份：默认 fail-closed。仅当显式设置 RQSYS_LOCAL_IDENTITY 且非生产环境时才启用本地开发身份，
 // 目标环境的可信身份由妙搭 controller 注入 req.userContext 后写入同名请求头。
 const localIdentityUserId = process.env.RQSYS_LOCAL_IDENTITY;
@@ -59,8 +57,6 @@ try {
 // 三个作业体（同步后推进 / analysis / base_push）的业务行为在 requirements/processing.ts
 // 与妙搭仓共用；本文件只负责平台装配（env、worker 生命周期、日志出口）。
 const syncJobRunner: SyncJobRunner | undefined = repositories ? async (job) => {
-  const fixture = isSyntheticFixtureSyncJob(job);
-  assertFixtureWorkAllowed({ sourceId: job.sourceConfigId, fixture }, fixtureEnvironment, new Date());
   const source = await repositories.sources.get(job.sourceConfigId);
   if (!source) throw new Error("Sync source configuration was not found");
   const config: SourceProjectConfig = {
@@ -83,9 +79,7 @@ const syncJobRunner: SyncJobRunner | undefined = repositories ? async (job) => {
   }
 
   const persistence = createPostgresSyncPersistence(repositories, job.sourceConfigId);
-  const taskSource = fixture
-    ? { async listRequirements(cfg: SourceProjectConfig) { return { items: createSyntheticFixtureTasks(job.batchId, cfg.requirementTypeId, job.onlyIds), hasMore: false, nextCursor: null }; } }
-    : { async listRequirements(cfg: SourceProjectConfig) { return { items: await new TeambitionClient().listRequirementTasks(cfg), hasMore: false, nextCursor: null }; } };
+  const taskSource = { async listRequirements(cfg: SourceProjectConfig) { return { items: await new TeambitionClient().listRequirementTasks(cfg), hasMore: false, nextCursor: null }; } };
   const orchestrator = new SyncOrchestrator(taskSource, persistence);
   const result = await orchestrator.run({ batchId: job.batchId, sourceConfigId: job.sourceConfigId, config, ...(job.mode === undefined ? {} : { mode: job.mode }), ...(job.onlyIds === undefined ? {} : { onlyIds: job.onlyIds }), ...(executorAllowlist.length > 0 ? { executorAllowlist } : {}) });
   // 打通同步 → AI 分析链路：下游推进（入队首分析 / 元数据推进）收敛在共用 workflow 模块。
@@ -170,7 +164,6 @@ const requirementWorkflow = repositories
         ...(baseAdapter ? { product: { base: baseAdapter, baseFields } } : {}),
         ...(groupBaseAdapter ? { group: { base: groupBaseAdapter, baseFields: groupBaseFields } } : {}),
       } } : {}),
-      fixtureEnvironment,
       // 本地开发专用上限：只限制「入队分析」的数量，不同步范围。默认 0 = 不限制；目标环境不要设置。
       ...(Number(process.env.RQSYS_MAX_ANALYSIS_PER_SYNC ?? 0) > 0 ? { analysisEnqueueCap: Number(process.env.RQSYS_MAX_ANALYSIS_PER_SYNC) } : {}),
       // I3-3：额度暂停告警与失败作业告警共用同一 webhook/冷却。
@@ -254,7 +247,6 @@ if (worker && repositories && workerPollMs > 0) {
   workerTimer = setInterval(() => {
     void (async () => {
       const now = new Date();
-      const fixtureSourceId = readScheduledFixtureSource(fixtureEnvironment, now);
       // 先回收孤儿批次再建新批次：历史遗留的 running 批次会让并发守卫持续拒绝，
       // 来源被静默锁死。回收失败不阻断本轮调度。
       try {
@@ -280,7 +272,7 @@ if (worker && repositories && workerPollMs > 0) {
       // 跳过本轮的分析恢复、负责人重查与 worker 消费。
       let outcomes: Awaited<ReturnType<typeof createDueSyncJobs>> = [];
       try {
-        outcomes = await createDueSyncJobs({ sources: repositories.sources, batches: repositories.batches, jobs: repositories.jobs, now, ...(fixtureSourceId ? { fixtureSourceId } : {}) });
+        outcomes = await createDueSyncJobs({ sources: repositories.sources, batches: repositories.batches, jobs: repositories.jobs, now });
       } catch (error) {
         process.stderr.write(`due sync job creation failed: ${String(error)}\n`);
       }

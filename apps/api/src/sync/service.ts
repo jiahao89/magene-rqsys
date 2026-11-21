@@ -29,7 +29,7 @@ export interface SyncInput { batchId:string;sourceConfigId:string;config:SourceP
   executorAllowlist?:string[] }
 // Queue payloads resolve configuration at the application composition seam; the orchestrator stays provider-agnostic.
 export type SyncExecutionMode = "full_pipeline" | "source_only";
-export interface SyncJobContext { batchId:string;sourceConfigId:string;trigger:"manual"|"scheduled";actorId:string|null;onlyIds?:string[];testFixture?:boolean;mode?:SyncExecutionMode }
+export interface SyncJobContext { batchId:string;sourceConfigId:string;trigger:"manual"|"scheduled";actorId:string|null;onlyIds?:string[];mode?:SyncExecutionMode }
 export function shouldProcessSyncDownstream(mode: SyncExecutionMode | undefined): boolean { return mode !== "source_only"; }
 export type SyncJobRunner = (job: SyncJobContext) => Promise<SyncResult>;
 export interface SyncResult {batchId:string;status:BatchState;totalCount:number;succeededCount:number;failedCount:number;

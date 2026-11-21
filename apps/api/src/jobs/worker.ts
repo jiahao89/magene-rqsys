@@ -1,4 +1,3 @@
-import { FixturePolicyError } from "../sync/test-fixture.js";
 import type { PipelineJobRecord } from "../domain/persistence.js";
 import type { PipelineJobRepository, SyncBatchRepository } from "../application/repositories.js";
 import { NON_RETRYABLE_SYNC_ITEM_CODES, SyncDataError, type SyncJobRunner } from "../sync/service.js";
@@ -91,14 +90,12 @@ export class PipelineJobWorker {
       const permanent = stage !== undefined && !isRetryable(stage, errorClass);
       const terminal =
         error instanceof UnsupportedJobTypeError ||
-        error instanceof FixturePolicyError ||
         error instanceof SyncDataError ||
         permanent ||
         job.attemptCount >= job.maxAttempts ||
         stage === undefined;
       if (terminal) {
-        const code = error instanceof FixturePolicyError ? "fixture_policy_denied"
-          : error instanceof SyncDataError ? "sync_data_errors"
+        const code = error instanceof SyncDataError ? "sync_data_errors"
             : error instanceof UnsupportedJobTypeError ? "unsupported_job_type" : permanent ? `permanent_${errorClass}` : "max_attempts_reached";
         const recorded = await this.options.jobs.complete(job.id, {
           expectedAttempt: job.attemptCount,
@@ -109,7 +106,7 @@ export class PipelineJobWorker {
           // settleSyncBatch 的 SQL 自带保护：仅当 job_type='sync' 且作业已 failed
           // 且批次仍为 running 时才置 failed，不会覆盖已收敛的批次。
           ...(job.jobType === "sync" ? { settleSyncBatch: true } : {}),
-          errorSummary: code === "fixture_policy_denied" ? `Synthetic acceptance policy denied (${error instanceof FixturePolicyError ? error.reason : "unspecified"}); restore a safe configuration before retrying.` : code === "sync_data_errors"
+          errorSummary: code === "sync_data_errors"
             ? `Source records failed validation (${(error as SyncDataError).codes.join(", ")}); fix the source data and retry the failed items.`
             : code === "unsupported_job_type"
             ? "No handler is registered for this job type."
@@ -142,12 +139,11 @@ export class PipelineJobWorker {
     if (injected) return injected(job);
     if (job.jobType === "sync") {
       if (!this.options.sync) throw new Error("Sync worker dependency is unavailable");
-      const { batchId, sourceId, triggerType, actorId, onlyIds, testFixture, mode } = job.payload as Record<string, unknown>;
+      const { batchId, sourceId, triggerType, actorId, onlyIds, mode } = job.payload as Record<string, unknown>;
       if (typeof batchId !== "string" || typeof sourceId !== "string" || (triggerType !== "manual" && triggerType !== "scheduled") || (actorId !== null && typeof actorId !== "string")) throw new Error("Invalid sync job payload");
       if (onlyIds !== undefined && (!Array.isArray(onlyIds) || !onlyIds.every((id) => typeof id === "string"))) throw new Error("Invalid sync job payload: onlyIds");
-      if (testFixture !== undefined && typeof testFixture !== "boolean") throw new Error("Invalid sync job payload: testFixture");
       if (mode !== undefined && mode !== "full_pipeline" && mode !== "source_only") throw new Error("Invalid sync job payload: mode");
-      const result = await this.options.sync({ batchId, sourceConfigId: sourceId, trigger: triggerType, actorId, mode: mode === "source_only" ? "source_only" : "full_pipeline", ...(Array.isArray(onlyIds) ? { onlyIds: onlyIds as string[] } : {}), ...(testFixture === true ? { testFixture: true } : {}) });
+      const result = await this.options.sync({ batchId, sourceConfigId: sourceId, trigger: triggerType, actorId, mode: mode === "source_only" ? "source_only" : "full_pipeline", ...(Array.isArray(onlyIds) ? { onlyIds: onlyIds as string[] } : {}) });
       // 批次失败/部分失败 → 触发重试策略（保留已成功条目，重试由编排器幂等处理）。
       // 例外：失败项全是数据类错误（如源记录缺 ID）时，重跑整批只会把全部条目再拉一遍再失败，
       // 最后报 max_attempts 把数据问题伪装成偶发故障。这类直接终态，人工按条目重试。
