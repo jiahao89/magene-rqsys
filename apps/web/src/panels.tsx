@@ -1132,22 +1132,22 @@ export function RequirementsPanel({ onRefresh, initialRequirementId, scope = "pr
     }
   }, [scope]);
 
-  // 同一页面实例切池（产品池 ↔ 集团池）时 React 会复用本组件：必须作废上一个池的详情与列表，
-  // 否则集团池页面会继续渲染产品池详情（跨池展示），或短暂显示对方的列表行。
+  // 同一页面实例切池（产品池 ↔ 集团池）时 React 会复用本组件：作废在途请求与上一池的列表行，
+  // 详情对象保留、由渲染层按 detail.pool 判池（不符只显示 404），切回原池即可恢复，无需重新请求。
   const previousScope = useRef(scope);
   useEffect(() => {
     if (previousScope.current === scope) return;
     previousScope.current = scope;
     detailRequestVersion.current += 1;
     setRows([]); setCursor(null); setLoadState("loading");
-    setSelected(null); setAutoOpenOwnerPicker(false);
-    if (detailId) {
-      // 保留 detailId 让详情区进入错误态，而不是静默回到列表：切池后不可能再渲染上一池的数据。
+    setAutoOpenOwnerPicker(false);
+    // 详情还在加载、没有池信息可判：保守显示 404，避免把在途请求的结果渲染到错误的池。
+    if (!selected && detailId) {
       setDetailLoading(false);
       setDetailError(API_ERROR_TEXT.NOT_FOUND ?? "请求的资源不存在或已被删除。");
     }
     setSourceCounts(null);
-  }, [scope, detailId]);
+  }, [scope, detailId, selected]);
 
   // 通知深链/分享链接：URL 的 requirement 是唯一入口；只在首次挂载时自动打开。
   const deepLinkOpened = useRef(false);
@@ -1277,12 +1277,14 @@ export function RequirementsPanel({ onRefresh, initialRequirementId, scope = "pr
   const sortedRows = prioritySort === "priority_asc" ? rows : sortRequirementsForAttention(rows);
 
   if (detailId) {
+    // 跨池守卫的渲染层兜底：同一实例切池时 selected 仍指向上一个池的详情，但绝不渲染它。
+    const detailPoolMismatch = Boolean(selected?.pool && selected.pool !== scope);
     return <section className="panel requirements-panel">
       <RequirementDetailPage
-        detail={selected}
+        detail={detailPoolMismatch ? null : selected}
         detailId={detailId}
-        loading={detailLoading}
-        error={detailError}
+        loading={detailPoolMismatch ? false : detailLoading}
+        error={detailPoolMismatch ? (API_ERROR_TEXT.NOT_FOUND ?? "请求的资源不存在或已被删除。") : detailError}
         notice={notice}
         busy={busy}
         autoOpenOwnerPicker={autoOpenOwnerPicker}

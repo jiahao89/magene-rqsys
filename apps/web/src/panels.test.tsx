@@ -2775,6 +2775,11 @@ describe("集团需求池切池守卫与创建入口（P2 修复）", () => {
     expect(await screen.findByText("请求的资源不存在或已被删除。")).toBeInTheDocument();
     expect(screen.getByText("无法载入需求详情")).toBeInTheDocument();
     expect(screen.queryByText("产品池需求标题")).toBeNull();
+
+    // 切回产品池：详情按原池恢复（守卫是双向的，不能修成单向坏掉）。
+    rerender(<RequirementsPanel scope="product" onRefresh={() => undefined} />);
+    expect(await screen.findByRole("heading", { name: "产品池需求标题" })).toBeInTheDocument();
+    expect(screen.queryByText("无法载入需求详情")).toBeNull();
   });
 
   it("hides the manual intake entries in the group pool, including the empty state", async () => {
@@ -2784,5 +2789,11 @@ describe("集团需求池切池守卫与创建入口（P2 修复）", () => {
     expect(await screen.findByText("没有匹配的需求")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "新建需求" })).toBeNull();
     expect(screen.queryByRole("button", { name: "从聊天粘贴" })).toBeNull();
+
+    // 产品池不受影响：两个创建入口都还在。
+    const { rerender } = render(<RequirementsPanel scope="group" onRefresh={() => undefined} />);
+    rerender(<RequirementsPanel scope="product" onRefresh={() => undefined} />);
+    expect(await screen.findByRole("button", { name: "新建需求" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "从聊天粘贴" })).toBeInTheDocument();
   });
 });
