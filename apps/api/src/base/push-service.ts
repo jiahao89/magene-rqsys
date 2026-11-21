@@ -38,7 +38,7 @@ export interface BasePushServiceDeps {
    */
   pool?: SourcePool;
   actorId: string | null;
-  /** PM Leader 的飞书 user_id（32 位十六进制）：first_push 的固定收件人，也是其它事件无负责人时的兜底收件人；缺省读 RQSYS_PM_LEADER_USER_ID。 */
+  /** PM Leader 的飞书 user_id（32 位十六进制）：产品池其它事件无负责人时的兜底收件人；集团池不使用。缺省读 RQSYS_PM_LEADER_USER_ID。 */
   pmLeaderUserId?: string | null;
   /** Web 工作台基地址（需求深链的 base）；缺省读 RQSYS_WEB_BASE_URL，再缺省用正式工作台地址。 */
   webBaseUrl?: string | null;
@@ -238,6 +238,9 @@ export function createBasePushService(deps: BasePushServiceDeps) {
     resolveBaseOwner: () => Promise<{ userId: string; idType: FeishuIdType } | null>;
   }): Promise<PushNotification | undefined> => {
     const currentOwnerUserId = input.owner?.feishuUserId ?? null;
+    // 0031：集团池只认应用侧执行人。不读 Base 里 PM 手工保留的负责人，也没有 PM Leader 兜底：
+    // 没有执行人就宁可不发，避免把集团需求的通知发给产品池的人。
+    const groupPool = deps.pool === "group";
     let previousOwner = await resolvePreviousPushOwner(input.req, input.owner, input.previousSource, input.hadSuccessfulPush);
     // 快照无法证明「上次推送到底有没有负责人」（典型：Q1 空负责人推送写入了空负责人，
     // 随后人工分配时旧快照的执行人没有映射 → unknown）。unknown 既不算空→有人，也不算 A→B，
@@ -250,7 +253,8 @@ export function createBasePushService(deps: BasePushServiceDeps) {
       try { baseOwnerForEvent = await input.resolveBaseOwner(); } catch { baseOwnerForEvent = null; }
       return baseOwnerForEvent;
     };
-    if (currentOwnerUserId && previousOwner.kind === "unknown") {
+    // 集团池不读 Base 负责人：证明不了旧负责人时保持 unknown，不据此推断「分配/变更」，也就不会发给错的人。
+    if (currentOwnerUserId && previousOwner.kind === "unknown" && !groupPool) {
       const baseOwner = await readBaseOwnerForEvent();
       previousOwner = baseOwner ? { kind: "known", userId: baseOwner.userId } : { kind: "none" };
     }
@@ -299,7 +303,7 @@ export function createBasePushService(deps: BasePushServiceDeps) {
     // Base 行里的负责人可能是 PM 直接改的；读取失败不阻断推送，只回落到应用侧负责人/PM Leader。
     let baseOwner: { userId: string; idType: FeishuIdType } | null = baseOwnerForEvent;
     // 只在本次不覆盖 Base 负责人时读取旧值；会覆盖时以应用负责人为准，避免通知一个即将被替换的人。
-    if (!ownerEvent && !input.willWriteOwner) {
+    if (!ownerEvent && !input.willWriteOwner && !groupPool) {
       baseOwner = await readBaseOwnerForEvent();
     }
     // 产品最终确认的收件人规则：
@@ -313,9 +317,12 @@ export function createBasePushService(deps: BasePushServiceDeps) {
     // Base 中 PM 手工保留下来的负责人优先于应用侧映射：内容变更/AI 重试成功时，
     // 通知必须发给 Base 当前负责人，而不是因为应用侧没有映射就回落 PM Leader。
     const baseRecipient = baseOwner ? { userId: baseOwner.userId, idType: baseOwner.idType } : null;
-    const pmLeaderRecipient = pmLeaderUserId ? { userId: pmLeaderUserId, idType: "user_id" as const } : null;
+    const pmLeaderRecipient = !groupPool && pmLeaderUserId ? { userId: pmLeaderUserId, idType: "user_id" as const } : null;
     // first_push 已在上方静默返回，这里只剩负责人事件与"Base/应用负责人优先、PM Leader 兜底"两类。
-    const recipient = ownerEvent ? ownerRecipient : (baseRecipient ?? ownerRecipient ?? pmLeaderRecipient);
+    // 集团池只发应用侧执行人：没有执行人就不产生通知（不回落 Base 负责人、也不回落 PM Leader）。
+    const recipient = groupPool
+      ? ownerRecipient
+      : ownerEvent ? ownerRecipient : (baseRecipient ?? ownerRecipient ?? pmLeaderRecipient);
     if (!recipient) return undefined;
     // 事件ID 确定性：同一事件重复推送得到同一个 ID，Base 自动化据此不重复发送。
     // 负责人事件追加 from/to，区分 A→B 与空→A 等不同事件。

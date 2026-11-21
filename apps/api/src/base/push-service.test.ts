@@ -88,6 +88,8 @@ function makeHarness(options: {
   let baseInput: CapturedPushInput | null = null;
   let savedBaseRecord: string | null = null;
   let savedFailure: { code: string | null; summary: string | null } | null = null;
+  // 集团池不应读 Base 负责人：用计数断言「一次都没读过」，而不是只看通知结果。
+  let baseOwnerReads = 0;
   let lockTail: Promise<unknown> = Promise.resolve();
   const withRequirementLock = async <T>(_requirementId: string, fn: () => Promise<T>): Promise<T> => {
     const previous = lockTail;
@@ -143,7 +145,7 @@ function makeHarness(options: {
     } as never,
     sourceSnapshots: { getAtVersion: async () => options.sourceSnapshot ?? null } as never,
     audit: { append: async (event: { eventType: string; result: string; safeDetails: Record<string, unknown> }) => { calls.push("audit"); auditEvents.push(event); } } as never,
-    base: { push: async (input: CapturedPushInput) => { calls.push("base"); baseInput = input; if (options.pushError) throw options.pushError; return { recordId: "record-2", created: false, omittedFields: options.omittedFields ?? [] }; }, findCurrentOwner: async () => options.baseOwner ?? null } as unknown as FeishuBasePushAdapter,
+    base: { push: async (input: CapturedPushInput) => { calls.push("base"); baseInput = input; if (options.pushError) throw options.pushError; return { recordId: "record-2", created: false, omittedFields: options.omittedFields ?? [] }; }, findCurrentOwner: async () => { baseOwnerReads += 1; calls.push("base-owner-read"); return options.baseOwner ?? null; } } as unknown as FeishuBasePushAdapter,
     sourceProjectId: "verified-source-project",
     baseFields: { projectId: "project", requirementId: "requirement", owner: "owner", source: {}, ai: {}, pm: ["PM状态"] },
     actorId: "operator-1",
@@ -152,7 +154,7 @@ function makeHarness(options: {
     ...(options.webBaseUrl === undefined ? {} : { webBaseUrl: options.webBaseUrl }),
     now: () => new Date("2026-10-10T00:00:00.000Z"),
   });
-  return { service, calls, auditEvents, get baseInput() { return baseInput; }, get savedBaseRecord() { return savedBaseRecord; }, get savedFailure() { return savedFailure; } };
+  return { service, calls, auditEvents, get baseInput() { return baseInput; }, get savedBaseRecord() { return savedBaseRecord; }, get savedFailure() { return savedFailure; }, get baseOwnerReads() { return baseOwnerReads; } };
 }
 
 test("推送把来源方式传给 Base 适配器（聊天粘贴按 intakeOrigin 判定）", async () => {
@@ -989,4 +991,201 @@ test("集团池推送把 TB 链接写进 sourceValues，产品池保持不写", 
   const manual = makeHarness({ pool: "group", req: requirement({ sourceType: "web_manual", sourceUrl: null, teambitionRequirementId: null }) });
   await manual.service.pushRequirement("req-1", "push:req-1:v2");
   assert.equal(manual.baseInput?.sourceValues?.sourceUrl, undefined);
+});
+
+// ---- 0031：集团池通知只认应用侧执行人，不读 Base 负责人、不回落 PM Leader ----
+
+/** 集团池实质变更的公共输入：sv1 已成功推送，本次 sv2 内容实质变更，执行人已映射。 */
+function groupSubstantivePush(overrides: Parameters<typeof makeHarness>[0] = {}) {
+  return makeHarness({
+    pool: "group",
+    req: requirement({ executorUserId: "tb-owner", executorName: "Owner", pipeline: { pull: "synced", analysis: "analyzed", owner: "not_required", push: "pending" } }),
+    mapping: mappingRecord(),
+    pmLeaderUserId: PM_LEADER_USER_ID,
+    lastSuccessful: pushRun({ sourceVersion: 1 }),
+    sourceSnapshot: sourceSnapshot({ substantiveHash: "substantive-v1", payload: { sourceExecutorId: "tb-owner", mappedFields: { executorName: "Owner" } } }),
+    ...overrides,
+  });
+}
+
+test("集团池实质变更只发给应用侧执行人", async () => {
+  const h = groupSubstantivePush();
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.deepEqual(h.baseInput?.notification, {
+    eventType: "需求内容变更",
+    eventId: "substantive_update:req-1:sv2:av1",
+    recipientUserId: "ou-owner",
+    recipientIdType: "open_id",
+    ownerMergeUserId: "ou-owner",
+  });
+  // 有执行人时读不读 Base 负责人不影响结果，但集团池的规则是根本不读。
+  assert.equal(h.baseOwnerReads, 0);
+});
+
+test("集团池无执行人时不发通知，也不回落 PM Leader", async () => {
+  const h = groupSubstantivePush({ mapping: null });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.equal(h.baseInput?.notification, undefined);
+});
+
+test("集团池无执行人时不读 Base 里 PM 手工保留的负责人", async () => {
+  // 集团 Base 的负责人可能被 PM 直接改过；集团池没有「无执行人」兜底，这条也不能发给 Base 负责人。
+  const h = groupSubstantivePush({ mapping: null, baseOwner: { userId: "ou-base-owner", idType: "open_id" } });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.equal(h.baseInput?.notification, undefined);
+  assert.equal(h.baseOwnerReads, 0);
+});
+
+test("集团池负责人 A→B 发给新的执行人", async () => {
+  const req = requirement({ executorUserId: "tb-owner", executorName: "Owner" });
+  const h = makeHarness({
+    pool: "group", req,
+    mapping: mappingRecord({ feishuUserId: "ou-owner" }),
+    previousMapping: mappingRecord({ id: "mapping-old", feishuUserId: "ou-previous", matchMethod: "tb_user_id" }),
+    pmLeaderUserId: PM_LEADER_USER_ID,
+    lastSuccessful: pushRun({ sourceVersion: 1 }),
+    sourceSnapshot: sourceSnapshot({ substantiveHash: req.substantiveHash, payload: { sourceExecutorId: PREVIOUS_OWNER_TB_ID, mappedFields: { executorName: "Previous Owner" } } }),
+  });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.deepEqual(h.baseInput?.notification, {
+    eventType: "负责人变更",
+    eventId: "owner_changed:req-1:sv2:av1:ou-previous:ou-owner",
+    recipientUserId: "ou-owner",
+    recipientIdType: "open_id",
+    ownerMergeUserId: "ou-owner",
+  });
+});
+
+test("集团池负责人变更到未映射的人时不发，也不退回旧负责人或 PM Leader", async () => {
+  const req = requirement({ executorUserId: "tb-owner", executorName: "Owner" });
+  const h = makeHarness({
+    pool: "group", req,
+    mapping: null,
+    previousMapping: mappingRecord({ id: "mapping-old", feishuUserId: "ou-previous", matchMethod: "tb_user_id" }),
+    pmLeaderUserId: PM_LEADER_USER_ID,
+    lastSuccessful: pushRun({ sourceVersion: 1 }),
+    sourceSnapshot: sourceSnapshot({ substantiveHash: req.substantiveHash, payload: { sourceExecutorId: PREVIOUS_OWNER_TB_ID, mappedFields: { executorName: "Previous Owner" } } }),
+  });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.equal(h.baseInput?.notification, undefined);
+  assert.equal(h.baseOwnerReads, 0);
+});
+
+test("集团池负责人从空到有值时通知新的执行人", async () => {
+  const req = requirement({ executorUserId: "tb-owner", executorName: "Owner" });
+  const h = makeHarness({
+    pool: "group", req,
+    mapping: mappingRecord(),
+    pmLeaderUserId: PM_LEADER_USER_ID,
+    lastSuccessful: pushRun({ sourceVersion: 1 }),
+    sourceSnapshot: sourceSnapshot({ substantiveHash: req.substantiveHash, payload: { sourceExecutorId: null, mappedFields: { executorName: null } } }),
+  });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.deepEqual(h.baseInput?.notification, {
+    eventType: "已分配负责人",
+    eventId: "owner_assigned:req-1:sv2:av1:none:ou-owner",
+    recipientUserId: "ou-owner",
+    recipientIdType: "open_id",
+    ownerMergeUserId: "ou-owner",
+  });
+});
+
+test("集团池 AI 重试成功但无执行人时不发通知", async () => {
+  const latest = analysisRun({ analysisVersion: 2, status: "analyzed" });
+  const h = makeHarness({
+    pool: "group",
+    pmLeaderUserId: PM_LEADER_USER_ID,
+    lastSuccessful: pushRun({ sourceVersion: 1 }),
+    sourceSnapshot: sourceSnapshot({ substantiveHash: "substantive-v2", payload: { sourceExecutorId: null, mappedFields: { executorName: null } } }),
+    latestAnalysis: latest,
+    analysisHistory: [analysisRun({ analysisVersion: 1, status: "failed_retryable" }), latest],
+  });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.equal(h.baseInput?.notification, undefined);
+  assert.equal(h.baseOwnerReads, 0);
+});
+
+test("集团池首次推送仍然静默", async () => {
+  const h = makeHarness({ pool: "group", mapping: mappingRecord(), pmLeaderUserId: PM_LEADER_USER_ID });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.equal(h.baseInput?.notification, undefined);
+});
+
+test("集团池首次推送遇到人工分配时通知被分配的人", async () => {
+  // 集团池没有兜底收件人，但「人工指定负责人」是明确的人类意图，被指定的人必须收到。
+  const req = requirement({ manualOwner: manualOwner(), pipeline: { pull: "synced", analysis: "analyzed", owner: "manually_mapped", push: "pending" } });
+  const h = makeHarness({ pool: "group", req, mapping: mappingRecord(), pmLeaderUserId: PM_LEADER_USER_ID });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.equal(h.baseInput?.notification?.eventType, "已分配负责人");
+  assert.equal(h.baseInput?.notification?.recipientUserId, "u-assignee");
+  assert.equal(h.baseInput?.notification?.recipientIdType, "user_id");
+});
+
+// 产品池回归：同样的输入必须保持「Base 负责人 → 应用负责人 → PM Leader」的既有链路。
+
+test("产品池实质变更仍优先发给 Base 里 PM 手工保留的负责人", async () => {
+  const h = makeHarness({
+    pool: "product",
+    mapping: null,
+    pmLeaderUserId: PM_LEADER_USER_ID,
+    lastSuccessful: pushRun({ sourceVersion: 1 }),
+    sourceSnapshot: sourceSnapshot({ substantiveHash: "substantive-v1" }),
+    baseOwner: { userId: "ou-base-owner", idType: "open_id" },
+  });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.equal(h.baseInput?.notification?.recipientUserId, "ou-base-owner");
+  assert.equal(h.baseInput?.notification?.recipientIdType, "open_id");
+  // 产品池照旧读 Base 负责人：这是它和无兜底集团池的关键差别。
+  assert.equal(h.baseOwnerReads, 1);
+});
+
+test("产品池无负责人时仍回落 PM Leader", async () => {
+  const h = makeHarness({
+    mapping: null,
+    pmLeaderUserId: PM_LEADER_USER_ID,
+    lastSuccessful: pushRun({ sourceVersion: 1 }),
+    sourceSnapshot: sourceSnapshot({ substantiveHash: "substantive-v1" }),
+    baseOwner: null,
+  });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.equal(h.baseInput?.notification?.recipientUserId, PM_LEADER_USER_ID);
+  assert.equal(h.baseInput?.notification?.recipientIdType, "user_id");
+});
+
+test("产品池既无负责人也无 PM Leader 时不发通知", async () => {
+  const h = makeHarness({
+    mapping: null,
+    lastSuccessful: pushRun({ sourceVersion: 1 }),
+    sourceSnapshot: sourceSnapshot({ substantiveHash: "substantive-v1" }),
+    baseOwner: null,
+  });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.equal(h.baseInput?.notification, undefined);
+});
+
+test("产品池有执行人映射时发给执行人，而不是 Base 负责人", async () => {
+  const h = makeHarness({
+    req: requirement({ executorUserId: "tb-owner", executorName: "Owner" }),
+    mapping: mappingRecord({ feishuUserId: "ou-owner" }),
+    pmLeaderUserId: PM_LEADER_USER_ID,
+    lastSuccessful: pushRun({ sourceVersion: 1 }),
+    sourceSnapshot: sourceSnapshot({ substantiveHash: "substantive-v1", payload: { sourceExecutorId: "tb-owner", mappedFields: { executorName: "Owner" } } }),
+    baseOwner: { userId: "ou-base-owner", idType: "open_id" },
+  });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.equal(h.baseInput?.notification?.recipientUserId, "ou-owner");
+  assert.equal(h.baseInput?.notification?.recipientIdType, "open_id");
 });
