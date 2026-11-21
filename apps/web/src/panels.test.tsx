@@ -294,8 +294,10 @@ describe("SourcesPanel (ticket 16)", () => {
     expect(await screen.findByText(shareUrl)).toBeInTheDocument();
     expect(screen.getByText("需使用公司飞书登录（仅本租户可访问）。")).toBeInTheDocument();
     expect(screen.getByText("同步规则")).toBeInTheDocument();
-    expect(screen.getByText(/平台自动化每 30 分钟读取一次/)).toBeInTheDocument();
-    expect(screen.getByText("最近一次同步")).toBeInTheDocument();
+    // 5b 收集表同步冻结（2026-11-21）：页面明确写「已暂停」，最近一次同步标注为历史值。
+    expect(screen.getByText("同步已暂停")).toBeInTheDocument();
+    expect(screen.getByText(/平台自动化已停止读取收集表/)).toBeInTheDocument();
+    expect(screen.getByText("最近一次同步（暂停前的历史值）")).toBeInTheDocument();
     expect(screen.getByText("最后运行")).toBeInTheDocument();
     expect(screen.getByText("扫描")).toBeInTheDocument();
     expect(screen.getByText("新建")).toBeInTheDocument();

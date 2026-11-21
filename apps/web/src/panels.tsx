@@ -383,8 +383,8 @@ function BaseFormReadonlyPanel() {
   const lastError = sanitizeBaseFormError(stats?.lastError ?? null);
   return <section className="panel requirements-panel" aria-labelledby="baseform-source-heading">
     <div className="panel-heading">
-      <div><h2 id="baseform-source-heading">多维表格需求收集表</h2><p>销售、售后等通过飞书收集表提交需求；系统自动同步到需求池，本页只读。</p></div>
-      <span className="status-chip status-muted"><span />只读</span>
+      <div><h2 id="baseform-source-heading">多维表格需求收集表</h2><p>销售、售后等通过飞书收集表提交需求。收集表同步已暂停，本页保留来源地址与暂停前的同步记录，只读。</p></div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}><span className="status-chip status-warning"><span />同步已暂停</span><span className="status-chip status-muted"><span />只读</span></div>
     </div>
     <div className="baseform-readonly-grid">
       {shareUrl ? <div className="baseform-block">
@@ -398,10 +398,10 @@ function BaseFormReadonlyPanel() {
       </div> : null}
       <div className="baseform-block">
         <h3>同步规则</h3>
-        <p className="baseform-rule-text">平台自动化每 30 分钟读取一次（Asia/Shanghai）；实际投递时间可能有偏移，偶尔会漏一轮。扫描到新行后依次校验、收录、回写「已收录 + 系统需求 ID」、AI 分析、推送 PM 数据表。已收录的行不再重复处理；校验失败的行按「同步说明」修正后等下一轮。提交不等于立即进池。</p>
+        <p className="baseform-rule-text">同步已暂停：平台自动化已停止读取收集表，暂停期间新提交不会进入需求池。暂停前的规则为每 30 分钟读取一次（Asia/Shanghai），实际投递时间可能有偏移；恢复后扫描到新行会依次校验、收录、回写「已收录 + 系统需求 ID」、AI 分析、推送 PM 数据表。已收录的行不再重复处理；提交不等于立即进池。</p>
       </div>
       <div className="baseform-block">
-        <h3>最近一次同步</h3>
+        <h3>最近一次同步（暂停前的历史值）</h3>
         {stats && statsAvailable ? <dl className="req-system-grid">
           <div><dt>最后运行</dt><dd>{stats.lastRunAt ? formatDateTime(stats.lastRunAt) ?? stats.lastRunAt : "尚未运行"}</dd></div>
           <div><dt>扫描</dt><dd>{stats.scanned} 行</dd></div>
@@ -2868,7 +2868,7 @@ export function OpsPanel() {
           评分：AI 建议 {metrics.scoring.aiSuggested} · 人工修改 {metrics.scoring.manual} · 采用 AI {metrics.scoring.aiApplied}（采纳率 {opsRate(metrics.scoring.adoptionRate)}）
         </p>
         {metrics.analysis.failureCodes.length > 0 && <p className="status-hint ops-failures">分析失败码：{metrics.analysis.failureCodes.map((item) => `${item.code}×${item.count}`).join("、")}</p>}
-        {pool === "product" && metrics.baseForm && <p className="status-hint">多维表格同步：扫描 {metrics.baseForm.scanned} 行 · 已收录 {metrics.baseForm.created + metrics.baseForm.recorded} · 校验失败 {metrics.baseForm.rejected} · 写回失败 {metrics.baseForm.writeBackFailed} · 读取失败 {metrics.baseForm.readFailed ? "是" : "否"} · 最近 {metrics.baseForm.lastRunAt ? timeLabel(metrics.baseForm.lastRunAt) : "—"}{metrics.baseForm.lastError ? ` · ${metrics.baseForm.lastError}` : ""}</p>}
+        {pool === "product" && metrics.baseForm && <p className="status-hint">多维表格同步（已暂停，以下为历史值）：扫描 {metrics.baseForm.scanned} 行 · 已收录 {metrics.baseForm.created + metrics.baseForm.recorded} · 校验失败 {metrics.baseForm.rejected} · 写回失败 {metrics.baseForm.writeBackFailed} · 读取失败 {metrics.baseForm.readFailed ? "是" : "否"} · 最近一次同步 {metrics.baseForm.lastRunAt ? timeLabel(metrics.baseForm.lastRunAt) : "—"}{metrics.baseForm.lastError ? ` · ${metrics.baseForm.lastError}` : ""}</p>}
       </> : <p className="status-hint">运营指标暂不可用。</p>}
     </div>
     {/* 上线 Gate 是产品池的上线判据（G1 为产品口径条数）；集团池视图不显示，避免误读。 */}
