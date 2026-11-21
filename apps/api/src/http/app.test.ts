@@ -277,9 +277,9 @@ test("test fixture status requires authentication and reports only its availabil
  assert.equal(disabledResponse.status, 200);
  assert.deepEqual(await disabledResponse.json(), { enabled: false });
 });
-test("lists only user-maintained source settings after injected identity authentication", async () => { const r = await handleApiRequest(new Request("http://localhost/api/sources"), makeDependencies()); assert.equal(r.status, 200); assert.deepEqual(await r.json(), { items: [{ id: source.id, projectName: "Project", enabled: true, schedule: { enabled: false, weekday: null, weekdays: null, time: null, timezone: null } }] }); });
+test("lists only user-maintained source settings after injected identity authentication", async () => { const r = await handleApiRequest(new Request("http://localhost/api/sources"), makeDependencies()); assert.equal(r.status, 200); assert.deepEqual(await r.json(), { items: [{ id: source.id, pool: "product", projectName: "Project", enabled: true, executorAllowlist: [], schedule: { enabled: false, weekday: null, weekdays: null, time: null, timezone: null } }] }); });
 test("rejects protected routes without an identity provider", async () => { const r = await handleApiRequest(new Request("http://localhost/api/sources"), unauthenticated); assert.equal(r.status, 401); });
-test("updates source settings by project name while keeping server-owned IDs and metadata", async () => { const d = makeDependencies(); const r = await handleApiRequest(new Request(`http://localhost/api/sources/${source.id}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectName: "Project", enabled: false, schedule: { enabled: true, weekday: 1, time: "09:30", timezone: "Asia/Shanghai" } }) }), d); assert.equal(r.status, 200); const body = await r.json() as Record<string, unknown>; assert.deepEqual(body, { id: source.id, projectName: "Project", enabled: false, schedule: { enabled: true, weekday: 1, weekdays: [1], time: "09:30", timezone: "Asia/Shanghai" } }); assert.equal(source.externalProjectId, "p1"); assert.equal(source.requirementTypeId, "type1"); assert.deepEqual(source.fieldMap, { title: "name" }); });
+test("updates source settings by project name while keeping server-owned IDs and metadata", async () => { const d = makeDependencies(); const r = await handleApiRequest(new Request(`http://localhost/api/sources/${source.id}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectName: "Project", enabled: false, schedule: { enabled: true, weekday: 1, time: "09:30", timezone: "Asia/Shanghai" } }) }), d); assert.equal(r.status, 200); const body = await r.json() as Record<string, unknown>; assert.deepEqual(body, { id: source.id, pool: "product", projectName: "Project", enabled: false, executorAllowlist: [], schedule: { enabled: true, weekday: 1, weekdays: [1], time: "09:30", timezone: "Asia/Shanghai" } }); assert.equal(source.externalProjectId, "p1"); assert.equal(source.requirementTypeId, "type1"); assert.deepEqual(source.fieldMap, { title: "name" }); });
 test("updates source schedule with a multi-weekday list", async () => {
   const d = makeDependencies();
   const r = await handleApiRequest(new Request(`http://localhost/api/sources/${source.id}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectName: "Project", enabled: false, schedule: { enabled: true, weekday: 1, weekdays: [1, 3, 5], time: "09:30", timezone: "Asia/Shanghai" } }) }), d);
@@ -459,10 +459,10 @@ test("batch and requirement list routes pass time, batch and stable cursor filte
  const batchCursor = { startedAt: "2026-01-01T00:00:00.000Z", id: batch.id };
  const batchResponse = await handleApiRequest(new Request(`http://localhost/api/batches?since=2026-01-01T00%3A00%3A00Z&until=2026-01-02T00%3A00%3A00Z&cursor=${encodeURIComponent(encodeBatchCursor(batchCursor))}`), d);
  assert.equal(batchResponse.status, 200);
- assert.deepEqual(batchQuery, { limit: 25, since: "2026-01-01T00:00:00Z", until: "2026-01-02T00:00:00Z", cursor: batchCursor });
+ assert.deepEqual(batchQuery, { limit: 25, pool: "product", since: "2026-01-01T00:00:00Z", until: "2026-01-02T00:00:00Z", cursor: batchCursor });
  const requirementResponse = await handleApiRequest(new Request(`http://localhost/api/requirements?batchId=${batch.id}&pullState=synced&since=2026-01-01T00%3A00%3A00Z&until=2026-01-02T00%3A00%3A00Z`), d);
  assert.equal(requirementResponse.status, 200);
- assert.deepEqual(requirementQuery, { batchId: batch.id, pullState: "synced", since: "2026-01-01T00:00:00Z", until: "2026-01-02T00:00:00Z", limit: 25 });
+ assert.deepEqual(requirementQuery, { batchId: batch.id, pool: "product", pullState: "synced", since: "2026-01-01T00:00:00Z", until: "2026-01-02T00:00:00Z", limit: 25 });
 });
 test("requirement list and export forward the source filter to repositories", async () => {
  const d = makeDependencies(); const queries: unknown[] = [];
@@ -471,10 +471,10 @@ test("requirement list and export forward the source filter to repositories", as
  assert.equal(listResponse.status, 200);
  const exportResponse = await handleApiRequest(new Request("http://localhost/api/requirements/export?source=web_manual"), d);
  assert.equal(exportResponse.status, 200);
- assert.deepEqual(queries, [{ source: "chat_paste", limit: 25 }, { source: "web_manual", limit: 5001 }]);
+ assert.deepEqual(queries, [{ source: "chat_paste", pool: "product", limit: 25 }, { source: "web_manual", pool: "product", limit: 5001 }]);
  const invalid = await handleApiRequest(new Request("http://localhost/api/requirements?source=base_form"), d);
  assert.equal(invalid.status, 200);
- assert.deepEqual(queries[2], { source: "base_form", limit: 25 });
+ assert.deepEqual(queries[2], { source: "base_form", pool: "product", limit: 25 });
  const rejected = await handleApiRequest(new Request("http://localhost/api/requirements?source=unknown"), d);
  assert.equal(rejected.status, 400);
 });
@@ -582,6 +582,9 @@ test("V02-T02 manual requirements read back with source fields and no TB link fa
   // 手工需求不拼接 TB 地址兜底（AC05）
   assert.equal(body.sourceUrl, null);
   assert.equal((body.pipeline as Record<string, string>).pull, "collected");
+  // F1：详情 DTO 必须返回服务端创建时间（四种来源统一），前端不再退回 source.createdAt。
+  assert.equal(body.createdAt, requirement.createdAt);
+  assert.equal(body.updatedAt, requirement.updatedAt);
 });
 
 test("empty requirement search returns an empty page without querying mappings with an empty source id", async () => {
@@ -715,6 +718,56 @@ test("ops metrics expose the base form sync state without leaking the table id",
   withoutFlags.repositories!.ops = { getOpsMetrics: async (input) => ({ window: { days: input.days, since: input.now } } as never) };
   const degraded = await (await handleApiRequest(new Request("http://localhost/api/ops/metrics"), withoutFlags)).json() as { metrics: { baseForm: unknown } };
   assert.equal(degraded.metrics.baseForm, null);
+});
+
+test("ops metrics expose the configured base form share url read-only and reject invalid values", async () => {
+  const previous = process.env.BASE_FORM_SHARE_URL;
+  const d = makeDependencies();
+  d.repositories!.ops = { getOpsMetrics: async (input) => ({ window: { days: input.days, since: input.now } } as never) };
+  d.repositories!.flags = {
+    get: async () => ({ value: { tableId: "tbl_internal", lastRunAt: "2026-11-20T09:00:00.000Z", scanned: 0, created: 0, rejected: 0, readFailed: false, lastError: null }, updatedAt: "2026-11-20T09:00:00.000Z" }),
+    set: async () => undefined,
+  };
+  const read = async () => {
+    const response = await handleApiRequest(new Request("http://localhost/api/ops/metrics"), d);
+    return (await response.json() as { metrics: { baseForm: Record<string, unknown> } }).metrics.baseForm;
+  };
+  try {
+    process.env.BASE_FORM_SHARE_URL = "https://aimagene.feishu.cn/share/base/shrcn-test";
+    const configured = await read();
+    assert.equal(configured.shareUrl, "https://aimagene.feishu.cn/share/base/shrcn-test");
+    assert.equal(JSON.stringify(configured).includes("tbl_internal"), false);
+
+    // lastError 只保留类别摘要：rec/tbl ID 必须掩码。
+    const withError = makeDependencies();
+    withError.repositories!.ops = d.repositories!.ops;
+    withError.repositories!.flags = {
+      get: async () => ({ value: { lastRunAt: "2026-11-20T09:00:00.000Z", scanned: 0, created: 0, rejected: 0, readFailed: false, lastError: "record reczz28brz00SUAx missing in tbl6Gfi0KJ2a1llK" }, updatedAt: "2026-11-20T09:00:00.000Z" }),
+      set: async () => undefined,
+    };
+    const errored = await (await handleApiRequest(new Request("http://localhost/api/ops/metrics"), withError)).json() as { metrics: { baseForm: Record<string, unknown> } };
+    assert.match(String(errored.metrics.baseForm.lastError), /rec…/);
+    assert.match(String(errored.metrics.baseForm.lastError), /tbl…/);
+    assert.equal(String(errored.metrics.baseForm.lastError).includes("reczz28"), false);
+    assert.equal(String(errored.metrics.baseForm.lastError).includes("tbl6Gfi"), false);
+
+    // 只配了 shareUrl、没有同步状态：仍返回 baseForm，统计按 0/null。
+    const withoutState = makeDependencies();
+    withoutState.repositories!.ops = d.repositories!.ops;
+    const fallback = await (await handleApiRequest(new Request("http://localhost/api/ops/metrics"), withoutState)).json() as { metrics: { baseForm: Record<string, unknown> } };
+    assert.equal(fallback.metrics.baseForm.shareUrl, "https://aimagene.feishu.cn/share/base/shrcn-test");
+    assert.equal(fallback.metrics.baseForm.lastRunAt, null);
+    assert.equal(fallback.metrics.baseForm.scanned, 0);
+
+    process.env.BASE_FORM_SHARE_URL = "javascript:alert(1)";
+    assert.equal((await read()).shareUrl, undefined, "非 http(s) 地址不返回");
+
+    delete process.env.BASE_FORM_SHARE_URL;
+    assert.equal((await read()).shareUrl, undefined, "未配置不返回");
+  } finally {
+    if (previous === undefined) delete process.env.BASE_FORM_SHARE_URL;
+    else process.env.BASE_FORM_SHARE_URL = previous;
+  }
 });
 
 test("ops job view lists failed and stuck jobs without leaking payload", async () => {
@@ -1185,4 +1238,83 @@ test("intake-draft still returns the draft when the similar-requirement search o
   const response = await handleApiRequest(draftRequest("需要导出"), d);
   assert.equal(response.status, 200);
   assert.deepEqual((await response.json() as { similar: unknown[] }).similar, []);
+});
+
+// ---- 0031 集团需求池：pool 作用域、详情守卫、执行人名单 ----
+const groupSource: SourceConfigRecord = { ...source, id: "77777777-7777-4777-8777-777777777777", pool: "group", executorAllowlist: [{ userId: "tb-user-1", name: "张三" }] };
+const groupRequirement = { ...requirement, id: "88888888-8888-4888-8888-888888888888", sourceConfigId: groupSource.id };
+const sourceBody = (extra: Record<string, unknown> = {}) => ({ projectName: "集团需求收集", enabled: true, schedule: { enabled: false, time: null, timezone: null }, ...extra });
+const postSource = (d: ApiDependencies, body: Record<string, unknown>) => handleApiRequest(new Request("http://localhost/api/sources", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), d);
+function poolDependencies() {
+  const d = makeDependencies();
+  d.repositories!.sources.get = async (id) => id === groupSource.id ? groupSource : id === source.id ? source : null;
+  d.repositories!.requirements!.get = (async (id: string) => id === groupRequirement.id ? groupRequirement : id === requirement.id ? requirement : null) as never;
+  return d;
+}
+test("requirement detail derives the pool from the id and returns it read-only", async () => {
+  const d = poolDependencies();
+  const group = await handleApiRequest(new Request(`http://localhost/api/requirements/${groupRequirement.id}`), d);
+  assert.equal(group.status, 200);
+  assert.equal((await group.json() as { pool?: string }).pool, "group");
+  const product = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`), d);
+  assert.equal(product.status, 200);
+  assert.equal((await product.json() as { pool?: string }).pool, "product");
+});
+test("an explicit pool that disagrees with the requirement answers 404, and anonymous stays 401", async () => {
+  const d = poolDependencies();
+  assert.equal((await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}?pool=group`), d)).status, 404);
+  assert.equal((await handleApiRequest(new Request(`http://localhost/api/requirements/${groupRequirement.id}?pool=product`), d)).status, 404);
+  // 先认证后判池：未登录请求不能被守卫降级成 404（那样会泄露 UUID 是否存在）。
+  assert.equal((await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}?pool=group`), unauthenticated)).status, 401);
+});
+test("source listing exposes the pool and allowlist display names without TB user ids", async () => {
+  const d = makeDependencies();
+  d.repositories!.sources.list = async () => [groupSource];
+  const body = await (await handleApiRequest(new Request("http://localhost/api/sources"), d)).json() as { items: Array<Record<string, unknown>> };
+  assert.equal(body.items[0]!.pool, "group");
+  assert.deepEqual(body.items[0]!.executorAllowlist, ["张三"]);
+  assert.equal(JSON.stringify(body).includes("tb-user-1"), false);
+});
+test("group source creation resolves names to bindings and rejects unusable allowlists", async () => {
+  const build = (members?: Array<{ userId: string; name: string }>) => {
+    const d = makeDependencies();
+    d.teambitionSourceProjects = { resolveProject: async () => ({ projectId: "p2", requirementTypeId: "t2" }) };
+    if (members) d.teambitionMembers = { listOrganizationMembers: async () => members };
+    d.repositories!.sources.list = async () => [];
+    let saved: unknown;
+    d.repositories!.sources.create = (async (input: unknown) => { saved = input; return { ...source, pool: "group", externalProjectId: "p2", executorAllowlist: (input as { executorAllowlist?: unknown }).executorAllowlist }; }) as never;
+    return { d, saved: () => saved as { executorAllowlist?: unknown } | undefined };
+  };
+  // 未注入成员目录：不能假装保存成功。
+  assert.equal((await postSource(build().d, sourceBody({ pool: "group", executorAllowlist: ["张三"] }))).status, 503);
+  // 未解析姓名 → 400 + 独立字段，供卡片列出并保留输入。
+  const unresolved = await postSource(build([{ userId: "tb-user-2", name: "李四" }]).d, sourceBody({ pool: "group", executorAllowlist: ["张三"] }));
+  assert.equal(unresolved.status, 400);
+  assert.deepEqual((await unresolved.json() as { error: { details?: { unresolvedExecutorNames?: string[] } } }).error.details?.unresolvedExecutorNames, ["张三"]);
+  // 空名单不能启用；21 个姓名超上限。
+  assert.equal((await postSource(build([{ userId: "tb-user-1", name: "张三" }]).d, sourceBody({ pool: "group", executorAllowlist: [] }))).status, 400);
+  assert.equal((await postSource(build([{ userId: "tb-user-1", name: "张三" }]).d, sourceBody({ pool: "group", executorAllowlist: Array.from({ length: 21 }, (_, i) => `人${i}`) }))).status, 400);
+  // 产品池传名单直接拒绝，避免“看起来过滤了其实没有”。
+  assert.equal((await postSource(build([{ userId: "tb-user-1", name: "张三" }]).d, sourceBody({ executorAllowlist: ["张三"] }))).status, 400);
+  // 正常路径：trim/去重后解析为 {userId,name}，只保存绑定，不回传 user_id。
+  const ok = build([{ userId: "tb-user-1", name: "张三" }]);
+  const created = await postSource(ok.d, sourceBody({ pool: "group", executorAllowlist: [" 张三 ", "张三"] }));
+  assert.equal(created.status, 201);
+  assert.deepEqual(ok.saved()?.executorAllowlist, [{ userId: "tb-user-1", name: "张三" }]);
+  assert.deepEqual((await created.json() as { executorAllowlist?: string[] }).executorAllowlist, ["张三"]);
+});
+test("each pool keeps one source: a second product source conflicts while a group source is allowed", async () => {
+  const d = makeDependencies();
+  d.teambitionSourceProjects = { resolveProject: async () => ({ projectId: "p2", requirementTypeId: "t2" }) };
+  d.teambitionMembers = { listOrganizationMembers: async () => [{ userId: "tb-user-1", name: "张三" }] };
+  d.repositories!.sources.create = (async (input: { pool?: string }) => ({ ...source, id: "99999999-9999-4999-8999-999999999999", pool: input.pool ?? "product", externalProjectId: "p2" })) as never;
+  assert.equal((await postSource(d, sourceBody())).status, 409);
+  const group = await postSource(d, sourceBody({ pool: "group", executorAllowlist: ["张三"] }));
+  assert.equal(group.status, 201);
+  assert.equal((await group.json() as { pool?: string }).pool, "group");
+});
+test("updating a source cannot move it between pools", async () => {
+  const d = makeDependencies();
+  const response = await handleApiRequest(new Request(`http://localhost/api/sources/${source.id}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(sourceBody({ pool: "group", executorAllowlist: ["张三"] })) }), d);
+  assert.equal(response.status, 400);
 });

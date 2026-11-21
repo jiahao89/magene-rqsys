@@ -91,6 +91,8 @@ const ALLOWED_DETAIL_KEYS: readonly string[] = [
   "fetched",
   "duplicateIds",
   "processed",
+  // 0031：执行人名单外跳过的条数（集团池同步审计，只记计数）
+  "filtered",
   "workerId",
   "scheduleWindow",
   "httpStatus",

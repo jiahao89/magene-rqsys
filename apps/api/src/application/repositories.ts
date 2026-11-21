@@ -3,7 +3,7 @@
 // （05 手动同步、06 AI 分析、07 负责人与 Base 推送、08 调度重试审计）实际需要的操作。
 // 唯一性约束由 DDL 保证（见 domain/persistence.ts 注释），端口语义与之对齐。
 
-import type { AuditEventRecord, BasePushRunRecord, BatchState, AnalysisRunRecord, FunctionModuleEntry, ModuleDictionaryVersionRecord, PersonMappingRecord, PmSnapshotRecord, PipelineJobRecord, PipelineJobType, PriorityLevel, PriorityRuleVersionRecord, SourceConfigRecord, SourceSnapshotRecord, SyncBatchRecord, SyncItemAction, SyncItemRecord, SyncTrigger, FeishuIdType, AudienceLevel, RiceDraftRecord, KanoEvidenceVersion, KanoRunRecord, RequirementScoreVersionRecord } from "../domain/persistence.js";
+import type { AuditEventRecord, BasePushRunRecord, BatchState, AnalysisRunRecord, FunctionModuleEntry, ModuleDictionaryVersionRecord, PersonMappingRecord, PmSnapshotRecord, PipelineJobRecord, PipelineJobType, PriorityLevel, PriorityRuleVersionRecord, SourceConfigRecord, SourceSnapshotRecord, SyncBatchRecord, SyncItemAction, SyncItemRecord, SyncTrigger, FeishuIdType, AudienceLevel, RiceDraftRecord, KanoEvidenceVersion, KanoRunRecord, RequirementScoreVersionRecord, SourcePool } from "../domain/persistence.js";
 import type { AnalysisState, OwnerState, PullState, PushState } from "../domain/workflow.js";
 import type { ResolvedSourceConfigUpdate } from "../contracts/source.js";
 import type { RequirementManualOwner, RequirementRecord, RequirementPriorityOverride, RequirementAnalysisContext, BaseFormRequirementInput, RequirementAssessmentRecord } from "../domain/persistence.js";
@@ -33,6 +33,8 @@ export interface SyncBatchRepository {
   findByIdempotencyKey(sourceConfigId: string, key: string): Promise<SyncBatchRecord | null>;
   list(query: {
     status?: BatchState;
+    /** 池作用域：缺省 product（不与集团池批次混排）。 */
+    pool?: SourcePool;
     since?: string;
     until?: string;
     limit: number;
@@ -45,6 +47,8 @@ export interface SyncBatchRepository {
       totalCount: number;
       succeededCount: number;
       failedCount: number;
+      /** 因执行人名单跳过的任务数（0031）；缺省不覆盖已有值。 */
+      filteredCount?: number;
       errorSummary: string | null;
       completedAt: string;
     },
@@ -131,7 +135,8 @@ export interface AnalysisRunRepository {
   /** I3-3：窗口内指定失败码的运行数（AI 额度暂停判定）。可选，内存实现可不提供。 */
   countRecentFailures?(safeErrorCode: string, since: string): Promise<number>;
   /** 总览 AI 区：全部调用次数、今日调用次数、最近一次调用的时间与状态（无调用则 null）。 */
-  aiCallStats?(since: string): Promise<{ total: number; today: number; lastAt: string | null; lastStatus: string | null }>;
+  /** 总览 AI 卡片统计；pool 缺省 product（集团池调用不计入总览）。 */
+  aiCallStats?(since: string, pool?: SourcePool): Promise<{ total: number; today: number; lastAt: string | null; lastStatus: string | null }>;
 }
 
 /** 0030：需求评估版本。按需生成；同一需求版本号递增，失败版本保留 errorCode。 */
@@ -297,13 +302,13 @@ export interface PipelineJobRepository {
    * analysis 由分析恢复处理，放进来会重复收尾。
    * 可选：内存实现可不提供。
    */
-  listExhaustedRunning?(now: string, limit: number): Promise<PipelineJobRecord[]>;
+  listExhaustedRunning?(now: string, limit: number, pool?: SourcePool): Promise<PipelineJobRecord[]>;
   /**
    * 运维视图（只读）：最近失败的作业，按更新时间倒序。
    * 只返回作业元数据与安全错误摘要，调用方不得回传 payload。
    * 可选：内存实现可不提供。
    */
-  listFailed?(limit: number): Promise<PipelineJobRecord[]>;
+  listFailed?(limit: number, pool?: SourcePool): Promise<PipelineJobRecord[]>;
   claimNext(workerId: string, leaseMs: number, now: string): Promise<PipelineJobRecord | null>;
   /**
    * 续约：仅当作业仍是本次认领的那次（status='running' 且 attempt_count 匹配）才延长租约。
@@ -339,7 +344,7 @@ export interface PipelineJobRepository {
 // audit_events（追加只读；safe_details 为白名单字段）
 /** 运营指标（PRD §10）：窗口内的同步/分析/推送成功率与耗时，以及当前快照。 */
 export interface OpsMetricsRepository {
-  getOpsMetrics(input: { days: number; now: string }): Promise<{
+  getOpsMetrics(input: { days: number; now: string; pool?: SourcePool }): Promise<{
     window: { days: number; since: string };
     sync: { total: number; succeeded: number; partialFailure: number; failed: number; successRate: number | null; avgDurationSeconds: number | null; lastCompletedAt: string | null };
     analysis: { total: number; analyzed: number; failedRetryable: number; running: number; successRate: number | null; avgDurationSeconds: number | null; lowConfidence: number; lowConfidenceRate: number | null; failureCodes: Array<{ code: string; count: number }> };
@@ -489,8 +494,9 @@ export interface RequirementQueryRepository {
     proposerName?: string | null;
     owner?: { feishuUserId: string; feishuIdType: "open_id" | "user_id" | "union_id"; name?: string | null };
   }): Promise<{ requirementId: string; platformRequirementId: string; replay: boolean } | { outcome: "key_conflict" }>;
-  // V02-T07：手工需求编辑（仅 web_manual）。期望源版本乐观并发；实质变更原子落新版本/快照/审计/分析任务；
-  // 元数据变更仅更新投影并入队非实质推送；规范化后无变化不新建版本。编辑回执同事务写入。
+  // V02-T07/PRD-30：手工与多维表格需求编辑（web_manual/base_form）。期望源版本乐观并发；
+  // 实质变更原子落新版本/快照/审计/分析任务；元数据变更仅更新投影并入队非实质推送；
+  // 规范化后无变化不新建版本。编辑回执同事务写入；base_form 不回写收集表，保留 source_payload 溯源。
   updateManualRequirement(input: {
     requirementId: string;
     expectedSourceVersion: number;
@@ -512,7 +518,7 @@ export interface RequirementQueryRepository {
     | { outcome: "version_conflict"; currentSourceVersion: number }
     | { outcome: "not_manual" }
     | { outcome: "not_found" }>;
-  getPipelineCounts(): Promise<{
+  getPipelineCounts(pool?: SourcePool): Promise<{
     total: number;
     pullSynced: number;
     analysisAnalyzed: number;
@@ -543,6 +549,8 @@ export interface RequirementQueryRepository {
     priority?: PriorityLevel;
     /** 5c-1 来源筛选：chat_paste 由 web_manual + source_payload.intakeOrigin 判定。 */
     source?: "teambition" | "web_manual" | "base_form" | "chat_paste";
+    /** 池作用域：缺省 product（集团池数据不进入产品池视图）。 */
+    pool?: SourcePool;
     /** created_desc（默认，游标分页）/ priority_asc（分诊视图，单页最多 100 条，不分页）。 */
     sort?: "created_desc" | "priority_asc";
     batchId?: string;
@@ -552,7 +560,7 @@ export interface RequirementQueryRepository {
     cursor?: RequirementSearchCursor;
   }): Promise<{ items: RequirementRecord[]; nextCursor: string | null }>;
   /** 5c-2：来源 Tab 计数。范围与列表默认一致（processing_state='active'），四种来源互斥。 */
-  sourceCounts?(): Promise<{ teambition: number; web_manual: number; base_form: number; chat_paste: number; all: number }>;
+  sourceCounts?(pool?: SourcePool): Promise<{ teambition: number; web_manual: number; base_form: number; chat_paste: number; all: number }>;
   get(id: string): Promise<RequirementRecord | null>;
   // 同步幂等查找：返回流水线推进所需的最小字段
   findForSync(sourceConfigId: string, teambitionRequirementId: string): Promise<{
@@ -593,6 +601,11 @@ export interface RequirementQueryRepository {
    * 已标记的行保留首次缺失时间；返回本次新标记的条数。
    */
   markSourceMissing(input: { sourceConfigId: string; seenTeambitionIds: string[]; now: string }): Promise<number>;
+  /**
+   * 集团池执行人过滤：本来源已经入池的 TB 需求 ID（执行人迁出名单也继续同步）。
+   * 可选：未实现时按全部未入池处理，只会跳过新任务，不会误标缺失。
+   */
+  listKnownTeambitionIds?(sourceConfigId: string): Promise<string[]>;
   // 标题重复检测的输入：当前来源全部需求（含已标记重复项）。
   listTitleCandidates(sourceConfigId: string): Promise<Array<{ id: string; teambitionRequirementId: string; title: string; sourceCreatedAt: string | null; duplicateOfRequirementId: string | null }>>;
   setDuplicateOf(requirementId: string, canonicalRequirementId: string | null): Promise<void>;

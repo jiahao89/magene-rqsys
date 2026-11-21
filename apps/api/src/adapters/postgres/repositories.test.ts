@@ -326,10 +326,13 @@ test("deleting a person deactivates every active mapping for that name", async (
 
 function recordingPool() {
   const calls: Array<{sql:string;values:unknown[]|undefined}> = [];
-  const resultFor = (sql:string, values?:unknown[]) => sql.includes("source_configs")
-    ? { rows: [{ id:"sid",provider:"teambition",external_project_id:"p",external_project_name:"P",requirement_type_id:"t",enabled:false,schedule_enabled:false,schedule_weekday:null,schedule_local_time:null,schedule_timezone:null,owner_names:[],field_map:{},created_at:new Date(0),updated_at:new Date(0)}], rowCount:1 }
-    : sql.includes("pipeline_jobs")
-      ? { rows: [{ id:"job-1",job_type:"analysis",dedupe_key:values?.[2],payload:{requirementId:"req-1"},status:"queued",attempt_count:0,max_attempts:5,available_at:new Date(0),locked_until:null,last_error_code:null,last_error_summary:null,created_at:new Date(0),updated_at:new Date(0)}], rowCount:1 }
+  // 0031：需求的搜索/批次列表会 LEFT JOIN source_configs（或带 EXISTS 子查询）做池过滤，
+  // 所以来源行只在语句本身针对 source_configs 时返回，避免把来源行当成需求/作业行映射。
+  const isSourceQuery = (sql:string) => ["UPDATE source_configs","INSERT INTO source_configs","FROM source_configs WHERE id=$1","FROM source_configs ORDER BY","SELECT id,owner_names FROM source_configs"].some((needle)=>sql.includes(needle));
+  const resultFor = (sql:string, values?:unknown[]) => sql.includes("pipeline_jobs")
+    ? { rows: [{ id:"job-1",job_type:"analysis",dedupe_key:values?.[2],payload:{requirementId:"req-1"},status:"queued",attempt_count:0,max_attempts:5,available_at:new Date(0),locked_until:null,last_error_code:null,last_error_summary:null,created_at:new Date(0),updated_at:new Date(0)}], rowCount:1 }
+    : isSourceQuery(sql)
+      ? { rows: [{ id:"sid",provider:"teambition",pool:"product",executor_allowlist:[],external_project_id:"p",external_project_name:"P",requirement_type_id:"t",enabled:false,schedule_enabled:false,schedule_weekday:null,schedule_local_time:null,schedule_timezone:null,owner_names:[],field_map:{},created_at:new Date(0),updated_at:new Date(0)}], rowCount:1 }
     : sql.includes("base_push_runs") && sql.includes("idempotency_key")
       ? { rows: [{ id:"push-1",requirement_id:"req-1",source_version:2,push_version:3,status:"pushed",idempotency_key:values?.[0],base_record_id:"base-1",safe_error_code:null,safe_error_summary:null,started_at:new Date(0),completed_at:new Date(1)}], rowCount:1 }
       : { rows: [], rowCount:0 };
@@ -358,15 +361,18 @@ test("overview aggregation excludes synthetic fixtures and maps database counts"
   });
   assert.match(calls[0]!.sql, /GROUP BY|FILTER/);
   assert.match(calls[0]!.sql, /teambition_requirement_id NOT LIKE \$1/);
-  assert.deepEqual(calls[0]!.values, ["rqsys-fixture-%"]);
+  assert.deepEqual(calls[0]!.values, ["rqsys-fixture-%", "product"]);
 });
 
 test("source config JSON fields are passed as JSON, not PostgreSQL array literals", async()=>{
   const {pool,calls}=recordingPool();const store=new PostgresRepositories(pool);
   await store.sources.create({projectId:"p",projectName:"P",requirementTypeId:"t",enabled:true,schedule:{enabled:false,weekday:null,time:null,timezone:null},ownerNames:["PM Owner"],fieldMap:{description:"cf-1"}});
   const insert=calls.find((call)=>call.sql.includes("INSERT INTO source_configs"));
-  assert.equal(insert?.values?.[10],JSON.stringify(["PM Owner"]));
-  assert.equal(insert?.values?.[11],JSON.stringify({description:"cf-1"}));
+  // 0031：pool 成为第 2 个参数，ownerNames/fieldMap/executorAllowlist 顺延到 11/12/13。
+  assert.equal(insert?.values?.[1],"product");
+  assert.equal(insert?.values?.[11],JSON.stringify(["PM Owner"]));
+  assert.equal(insert?.values?.[12],JSON.stringify({description:"cf-1"}));
+  assert.equal(insert?.values?.[13],"[]");
 });
 
 test("audit search uses parameterized filters and limit", async()=>{
@@ -429,15 +435,17 @@ test("batch search applies inclusive time bounds and a stable composite cursor",
   const {pool,calls}=recordingPool();const store=new PostgresRepositories(pool);
   const cursor={startedAt:"2026-01-02T00:00:00.000Z",id:"33333333-3333-4333-8333-333333333333"};
   await store.batches.list({status:"failed",since:"2026-01-01T00:00:00Z",until:"2026-01-03T00:00:00Z",cursor,limit:10});
-  assert.match(calls[0]!.sql,/started_at >= \$2/);assert.match(calls[0]!.sql,/started_at <= \$3/);assert.match(calls[0]!.sql,/\(started_at,id\)<\(\$4::timestamptz,\$5::uuid\)/);
-  assert.deepEqual(calls[0]!.values,["failed","2026-01-01T00:00:00Z","2026-01-03T00:00:00Z",cursor.startedAt,cursor.id,11]);
+  assert.match(calls[0]!.sql,/b\.started_at >= \$2/);assert.match(calls[0]!.sql,/b\.started_at <= \$3/);assert.match(calls[0]!.sql,/\(b\.started_at,b\.id\)<\(\$4::timestamptz,\$5::uuid\)/);
+  // 0031：批次列表按池过滤，pool 作为第 7 个参数追加（缺省 product）。
+  assert.match(calls[0]!.sql,/sc\.pool=\$7::text/);
+  assert.deepEqual(calls[0]!.values,["failed","2026-01-01T00:00:00Z","2026-01-03T00:00:00Z",cursor.startedAt,cursor.id,11,"product"]);
 });
 
 test("requirement search filters by latest batch and last-seen time on the server", async()=>{
   const {pool,calls}=recordingPool();const store=new PostgresRepositories(pool);
   await store.requirements.search({batchId:"33333333-3333-4333-8333-333333333333",since:"2026-01-01T00:00:00Z",until:"2026-01-02T00:00:00Z",limit:25});
   assert.match(calls[0]!.sql,/latest_batch_id=\$7/);assert.match(calls[0]!.sql,/last_seen_at >= \$8/);assert.match(calls[0]!.sql,/last_seen_at <= \$9/);
-  assert.deepEqual(calls[0]!.values,[null,null,null,null,null,null,"33333333-3333-4333-8333-333333333333","2026-01-01T00:00:00Z","2026-01-02T00:00:00Z",null,null,26,null,null,null]);
+  assert.deepEqual(calls[0]!.values,[null,null,null,null,null,null,"33333333-3333-4333-8333-333333333333","2026-01-01T00:00:00Z","2026-01-02T00:00:00Z",null,null,26,null,null,null,"product"]);
 });
 
 test("priority triage search filters effective priority and disables cursor pagination", async()=>{
@@ -450,6 +458,7 @@ test("priority triage search filters effective priority and disables cursor pagi
   assert.equal(calls[0]!.values![10],null);
   assert.equal(calls[0]!.values![13],"P2");
   assert.equal(calls[0]!.values![14],"priority_asc");
+  assert.equal(calls[0]!.values![15],"product");
   assert.equal(page.nextCursor,null);
 });
 
@@ -484,9 +493,11 @@ test("ops metrics query uses the computed window and returns a stable shape on e
 test("ops view lists failed jobs with a bounded parameterized query", async()=>{
   const {pool,calls}=recordingPool();const store=new PostgresRepositories(pool);
   await store.jobs.listFailed(25);
-  assert.match(calls[0]!.sql,/status='failed'/);
-  assert.match(calls[0]!.sql,/ORDER BY updated_at DESC, id DESC LIMIT \$1/);
-  assert.deepEqual(calls[0]!.values,[25]);
+  assert.match(calls[0]!.sql,/j\.status='failed'/);
+  assert.match(calls[0]!.sql,/ORDER BY j\.updated_at DESC, j\.id DESC LIMIT \$1/);
+  // 0031：作业按池作用域过滤（按 payload 的 sourceId / requirementId 归属），pool 追加在 limit 之后。
+  assert.match(calls[0]!.sql,/sc\.pool=\$2::text/);
+  assert.deepEqual(calls[0]!.values,[25,"product"]);
 });
 
 test("job claim uses SKIP LOCKED and expires old leases", async()=>{
@@ -538,4 +549,70 @@ test("enqueue reopens a terminally failed job for an explicit same-key retry", a
   assert.match(calls[0]!.sql,/ON CONFLICT\(dedupe_key\) DO UPDATE/);
   assert.match(calls[0]!.sql,/status IN \('failed','cancelled'\)/);
   assert.match(calls[0]!.sql,/attempt_count=0/);
+});
+
+// PRD-30：base_form 编辑只改平台侧；source_payload 保留 formRecordId 与原始表单投影。
+type EditRow = Record<string, unknown>;
+function editPool(row: EditRow) {
+  const statements: Array<{ text: string; values: unknown[] }> = [];
+  const query = async (text: string, values: unknown[] = []) => {
+    statements.push({ text, values });
+    if (/^(BEGIN|COMMIT|ROLLBACK)$/i.test(text.trim())) return { rows: [], rowCount: 0 };
+    if (text.includes("FROM requirements WHERE id=$1 FOR UPDATE")) return { rows: [row], rowCount: 1 };
+    if (text.includes("FROM requirement_edit_receipts WHERE idempotency_key=$1")) return { rows: [], rowCount: 0 };
+    if (text.includes("COALESCE(MAX(analysis_version)")) return { rows: [{ v: 2 }], rowCount: 1 };
+    return { rows: [], rowCount: 0 };
+  };
+  const store = new PostgresRepositories({ query, connect: async () => ({ query, release() {} }) } as never).requirements;
+  return { store, statements };
+}
+
+function baseFormEditRow() {
+  return {
+    id: "req-1", source_type: "base_form", source_version: 1, title: "旧标题", description: "旧描述",
+    source_channel: "售后", product_model: "C706", requirement_type: "新增功能", constraint_notes: null,
+    supplement_url: null, intake_module: null, proposer_name: "张骑", source_hash: "old-source-hash",
+    substantive_hash: substantiveHash({ title: "旧标题", description: "旧描述", scope: null, acceptanceCriteria: null, attachmentRefs: [] }),
+    source_payload: { sourceType: "base_form", formRecordId: "rec-1", title: "旧标题", description: "旧描述", sourceChannel: "售后" },
+  };
+}
+
+test("base_form substantive edit bumps the version, keeps formRecordId provenance and re-runs analysis", async () => {
+  const { store, statements } = editPool(baseFormEditRow());
+  const result = await store.updateManualRequirement({
+    requirementId: "req-1", expectedSourceVersion: 1, idempotencyKey: "key-1", actorId: "actor-1", requestHash: "hash-1", title: "新标题",
+  });
+  assert.deepEqual(result, { outcome: "updated", sourceVersion: 2, substantiveChanged: true, replay: false });
+  const snapshot = statements.find((statement) => statement.text.startsWith("INSERT INTO source_snapshots"))!;
+  const snapshotPayload = JSON.parse(String(snapshot.values[5]));
+  assert.equal(snapshotPayload.formRecordId, "rec-1");
+  assert.equal(snapshotPayload.title, "旧标题", "source_payload 保留收集表原文，不改写成平台编辑值");
+  const update = statements.find((statement) => statement.text.startsWith("UPDATE requirements SET title=$2"))!;
+  assert.equal(update.values[10], 2);
+  assert.equal(JSON.parse(String(update.values[11])).formRecordId, "rec-1");
+  const analysis = statements.find((statement) => statement.text.includes("'analysis',$2"))!;
+  assert.equal(analysis.values[1], "analysis:req-1:v2");
+  assert.equal(statements.some((statement) => statement.text.includes("'base_push',$2")), false);
+});
+
+test("base_form metadata edit keeps the version and only enqueues a re-push with preserved provenance", async () => {
+  const { store, statements } = editPool(baseFormEditRow());
+  const result = await store.updateManualRequirement({
+    requirementId: "req-1", expectedSourceVersion: 1, idempotencyKey: "key-2", actorId: "actor-1", requestHash: "hash-2", sourceChannel: "销售",
+  });
+  assert.deepEqual(result, { outcome: "updated", sourceVersion: 1, substantiveChanged: false, replay: false });
+  const update = statements.find((statement) => statement.text.startsWith("UPDATE requirements SET source_channel=$2"))!;
+  assert.equal(JSON.parse(String(update.values[5])).formRecordId, "rec-1");
+  const push = statements.find((statement) => statement.text.includes("'base_push',$2"))!;
+  assert.match(String(push.values[1]), /^base-push:req-1:sv1:av2:meta:/);
+  assert.equal(statements.some((statement) => statement.text.includes("'analysis',$2")), false);
+});
+
+test("Teambition facts remain non-editable", async () => {
+  const { store, statements } = editPool({ ...baseFormEditRow(), source_type: "teambition" });
+  const result = await store.updateManualRequirement({
+    requirementId: "req-1", expectedSourceVersion: 1, idempotencyKey: "key-3", actorId: "actor-1", requestHash: "hash-3", title: "新标题",
+  });
+  assert.deepEqual(result, { outcome: "not_manual" });
+  assert.equal(statements.some((statement) => statement.text.startsWith("UPDATE requirements")), false);
 });

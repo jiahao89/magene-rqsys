@@ -1,12 +1,12 @@
 import type { Pool } from "pg";
 import { normalizeOwnerName } from "../owner/mapping.js";
 import { analysisForceDedupeKey, analysisRetryDedupeKey, analysisRunningJobKeys } from "../scheduler/analysis-recovery.js";
-import { SourceProjectResolutionError, type FeishuUserDirectory, type FeishuUserSelectionResolver, type IdentityProvider, type TeambitionSourceProjectResolver } from "../application/ports.js";
+import { SourceProjectResolutionError, type FeishuUserDirectory, type FeishuUserSelectionResolver, type IdentityProvider, type TeambitionMemberDirectory, type TeambitionSourceProjectResolver } from "../application/ports.js";
 import { isIntakeComplete, normalizeScheduleTime } from "../domain/workflow.js";
 import { stableJson } from "../sync/hashes.js";
 import { RICE_CONFIG_VERSION, RICE_EFFORT_UNIT, RICE_IMPACT_LEVELS, RICE_REACH_UNIT, computeRiceScore } from "../beta/rice.js";
 import type { AuditEventRepository, AnalysisRunRepository, PipelineJobRepository, SourceConfigRepository, SyncBatchRepository, SyncItemRepository, PersonMappingRepository, RequirementQueryRepository, BasePushRunRepository, ModuleDictionaryRepository, PriorityRuleRepository, SourceSnapshotRepository, TeamDirectoryRepository, RequirementScoringRepository, RequirementAssessmentRepository } from "../application/repositories.js";
-import type { PersonMappingRecord, AnalysisRunRecord, ModuleDictionaryVersionRecord, PriorityRuleVersionRecord, RequirementRecord, RequirementAssessmentRecord, SourceConfigRecord, SyncBatchRecord, PipelineJobRecord } from "../domain/persistence.js";
+import type { PersonMappingRecord, AnalysisRunRecord, ModuleDictionaryVersionRecord, PriorityRuleVersionRecord, RequirementRecord, RequirementAssessmentRecord, SourceConfigRecord, SourceExecutorBinding, SourcePool, SyncBatchRecord, PipelineJobRecord } from "../domain/persistence.js";
 import type { TeamPersonRecord } from "../domain/team-directory.js";
 import { AnalysisContextUpdateSchema, AuditListQuerySchema, GateConfirmSchema, OpsJobsQuerySchema, OpsMetricsQuerySchema, RequirementExportQuerySchema, ClearDuplicateDecisionSchema, DuplicateDecisionSchema, PriorityOverrideUpdateSchema, RetryAnalysisRequestSchema, KanoEvidenceImportSchema, KanoRunRequestSchema, AudienceUpdateSchema, BatchListQuerySchema, RiceDraftUpdateSchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementIntakeEditSchema, RequirementIntakeSchema, RequirementListQuerySchema, RequirementAssessmentInputSchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -15,13 +15,13 @@ import { maskPii } from "../analysis/contract.js";
 import { confirmGate, evaluateGates } from "../ops/gates.js";
 import { priorityRuleThresholds } from "../analysis/priority-rule.js";
 import { toCsv } from "../application/csv.js";
-import { SourceConfigUpdateSchema, normalizeSourceSchedule, type ResolvedSourceConfigUpdate } from "../contracts/source.js";
+import { SourceConfigUpdateSchema, normalizeSourceSchedule, normalizeExecutorAllowlistNames, MAX_EXECUTOR_ALLOWLIST_SIZE, type ResolvedSourceConfigUpdate } from "../contracts/source.js";
 import { DictionaryCreateSchema, PriorityRuleCreateSchema, TeamModulesSaveSchema, TeamPersonCreateSchema, TeamPersonFeishuBindSchema, TeamPersonRenameSchema } from "../contracts/rules.js";
 import { DEFAULT_TEAM_MEMBERS } from "../domain/team-directory.js";
 import { BASE_FORM_SYNC_STATE_FLAG } from "../base/form-sync.js";
 import { isDatabaseReady } from "../adapters/postgres/health.js";
 import { EXPECTED_LATEST_MIGRATION } from "../db/expected-migration.js";
-import { jsonError } from "./errors.js";
+import { jsonError, redactSecrets } from "./errors.js";
 import { CHAT_PROMPT_VERSION, ChatDraftRequestSchema, createDraftRateLimiter, type ChatIntakeExtractor, type DraftRateLimit } from "../intake/chat-extract.js";
 import { ASSESSMENT_RUNNING_STALE_MS, AssessmentContractError, type AssessmentRunner } from "../assessment/service.js";
 import { readAiPause } from "../ops/ai-pause.js";
@@ -53,6 +53,8 @@ export interface ApiDependencies {
   identity: IdentityProvider | undefined;
   repositories: ApiRepositories | undefined;
   teambitionSourceProjects?: TeambitionSourceProjectResolver;
+  /** 集团池执行人名单解析：展示名 → TB user_id。未注入时保存集团池名单返回 503。 */
+  teambitionMembers?: TeambitionMemberDirectory;
   feishuUsers?: FeishuUserDirectory;
   feishuUserSelections?: FeishuUserSelectionResolver;
   enableTestFixtures?: boolean;
@@ -135,10 +137,30 @@ function safeCauseType(error: unknown): string {
   }
   return causeType;
 }
+/** 运维展示的 lastError 只保留类别摘要：复用通用脱敏，并把 Base record/table ID 掩码。 */
+function redactBaseError(text: string): string {
+  return redactSecrets(text)
+    .replace(/\brec[A-Za-z0-9]{6,}\b/g, "rec…")
+    .replace(/\btbl[A-Za-z0-9]{6,}\b/g, "tbl…")
+    .slice(0, 200);
+}
+/** 数据源页展示收集表分享地址：只读环境变量；未配置/非法 URL 不返回，也不回传表 ID/record ID。 */
+function baseFormShareUrl(): string | null {
+  const raw = process.env.BASE_FORM_SHARE_URL?.trim();
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    if (url.username || url.password) return null;
+    return url.toString();
+  } catch { return null; }
+}
 /** 5b：收集表同步的运维状态只读 system_flags；字段做类型收敛，读不到时 baseForm 为 null 不影响其它指标。 */
 function baseFormOpsState(value: Record<string, unknown>) {
   const num = (candidate: unknown) => typeof candidate === "number" && Number.isFinite(candidate) ? candidate : 0;
+  const shareUrl = baseFormShareUrl();
   return {
+    ...(shareUrl === null ? {} : { shareUrl }),
     lastRunAt: typeof value.lastRunAt === "string" ? value.lastRunAt : null,
     pages: num(value.pages),
     scanned: num(value.scanned),
@@ -148,7 +170,7 @@ function baseFormOpsState(value: Record<string, unknown>) {
     rejected: num(value.rejected),
     writeBackFailed: num(value.writeBackFailed),
     readFailed: value.readFailed === true,
-    lastError: typeof value.lastError === "string" ? value.lastError.slice(0, 200) : null,
+    lastError: typeof value.lastError === "string" ? redactBaseError(value.lastError) : null,
   };
 }
 function reportAiStatsFailure(dependencies: ApiDependencies, stat: "analysis" | "intake", error: unknown): void {
@@ -177,7 +199,8 @@ async function aiOverview(dependencies: ApiDependencies, repositories: ApiReposi
   let intake = EMPTY_AI_INTAKE;
   let statsAvailable = true;
   try {
-    analysis = (await repositories.analyses?.aiCallStats?.(since)) ?? EMPTY_AI_ANALYSIS;
+    // 总览固定产品池：AI 调用统计也只看产品池，避免集团池数字混入。
+    analysis = (await repositories.analyses?.aiCallStats?.(since, "product")) ?? EMPTY_AI_ANALYSIS;
   } catch (error) {
     // 统计失败只降级 AI 卡片：接口仍回 200 和 counts，不让整页总览跟着挂；错误类型与 SQLSTATE 进诊断日志。
     statsAvailable = false;
@@ -246,10 +269,19 @@ function pathUuid(raw: string, dependencies: ApiDependencies): string | null {
   return value;
 }
 function sourceDto(source: SourceConfigRecord) {
-  return { id: source.id, projectName: source.externalProjectName, enabled: source.enabled, schedule: { enabled: source.scheduleEnabled, weekday: source.scheduleWeekday, weekdays: source.scheduleWeekdays ?? (source.scheduleWeekday === null ? null : [source.scheduleWeekday]), time: normalizeScheduleTime(source.scheduleLocalTime), timezone: source.scheduleTimezone } };
+  const pool: SourcePool = source.pool ?? "product";
+  return {
+    id: source.id,
+    pool,
+    projectName: source.externalProjectName,
+    enabled: source.enabled,
+    // 名单只回传展示名：TB user_id 是服务端解析细节，不下发浏览器。
+    executorAllowlist: (source.executorAllowlist ?? []).map((binding) => binding.name),
+    schedule: { enabled: source.scheduleEnabled, weekday: source.scheduleWeekday, weekdays: source.scheduleWeekdays ?? (source.scheduleWeekday === null ? null : [source.scheduleWeekday]), time: normalizeScheduleTime(source.scheduleLocalTime), timezone: source.scheduleTimezone },
+  };
 }
-function batchDto(batch: SyncBatchRecord) {
-  return { id: batch.id, status: batch.status, triggerType: batch.triggerType, actorId: batch.actorId, totalCount: batch.totalCount, succeededCount: batch.succeededCount, failedCount: batch.failedCount, startedAt: batch.startedAt, completedAt: batch.completedAt, errorSummary: batch.errorSummary };
+function batchDto(batch: SyncBatchRecord, pool: SourcePool = "product") {
+  return { id: batch.id, pool, status: batch.status, triggerType: batch.triggerType, actorId: batch.actorId, totalCount: batch.totalCount, succeededCount: batch.succeededCount, failedCount: batch.failedCount, filteredCount: batch.filteredCount ?? 0, startedAt: batch.startedAt, completedAt: batch.completedAt, errorSummary: batch.errorSummary };
 }
 // Teambition 自建站的任务地址规则（由一条真实地址确认：/task/<任务ID>）。
 const TEAMBITION_TASK_BASE_URL = process.env.RQSYS_TEAMBITION_TASK_BASE_URL ?? "https://teambition.magene.cn/task";
@@ -286,7 +318,7 @@ function requirementResolutionDto(req: RequirementRecord) {
   };
 }
 
-function requirementDto(req: RequirementRecord, analysis: Record<string, unknown> | null = null, analyses: unknown[] = [], ownerName: string | null = null, currentScorePriority: RequirementRecord["currentScorePriority"] = null) {
+function requirementDto(req: RequirementRecord, analysis: Record<string, unknown> | null = null, analyses: unknown[] = [], ownerName: string | null = null, currentScorePriority: RequirementRecord["currentScorePriority"] = null, pool: SourcePool | null = null) {
   // 展示字段：详情页 L1 需要标题/描述/负责人/更新时间；只加不改，避免破坏既有调用方。
   // ownerName 仅在详情接口注入（列表逐行查映射会 N+1），解析不到时为 null。
   return {
@@ -304,6 +336,8 @@ function requirementDto(req: RequirementRecord, analysis: Record<string, unknown
     sourceRequirementId: req.teambitionRequirementId,
     // V02-T02 加法：来源类型（teambition/web_manual）与业务渠道；TB 显示不变，手工预留已收录语义。
     sourceType: req.sourceType,
+    // 0031：只读的池归属（详情接口注入；列表不带，页面按自己的 pool 参数区分）。
+    ...(pool === null ? {} : { pool }),
     sourceChannel: req.sourceChannel,
     productModel: req.productModel,
     requirementType: req.requirementType,
@@ -317,6 +351,8 @@ function requirementDto(req: RequirementRecord, analysis: Record<string, unknown
     // PR-05：TB 执行人原始姓名（未映射时用于“待匹配负责人”分组；不替代映射后的 ownerName）。
     executorName: req.executorName ?? null,
     sourceVersion: req.sourceVersion,
+    // 0030/F1：详情页「创建时间」读服务端字段；四种来源统一返回（加法，不替代 updatedAt）。
+    createdAt: req.createdAt,
     updatedAt: req.updatedAt,
     sourceUrl: req.sourceType === "teambition" ? req.sourceUrl ?? `${TEAMBITION_TASK_BASE_URL}/${req.teambitionRequirementId}` : req.sourceUrl,
     lastPushedAt: req.lastPushedAt,
@@ -402,24 +438,115 @@ async function mappingConflictResponse(action: () => Promise<PersonMappingRecord
   catch (cause) { return (cause as Error)?.name === "PersonMappingConflict" ? jsonError("CONFLICT", (cause as Error).message) : jsonError("DEPENDENCY_UNAVAILABLE"); }
 }
 
+/**
+ * 集团池执行人姓名 → TB user_id。
+ * 已解析过的名字直接复用当前来源的绑定（网关临时不可用时未改名单仍能保存）；
+ * 其余名字走组织成员目录精确匹配；name 不区分大小写，同一名字多个账号按“未解析”处理。
+ */
+async function resolveExecutorAllowlist(
+  names: string[],
+  dependencies: ApiDependencies,
+  existing: SourceExecutorBinding[] = [],
+): Promise<SourceExecutorBinding[] | Response> {
+  if (names.length === 0) return [];
+  const byName = new Map(existing.map((binding) => [binding.name.normalize("NFC").toLocaleLowerCase(), binding]));
+  const key = (value: string) => value.normalize("NFC").trim().toLocaleLowerCase();
+  const pending = names.filter((name) => !byName.has(key(name)));
+  if (pending.length > 0) {
+    if (!dependencies.teambitionMembers) return jsonError("DEPENDENCY_UNAVAILABLE", "Teambition 成员目录未配置，暂时无法解析执行人名单。");
+    let members: Array<{ userId: string; name: string }>;
+    try { members = await dependencies.teambitionMembers.listOrganizationMembers(); }
+    catch { return jsonError("DEPENDENCY_UNAVAILABLE", "无法读取 Teambition 组织成员，请稍后重试。"); }
+    for (const name of pending) {
+      const matches = members.filter((member) => key(member.name) === key(name));
+      if (matches.length === 1) byName.set(key(name), { userId: String(matches[0]!.userId), name: matches[0]!.name });
+    }
+  }
+  const unresolved = names.filter((name) => !byName.has(key(name)));
+  if (unresolved.length > 0) {
+    return jsonError("VALIDATION_FAILED", `以下执行人未在 Teambition 组织成员中唯一找到：${unresolved.join("、")}`, undefined, { unresolvedExecutorNames: unresolved });
+  }
+  return names.map((name) => byName.get(key(name))!);
+}
+
 async function resolveSourceConfig(
   update: ReturnType<typeof SourceConfigUpdateSchema.parse>,
   dependencies: ApiDependencies,
   current?: SourceConfigRecord,
 ): Promise<ResolvedSourceConfigUpdate | Response> {
+  // 0031：池在创建时确定，更新不可改池（同一来源的批次/需求归属不能中途漂移）。
+  const pool: SourcePool = current ? (current.pool ?? "product") : (update.pool ?? "product");
+  if (current && update.pool !== undefined && update.pool !== pool) return jsonError("VALIDATION_FAILED", "来源所属池不可修改。");
+  // 名单按“未传 = 保持现状”处理，避免旧客户端/局部更新把集团池名单清空。
+  const requestedNames = update.executorAllowlist === undefined && current
+    ? (current.executorAllowlist ?? []).map((binding) => binding.name)
+    : normalizeExecutorAllowlistNames(update.executorAllowlist ?? []);
+  if (pool === "product" && requestedNames.length > 0) return jsonError("VALIDATION_FAILED", "产品池不支持执行人名单。");
+  if (requestedNames.length > MAX_EXECUTOR_ALLOWLIST_SIZE) return jsonError("VALIDATION_FAILED", `执行人名单最多 ${MAX_EXECUTOR_ALLOWLIST_SIZE} 个。`);
+  if (pool === "group" && requestedNames.length === 0 && update.enabled) return jsonError("VALIDATION_FAILED", "请至少填写 1 个执行人后再启用同步。");
+  const allowlist = await resolveExecutorAllowlist(requestedNames, dependencies, current?.executorAllowlist ?? []);
+  if (allowlist instanceof Response) return allowlist;
   if (current && update.projectName === current.externalProjectName) {
-    return { ...update, schedule: normalizeSourceSchedule(update.schedule), projectId: current.externalProjectId, requirementTypeId: current.requirementTypeId, ownerNames: current.ownerNames, fieldMap: current.fieldMap };
+    return { ...update, pool, executorAllowlist: allowlist, schedule: normalizeSourceSchedule(update.schedule), projectId: current.externalProjectId, requirementTypeId: current.requirementTypeId, ownerNames: current.ownerNames, fieldMap: current.fieldMap };
   }
   if (dependencies.teambitionSourceProjects) {
     try {
       const resolved = await dependencies.teambitionSourceProjects.resolveProject(update.projectName);
-      return { ...update, schedule: normalizeSourceSchedule(update.schedule), projectId: resolved.projectId, requirementTypeId: resolved.requirementTypeId, ownerNames: [...DEFAULT_TEAM_MEMBERS], fieldMap: {} };
+      return { ...update, pool, executorAllowlist: allowlist, schedule: normalizeSourceSchedule(update.schedule), projectId: resolved.projectId, requirementTypeId: resolved.requirementTypeId, ownerNames: [...DEFAULT_TEAM_MEMBERS], fieldMap: {} };
     } catch (cause) {
       if (cause instanceof SourceProjectResolutionError) return jsonError("VALIDATION_FAILED", cause.message);
       return jsonError("DEPENDENCY_UNAVAILABLE", "无法连接 Teambition 项目配置，请稍后重试。");
     }
   }
   return jsonError("DEPENDENCY_UNAVAILABLE", "Teambition 项目自动识别尚未配置。");
+}
+
+function sourcePool(source: SourceConfigRecord | null): SourcePool {
+  return (source?.pool ?? "product");
+}
+
+/** 需求归属池：手工/多维表格需求没有来源配置，恒属产品池。 */
+async function requirementPoolOf(repositories: ApiRepositories, requirement: RequirementRecord): Promise<SourcePool> {
+  if (!requirement.sourceConfigId) return "product";
+  return sourcePool(await repositories.sources.get(requirement.sourceConfigId));
+}
+
+/**
+ * Q2 重复标记只对产品池生效：集团池 Base 是另一张表，产品池标记器写不过去，
+ * 也不应该跨表写（跨池隔离优先于这个附加能力）。
+ */
+async function duplicateMarkerFor(
+  dependencies: ApiDependencies,
+  repositories: ApiRepositories,
+  requirement: RequirementRecord,
+): Promise<ApiDependencies["duplicateMarker"] | null> {
+  if (!dependencies.duplicateMarker) return null;
+  return (await requirementPoolOf(repositories, requirement)) === "product" ? dependencies.duplicateMarker : null;
+}
+
+// 集合/导出接口的路径段不是需求 ID；详情与写接口才是 UUID 推导作用域的对象。
+const REQUIREMENT_COLLECTION_SEGMENTS = new Set(["export", "source-counts", "intake-draft"]);
+/**
+ * 详情/写接口显式带 pool 时的跨池守卫：与 UUID 归属不符固定 404（不返回 200 空数据/对方数据），
+ * 不带 pool 时不拦截——服务端按 UUID 推导，返回只读 pool 供页面守卫。
+ */
+async function requirementPoolGuard(request: Request, url: URL, dependencies: ApiDependencies): Promise<Response | null> {
+  const explicit = url.searchParams.get("pool");
+  if (explicit === null) return null;
+  if (!url.pathname.startsWith("/api/requirements/")) return null;
+  const segment = url.pathname.slice("/api/requirements/".length).split("/")[0] ?? "";
+  if (!segment || REQUIREMENT_COLLECTION_SEGMENTS.has(segment)) return null;
+  const repositories = dependencies.repositories;
+  if (!repositories?.requirements) return null;
+  // 先认证再判池：未登录请求保持 401，不能靠守卫把“是否存在”泄露给匿名调用方。
+  const auth = await actorFor(request, dependencies);
+  if ("response" in auth) return auth.response;
+  if (explicit !== "product" && explicit !== "group") return jsonError("VALIDATION_FAILED");
+  let requirement: RequirementRecord | null;
+  try { requirement = await repositories.requirements.get(segment); } catch { return null; }
+  // 不存在时交给原处理器返回 404，避免守卫与业务路径给出不同错误体。
+  if (!requirement) return null;
+  return (await requirementPoolOf(repositories, requirement)) === explicit ? null : jsonError("NOT_FOUND");
 }
 
 export async function handleApiRequest(request: Request, dependencies: ApiDependencies): Promise<Response> {
@@ -432,6 +559,9 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
 }
 async function routeApiRequest(request: Request, dependencies: ApiDependencies): Promise<Response> {
   const url = new URL(request.url), method = request.method.toUpperCase(), repositories = dependencies.repositories;
+  // 详情/写接口的显式 pool 与归属不符 → 404；不带 pool 的请求不受影响（零额外查询）。
+  const poolGuardFailure = await requirementPoolGuard(request, url, dependencies);
+  if (poolGuardFailure) return poolGuardFailure;
   if (method === "GET" && url.pathname === "/api/health") return json({ status: "ok", service: "rq-sys-api" });
   if (method === "GET" && url.pathname === "/api/health/ready") {
     if (!(await isDatabaseReady(dependencies.database))) return json({ status: "not_ready", reason: "database_unavailable_or_not_configured" }, 503);
@@ -441,7 +571,8 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
   if (method === "GET" && url.pathname === "/api/overview/metrics") {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const counts = await repositories.requirements.getPipelineCounts();
+    // 总览固定产品池（Chief 决定 2026-11-21）：集团池数字只在其自身页头显示，不进入总览。
+    const counts = await repositories.requirements.getPipelineCounts("product");
     const rule = await repositories.priorityRules?.getPublished();
     const rulePayload = rule?.rules as { thresholds?: { p0?: number; p1?: number; p2?: number } } | null;
     const ai = await aiOverview(dependencies, repositories, (dependencies.now ?? (() => new Date()))());
@@ -470,9 +601,10 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories) return jsonError("DEPENDENCY_UNAVAILABLE");
     const parsed = SourceConfigUpdateSchema.safeParse(await readJson(request)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
-    // 受控初始化：MVP 只允许一个产品组来源（D-09）。
+    // 0031 起 D-09 的单来源约束改为“每个池最多一个来源”（(provider, pool) 唯一索引）。
+    const requestedPool: SourcePool = parsed.data.pool ?? "product";
     const existing = await repositories.sources.list();
-    if (existing.length > 0) return jsonError("CONFLICT");
+    if (existing.some((source) => (source.pool ?? "product") === requestedPool)) return jsonError("CONFLICT");
     const resolved = await resolveSourceConfig(parsed.data, dependencies); if (resolved instanceof Response) return resolved;
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
     let created: SourceConfigRecord;
@@ -541,7 +673,7 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     const parsed = BatchListQuerySchema.safeParse(query); if (!parsed.success) return jsonError("VALIDATION_FAILED");
     const batchCursor = decodeBatchCursor(parsed.data.cursor);
     if (parsed.data.cursor !== undefined && batchCursor === undefined) return jsonError("VALIDATION_FAILED", "Invalid cursor.");
-    const page = await repositories.batches.list({ limit: parsed.data.limit, ...(parsed.data.status === undefined ? {} : { status: parsed.data.status }), ...(parsed.data.since === undefined ? {} : { since: parsed.data.since }), ...(parsed.data.until === undefined ? {} : { until: parsed.data.until }), ...(batchCursor === undefined ? {} : { cursor: batchCursor }) }); return json({ items: page.items.map(batchDto), nextCursor: page.nextCursor });
+    const page = await repositories.batches.list({ limit: parsed.data.limit, pool: parsed.data.pool, ...(parsed.data.status === undefined ? {} : { status: parsed.data.status }), ...(parsed.data.since === undefined ? {} : { since: parsed.data.since }), ...(parsed.data.until === undefined ? {} : { until: parsed.data.until }), ...(batchCursor === undefined ? {} : { cursor: batchCursor }) }); return json({ items: page.items.map((item) => batchDto(item, parsed.data.pool)), nextCursor: page.nextCursor });
   }
   const batchMatch = url.pathname.match(/^\/api\/batches\/([^/]+)$/);
   if (method === "GET" && batchMatch) {
@@ -549,7 +681,8 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     if (!repositories) return jsonError("DEPENDENCY_UNAVAILABLE");
     const batchId = pathUuid(batchMatch[1]!, dependencies); if (!batchId) return jsonError("NOT_FOUND");
     const batch = await repositories.batches.get(batchId); if (!batch) return jsonError("NOT_FOUND");
-    return json({ ...batchDto(batch), items: await repositories.items.listByBatch(batch.id) });
+    const batchSource = batch.sourceConfigId ? await repositories.sources.get(batch.sourceConfigId) : null;
+    return json({ ...batchDto(batch, sourcePool(batchSource)), items: await repositories.items.listByBatch(batch.id) });
   }
   if (method === "GET" && url.pathname === "/api/audit") {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
@@ -593,8 +726,8 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     const parsed = OpsJobsQuerySchema.safeParse(query); if (!parsed.success) return jsonError("VALIDATION_FAILED");
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
     const [failed, stuck] = await Promise.all([
-      repositories.jobs.listFailed(parsed.data.limit),
-      repositories.jobs.listExhaustedRunning(now, parsed.data.limit),
+      repositories.jobs.listFailed(parsed.data.limit, parsed.data.pool),
+      repositories.jobs.listExhaustedRunning(now, parsed.data.limit, parsed.data.pool),
     ]);
     return json({ now, items: { failed: failed.map(opsJobDto), stuck: stuck.map(opsJobDto) } });
   }
@@ -605,7 +738,7 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     const query = Object.fromEntries(url.searchParams.entries());
     const parsed = OpsMetricsQuerySchema.safeParse(query); if (!parsed.success) return jsonError("VALIDATION_FAILED");
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
-    const metrics = await repositories.ops.getOpsMetrics({ days: parsed.data.days, now });
+    const metrics = await repositories.ops.getOpsMetrics({ days: parsed.data.days, now, pool: parsed.data.pool });
     let baseForm = null;
     if (repositories.flags) {
       try {
@@ -613,6 +746,8 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
         if (state && state.value && typeof state.value === "object") baseForm = baseFormOpsState(state.value);
       } catch { /* 同步状态不可用只让这一块为空，不影响其它运营指标 */ }
     }
+    // 地址与统计解耦：配了 shareUrl 但同步状态缺失时仍返回 baseForm（统计按 0/null），两者都无才为 null。
+    if (!baseForm && baseFormShareUrl()) baseForm = baseFormOpsState({});
     return json({ metrics: { ...metrics, baseForm } });
   }
   if (method === "GET" && url.pathname === "/api/rules/dictionary") {
@@ -866,7 +1001,7 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
   }
   const intakeEditMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)$/);
   if (method === "PATCH" && intakeEditMatch) {
-    // V02-T07：手工编辑（仅 web_manual）。TB 事实只读；期望源版本 + 幂等键。
+    // V02-T07/PRD-30：手工与多维表格编辑（base_form 只改平台侧，不回写收集表）。TB 事实只读；期望源版本 + 幂等键。
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
     const requirementId = pathUuid(intakeEditMatch[1]!, dependencies); if (!requirementId) return jsonError("NOT_FOUND");
@@ -886,7 +1021,7 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
         ...(body.supplementUrl !== undefined ? { supplementUrl: body.supplementUrl } : {}),
       });
       if (result.outcome === "not_found") return jsonError("NOT_FOUND");
-      if (result.outcome === "not_manual") return jsonError("CONFLICT", "Teambition 来源的事实由 Teambition 维护，Web 仅编辑手工需求。");
+      if (result.outcome === "not_manual") return jsonError("CONFLICT", "Teambition 来源的事实由 Teambition 维护，Web 仅编辑手工/多维表格需求。");
       if (result.outcome === "key_conflict") return jsonError("CONFLICT", "该幂等键已用于不同的提交内容。");
       if (result.outcome === "version_conflict") return jsonError("CONFLICT", `版本冲突：该需求已被更新到源版本 ${result.currentSourceVersion}，请刷新后重试。`);
       return json({ requirementId, outcome: result.outcome, sourceVersion: result.sourceVersion, ...(result.outcome === "updated" || result.outcome === "replay" ? { substantiveChanged: result.substantiveChanged } : {}) }, 200);
@@ -901,7 +1036,7 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     const cursor = parsed.data.sort === "priority_asc" ? undefined : decodeRequirementCursor(parsed.data.cursor);
     if (parsed.data.sort !== "priority_asc" && parsed.data.cursor !== undefined && cursor === undefined) return jsonError("VALIDATION_FAILED", "Invalid cursor.");
     const page = await repositories.requirements.search({ ...(parsed.data.q === undefined ? {} : { q: parsed.data.q }), ...(parsed.data.executorName === undefined ? {} : { executorName: parsed.data.executorName }), ...(parsed.data.pullState === undefined ? {} : { pullState: parsed.data.pullState }), ...(parsed.data.analysisState === undefined ? {} : { analysisState: parsed.data.analysisState }), ...(parsed.data.ownerState === undefined ? {} : { ownerState: parsed.data.ownerState }), ...(parsed.data.pushState === undefined ? {} : { pushState: parsed.data.pushState }),
-      ...(parsed.data.processingState === undefined ? {} : { processingState: parsed.data.processingState }), ...(parsed.data.priority === undefined ? {} : { priority: parsed.data.priority }), ...(parsed.data.source === undefined ? {} : { source: parsed.data.source }), ...(parsed.data.sort === undefined ? {} : { sort: parsed.data.sort }), ...(parsed.data.batchId === undefined ? {} : { batchId: parsed.data.batchId }), ...(parsed.data.since === undefined ? {} : { since: parsed.data.since }), ...(parsed.data.until === undefined ? {} : { until: parsed.data.until }), limit: parsed.data.limit, ...(cursor === undefined ? {} : { cursor }) });
+      ...(parsed.data.processingState === undefined ? {} : { processingState: parsed.data.processingState }), ...(parsed.data.priority === undefined ? {} : { priority: parsed.data.priority }), ...(parsed.data.source === undefined ? {} : { source: parsed.data.source }), pool: parsed.data.pool, ...(parsed.data.sort === undefined ? {} : { sort: parsed.data.sort }), ...(parsed.data.batchId === undefined ? {} : { batchId: parsed.data.batchId }), ...(parsed.data.since === undefined ? {} : { since: parsed.data.since }), ...(parsed.data.until === undefined ? {} : { until: parsed.data.until }), limit: parsed.data.limit, ...(cursor === undefined ? {} : { cursor }) });
     // 列表一次取回全部有效映射再按 TB 用户查名，避免逐行查询。
     // 空页时不能把空字符串传给 uuid 列：PostgreSQL 会以 22P02 拒绝，接口变成 500，
     // 因此只对页内真实出现过的来源查询映射。
@@ -924,7 +1059,7 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     const parsed = RequirementExportQuerySchema.safeParse(query); if (!parsed.success) return jsonError("VALIDATION_FAILED");
     const exportLimit = 5000;
     const page = await repositories.requirements.search({
-      ...(parsed.data.q === undefined ? {} : { q: parsed.data.q }), ...(parsed.data.executorName === undefined ? {} : { executorName: parsed.data.executorName }),
+      ...(parsed.data.q === undefined ? {} : { q: parsed.data.q }), ...(parsed.data.executorName === undefined ? {} : { executorName: parsed.data.executorName }), pool: parsed.data.pool,
       ...(parsed.data.pullState === undefined ? {} : { pullState: parsed.data.pullState }), ...(parsed.data.analysisState === undefined ? {} : { analysisState: parsed.data.analysisState }),
       ...(parsed.data.ownerState === undefined ? {} : { ownerState: parsed.data.ownerState }), ...(parsed.data.pushState === undefined ? {} : { pushState: parsed.data.pushState }),
       ...(parsed.data.processingState === undefined ? {} : { processingState: parsed.data.processingState }), ...(parsed.data.priority === undefined ? {} : { priority: parsed.data.priority }),
@@ -959,8 +1094,11 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
   if (method === "GET" && url.pathname === "/api/requirements/source-counts") {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.requirements?.sourceCounts) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const poolParam = url.searchParams.get("pool");
+    if (poolParam !== null && poolParam !== "product" && poolParam !== "group") return jsonError("VALIDATION_FAILED");
     try {
-      const counts = await repositories.requirements.sourceCounts();
+      // 集团池页面只取 all 一个数字，不渲染五来源 Tab；接口仍按池统计。
+      const counts = await repositories.requirements.sourceCounts((poolParam ?? "product") as SourcePool);
       return json({ counts });
     } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
   }
@@ -1204,6 +1342,8 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
     const requirementId = pathUuid(requirementMatch[1]!, dependencies); if (!requirementId) return jsonError("NOT_FOUND");
     const req = await repositories.requirements.get(requirementId); if (!req) return jsonError("NOT_FOUND");
+    // 0031：详情按 UUID 推导池归属并只读返回；客户端不传 pool（显式不符已在上方守卫返回 404）。
+    const detailPool = await requirementPoolOf(repositories, req);
     const latest = await repositories.analyses?.latest(req.id) ?? null;
     const history = await repositories.analyses?.listByRequirement(req.id) ?? [];
     // 负责人姓名：详情单条解析一次，解析不到返回 null；前端会退回只显示映射状态。
@@ -1220,7 +1360,7 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     const aiScore = repositories.scoring ? await repositories.scoring.aiSuggestion(req.id) : null;
     const scoreHistory = repositories.scoring ? await repositories.scoring.list(req.id) : [];
     return json({
-      ...requirementDto(req, latest && latest.status === "analyzed" ? latest.structuredResult : null, history.map(analysisVersionDto), ownerName, currentScore?.priority ?? null),
+      ...requirementDto(req, latest && latest.status === "analyzed" ? latest.structuredResult : null, history.map(analysisVersionDto), ownerName, currentScore?.priority ?? null, detailPool),
       duplicates,
       resolution: resolution ?? requirementResolutionDto(req),
       scoring: {
@@ -1433,9 +1573,10 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
       if (auditFailure) return auditFailure;
       const updated = await repositories.requirements.get(req.id);
       // Q2：撤销判定后清除 Base 标记；失败只留审计，不影响撤销结果。
-      if (dependencies.duplicateMarker) {
+      const clearMarker = await duplicateMarkerFor(dependencies, repositories, req);
+      if (clearMarker) {
         try {
-          const marked = await dependencies.duplicateMarker({ recordId: updated?.baseRecordId ?? req.baseRecordId, decision: null });
+          const marked = await clearMarker({ recordId: updated?.baseRecordId ?? req.baseRecordId, decision: null });
           if (marked.outcome === "failed" || marked.outcome === "field_missing") {
             await appendAudit(repositories, { id: randomUUID(), actorId: auth.actor.id, eventType: "requirement.duplicate_mark_failed", entityType: "requirement", entityId: req.id, result: "failed", safeDetails: { reason: marked.outcome, ...(marked.outcome === "failed" ? { errorClass: marked.errorCode } : {}) }, occurredAt: nowIso });
           }
@@ -1463,9 +1604,10 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     const auditFailure = await appendAudit(repositories, { id: randomUUID(), actorId: auth.actor.id, eventType: parsed.data.decision === "duplicate" ? "duplicate.confirmed" : "duplicate.reviewed", entityType: "requirement", result: "succeeded", entityId: req.id, safeDetails: { decision: parsed.data.decision, version: result.version }, occurredAt: nowIso });
     if (auditFailure) return auditFailure;
     // Q2：把判定写进 Base 的专用标记字段（不通知）；失败只留审计，不影响判定结果。
-    if (dependencies.duplicateMarker) {
+    const setMarker = await duplicateMarkerFor(dependencies, repositories, req);
+    if (setMarker) {
       try {
-        const marked = await dependencies.duplicateMarker({
+        const marked = await setMarker({
           recordId: req.baseRecordId,
           // confirmed_unique = 确认非重复：清除既有标记，而不是写「重复」
           decision: parsed.data.decision === "confirmed_unique" ? null : parsed.data.decision,
