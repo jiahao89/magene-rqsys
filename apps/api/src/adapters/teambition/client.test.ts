@@ -96,3 +96,42 @@ test("fails closed at construction when the gateway API key is missing and names
     (error: unknown) => error instanceof Error && error.message.includes("GATEWAY_API_KEY"),
   );
 });
+
+test("group pool picks the exactly named 需求 task type when several candidates match", async (t) => {
+  installFetch(t, [
+    { payload: { "project-1": { name: "需求收集与管理" } } },
+    { payload: { "type-requirement": "需求", "type-requirement-1": "需求1" } },
+  ]);
+  const client = new TeambitionClient({ baseUrl: "https://gateway.example", apiKey: "test-key" });
+
+  assert.deepEqual(
+    await client.resolveProject("需求收集与管理", { pool: "group" }),
+    { projectId: "project-1", requirementTypeId: "type-requirement" },
+  );
+});
+
+test("group pool still refuses to guess when no candidate is exactly named 需求", async (t) => {
+  installFetch(t, [
+    { payload: { "project-1": { name: "需求收集与管理" } } },
+    { payload: { "type-a": "需求1", "type-b": "需求2" } },
+  ]);
+  const client = new TeambitionClient({ baseUrl: "https://gateway.example", apiKey: "test-key" });
+
+  await assert.rejects(
+    client.resolveProject("需求收集与管理", { pool: "group" }),
+    (error: unknown) => error instanceof SourceProjectResolutionError && error.reason === "requirement_type_ambiguous",
+  );
+});
+
+test("product pool keeps the strict single-candidate rule even when one is named 需求", async (t) => {
+  installFetch(t, [
+    { payload: { "project-1": { name: "需求收集与管理" } } },
+    { payload: { "type-requirement": "需求", "type-requirement-1": "需求1" } },
+  ]);
+  const client = new TeambitionClient({ baseUrl: "https://gateway.example", apiKey: "test-key" });
+
+  await assert.rejects(
+    client.resolveProject("需求收集与管理", { pool: "product" }),
+    (error: unknown) => error instanceof SourceProjectResolutionError && error.reason === "requirement_type_ambiguous",
+  );
+});

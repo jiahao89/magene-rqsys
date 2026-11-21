@@ -491,7 +491,8 @@ async function resolveSourceConfig(
   }
   if (dependencies.teambitionSourceProjects) {
     try {
-      const resolved = await dependencies.teambitionSourceProjects.resolveProject(update.projectName);
+      // 集团池允许多候选里精确取「需求」，所以池要随解析请求一起传下去。
+      const resolved = await dependencies.teambitionSourceProjects.resolveProject(update.projectName, { pool });
       return { ...update, pool, executorAllowlist: allowlist, schedule: normalizeSourceSchedule(update.schedule), projectId: resolved.projectId, requirementTypeId: resolved.requirementTypeId, ownerNames: [...DEFAULT_TEAM_MEMBERS], fieldMap: {} };
     } catch (cause) {
       if (cause instanceof SourceProjectResolutionError) return jsonError("VALIDATION_FAILED", cause.message);

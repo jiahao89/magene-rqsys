@@ -1,4 +1,5 @@
 import type { SourceProjectConfig } from "../../domain/workflow.js";
+import type { SourcePool } from "../../domain/persistence.js";
 import type { TeambitionTaskRecord } from "./raw-types.js";
 import { SourceProjectResolutionError, type TeambitionMemberDirectory, type TeambitionSourceProjectResolver } from "../../application/ports.js";
 
@@ -96,7 +97,7 @@ export class TeambitionClient implements TeambitionSourceProjectResolver, Teambi
     }
   }
 
-  async resolveProject(projectName: string): Promise<{ projectId: string; requirementTypeId: string }> {
+  async resolveProject(projectName: string, options?: { pool?: SourcePool }): Promise<{ projectId: string; requirementTypeId: string }> {
     const targetName = normalizeName(projectName);
     const projects = namedEntities(await this.getJson("getProjects"))
       .filter((project) => normalizeName(project.name) === targetName);
@@ -114,6 +115,13 @@ export class TeambitionClient implements TeambitionSourceProjectResolver, Teambi
       throw new SourceProjectResolutionError("requirement_type_not_found", `项目“${projectName}”中没有可识别的需求任务类型。`);
     }
     if (candidates.length > 1) {
+      // 0031：集团项目存在「需求」「需求1」两个任务类型，按规范不能随便挑。
+      // 集团池改用确定性规则：候选里精确名「需求」（归一化后全等）唯一命中才采用；
+      // 没有精确命中或命中多个，仍按“无法自动确定”拒绝。产品池保持原行为。
+      if (options?.pool === "group") {
+        const exact = candidates.filter(({ name }) => normalizeName(name) === "需求");
+        if (exact.length === 1) return { projectId: project.id, requirementTypeId: exact[0]!.id };
+      }
       throw new SourceProjectResolutionError("requirement_type_ambiguous", `项目“${projectName}”中存在多个需求任务类型，无法自动确定同步范围。`);
     }
     return { projectId: project.id, requirementTypeId: candidates[0]!.id };

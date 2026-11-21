@@ -2,6 +2,7 @@ import type {
   NormalizedTeambitionRequirement,
   SourceProjectConfig,
 } from "../domain/workflow.js";
+import type { SourcePool } from "../domain/persistence.js";
 import type { TeambitionTaskRecord } from "../adapters/teambition/raw-types.js";
 
 export interface TeambitionSourcePort {
@@ -9,7 +10,11 @@ export interface TeambitionSourcePort {
 }
 
 export interface TeambitionSourceProjectResolver {
-  resolveProject(projectName: string): Promise<{ projectId: string; requirementTypeId: string }>;
+  /**
+   * 解析 TB 项目与需求任务类型。
+   * pool=group 时允许多个候选里按确定性规则取精确名「需求」；其余情况保持“唯一候选”约束。
+   */
+  resolveProject(projectName: string, options?: { pool?: SourcePool }): Promise<{ projectId: string; requirementTypeId: string }>;
 }
 
 /**
