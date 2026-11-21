@@ -1,5 +1,7 @@
 # RQ-Sys MVP implementation and acceptance status (updated 2026-10-19)
 
+> **2026-11-21 更新：** 本文是 2026-10-19 的历史状态快照。文中提到的 fixture 端点/开关（`/api/dev/fixtures/*`、`RQSYS_ENABLE_TEST_FIXTURES`、`RQSYS_SCHEDULE_FIXTURE`）已在收尾版 `7710556274223631598` 删除，不能按本文恢复或执行；当前验收见 `.scratch/full-acceptance-20261121/FULL-ACCEPTANCE-20261121.md`。
+
 > **当前状态（2026-10-19 15:40，取代下文更早的验收快照）**
 >
 > - 最新发布 `7698268411600276761` / commit `f7bc228`，`finished`，`error_logs=[]`。

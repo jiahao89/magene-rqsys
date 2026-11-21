@@ -68,7 +68,7 @@ git -C rq-sys-miaoda grep -n "飞书平台或集成服务拒绝" -- client/src/r
 2. ~~发布 `cd64e8d`~~ **已完成**：release `7695624698437651669` 轮询至 `finished`，绑定 `cd64e8dc6152e0eca6b55f266ffe7ff97cecadba`，`error_logs` 为空；线上 `https://ecn8egz1lhkq.feishuapp.com/app/app_17fqkjwyx1u`；发布当日 runtime ERROR 记录为 0。
 3. **发布失败的真实原因（重要，避免重复踩坑）**：前 9 次失败时 `--apply-reason` 用的是**含 ASCII 冒号**的英文理由，全部返回 `code 500000049`；把理由换成**不含冒号**的纯文本后，**第一次调用就成功**。所以遇到 `500000049` 时，先换一个不含冒号的简短理由重试，而不是反复重发同一参数。此结论为高置信相关性，但未做对照实验（不再为此额外发布一次）。
 4. 已排除的其它解释（保留以便复核）：`git` 与 `origin/sprint/default` 完全一致；`+db-env-diff` 无待发布结构变更；`npm run build:prod` 通过；执行 `+git-credential-init` 刷新凭证后再 push 并重试仍失败。
-5. 发布后重新加载 dev preview，确认来源表单只需项目名称且默认 `室外产品-码表软固件需求池`；创建 schedule-disabled 来源，确认项目和任务类型解析成功。完整清单见 [`TARGET-ACCEPTANCE-CHECKLIST.md`](TARGET-ACCEPTANCE-CHECKLIST.md)。
+5. 发布后重新加载 dev preview，确认来源表单只需项目名称且默认 `室外产品-码表软固件需求池`；创建 schedule-disabled 来源，确认项目和任务类型解析成功。原 `TARGET-ACCEPTANCE-CHECKLIST.md` 已废止（2026-11-21，fixture 通道删除），只作历史存档；当前验收见 `.scratch/full-acceptance-20261121/FULL-ACCEPTANCE-20261121.md`。
 
 ### 一个本地可复现的观察（与本故障无关）
 

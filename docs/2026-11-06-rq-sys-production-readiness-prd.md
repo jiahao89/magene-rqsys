@@ -174,7 +174,7 @@
 
 - [MVP PRD rev60 / specs](./../specs/rq-sys-mvp/README.md)、[OPEN-DECISIONS](./../specs/rq-sys-mvp/OPEN-DECISIONS.md)
 - [V0.2 PRD](./2026-10-21-rq-sys-v0.2-prd.md)、[评分规则比较](./../specs/rq-sys-v0.2/SCORING-RULE-COMPARISON.md)
-- [发布收尾](./../specs/rq-sys-mvp/RELEASE-CLOSEOUT.md)、[目标验收清单](./../deployment/TARGET-ACCEPTANCE-CHECKLIST.md)、[外部阻塞 runbook](./../deployment/EXTERNAL-BLOCKER-RUNBOOK.md)
+- [发布收尾](./../specs/rq-sys-mvp/RELEASE-CLOSEOUT.md)、[目标验收清单（历史，已废止）](./../deployment/TARGET-ACCEPTANCE-CHECKLIST.md)、[外部阻塞 runbook](./../deployment/EXTERNAL-BLOCKER-RUNBOOK.md)
 - [2026-11-06 重跑与采纳记录](./2026-11-06-rerun-and-adoption.md)
 
 ## 13. 待决口径（2026-11-10）

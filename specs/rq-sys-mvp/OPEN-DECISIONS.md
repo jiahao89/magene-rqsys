@@ -27,7 +27,9 @@ This register prevents unresolved choices from becoming implementation assumptio
 
 ## 2026-10-15 Online acceptance follow-up
 
-The combined scheduled-safe-fixture path is now target verified: two successful platform deliveries reused one persisted weekly-window batch and completed actual AI/POC Base push. The default-off mode and both Base/fixture guards are documented in SCHEDULE-FIXTURE-ACCEPTANCE.md. All original Online variables and disabled trigger/source-plan states were restored; no real TB call occurred. Dev editor lifecycle remains a platform limitation, with fresh PreviewProxy 400/toStart evidence and a successful workspace-wake mitigation. It is not treated as a repaired application route. See Ticket09 for current commits/releases and exact scope.
+**历史记录（2026-10-15）：** The combined scheduled-safe-fixture path is now target verified: two successful platform deliveries reused one persisted weekly-window batch and completed actual AI/POC Base push. The default-off mode and both Base/fixture guards are documented in SCHEDULE-FIXTURE-ACCEPTANCE.md. All original Online variables and disabled trigger/source-plan states were restored; no real TB call occurred. Dev editor lifecycle remains a platform limitation, with fresh PreviewProxy 400/toStart evidence and a successful workspace-wake mitigation. It is not treated as a repaired application route. See Ticket09 for current commits/releases and exact scope.
+
+**2026-11-21 更新（已废止）：** 上述 scheduled-safe-fixture 方案及造数通道已从生产代码删除（`sync/test-fixture.ts`、`/api/dev/fixtures/*`、`RQSYS_ENABLE_TEST_FIXTURES`、`RQSYS_SCHEDULE_FIXTURE`、`rqsys-fixture-*`）。`SCHEDULE-FIXTURE-ACCEPTANCE.md` 与 `TARGET-ACCEPTANCE-CHECKLIST.md` 仅作历史存档，不得执行。当前验收以 `.scratch/full-acceptance-20261121/FULL-ACCEPTANCE-20261121.md`、`SCHEDULED-BATCH-CHECKLIST-20261123.md` 和 `WRITE-PATH-SMOKE-PLAN-20261121.md` 为准；不造数，通知只用用户本人。
 
 ## D-12 (2026-10-22) 通知收件人：批量首推静默，人工分配必通知
 

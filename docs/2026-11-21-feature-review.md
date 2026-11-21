@@ -26,17 +26,17 @@
 
 | 功能 | 问题 | 证据 | 建议 | 优先级 |
 |---|---|---|---|---|
-| 集团池通知兜底 | 收件人逻辑未按 `pool` 区分：集团池仍可能读 Base 负责人并回落到 `pmLeaderRecipient` | `apps/api/src/base/push-service.ts:298–320`；集团通知工作流 `wkfKg2RfYO5vkTEd` 已启用；当前 191 条恰好都有执行人，缺陷未暴露 | **P0 修复**：集团池不读 Base 负责人（`if (!ownerEvent && !input.willWriteOwner && deps.pool !== "group") baseOwner = await readBaseOwnerForEvent();`）；收件人按池分叉：`ownerEvent ? ownerRecipient : deps.pool === "group" ? ownerRecipient : (baseRecipient ?? ownerRecipient ?? pmLeaderRecipient)`；产品池原样；不加审计字段，跳过时通知字段留空、按 `ownerState=unassigned` 查；补 13 条用例（7 集团 + 4 产品 + 2 接线） | P0 |
+| 集团池通知兜底 | 收件人逻辑未按 `pool` 区分：集团池仍可能读 Base 负责人并回落到 `pmLeaderRecipient` | `apps/api/src/base/push-service.ts:298–320`；集团通知工作流 `wkfKg2RfYO5vkTEd` 已启用；当前 191 条恰好都有执行人，缺陷未暴露 | **已发版 `7710556274223631598`（P0）**：集团池不读 Base 负责人（`if (!ownerEvent && !input.willWriteOwner && deps.pool !== "group") baseOwner = await readBaseOwnerForEvent();`）；收件人按池分叉：`ownerEvent ? ownerRecipient : deps.pool === "group" ? ownerRecipient : (baseRecipient ?? ownerRecipient ?? pmLeaderRecipient)`；产品池原样；不加审计字段，跳过时通知字段留空、按 `ownerState=unassigned` 查；13 条用例（7 集团 + 4 产品 + 2 接线）随版 | 已发版 |
 | 手工样例 `RQ-000316` | 测试记录为「4 项造数均已清理」，但同时保留 `RQ-000316` 为常驻样例；与「验收测试数据必须删除」的口径存在冲突 | 测试覆盖清单 | **Chief 2026-11-21 已定**：转为正式样例保留，不删除（已是 334 基线一部分，删除会重算历史报告）；作为「验收数据删除」口径的例外登记，不纳入收尾版 | 已定 |
 | 作业运维「失败作业」 | 41 条历史 `base_push`（`max_attempts_reached`）与当前 100% 成功率同屏 | 本轮验收记录/测试复验 | 作业 DTO 加 `recovered`，前端显示「已恢复」或归档；不与当前失败混排 | P2 |
 | 产品池 Base「TB链接」列 | 因 `TB链接 → TB地址` 兼容转换，列一直为空（`field_not_in_base`） | Chief 2026-11-21 确认 | 本轮不修；集团池已绕开并写「TB链接」；后续单独修产品池 | P2 |
-| PRD §4.12 口径 | 原文档写 9 人/`wanying qi` 阻塞/`tblxr…`/兜底收件人待定；线上已按 8 人、独立 Base、无兜底运行 | 2026-11-21 用户口径 | **本轮已收口**：8 人名单、独立 Base `HZ6…`/`tblNV…`、191 条迁移、无兜底收件人；定时同步仍待用户 | P1（已完成） |
+| PRD §4.12 口径 | 原文档写 9 人/`wanying qi` 阻塞/`tblxr…`/兜底收件人待定；线上已按 8 人、独立 Base、无兜底运行 | 2026-11-21 用户口径 | **本轮已收口**：8 人名单、独立 Base `HZ6…`/`tblNV…`、191 条迁移、无兜底收件人；定时同步 2026-11-21 已开启 | P1（已完成） |
 | 审计按池筛选 | 同步记录只按批次池筛选；审计页不支持 | 本轮验收边界 | 页面已注明；后续有需要再加 `pool`，本期不假装能过滤 | P3 |
-| 集团池定时同步 | 目前仅手动同步；周一/三/五 09:00 未开 | 测试建议开、清单已备 | 等用户拍；开启后按 `SCHEDULED-BATCH-CHECKLIST-20261123.md` 核对 | 待用户 |
+| 集团池定时同步 | 2026-11-21 已开启：周一/三/五 09:00（Asia/Shanghai），8 人名单不变；开启后未立即触发批次，最新批次仍是 14:06 的 manual | 测试建议开启、清单已备 | 首个自动批次（周一 09:00）按 `SCHEDULED-BATCH-CHECKLIST-20261123.md` 核对；触发失败/未触发先分因，不改配置 | 已开启 |
 | 前端单来源假设 | `App.tsx:388` 来源横幅、`App.tsx:452` 调度卡片仍取 `sources[0]`，依赖后端返回顺序 | 前端清单 | 显式取 `pool === "product"`；总览注明只反映产品池；**下一轮优化，不纳入本次收尾版** | 下一轮 |
 | 数据源页文案 | 仍写「单项目的数据源与周计划设置」（`App.tsx:596`），与两池 + 多维表格现状不符 | 前端清单 | 改为「产品池 / 集团池 / 多维表格收集」两类配置入口；**下一轮优化，不纳入本次收尾版** | 下一轮 |
-| 环境变量文档 | 40 个环境变量中 12 个不在 `.env.example`（含 `GROUP_BASE_*`、`RQSYS_GROUP_BASE_RECORD_URL_TEMPLATE`、`RQSYS_TEAMBITION_TASK_BASE_URL`、`BASE_FORM_SHARE_URL` 等） | 后端清单 | 补 `.env.example` 与部署说明；不涉及代码行为 | P2 |
-| 遗留 2 行改动 | 后端已单独提交 `c66d3bf`（根仓：`app.ts` 列表按池取 Base 模板 + `repositories.ts` 显式实现）和 `16c8cc2`（妙搭镜像 1 行），未 push；`app.test.ts` 的 22 行用例随收尾批次走 | 后端清单 | 随收尾小版一起推发版，不混入 PRD 提示词批次 | 已提交未推 |
+| 环境变量文档 | 40 个环境变量中 12 个不在 `.env.example`（含 `GROUP_BASE_*`、`RQSYS_GROUP_BASE_RECORD_URL_TEMPLATE`、`RQSYS_TEAMBITION_TASK_BASE_URL`、`BASE_FORM_SHARE_URL` 等） | 后端清单 | 已补入 `.env.example`（收尾版 `7710556274223631598`）；部署说明同步更新 | 已完成 |
+| 遗留 2 行改动 | 后端已单独提交 `c66d3bf`（根仓：`app.ts` 列表按池取 Base 模板 + `repositories.ts` 显式实现）和 `16c8cc2`（妙搭镜像 1 行）；`app.test.ts` 的 22 行用例随收尾批次 | 后端清单 | 已并入收尾版 `7710556274223631598`（root `6e70fe9` / 妙搭 `649a611`） | 已完成 |
 | SOP/GuidePanel | 静态长文与 PRD 知识重复，流程一变要手动同步 | 前端清单 | 评估改为外链文档；本轮不删 | P3 |
 
 **P0 用例清单（13 条）**：集团池 7 条：① 执行人已映射 + 实质更新 → 发执行人；② 执行人未映射 → 不产生事件、Base 行照常成功；③ Base 有人工负责人 + 应用无执行人 → 不发，且断言未读 Base 负责人；④ `owner_changed` A→B → 发 B；B 未映射 → 不发（不回退 A、不回落 PM Leader）；⑤ `owner_assigned` 空→A → 发 A；⑥ `ai_retry_success` 无执行人 → 不发；⑦ `first_push` → 静默。产品池 4 条：⑧ 应用无负责人 + Base 有 → 发 Base 负责人；⑨ 都无 + 配置 PM Leader → 发 PM Leader；⑩ 都无 + 未配 → 不发；⑪ 执行人有映射 → 发执行人。接线 2 条：⑫ 同一 worker 连推 product/group 不串池；⑬ PG 到位后集团池无执行人推送：Base 行成功、事件字段为空。半天，一个文件两仓镜像。
@@ -72,8 +72,8 @@
 
 | 项 | 现状 | 建议 |
 |---|---|---|
-| 多维表格收集表同步（5b） | `base/form-sync.ts` 414 行 + 6 个 cell 解析器 + server 接线 + 运维卡片 + 4 个 env；验收时最近同步 15:44:24，**扫描 0 行**，`base_form` 来源 0 条 | **Chief 2026-11-21 定稿，待用户批收尾小版后执行**：关定时同步、运维卡片标「未启用」、改 PRD §4.11 修订；修复另立下一轮，不删代码 |
-| 内置造数通道 | `sync/test-fixture.ts`（94 行，SHARED）+ `/api/dev/fixtures/status`；生产代码内置 `rqsys-fixture-*` 合成需求、`RQSYS_SCHEDULE_FIXTURE`、POC Base 门禁；唯一调用方是测试 | 下一轮移除；用户已明确不造数；删除前确认目标环境无依赖 |
+| 多维表格收集表同步（5b） | `base/form-sync.ts` 414 行 + 6 个 cell 解析器 + server 接线 + 运维卡片 + 4 个 env；验收时最近同步 15:44:24，**扫描 0 行**，`base_form` 来源 0 条 | **已冻结（收尾版 `7710556274223631598`）**：online 删除 `BASE_INTAKE_TABLE_ID`，数据源页显示「已暂停」，运维卡片「最近一次同步」标为历史值；PRD §4.11 已改，代码保留但不启动；修复另立下一轮 | 已完成 |
+| 内置造数通道 | `sync/test-fixture.ts`（94 行，SHARED）+ `/api/dev/fixtures/status`；生产代码内置 `rqsys-fixture-*` 合成需求、`RQSYS_SCHEDULE_FIXTURE`、POC Base 门禁；唯一调用方是测试 | 已删除（收尾版 `7710556274223631598`）：造数通道、fixture 端点、`RQSYS_*` 开关一并移除；`SCHEDULE-FIXTURE-ACCEPTANCE.md`/`TARGET-ACCEPTANCE-CHECKLIST.md` 已标历史，不再可执行 | 已完成 |
 | 双仓人工镜像 | 81 个同名文件、36 个要求逐字一致，实际 21 个逐字一致，60 个靠 DECLARED 理由兜底；每次改动做两遍 | 长期改构建期生成或端口隔离；与 `panels.tsx` 拆分一起排期 |
 | 手工自愈脚本 | `scripts/rqsys-maintenance.mjs` 因平台触发器「3 小时只投递 1 次」存在；自愈实质依赖人 | 推动触发器更可靠，或写进正式值班流程 |
 | `panels.tsx` 膨胀/重复 | `panels.tsx` 3103 行（前端源码约 30%）；`RequirementsTable` 在 `App.tsx` 与 `panels.tsx` 各一份，列定义重复 | 按页拆分；抽公共列；两仓镜像成本一并评估 |
@@ -127,18 +127,19 @@
 - 验收测试数据必须删除（应用库 + Base 两侧），不造集团池数据。
 - 本轮只出审查表，不改代码、不删功能。
 
-## 9. 建议顺序（按 2026-11-21 Chief 定稿）
+## 9. 当前状态与顺序（2026-11-21 收尾版后）
 
-1. **文档收口**：PRD §4.12 已按 8 人/独立 Base/无兜底收口；PRD 提示词规格已评审通过；三份文档并进发版批次一起提交，不单独提交。
-2. **写链路冒烟**：先跑 RQ-000335「分配→撤销」，约 10 分钟；发出 1 条真实 IM 需用户先给收件人/批写操作。
-3. **收尾小版（待用户批范围）**：P0 集团池通知兜底修复（13 条用例）+ 移除造数通道 + 补 12 个 env 文档 + 冻结收集表同步（关定时、卡片标「未启用」、改 PRD §4.11 修订）+ 工作区 5 个文件 + `c66d3bf`/`16c8cc2` 一起推发版；文档随本批提交。
-4. **PRD 提示词**：收尾版之后启动，不等冒烟结果；S1 后端 → S2 前端 → S3 测试；开工前统一 §7 契约命名。
+1. **文档收口**：PRD §4.12 已按 8 人/独立 Base/无兜底收口；PRD §4.11 已改为「已暂停/历史值」；PRD 提示词规格已评审通过。三份文档在 `2cd1a83` 批次；fixture 两份旧文档已标历史。
+2. **写链路冒烟**：已执行 RQ-000335「分配 → 撤销」（17:41/17:42）；IM 无新增消息，发现「撤销后重新指定同一人会静默」属已知限制，进下一轮修，不按回归处理。
+3. **收尾小版**：`7710556274223631598` finished（root `6e70fe9` / 妙搭 `649a611`）；P0 通知修复、删除造数通道、env 文档、撤销清理已上线；收集表同步已冻结（online 删除 `BASE_INTAKE_TABLE_ID`，页面「已暂停」）。
+4. **PRD 提示词**：已启动 S1 后端（迁移 0032、`/prd-prompts`、90s、版本化、skill）、S2 前端、S3 测试；按规格推进。
 5. **使用数据 + 四页面点检**：RICE/Kano/人群/分析上下文/优先级规则/Gate；再决定隐藏或删减。
-6. **收集表同步后续**：本次方案是冻结（待用户批收尾小版）；要修通另立下一轮，先补 11-19 起零产出的根因。
+6. **收集表同步后续**：本次已冻结；要修通另立下一轮，先补 11-19 起零产出的根因。
 7. **长期项**：双仓镜像、`panels.tsx` 拆分、`RequirementsTable` 抽公共列；`sources[0]`/数据源页文案下一轮优化。
+8. **集团池定时同步**：已于 2026-11-21 开启（周一/三/五 09:00）；下周一按清单核对首个自动批次。
 
 ## 10. 合并来源
 
-- 后端：2026-11-21 群消息清单（P0 通知兜底、12 个死代码导出、5 项高维护、2 行已提交未推 `c66d3bf`/`16c8cc2`）。
+- 后端：2026-11-21 群消息清单（P0 通知兜底、12 个死代码导出、5 项高维护、2 行改动 `c66d3bf`/`16c8cc2` 已并入收尾版）。
 - 前端：2026-11-21 群消息清单（3 个死代码候选、Beta/SOP、`panels.tsx`/`RequirementsTable`、单来源假设、PRD 提示词前端计划）。
 - 测试：`VERIFICATION-COVERAGE-20261121.md`（覆盖状态、反复问题、补验顺序）。
