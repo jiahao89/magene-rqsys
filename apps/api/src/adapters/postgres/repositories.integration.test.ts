@@ -151,6 +151,34 @@ test("ops metrics aggregate completed sync batches in the window (PRD 10)", asyn
   } finally { await cleanup(ctx); }
 });
 
+test("ops metrics count each requirement once by its last push attempt in the window", async () => {
+  const ctx = await setup();
+  try {
+    const source = await ctx.repos.sources.create(config);
+    const batch = await ctx.repos.batches.create({ sourceConfigId: source.id, triggerType: "manual", actorId: null, idempotencyKey: "ops-push-last-0001", startedAt: "2026-11-21T00:00:00Z" });
+    const recovered = await ctx.repos.requirements.upsertRequirement(source.id, "recovered", requirementWrite(source.id, batch.id, { teambitionRequirementId: "recovered" }));
+    const failing = await ctx.repos.requirements.upsertRequirement(source.id, "failing", requirementWrite(source.id, batch.id, { teambitionRequirementId: "failing" }));
+
+    // 需求 A：先失败后成功 —— 只记 pushed，不记 failed。
+    const aFail = await ctx.repos.basePushes.append({ requirementId: recovered.id, sourceVersion: 1, pushVersion: 1, idempotencyKey: "ops-push-a-fail", startedAt: "2026-11-21T06:00:00Z" });
+    await ctx.repos.basePushes.updateResult(aFail.id, { status: "failed", safeErrorCode: "URL_FIELD_CONV_FAIL", completedAt: "2026-11-21T06:00:07Z" });
+    const aOk = await ctx.repos.basePushes.append({ requirementId: recovered.id, sourceVersion: 1, pushVersion: 2, idempotencyKey: "ops-push-a-ok", startedAt: "2026-11-21T07:00:00Z" });
+    await ctx.repos.basePushes.updateResult(aOk.id, { status: "pushed", baseRecordId: "rec-a", completedAt: "2026-11-21T07:00:03Z" });
+
+    // 需求 B：成功之后又失败 —— 最后一次是 failed，记 failed。
+    const bOk = await ctx.repos.basePushes.append({ requirementId: failing.id, sourceVersion: 1, pushVersion: 1, idempotencyKey: "ops-push-b-ok", startedAt: "2026-11-21T06:10:00Z" });
+    await ctx.repos.basePushes.updateResult(bOk.id, { status: "pushed", baseRecordId: "rec-b", completedAt: "2026-11-21T06:10:03Z" });
+    const bFail = await ctx.repos.basePushes.append({ requirementId: failing.id, sourceVersion: 2, pushVersion: 2, idempotencyKey: "ops-push-b-fail", startedAt: "2026-11-21T07:10:00Z" });
+    await ctx.repos.basePushes.updateResult(bFail.id, { status: "failed", safeErrorCode: "BASE_PUSH_FAILED", completedAt: "2026-11-21T07:10:05Z" });
+
+    const metrics = await ctx.repos.ops.getOpsMetrics({ days: 7, now: "2026-11-22T00:00:00.000Z", pool: "product" });
+    assert.equal(metrics.push.total, 2, "两条需求共 4 次尝试，按需求只算 2");
+    assert.equal(metrics.push.pushed, 1, "先失败后成功只记成功");
+    assert.equal(metrics.push.failed, 1, "最后一次仍失败的需求记失败");
+    assert.equal(metrics.push.successRate, 50);
+  } finally { await cleanup(ctx); }
+});
+
 test("source-missing marking flags only unseen TB requirements and clears on reappearance (Q4)", async () => {
   const ctx = await setup();
   try {

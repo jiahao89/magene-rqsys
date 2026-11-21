@@ -1016,36 +1016,51 @@ export class PostgresRequirementScoringRepository implements RequirementScoringR
     }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}
   }
 }
-export class PostgresOpsMetricsRepository implements OpsMetricsRepository{constructor(private readonly pool:Pool){}async getOpsMetrics(p:{days:number;now:string}){
+export class PostgresOpsMetricsRepository{constructor(private readonly pool:Pool){}
+async getOpsMetrics(p:{days:number;now:string;pool?:SourcePool}){
   const since=new Date(new Date(p.now).getTime()-p.days*24*60*60*1000).toISOString();
-  const{rows}=await this.pool.query(`WITH w AS (SELECT $1::timestamptz AS since)
+  // 0031：按池作用域统计；缺省 product，集团池数字不混入产品池运维视图。
+  const pool=p.pool??"product";
+  const{rows}=await this.pool.query(`WITH w AS (SELECT $1::timestamptz AS since),
+  scoped_source AS (SELECT id FROM source_configs WHERE pool=$2::text),
+  scoped_req AS (
+    SELECT r.id FROM requirements r LEFT JOIN source_configs sc ON sc.id=r.source_config_id
+    WHERE (($2::text='product' AND (r.source_config_id IS NULL OR sc.pool='product')) OR ($2::text='group' AND sc.pool='group'))
+  ),
+  last_push AS (
+    -- 推送口径按需求取窗口内最后一次尝试：重试成功的那条不再记失败（attempt 口径会把历史失败计入）。
+    SELECT DISTINCT ON (r.requirement_id) r.requirement_id, r.status, r.started_at, r.completed_at
+    FROM base_push_runs r, w
+    WHERE r.started_at>=w.since AND r.requirement_id IN (SELECT id FROM scoped_req)
+    ORDER BY r.requirement_id, r.started_at DESC, r.id DESC
+  )
   SELECT
-    (SELECT count(*) FROM sync_batches b, w WHERE b.created_at>=w.since)::int AS sync_total,
-    (SELECT count(*) FROM sync_batches b, w WHERE b.created_at>=w.since AND b.status='succeeded')::int AS sync_succeeded,
-    (SELECT count(*) FROM sync_batches b, w WHERE b.created_at>=w.since AND b.status='partial_failure')::int AS sync_partial,
-    (SELECT count(*) FROM sync_batches b, w WHERE b.created_at>=w.since AND b.status='failed')::int AS sync_failed,
-    (SELECT avg(EXTRACT(EPOCH FROM (b.completed_at-b.started_at))) FROM sync_batches b, w WHERE b.created_at>=w.since AND b.completed_at IS NOT NULL)::float AS sync_avg_seconds,
-    (SELECT max(b.completed_at) FROM sync_batches b) AS sync_last_completed_at,
-    (SELECT count(*) FROM analysis_runs r, w WHERE r.started_at>=w.since)::int AS analysis_total,
-    (SELECT count(*) FROM analysis_runs r, w WHERE r.started_at>=w.since AND r.status='analyzed')::int AS analysis_analyzed,
-    (SELECT count(*) FROM analysis_runs r, w WHERE r.started_at>=w.since AND r.status='failed_retryable')::int AS analysis_failed,
-    (SELECT count(*) FROM analysis_runs r, w WHERE r.started_at>=w.since AND r.status='running')::int AS analysis_running,
-    (SELECT avg(EXTRACT(EPOCH FROM (r.completed_at-r.started_at))) FROM analysis_runs r, w WHERE r.started_at>=w.since AND r.completed_at IS NOT NULL)::float AS analysis_avg_seconds,
-    (SELECT count(*) FROM analysis_runs r, w WHERE r.started_at>=w.since AND r.status='analyzed' AND r.confidence='low')::int AS analysis_low_confidence,
-    (SELECT count(*) FROM requirements WHERE processing_state='active' AND owner_state='auto_mapped')::int AS owner_auto,
-    (SELECT count(*) FROM requirements WHERE processing_state='active' AND owner_state='manually_mapped')::int AS owner_manual,
-    (SELECT count(*) FROM requirements WHERE processing_state='active' AND owner_state='pending_mapping')::int AS owner_pending,
-    (SELECT count(*) FROM requirements WHERE processing_state='active' AND owner_state='not_required')::int AS owner_not_required,
-    (SELECT count(*) FROM base_push_runs r, w WHERE r.started_at>=w.since)::int AS push_total,
-    (SELECT count(*) FROM base_push_runs r, w WHERE r.started_at>=w.since AND r.status='pushed')::int AS push_pushed,
-    (SELECT count(*) FROM base_push_runs r, w WHERE r.started_at>=w.since AND r.status='failed')::int AS push_failed,
-    (SELECT avg(EXTRACT(EPOCH FROM (r.completed_at-r.started_at))) FROM base_push_runs r, w WHERE r.started_at>=w.since AND r.completed_at IS NOT NULL)::float AS push_avg_seconds,
-    (SELECT count(*) FROM requirement_resolutions WHERE review_state='confirmed' AND decision IN ('duplicate','ignored'))::int AS duplicate_confirmed,
-    (SELECT count(*) FROM requirement_resolutions WHERE review_state='suspected')::int AS duplicate_suspected,
-    (SELECT count(*) FROM requirement_score_versions v, w WHERE v.created_at>=w.since AND v.origin='ai')::int AS score_ai,
-    (SELECT count(*) FROM requirement_score_versions v, w WHERE v.created_at>=w.since AND v.origin='manual')::int AS score_manual,
-    (SELECT count(*) FROM requirement_score_versions v, w WHERE v.created_at>=w.since AND v.origin='ai_applied')::int AS score_ai_applied`,[since]);
-  const failures=await this.pool.query("SELECT COALESCE(safe_error_code,'unknown') AS code,count(*)::int AS count FROM analysis_runs WHERE started_at>=$1::timestamptz AND status='failed_retryable' GROUP BY 1 ORDER BY 2 DESC,1 LIMIT 5",[since]);
+    (SELECT count(*) FROM sync_batches b, w WHERE b.created_at>=w.since AND b.source_config_id IN (SELECT id FROM scoped_source))::int AS sync_total,
+    (SELECT count(*) FROM sync_batches b, w WHERE b.created_at>=w.since AND b.status='succeeded' AND b.source_config_id IN (SELECT id FROM scoped_source))::int AS sync_succeeded,
+    (SELECT count(*) FROM sync_batches b, w WHERE b.created_at>=w.since AND b.status='partial_failure' AND b.source_config_id IN (SELECT id FROM scoped_source))::int AS sync_partial,
+    (SELECT count(*) FROM sync_batches b, w WHERE b.created_at>=w.since AND b.status='failed' AND b.source_config_id IN (SELECT id FROM scoped_source))::int AS sync_failed,
+    (SELECT avg(EXTRACT(EPOCH FROM (b.completed_at-b.started_at))) FROM sync_batches b, w WHERE b.created_at>=w.since AND b.completed_at IS NOT NULL AND b.source_config_id IN (SELECT id FROM scoped_source))::float AS sync_avg_seconds,
+    (SELECT max(b.completed_at) FROM sync_batches b WHERE b.source_config_id IN (SELECT id FROM scoped_source)) AS sync_last_completed_at,
+    (SELECT count(*) FROM analysis_runs r, w WHERE r.started_at>=w.since AND r.requirement_id IN (SELECT id FROM scoped_req))::int AS analysis_total,
+    (SELECT count(*) FROM analysis_runs r, w WHERE r.started_at>=w.since AND r.status='analyzed' AND r.requirement_id IN (SELECT id FROM scoped_req))::int AS analysis_analyzed,
+    (SELECT count(*) FROM analysis_runs r, w WHERE r.started_at>=w.since AND r.status='failed_retryable' AND r.requirement_id IN (SELECT id FROM scoped_req))::int AS analysis_failed,
+    (SELECT count(*) FROM analysis_runs r, w WHERE r.started_at>=w.since AND r.status='running' AND r.requirement_id IN (SELECT id FROM scoped_req))::int AS analysis_running,
+    (SELECT avg(EXTRACT(EPOCH FROM (r.completed_at-r.started_at))) FROM analysis_runs r, w WHERE r.started_at>=w.since AND r.completed_at IS NOT NULL AND r.requirement_id IN (SELECT id FROM scoped_req))::float AS analysis_avg_seconds,
+    (SELECT count(*) FROM analysis_runs r, w WHERE r.started_at>=w.since AND r.status='analyzed' AND r.confidence='low' AND r.requirement_id IN (SELECT id FROM scoped_req))::int AS analysis_low_confidence,
+    (SELECT count(*) FROM requirements r WHERE r.processing_state='active' AND r.owner_state='auto_mapped' AND r.id IN (SELECT id FROM scoped_req))::int AS owner_auto,
+    (SELECT count(*) FROM requirements r WHERE r.processing_state='active' AND r.owner_state='manually_mapped' AND r.id IN (SELECT id FROM scoped_req))::int AS owner_manual,
+    (SELECT count(*) FROM requirements r WHERE r.processing_state='active' AND r.owner_state='pending_mapping' AND r.id IN (SELECT id FROM scoped_req))::int AS owner_pending,
+    (SELECT count(*) FROM requirements r WHERE r.processing_state='active' AND r.owner_state='not_required' AND r.id IN (SELECT id FROM scoped_req))::int AS owner_not_required,
+    (SELECT count(*) FROM last_push)::int AS push_total,
+    (SELECT count(*) FROM last_push WHERE status='pushed')::int AS push_pushed,
+    (SELECT count(*) FROM last_push WHERE status='failed')::int AS push_failed,
+    (SELECT avg(EXTRACT(EPOCH FROM (completed_at-started_at))) FROM last_push WHERE completed_at IS NOT NULL)::float AS push_avg_seconds,
+    (SELECT count(*) FROM requirement_resolutions rr WHERE rr.review_state='confirmed' AND rr.decision IN ('duplicate','ignored') AND rr.source_config_id IN (SELECT id FROM scoped_source))::int AS duplicate_confirmed,
+    (SELECT count(*) FROM requirement_resolutions rr WHERE rr.review_state='suspected' AND rr.source_config_id IN (SELECT id FROM scoped_source))::int AS duplicate_suspected,
+    (SELECT count(*) FROM requirement_score_versions v, w WHERE v.created_at>=w.since AND v.origin='ai' AND v.requirement_id IN (SELECT id FROM scoped_req))::int AS score_ai,
+    (SELECT count(*) FROM requirement_score_versions v, w WHERE v.created_at>=w.since AND v.origin='manual' AND v.requirement_id IN (SELECT id FROM scoped_req))::int AS score_manual,
+    (SELECT count(*) FROM requirement_score_versions v, w WHERE v.created_at>=w.since AND v.origin='ai_applied' AND v.requirement_id IN (SELECT id FROM scoped_req))::int AS score_ai_applied`,[since,pool]);
+  const failures=await this.pool.query("SELECT COALESCE(r.safe_error_code,'unknown') AS code,count(*)::int AS count FROM analysis_runs r WHERE r.started_at>=$1::timestamptz AND r.status='failed_retryable' AND EXISTS (SELECT 1 FROM requirements rq LEFT JOIN source_configs sc ON sc.id=rq.source_config_id WHERE rq.id=r.requirement_id AND (($2::text='product' AND (rq.source_config_id IS NULL OR sc.pool='product')) OR ($2::text='group' AND sc.pool='group'))) GROUP BY 1 ORDER BY 2 DESC,1 LIMIT 5",[since,pool]);
   const row=rows[0]??{};const n=(v:unknown)=>Number(v??0);
   const rate=(num:number,den:number)=>den>0?Math.round((num/den)*1000)/10:null;
   const syncTotal=n(row.sync_total),analysisTotal=n(row.analysis_total),pushTotal=n(row.push_total);
@@ -1059,7 +1074,8 @@ export class PostgresOpsMetricsRepository implements OpsMetricsRepository{constr
     duplicate:{confirmedSuppressed:n(row.duplicate_confirmed),suspected:n(row.duplicate_suspected)},
     scoring:{aiSuggested:scoreAi,manual:scoreManual,aiApplied:scoreApplied,adoptionRate:rate(scoreApplied,scoreApplied+scoreManual)},
   };
-}}
+}
+}
 
 export class PostgresSystemFlagRepository implements SystemFlagRepository{constructor(private readonly pool:Pool){}async get(name:string){const{rows}=await this.pool.query("SELECT value,updated_at FROM system_flags WHERE name=$1",[name]);return rows[0]?{value:(rows[0].value??{}) as Record<string,unknown>,updatedAt:asDate(rows[0].updated_at)!}:null;}async set(name:string,value:Record<string,unknown>,at:string){await this.pool.query("INSERT INTO system_flags(name,value,updated_at) VALUES($1,$2::jsonb,$3::timestamptz) ON CONFLICT(name) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",[name,JSON.stringify(value),at]);}}
 

@@ -490,6 +490,20 @@ test("ops metrics query uses the computed window and returns a stable shape on e
   assert.equal(metrics.scoring.adoptionRate,null);
 });
 
+test("ops metrics scope every section by pool and count pushes per requirement by the last attempt", async()=>{
+  const {pool,calls}=recordingPool();const store=new PostgresRepositories(pool);
+  await store.ops.getOpsMetrics({days:7,now:"2026-11-10T00:00:00.000Z",pool:"group"});
+  // 池作用域：缺省 product，集团视图必须显式带上。
+  assert.match(calls[0]!.sql,/scoped_source AS \(SELECT id FROM source_configs WHERE pool=\$2::text\)/);
+  assert.match(calls[0]!.sql,/scoped_req AS/);
+  // 推送口径：先按需求取窗口内最后一次尝试，再按该状态计数（attempt 口径会把历史失败计入）。
+  assert.match(calls[0]!.sql,/DISTINCT ON \(r\.requirement_id\)/);
+  assert.match(calls[0]!.sql,/FROM last_push WHERE status='pushed'/);
+  assert.match(calls[0]!.sql,/FROM last_push WHERE status='failed'/);
+  assert.deepEqual(calls[0]!.values,["2026-11-03T00:00:00.000Z","group"]);
+  assert.deepEqual(calls[1]!.values,["2026-11-03T00:00:00.000Z","group"]);
+});
+
 test("ops view lists failed jobs with a bounded parameterized query", async()=>{
   const {pool,calls}=recordingPool();const store=new PostgresRepositories(pool);
   await store.jobs.listFailed(25);
