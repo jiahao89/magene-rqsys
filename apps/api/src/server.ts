@@ -309,8 +309,8 @@ if (worker && repositories && workerPollMs > 0) {
               client: baseIntakeClient, requirements: repositories.requirements, audit: repositories.audit,
               fields: baseIntakeFields.fields, moduleNames, now, tableId: baseIntakeTableId!, flags: repositories.flags,
             });
-            if (report.created > 0 || report.rejected > 0 || report.writeBackFailed > 0 || report.readFailed) {
-              process.stdout.write(`base form sync: scanned=${report.scanned} created=${report.created} rejected=${report.rejected} writeBackFailed=${report.writeBackFailed}${report.readFailed ? " readFailed" : ""}\n`);
+            if (report.created > 0 || report.rejected > 0 || report.writeBackFailed > 0 || report.readFailed || report.truncated) {
+              process.stdout.write(`base form sync: scanned=${report.scanned} created=${report.created} rejected=${report.rejected} writeBackFailed=${report.writeBackFailed}${report.readFailed ? " readFailed" : ""}${report.truncated ? " truncated" : ""}\n`);
             }
             for (const error of report.errors) process.stderr.write(`base form sync item failed: ${error}\n`);
           } catch (error) {

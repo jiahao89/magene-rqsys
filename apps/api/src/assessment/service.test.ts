@@ -202,3 +202,22 @@ test("assessment normalizes assumption prefixes to full-width 假设： before p
   assert.deepEqual(stored, ["假设：低温电量估算偏差", "假设：低温下电量曲线需要标定", "假设：已有平台能力"]);
   assert.deepEqual((result.output as { assumptions: string[] }).assumptions, stored);
 });
+
+test("评估路径把花名册姓名并入掩码，名单不再为空", async () => {
+  const h = harness(() => envelope(output));
+  await h.runner.run({
+    requirement,
+    inputs: { background: "刘媛媛反馈冬天掉电快，希望显示电量百分比" },
+    actorId: "actor-1",
+    piiMarkers: ["刘媛媛"],
+  });
+  const user = (h.bodies[0]!.messages as { role: string; content: string }[]).find((message) => message.role === "user")!.content;
+  assert.equal(user.includes("刘媛媛"), false);
+  assert.match(user, /（已掩码）/);
+
+  // 老调用方不传名单时保持原行为（固定模式仍脱敏），不会因为新增参数报错。
+  const legacy = harness(() => envelope(output));
+  await legacy.runner.run({ requirement, inputs: { background: "刘媛媛反馈冬天掉电快" }, actorId: "actor-1" });
+  const legacyUser = (legacy.bodies[0]!.messages as { role: string; content: string }[]).find((message) => message.role === "user")!.content;
+  assert.equal(legacyUser.includes("刘媛媛"), true);
+});

@@ -70,6 +70,8 @@ export interface AssessmentRunner {
     inputs: RequirementAssessmentInput;
     actorId: string;
     analysis?: AnalysisRunRecord | null;
+    /** PII 掩码名单（来源花名册 + 提出人/执行人）；缺省时只按需求字段本身脱敏。 */
+    piiMarkers?: string[];
   }): Promise<RequirementAssessmentRecord>;
 }
 
@@ -95,7 +97,7 @@ export function createAssessmentRunner(options: {
   const now = options.now ?? (() => new Date());
 
   return {
-    async run({ requirement, inputs, actorId, analysis }) {
+    async run({ requirement, inputs, actorId, analysis, piiMarkers }) {
       if (!config.apiKey) throw new AiProviderError("auth_error", "AI provider credential is not configured.");
       const startedAt = now().toISOString();
       // PRD §4.10.3：inputs 固定落三个键，空字符串保留（全空也允许生成），便于版本追溯与 hash 对比。
@@ -132,7 +134,8 @@ export function createAssessmentRunner(options: {
           supplements: storedInputs,
           analysis,
         });
-        const maskedUser = maskPii(messages.user, []);
+        // 与主分析路径同口径：花名册姓名也进掩码，不能只靠需求字段本身。
+        const maskedUser = maskPii(messages.user, piiMarkers ?? []);
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), config.timeoutMs);
         let response: Response;

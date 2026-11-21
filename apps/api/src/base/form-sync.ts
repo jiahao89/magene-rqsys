@@ -251,6 +251,8 @@ export interface BaseFormSyncReport {
   rejected: number;
   writeBackFailed: number;
   readFailed: boolean;
+  /** 读到页数上限时仍 hasMore：本轮没读完，不能当成"全表已扫描"。 */
+  truncated: boolean;
   errors: string[];
 }
 
@@ -268,7 +270,7 @@ function sameText(left: unknown, right: string): boolean {
 }
 
 export async function syncBaseFormIntake(params: BaseFormSyncParams): Promise<BaseFormSyncReport> {
-  const report: BaseFormSyncReport = { tableId: params.tableId, pages: 0, scanned: 0, skipped: 0, created: 0, recorded: 0, rejected: 0, writeBackFailed: 0, readFailed: false, errors: [] };
+  const report: BaseFormSyncReport = { tableId: params.tableId, pages: 0, scanned: 0, skipped: 0, created: 0, recorded: 0, rejected: 0, writeBackFailed: 0, readFailed: false, truncated: false, errors: [] };
   const nowIso = params.now.toISOString();
   const nowMs = params.now.getTime();
   const appendAudit = async (eventType: string, entityType: string, entityId: string, result: "succeeded" | "failed", safeDetails: Record<string, unknown>): Promise<void> => {
@@ -313,6 +315,13 @@ export async function syncBaseFormIntake(params: BaseFormSyncParams): Promise<Ba
       await appendAudit("base_form.read_failed", "base_form_table", params.tableId, "failed", { phase: "read", reason: "missing_page_token", sourceType: "base_form" });
       break;
     }
+    if (page + 1 === maxPages) {
+      // 页数上限不是"读完了"：继续静默结束会丢掉 maxPages×pageSize 之后的所有行。
+      report.truncated = true;
+      report.errors.push(`scan truncated at ${maxPages} pages (${report.scanned} rows); raise maxPages or pageSize to cover the whole table`);
+      await appendAudit("base_form.scan_truncated", "base_form_table", params.tableId, "failed", { stage: "scan", reason: "page_limit", processed: report.scanned, sourceType: "base_form" });
+      break;
+    }
     pageToken = result.nextPageToken;
   }
 
@@ -330,6 +339,7 @@ export async function syncBaseFormIntake(params: BaseFormSyncParams): Promise<Ba
         rejected: report.rejected,
         writeBackFailed: report.writeBackFailed,
         readFailed: report.readFailed,
+        truncated: report.truncated,
         lastError: report.errors[0] ?? null,
       }, nowIso);
     } catch (error) {

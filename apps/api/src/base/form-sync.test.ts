@@ -216,3 +216,19 @@ test("field mapping overrides are validated and duplicate roles are rejected", (
   assert.match(String(parseBaseFormFields(JSON.stringify({ title: "" })).error), /must be a non-empty string/);
   assert.match(String(parseBaseFormFields(JSON.stringify({ title: "重复", description: "重复" })).error), /same field/);
 });
+
+test("读到页数上限就标记 truncated 并审计，而不是静默当成读完了", async () => {
+  const h = harness([[validRow("rec-a")], [validRow("rec-b")]]);
+  const report = await syncBaseFormIntake({ client: h.client, requirements: h.requirements, audit: h.audit, fields, now, tableId: "tbl_test", flags: h.flags, maxPages: 1 });
+  assert.equal(report.pages, 1);
+  assert.equal(report.scanned, 1);
+  assert.equal(report.truncated, true);
+  assert.equal(report.readFailed, false);
+  assert.equal(h.audits.at(-1)?.eventType, "base_form.scan_truncated");
+  assert.deepEqual(h.audits.at(-1)?.safeDetails, { stage: "scan", reason: "page_limit", processed: 1, sourceType: "base_form" });
+  assert.equal(h.flagWrites.at(-1)?.value.truncated, true);
+  // 读满的情况下不误报：读到最后且 hasMore=false 时 truncated 为 false。
+  const complete = harness([[validRow("rec-x")]]);
+  const done = await syncBaseFormIntake({ client: complete.client, requirements: complete.requirements, audit: complete.audit, fields, now, tableId: "tbl_test" });
+  assert.equal(done.truncated, false);
+});

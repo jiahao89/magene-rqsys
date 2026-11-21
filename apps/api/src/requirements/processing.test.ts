@@ -3,11 +3,11 @@
 // 完整 HTTP→worker→Base 链路由既有套件覆盖（T01-AC05），不在此重复。
 import test from "node:test";
 import assert from "node:assert/strict";
-import { analysisPiiMarkers, createRequirementWorkflow, enqueueSupersededPush, type RequirementWorkflowDeps, type TouchedRequirement } from "./processing.js";
+import { analysisPiiMarkers, createRequirementWorkflow, enqueueSupersededPush, loadDirectoryRosterNames, resetRosterFailureThrottle, type RequirementWorkflowDeps, type TouchedRequirement } from "./processing.js";
 import { FeishuApiError } from "../base/transport.js";
 import { AiProviderError } from "../analysis/provider.js";
 import { isIntakeComplete } from "../domain/workflow.js";
-import type { RequirementRecord } from "../domain/persistence.js";
+import type { AuditEventRecord, RequirementRecord } from "../domain/persistence.js";
 import type { AiProvider, ProviderAnalysisInput } from "../analysis/provider.js";
 import type { ValidatedAnalysis } from "../analysis/contract.js";
 
@@ -429,4 +429,20 @@ test("group-pool Base push uses the group target, never the product adapter", as
   await workflow.handleBasePushJob({ payload: { requirementId: "req-1", sourceVersion: 1, analysisVersion: 0 } });
   assert.deepEqual(pushed, ["group"]);
   assert.deepEqual(usedFields, { sourceUrl: "TB链接" });
+});
+
+test("目录花名册读取失败写审计而不是静默降级为空名单", async () => {
+  resetRosterFailureThrottle();
+  const audits: AuditEventRecord[] = [];
+  const failing = { directory: { async listPeople(): Promise<Array<{ name: string }>> { throw new TypeError("directory down"); } }, audit: { async append(event: AuditEventRecord) { audits.push(event); } } as never };
+  assert.deepEqual(await loadDirectoryRosterNames(failing), []);
+  assert.equal(audits.length, 1);
+  assert.equal(audits[0]!.eventType, "analysis.roster_unavailable");
+  assert.equal(audits[0]!.result, "failed");
+  assert.deepEqual(audits[0]!.safeDetails, { stage: "roster", reason: "directory_read_failed", errorClass: "TypeError" });
+
+  // 节流窗口内再次失败不重复写审计；正常读取返回姓名并过滤空名。
+  assert.deepEqual(await loadDirectoryRosterNames(failing), []);
+  assert.equal(audits.length, 1);
+  assert.deepEqual(await loadDirectoryRosterNames({ directory: { async listPeople() { return [{ name: "张三" }, { name: "" }]; } } }), ["张三"]);
 });

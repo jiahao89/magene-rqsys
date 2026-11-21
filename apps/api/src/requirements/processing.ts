@@ -99,6 +99,53 @@ export function analysisPiiMarkers(
     .filter((value): value is string => typeof value === "string" && value.length > 0);
 }
 
+/** 目录读取失败留痕的节流窗口：目录长时间不可用时不要每条需求刷一条审计/日志。 */
+const ROSTER_FAILURE_THROTTLE_MS = 5 * 60_000;
+let lastRosterFailureAt = 0;
+
+/** 测试用：重置节流状态，避免模块级状态让用例互相影响。 */
+export function resetRosterFailureThrottle(): void {
+  lastRosterFailureAt = 0;
+}
+
+/**
+ * 团队目录花名册（PII 掩码名单）。手工需求没有来源配置，目录是掩码线索的唯一来源。
+ * 读取失败不阻断分析/评估，但**不再静默**：写一条审计并按进程节流打一行 stderr，
+ * 让「掩码覆盖降级」在运维侧可见（否则姓名会以原始文本进入模型）。
+ */
+export async function loadDirectoryRosterNames(deps: {
+  directory?: { listPeople(): Promise<Array<{ name: string | null }>> } | undefined;
+  audit?: AuditEventRepository | undefined;
+  log?: ((line: string) => void) | undefined;
+  now?: (() => Date) | undefined;
+}): Promise<string[]> {
+  try {
+    const people = await deps.directory?.listPeople() ?? [];
+    return people.map((person) => person.name).filter((name): name is string => Boolean(name));
+  } catch (error) {
+    const nowMs = (deps.now ?? (() => new Date()))().getTime();
+    const firstInWindow = nowMs - lastRosterFailureAt >= ROSTER_FAILURE_THROTTLE_MS;
+    if (firstInWindow) lastRosterFailureAt = nowMs;
+    const errorClass = String((error as { name?: unknown } | null)?.name ?? "Error");
+    deps.log?.(`directory roster unavailable (${errorClass}); PII masking falls back to requirement names only`);
+    if (firstInWindow && deps.audit) {
+      try {
+        await deps.audit.append({
+          id: randomUUID(),
+          actorId: null,
+          eventType: "analysis.roster_unavailable",
+          entityType: "team_directory",
+          entityId: "roster",
+          result: "failed",
+          safeDetails: { stage: "roster", reason: "directory_read_failed", errorClass },
+          occurredAt: new Date(nowMs).toISOString(),
+        });
+      } catch { /* 审计失败不阻断分析；掩码仍按剩余名单执行 */ }
+    }
+    return [];
+  }
+}
+
 export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
   const log = deps.log ?? ((line: string) => { process.stderr.write(`${line}\n`); });
   const createProvider = deps.createProvider ?? (() => createDeepSeekProvider());
@@ -111,10 +158,9 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
     jobs: deps.repositories.jobs, audit: deps.repositories.audit,
   });
 
-  /** 掩码名单 = 团队目录花名册（+TB 来源花名册，由调用方并入）。目录读取失败不阻断分析（名单缺失只降级掩码覆盖）。 */
+  /** 掩码名单 = 团队目录花名册（+TB 来源花名册，由调用方并入）。失败留痕由 loadDirectoryRosterNames 负责。 */
   async function loadRosterNames(): Promise<string[]> {
-    try { return (await deps.repositories.directory?.listPeople() ?? []).map((person) => person.name).filter((name): name is string => Boolean(name)); }
-    catch { return []; }
+    return loadDirectoryRosterNames({ directory: deps.repositories.directory, audit: deps.repositories.audit, log });
   }
 
   // I3-3：自动分析入队前读取一次暂停状态（按 tick 读一次，避免逐条查库）。

@@ -24,6 +24,7 @@ import { EXPECTED_LATEST_MIGRATION } from "../db/expected-migration.js";
 import { jsonError, redactSecrets } from "./errors.js";
 import { CHAT_PROMPT_VERSION, ChatDraftRequestSchema, createDraftRateLimiter, type ChatIntakeExtractor, type DraftRateLimit } from "../intake/chat-extract.js";
 import { ASSESSMENT_RUNNING_STALE_MS, AssessmentContractError, type AssessmentRunner } from "../assessment/service.js";
+import { analysisPiiMarkers, loadDirectoryRosterNames } from "../requirements/processing.js";
 import { readAiPause } from "../ops/ai-pause.js";
 import { decodeRequirementCursor } from "../application/requirement-cursor.js";
 import { decodeBatchCursor } from "../application/batch-cursor.js";
@@ -1326,7 +1327,16 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
       const assessmentAnalysis = repositories.analyses
         ? await repositories.analyses.latest(assessmentRequirementId).catch(() => null)
         : null;
-      return json(assessmentDto(await dependencies.assessments.run({ requirement: assessmentRequirement, inputs, actorId: auth.actor.id, analysis: assessmentAnalysis })), 201);
+      // 与主分析同口径的 PII 名单：来源花名册 + 目录花名册 + 提出人/执行人。
+      // 目录读取失败会写审计（loadDirectoryRosterNames），不再静默降级为空名单。
+      const assessmentRosterNames: string[] = [];
+      if (assessmentRequirement.sourceConfigId) {
+        try { assessmentRosterNames.push(...(await repositories.sources.get(assessmentRequirement.sourceConfigId))?.ownerNames ?? []); }
+        catch { /* 来源读取失败只降低掩码覆盖，不阻断评估 */ }
+      }
+      assessmentRosterNames.push(...await loadDirectoryRosterNames({ directory: repositories.directory, audit: repositories.audit }));
+      const assessmentMarkers = analysisPiiMarkers(assessmentRequirement, assessmentRosterNames);
+      return json(assessmentDto(await dependencies.assessments.run({ requirement: assessmentRequirement, inputs, actorId: auth.actor.id, analysis: assessmentAnalysis, piiMarkers: assessmentMarkers })), 201);
     } catch (cause) {
       // 与 intake 口径一致：单飞 409；限流 429 + Retry-After；密钥/请求配置事故 500；其余按依赖暂不可用。
       const errorClass = String((cause as { code?: unknown })?.code ?? "unknown");

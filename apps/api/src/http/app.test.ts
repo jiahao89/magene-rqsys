@@ -524,7 +524,8 @@ test("requirement assessments list history, create on demand and map provider fa
   }), d);
   assert.equal(ok.status, 201);
   assert.deepEqual(await ok.json(), dto);
-  assert.deepEqual(runs, [{ requirement, inputs: { background: "补充背景", scenario: "通勤" }, actorId: "actor-1", analysis: analysisRun }]);
+  // 评估与主分析同口径：来源花名册（source.ownerNames）并入 PII 掩码名单。
+  assert.deepEqual(runs, [{ requirement, inputs: { background: "补充背景", scenario: "通勤" }, actorId: "actor-1", analysis: analysisRun, piiMarkers: ["Lee"] }]);
   const missing = await handleApiRequest(new Request("http://localhost/api/requirements/77777777-7777-4777-8777-777777777777/assessments"), d);
   assert.equal(missing.status, 404);
   const noRunner = makeDependencies();
