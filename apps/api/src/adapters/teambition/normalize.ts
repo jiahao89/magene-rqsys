@@ -130,6 +130,29 @@ export function resolveFieldMap(pool: SourcePool | undefined, fieldMap: Teambiti
   return fieldMap;
 }
 
+/**
+ * TB 非 rtf 字段的取值归一化：text 字段常返回 [{title}]，单选/多选返回 [{name}]，
+ * 也有 [{text}] 形状。统一取可读文本后合并（、分隔）；纯字符串 trim；其余返回 null。
+ * 附件引用/自定义字段保持原数组，不经过这里。
+ */
+function plainFieldText(value: unknown): string | null {
+  const pick = (entry: unknown): string | null => {
+    if (typeof entry === "string") return entry.trim() || null;
+    if (!entry || typeof entry !== "object") return null;
+    const record = entry as { title?: unknown; name?: unknown; text?: unknown };
+    for (const key of ["title", "name", "text"] as const) {
+      const candidate = record[key];
+      if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+    }
+    return null;
+  };
+  if (Array.isArray(value)) {
+    const parts = value.map(pick).filter((part): part is string => part !== null);
+    return parts.length > 0 ? parts.join("、") : null;
+  }
+  return pick(value);
+}
+
 export function normalizeTeambitionTask(
   projectId: string,
   task: TeambitionTaskRecord,
@@ -157,7 +180,13 @@ export function normalizeTeambitionTask(
       if (domainField === "proposerName") mappedFields.proposerUserId = lookup.userIds[0] ?? null;
       continue;
     }
-    mappedFields[domainField] = rawValue;
+    // 非 rtf / 非用户字段：text、select 等返回对象数组，统一取可读文本；
+    // 附件引用/自定义字段仍是数组，保持原值交给下游按数组处理。
+    if (domainField === "attachmentRefs" || domainField === "customFields") {
+      mappedFields[domainField] = rawValue;
+      continue;
+    }
+    mappedFields[domainField] = plainFieldText(rawValue);
   }
 
   const mappedIds = new Set(Object.values(fieldMap));

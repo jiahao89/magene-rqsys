@@ -89,3 +89,34 @@ test("product pool keeps an empty map and an explicitly configured group map win
   ]), resolveFieldMap("product", {}));
   assert.deepEqual(normalized.mappedFields, {});
 });
+
+// 0031：TB text/select 字段的值是对象数组（[{title}] / [{name}]），必须取可读文本才会落库。
+test("non-rtf text and select values are normalized to readable text", () => {
+  const normalized = normalizeTeambitionTask("project-group", task([
+    { _customfieldid: "product-model", value: [{ title: "MageneC706" }] },
+    { _customfieldid: "select-type", value: [{ name: "P1" }] },
+    { _customfieldid: "plain-url", value: "  https://teambition.example/task/1  " },
+    { _customfieldid: "multi", value: [{ title: "A" }, { name: "B" }] },
+    { _customfieldid: "unrecognized", value: 42 },
+  ]), { productModel: "product-model", requirementType: "select-type", sourceUrl: "plain-url", scope: "multi", acceptanceCriteria: "unrecognized" });
+  assert.equal(normalized.mappedFields.productModel, "MageneC706");
+  assert.equal(normalized.mappedFields.requirementType, "P1");
+  assert.equal(normalized.mappedFields.sourceUrl, "https://teambition.example/task/1");
+  assert.equal(normalized.mappedFields.scope, "A、B");
+  assert.equal(normalized.mappedFields.acceptanceCriteria, null);
+});
+
+test("rtf, user and array-shaped fields keep their previous projections", () => {
+  const normalized = normalizeTeambitionTask("project-1", task([
+    { _customfieldid: "description", type: "rtf", value: [{ meta: { html: "<p>正文</p>" } }] },
+    { _customfieldid: "proposer", type: "lookup", value: [{ _id: "record-1", title: "张三", meta: { userid: "tb-user-1" } }] },
+    { _customfieldid: "attachments", value: [{ title: "a.pdf" }] },
+    { _customfieldid: "customs", value: [{ title: "raw" }] },
+  ]), { description: "description", proposerName: "proposer", attachmentRefs: "attachments", customFields: "customs" });
+  assert.equal(normalized.mappedFields.description, "正文");
+  assert.equal(normalized.mappedFields.proposerName, "张三");
+  assert.equal(normalized.mappedFields.proposerUserId, "tb-user-1");
+  // 附件引用与自定义字段保持数组，不参与文本归一化（下游按数组消费）。
+  assert.deepEqual(normalized.mappedFields.attachmentRefs, [{ title: "a.pdf" }]);
+  assert.deepEqual(normalized.mappedFields.customFields, [{ title: "raw" }]);
+});
