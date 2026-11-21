@@ -14,7 +14,7 @@
 
 import { randomUUID } from "node:crypto";
 import type { RequirementQueryRepository, PersonMappingRepository, BasePushRunRepository, AuditEventRepository, AnalysisRunRepository, SourceSnapshotRepository, RequirementScoringRepository } from "../application/repositories.js";
-import type { AnalysisRunRecord, FeishuIdType, PersonMappingRecord, RequirementRecord, SourceSnapshotRecord } from "../domain/persistence.js";
+import type { AnalysisRunRecord, FeishuIdType, PersonMappingRecord, RequirementRecord, SourceSnapshotRecord, SourcePool } from "../domain/persistence.js";
 import { baseSourceMethodValue, type FeishuBasePushAdapter, type OmittedField } from "./client.js";
 import { BaseKeyConflictError, FeishuApiError, isRetryableFeishuFailure } from "./transport.js";
 import { normalizeOwnerName } from "../owner/mapping.js";
@@ -32,12 +32,26 @@ export interface BasePushServiceDeps {
   base: FeishuBasePushAdapter;
   sourceProjectId: string;
   baseFields: { projectId?: string; requirementId: string; platformRequirementId?: string; owner: string; source: Record<string, string>; ai: Record<string, string>; pm: string[] };
+  /**
+   * 0031：需求归属池。集团池的 Base 表有「TB链接」列，推送时补写 sourceUrl；
+   * 产品池「TB链接」列为空是本轮不修的历史缺口，所以只对 group 生效。
+   */
+  pool?: SourcePool;
   actorId: string | null;
   /** PM Leader 的飞书 user_id（32 位十六进制）：first_push 的固定收件人，也是其它事件无负责人时的兜底收件人；缺省读 RQSYS_PM_LEADER_USER_ID。 */
   pmLeaderUserId?: string | null;
   /** Web 工作台基地址（需求深链的 base）；缺省读 RQSYS_WEB_BASE_URL，再缺省用正式工作台地址。 */
   webBaseUrl?: string | null;
   now?: () => Date;
+}
+
+// 集团表「TB链接」列要的是可点击的任务地址。数据库的 source_url 只在 field_map 里显式配了才写，
+// 集团池默认映射不含它，所以为空时按 TB 任务地址派生（与详情接口的展示链接同一规则）。
+const TEAMBITION_TASK_BASE_URL = process.env.RQSYS_TEAMBITION_TASK_BASE_URL ?? "https://teambition.magene.cn/task";
+function baseSourceUrl(requirement: RequirementRecord): string | null {
+  if (requirement.sourceUrl) return requirement.sourceUrl;
+  if (requirement.sourceType !== "teambition" || !requirement.teambitionRequirementId) return null;
+  return `${TEAMBITION_TASK_BASE_URL}/${requirement.teambitionRequirementId}`;
 }
 
 /** 4 类通知事件（负责人分配/变更同属负责人事件）。 */
@@ -434,6 +448,8 @@ export function createBasePushService(deps: BasePushServiceDeps) {
       const sourceCreatedAt = req.sourceCreatedAt ? Date.parse(req.sourceCreatedAt) : Number.NaN;
       // 5c-2：来源方式与 5c-1 徽标同口径；由 source_type + source_payload.intakeOrigin 判定。
       const sourceMethod = baseSourceMethodValue(req.sourceType, req.sourcePayload?.intakeOrigin);
+      // 0031：集团池写「TB链接」；产品池不写（历史缺口本轮不动）。
+      const groupSourceUrl = deps.pool === "group" ? baseSourceUrl(req) : null;
       pushedResult = await deps.base.push({
         projectId: deps.sourceProjectId, requirementId: req.teambitionRequirementId, platformRequirementId: req.platformRequirementId, requirementDbId: req.id,
         // 每次推送都写深链（含首推静默）：PM 从通知按钮点进来能直接打开该需求详情。
@@ -444,6 +460,8 @@ export function createBasePushService(deps: BasePushServiceDeps) {
         idempotencyKey,
         sourceValues: {
           ...(Number.isFinite(sourceCreatedAt) ? { createdAt: sourceCreatedAt } : {}),
+          // 0031：集团池补写 TB 链接（映射到集团表「TB链接」列）；产品池保持原样。
+          ...(groupSourceUrl === null ? {} : { sourceUrl: groupSourceUrl }),
         },
         aiValues: ai,
         ...(sourceMethod ? { sourceMethod } : {}),

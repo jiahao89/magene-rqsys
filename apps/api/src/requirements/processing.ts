@@ -322,7 +322,7 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
       const service = createBasePushService({
         requirements: deps.repositories.requirements, people: deps.repositories.people, basePushes: deps.repositories.basePushes,
         audit: deps.repositories.audit, analyses: deps.repositories.analyses, ...(deps.repositories.scoring ? { scoring: deps.repositories.scoring } : {}), sourceSnapshots: deps.repositories.sourceSnapshots,
-        base: target.base, sourceProjectId: source?.externalProjectId ?? "", baseFields: target.baseFields, actorId: typeof job.payload.actorId === "string" ? job.payload.actorId : null,
+        base: target.base, sourceProjectId: source?.externalProjectId ?? "", baseFields: target.baseFields, pool, actorId: typeof job.payload.actorId === "string" ? job.payload.actorId : null,
       });
       const idempotencyKey = typeof job.payload.idempotencyKey === "string"
         ? job.payload.idempotencyKey

@@ -54,6 +54,7 @@ interface CapturedPushInput {
   substantiveChanged: boolean;
   requirementLink?: string;
   sourceMethod?: string;
+  sourceValues?: { createdAt?: number; sourceUrl?: string };
   notification?: { eventId: string; eventType: string; recipientUserId: string | null; recipientIdType: "open_id" | "user_id" | "union_id"; ownerMergeUserId: string | null };
   aiValues?: { module?: string; priority?: "P0" | "P1" | "P2" | "P3"; analysisVersion?: number };
 }
@@ -77,6 +78,8 @@ function makeHarness(options: {
   withLock?: boolean;
   /** 模拟推送期间新一轮同步推进 source_version（A→B→A 竞态）。 */
   versionAfterPush?: number;
+  /** 0031：需求归属池；集团池才补写 TB链接（sourceUrl）。 */
+  pool?: "product" | "group";
 } = {}) {
   const auditEvents: { eventType: string; result: string; safeDetails: Record<string, unknown> }[] = [];
   const req = options.req ?? requirement();
@@ -144,6 +147,7 @@ function makeHarness(options: {
     sourceProjectId: "verified-source-project",
     baseFields: { projectId: "project", requirementId: "requirement", owner: "owner", source: {}, ai: {}, pm: ["PM状态"] },
     actorId: "operator-1",
+    ...(options.pool === undefined ? {} : { pool: options.pool }),
     ...(options.pmLeaderUserId === undefined ? {} : { pmLeaderUserId: options.pmLeaderUserId }),
     ...(options.webBaseUrl === undefined ? {} : { webBaseUrl: options.webBaseUrl }),
     now: () => new Date("2026-10-10T00:00:00.000Z"),
@@ -957,4 +961,32 @@ test("V02-T03 manual requirements push with a null TB id and the platform key", 
   assert.equal(result.kind, "pushed");
   assert.equal(h.baseInput?.requirementId, null);
   assert.equal(h.baseInput?.platformRequirementId, "RQ-000001");
+});
+
+test("集团池推送把 TB 链接写进 sourceValues，产品池保持不写", async () => {
+  // 映射值优先：field_map 显式给了链接就用它。
+  const mapped = makeHarness({ pool: "group", req: requirement({ sourceUrl: "https://custom.example/link" }) });
+  await mapped.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(mapped.baseInput?.sourceValues?.sourceUrl, "https://custom.example/link");
+
+  // 191 条的真实形态：DB 的 source_url 为空（集团池默认映射不写该列），按 TB 任务地址派生。
+  const derived = makeHarness({ pool: "group", req: requirement({ sourceUrl: null, teambitionRequirementId: "tb-task-1" }) });
+  await derived.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(derived.baseInput?.sourceValues?.sourceUrl, "https://teambition.magene.cn/task/tb-task-1");
+
+  // 产品池「TB链接」列为空是本轮不修的历史缺口：即使能派生也不写。
+  const product = makeHarness({ pool: "product", req: requirement({ sourceUrl: "https://teambition.magene.cn/task/tb-task-1" }) });
+  await product.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(product.baseInput?.sourceValues?.sourceUrl, undefined);
+  assert.deepEqual(Object.keys(product.baseInput?.sourceValues ?? {}), []);
+
+  // 未传 pool（旧调用方）按产品池处理。
+  const legacy = makeHarness({ req: requirement({ sourceUrl: null }) });
+  await legacy.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(legacy.baseInput?.sourceValues?.sourceUrl, undefined);
+
+  // 非 TB 行没有任务地址可推，集团池也不写空值。
+  const manual = makeHarness({ pool: "group", req: requirement({ sourceType: "web_manual", sourceUrl: null, teambitionRequirementId: null }) });
+  await manual.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(manual.baseInput?.sourceValues?.sourceUrl, undefined);
 });
