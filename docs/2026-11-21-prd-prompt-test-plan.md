@@ -16,7 +16,7 @@
 - L2 必须能捕获并断言**发给模型的 messages**（PII 掩码、提出人不在、调研结论在）。
 - L3 只跑「成功路径 + 版本化 + UI/复制」，失败路径不拿线上供应商做实验。
 
-**契约（2026-11-21 后端口径）**：`POST` 201 返回裸对象 `{id, version, status, output, promptVersion, model, investigationNotes, assessmentVersion, errorCode, createdAt, completedAt}`；`GET` 返回 `{items}`（同结构，按 version DESC）。该接口 **没有 `pool` 参数**，池由需求 UUID 推导，跨池不返回 404。
+**契约（2026-11-21 最终口径）**：`POST` 201 返回裸对象 `{id, version, status, output, promptVersion, model, investigationNotes, assessmentVersion, errorCode, createdAt, completedAt}`；`GET` 返回 `{items}`（同结构，按 version DESC）。**不传 `pool` 时按需求 UUID 推导；传了且与所属池不符 → 404**（与详情/写接口守卫一致）；同池或省略 → 正常 200/201。
 
 ## 2. 测试数据与清理
 
@@ -80,8 +80,8 @@
 
 | ID | 场景 | 方法 | 期望 |
 |---|---|---|---|
-| S3-21 | 产品 UUID 带 `?pool=group` / `?pool=product` / 不带 | L2/L3 | **结果一致**（201/响应体相同）；该接口无 `pool` 参数，按 UUID 推导 |
-| S3-22 | 集团 UUID 带任意 `?pool` | L2 | **结果一致**（同样 201）；集团池只读约束不受影响 |
+| S3-21 | 产品 UUID：不带 / `?pool=product` / `?pool=group` | L2/L3 | 前两者 200；`?pool=group` → **404**（跨池守卫） |
+| S3-22 | 集团 UUID：不带 / `?pool=group` / `?pool=product` | L2 | 前两者 200（列表为空也 200）；`?pool=product` → **404** |
 | S3-23 | 不存在的 UUID | L2 | 404 `NOT_FOUND` |
 | S3-24 | 输出安全 | L2/L3 | 无 PII/密钥/Base ID/record ID/裸 URL；无提出人 |
 | S3-25 | 无副作用 | L3 | 只新增 `requirement_prd_prompts` 行；需求、评估、分析、Base 两表、通知事件计数不变 |
@@ -114,5 +114,5 @@
 ## 6. 风险与备注
 
 - 线上 3 次模型调用需单独报备，评估/提示词表无删除接口，清理依赖 DB 权限。
-- 集团的 PRD 提示词可用性（S3-23）只做 API 级验证，不在集团详情点生成（集团池保持只读）。
+- 集团的 PRD 提示词可用性（S3-22）只做 API 级验证，不在集团详情点生成（集团池保持只读）。
 - 若后端先落 S1、前端未就绪，L3 的 UI/复制项（S3-02/13/27）顺延到 S2 完成后补跑。
