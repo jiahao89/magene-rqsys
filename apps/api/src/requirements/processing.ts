@@ -368,7 +368,8 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
       const idempotencyKey = typeof job.payload.idempotencyKey === "string"
         ? job.payload.idempotencyKey
         : basePushIdempotencyKey(requirementId, requirement.sourceVersion, latestAnalysis?.analysisVersion ?? 0);
-      const outcome = await service.pushRequirement(requirementId, idempotencyKey);
+      // 撤销人工负责人的推送带 clearOwner：Base「执行人」必须显式清空（普通空负责人不写该字段）。
+      const outcome = await service.pushRequirement(requirementId, idempotencyKey, job.payload.clearOwner === true ? { clearOwner: true } : undefined);
       // 推送期间内容前进（例如 A→B→A 的竞态）：本次推的是旧版本，为当前版本补一次入队。
       try {
         await enqueueSupersededPush(deps, requirementId, requirement.sourceVersion, typeof job.payload.actorId === "string" ? job.payload.actorId : null);

@@ -55,6 +55,7 @@ interface CapturedPushInput {
   requirementLink?: string;
   sourceMethod?: string;
   sourceValues?: { createdAt?: number; sourceUrl?: string };
+  clearOwner?: boolean;
   notification?: { eventId: string; eventType: string; recipientUserId: string | null; recipientIdType: "open_id" | "user_id" | "union_id"; ownerMergeUserId: string | null };
   aiValues?: { module?: string; priority?: "P0" | "P1" | "P2" | "P3"; analysisVersion?: number };
 }
@@ -1188,4 +1189,31 @@ test("产品池有执行人映射时发给执行人，而不是 Base 负责人",
   assert.equal(result.kind, "pushed");
   assert.equal(h.baseInput?.notification?.recipientUserId, "ou-owner");
   assert.equal(h.baseInput?.notification?.recipientIdType, "open_id");
+});
+
+// ---- S5 冒烟回归：撤销负责人不重发通知、不清空执行人 ----
+
+test("AI 重试成功只在那一推里通知，后续静默推送不再改写通知事件ID", async () => {
+  // 冒烟实测：v1–v4 失败、v5 成功是持续条件，撤销负责人时又被当成 ai_retry_success 重发了一条。
+  // 判据：上一次成功推送发生在本次分析完成之后 → 说明「失败→成功」已经报过。
+  const latest = analysisRun({ analysisVersion: 2, status: "analyzed", completedAt: "2026-10-09T00:00:00.000Z" });
+  const h = makeHarness({
+    lastSuccessful: pushRun({ sourceVersion: 1, completedAt: "2026-10-09T00:00:05.000Z" }),
+    sourceSnapshot: sourceSnapshot({ substantiveHash: "substantive-v2", payload: { sourceExecutorId: null, mappedFields: { executorName: null } } }),
+    latestAnalysis: latest,
+    analysisHistory: [analysisRun({ analysisVersion: 1, status: "failed_retryable" }), latest],
+  });
+  const result = await h.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(result.kind, "pushed");
+  assert.equal(h.baseInput?.notification, undefined);
+});
+
+test("撤销人工负责人的推送把 clearOwner 透传给 Base 适配器", async () => {
+  const h = makeHarness();
+  await h.service.pushRequirement("req-1", "push:req-1:v2", { clearOwner: true });
+  assert.equal(h.baseInput?.clearOwner, true);
+  // 普通推送不带该标记：空负责人仍然不改写 Base 已有执行人。
+  const plain = makeHarness();
+  await plain.service.pushRequirement("req-1", "push:req-1:v2");
+  assert.equal(plain.baseInput?.clearOwner, undefined);
 });

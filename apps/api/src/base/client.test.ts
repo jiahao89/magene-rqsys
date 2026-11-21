@@ -679,3 +679,18 @@ test("URL 类型的来源字段写成 {link,text}，普通文本字段仍是字�
   }).push(input);
   assert.equal((legacy.row()!.fields as Record<string, unknown>)["TB链接"], url);
 });
+
+test("撤销人工负责人时显式清空 Base 执行人，普通空负责人仍保留 Base 已有负责人", async () => {
+  // 冒烟实测：撤销负责人后 Base「执行人」仍挂着贾浩，旧收件人也就一直有效。
+  const fake = fakeBase({ recordId: "record-1", fields: { "TB需求ID": "r", "需求平台ID": "RQ-000001", "执行人": [{ id: "u-assignee" }] } });
+  const adapter = new FeishuBasePushAdapter(fake.client, { requirementId: "TB需求ID", platformRequirementId: "需求平台ID", owner: "执行人", source: { title: "标题" }, ai: {}, pm: [] });
+  const base = { projectId: "p", requirementId: "r", platformRequirementId: "RQ-000001", requirementDbId: "11111111-2222-4333-8444-555555555555", title: "Title", owner: null, sourceVersion: 2, substantiveChanged: false, idempotencyKey: "p:r:v2" };
+
+  // 普通空负责人（TB 执行人没有映射）：不写该字段，PM 在 Base 手改的负责人不受影响。
+  await adapter.push(base);
+  assert.deepEqual(fake.row()?.fields["执行人"], [{ id: "u-assignee" }]);
+
+  // 撤销人工负责人：必须清空。
+  await adapter.push({ ...base, clearOwner: true, idempotencyKey: "p:r:v3" });
+  assert.deepEqual(fake.row()?.fields["执行人"], []);
+});

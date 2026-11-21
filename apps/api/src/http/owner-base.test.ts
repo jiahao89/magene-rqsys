@@ -203,3 +203,21 @@ test("clearing a manual owner on a requirement without TB executor lands on not_
   assert.deepEqual(calls, ["released:not_required"]);
   assert.deepEqual(await response.json(), { requirementId: "req-1", ownerState: "not_required", status: "queued" });
 });
+
+test("撤销人工负责人的推送作业带 clearOwner，分配作业不带", async () => {
+  // 冒烟回归：撤销后 Base 执行人没清空，通知收件人也还挂旧值。清空指令必须由撤销路径显式下发，
+  // 不能靠「owner 为空就不写」的默认语义（那一条是给未映射的 TB 执行人保护的）。
+  const reset = deps();
+  const repositories = reset.dependencies.repositories as unknown as { requirements: Record<string, unknown> };
+  const base = await (repositories.requirements.get as () => Promise<RequirementRecord | null>)();
+  repositories.requirements.get = async () => ({ ...base!, pipeline: { ...base!.pipeline, owner: "manually_mapped" }, manualOwner: { feishuUserId: "u-assignee", feishuIdType: "user_id", name: "毕梓浩", assignedBy: "operator", assignedAt: "2026-10-09T00:00:00.000Z", pushedFeishuUserId: null, assignmentVersion: 1 } });
+  repositories.requirements.releaseManualOwner = async () => ({});
+  const cleared = await handleApiRequest(new Request("http://localhost/api/requirements/req-1/owner", { method: "DELETE" }), reset.dependencies);
+  assert.equal(cleared.status, 200);
+  assert.equal((reset.queued() as { payload: Record<string, unknown> }).payload.clearOwner, true);
+
+  const assign = deps();
+  const assigned = await handleApiRequest(new Request("http://localhost/api/requirements/req-1/owner", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ feishuUserId: "ou-user", feishuIdType: "open_id" }) }), assign.dependencies);
+  assert.equal(assigned.status, 200);
+  assert.equal((assign.queued() as { payload: Record<string, unknown> }).payload.clearOwner, undefined);
+});

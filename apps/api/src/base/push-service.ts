@@ -232,6 +232,8 @@ export function createBasePushService(deps: BasePushServiceDeps) {
     hadSuccessfulPush: boolean;
     substantiveChanged: boolean;
     latestAnalysis: AnalysisRunRecord | null;
+    /** 上一次成功推送的完成时间（没有成功推送时为 null）：用于判断一次性事件是否已经报过。 */
+    previousSuccessfulPushAt: string | null;
     /** 本次是否会写 Base 负责人；会写时以应用负责人为准，不读 Base 旧值。 */
     willWriteOwner: boolean;
     /** 惰性读取 Base 行当前保留的负责人；只在确实需要收件人判定时调用，避免每次推送多读两次 Base。 */
@@ -268,6 +270,13 @@ export function createBasePushService(deps: BasePushServiceDeps) {
         .filter((run) => run.sourceVersion === latestAnalysis.sourceVersion && run.analysisVersion < latestAnalysis.analysisVersion)
         .sort((left, right) => right.analysisVersion - left.analysisVersion)[0] ?? null;
       aiRetrySuccess = previousAnalysis?.status === "failed_retryable";
+    }
+    // ai_retry_success 是一次性事件，不是持续状态：只要「失败→成功」那次推送已经发过，
+    // 同一分析版本后续的每次推送（例如撤销负责人）都不能再认领它，否则事件ID被反复改写，
+    // 撤销时还会把一条早已发过的通知再发一遍。判据：上一次成功推送发生在本次分析完成之后。
+    if (aiRetrySuccess && latestAnalysis?.completedAt && input.previousSuccessfulPushAt
+      && input.previousSuccessfulPushAt > latestAnalysis.completedAt) {
+      aiRetrySuccess = false;
     }
 
     let eventType: NotificationEventType | null = null;
@@ -349,7 +358,7 @@ export function createBasePushService(deps: BasePushServiceDeps) {
     return false;
   }
 
-  async function pushRequirementUnlocked(requirementId: string, idempotencyKey: string): Promise<PushOutcome> {
+  async function pushRequirementUnlocked(requirementId: string, idempotencyKey: string, options?: { clearOwner?: boolean }): Promise<PushOutcome> {
     const req = await deps.requirements.get(requirementId);
     if (!req) return { kind: "not_found" };
     if (!isIntakeComplete(req.pipeline.pull)) return { kind: "conflict", reason: "intake_incomplete" };
@@ -446,6 +455,7 @@ export function createBasePushService(deps: BasePushServiceDeps) {
       const notification = await computeNotification({
         req, owner, previousSource,
         hadSuccessfulPush: Boolean(lastSuccessfulPush),
+        previousSuccessfulPushAt: lastSuccessfulPush?.completedAt ?? null,
         substantiveChanged, latestAnalysis,
         willWriteOwner: Boolean(baseOwner),
         resolveBaseOwner: async () => lastSuccessfulPush
@@ -463,6 +473,7 @@ export function createBasePushService(deps: BasePushServiceDeps) {
         requirementLink: requirementDeepLink(webBaseUrl, req.id),
         title: req.title, description: req.description,
         owner: baseOwner,
+        ...(options?.clearOwner ? { clearOwner: true } : {}),
         sourceVersion: req.sourceVersion, pushedAt: now().toISOString(), substantiveChanged,
         idempotencyKey,
         sourceValues: {
@@ -541,8 +552,8 @@ export function createBasePushService(deps: BasePushServiceDeps) {
      * Postgres 实现走「同一事务 + pg_advisory_xact_lock」，锁覆盖读 req → 建 run → 外部写 → 落库；
      * 内存/测试桩没有该能力时直接执行。没有锁实现的仓储保持原行为。
      */
-    async pushRequirement(requirementId: string, idempotencyKey: string): Promise<PushOutcome> {
-      const run = () => pushRequirementUnlocked(requirementId, idempotencyKey);
+    async pushRequirement(requirementId: string, idempotencyKey: string, options?: { clearOwner?: boolean }): Promise<PushOutcome> {
+      const run = () => pushRequirementUnlocked(requirementId, idempotencyKey, options);
       return deps.requirements.withRequirementLock
         ? deps.requirements.withRequirementLock(requirementId, run)
         : run();

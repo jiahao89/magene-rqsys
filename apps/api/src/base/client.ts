@@ -128,6 +128,11 @@ export interface BasePushInput {
   title: string;
   description?: string | null;
   owner: { userId: string; idType: "open_id" | "user_id" | "union_id" } | null;
+  /**
+   * 撤销人工负责人时置 true：owner 为空也要把 Base「执行人」写成空数组（清空）。
+   * 其余空负责人场景保持旧语义——不写该字段，避免未被映射的 TB 执行人抹掉 PM 手工负责人。
+   */
+  clearOwner?: boolean;
   sourceVersion: number;
   pushedAt?: string;
   substantiveChanged: boolean;
@@ -335,7 +340,11 @@ export class FeishuBasePushAdapter {
       if (pmStatusField) delta[pmStatusField] = this.selectValue(pmStatusField, "待处理");
     }
     // Unmapped and empty TB ownership never erases a human-assigned Base owner.
-    if (input.owner === null) delete delta[this.fields.owner];
+    // 例外：人工负责人被撤销（clearOwner）时必须显式清空，否则 Base 会一直挂着旧执行人和旧收件人。
+    if (input.owner === null) {
+      if (input.clearOwner) delta[this.fields.owner] = [];
+      else delete delta[this.fields.owner];
+    }
     const updated = await this.writeRecord(existing.recordId, delta, input, omittedFields);
     return { recordId: updated.recordId, created: false, omittedFields };
   }

@@ -445,3 +445,23 @@ test("目录花名册读取失败写审计而不是静默降级为空名单", as
   assert.equal(audits.length, 1);
   assert.deepEqual(await loadDirectoryRosterNames({ directory: { async listPeople() { return [{ name: "张三" }, { name: "" }]; } } }), ["张三"]);
 });
+
+test("撤销负责人的 base_push 作业把 clearOwner 传给 Base 适配器", async () => {
+  // 冒烟回归：撤销后 Base 执行人残留，收件人也跟着残留。
+  const h = harness();
+  const seen: Array<Record<string, unknown>> = [];
+  const repositories = {
+    ...h.deps.repositories,
+    basePushes: {
+      async findByIdempotencyKey() { return null; },
+      async latestSuccessful() { return null; },
+      async latest() { return null; },
+      async append(input: Record<string, unknown>) { return { ...input, id: "push-run-1", status: "running", pushVersion: 1, baseRecordId: null, safeErrorCode: null, safeErrorSummary: null, completedAt: null }; },
+      async updateResult() { return null; },
+    },
+    sourceSnapshots: { async getAtVersion() { return null; } },
+  } as unknown as RequirementWorkflowDeps["repositories"];
+  const workflow = createRequirementWorkflow({ ...h.deps, repositories, base: { push: async (input: Record<string, unknown>) => { seen.push(input); return { recordId: "record-1", created: false, omittedFields: [] }; } } as never });
+  await workflow.handleBasePushJob({ payload: { requirementId: "req-1", sourceVersion: 1, analysisVersion: 0, idempotencyKey: "push:req-1:v1", clearOwner: true } });
+  assert.equal(seen[0]?.clearOwner, true);
+});

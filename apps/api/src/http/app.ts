@@ -1522,7 +1522,8 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
       // 映射补齐后由 owner-recheck 用独立 intent 键重推并补负责人。
       const idempotencyKey = basePushIdempotencyKey(req.id, req.sourceVersion, analysisVersion, `owner-reset:v${req.manualOwner?.assignmentVersion ?? 0}:${targetState}`);
       try {
-        await repositories.jobs.enqueue({ jobType: "base_push", dedupeKey: idempotencyKey, payload: { requirementId: req.id, sourceVersion: req.sourceVersion, analysisVersion, idempotencyKey, actorId: auth.actor.id }, availableAt: now });
+        // clearOwner：撤销人工负责人后 Base「执行人」必须清空，不能继续挂着旧负责人和旧收件人。
+        await repositories.jobs.enqueue({ jobType: "base_push", dedupeKey: idempotencyKey, payload: { requirementId: req.id, sourceVersion: req.sourceVersion, analysisVersion, idempotencyKey, actorId: auth.actor.id, clearOwner: true }, availableAt: now });
       } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
       const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "owner.manual_cleared", entityType: "requirement", entityId: req.id, result: "succeeded", safeDetails: { sourceVersion: req.sourceVersion }, occurredAt: now });
       if (auditFailure) return auditFailure;
