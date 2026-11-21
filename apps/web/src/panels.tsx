@@ -2870,7 +2870,8 @@ export function OpsPanel() {
         {pool === "product" && metrics.baseForm && <p className="status-hint">多维表格同步：扫描 {metrics.baseForm.scanned} 行 · 已收录 {metrics.baseForm.created + metrics.baseForm.recorded} · 校验失败 {metrics.baseForm.rejected} · 写回失败 {metrics.baseForm.writeBackFailed} · 读取失败 {metrics.baseForm.readFailed ? "是" : "否"} · 最近 {metrics.baseForm.lastRunAt ? timeLabel(metrics.baseForm.lastRunAt) : "—"}{metrics.baseForm.lastError ? ` · ${metrics.baseForm.lastError}` : ""}</p>}
       </> : <p className="status-hint">运营指标暂不可用。</p>}
     </div>
-    <div className="ops-gates">
+    {/* 上线 Gate 是产品池的上线判据（G1 为产品口径条数）；集团池视图不显示，避免误读。 */}
+    {pool === "product" && <div className="ops-gates">
       <div className="ops-metrics-head">
         <strong>上线 Gate</strong>
         <span className={`status-chip gate-overall is-${gates?.ready ? "pass" : "pending"}`}>{gates ? (gates.ready ? "已满足" : "未满足") : "加载中"}</span>
@@ -2896,7 +2897,7 @@ export function OpsPanel() {
         </li>)}
       </ul> : <p className="status-hint">Gate 状态暂不可用。</p>}
       {gateError && <p className="field-error" role="alert">{gateError}</p>}
-    </div>
+    </div>}
     <div className="subsection">
       <div className="panel-heading"><div><h3>失败作业</h3><p>恢复由各自的重试入口或恢复器完成；本页不提供写入操作。</p></div></div>
       {items ? <OpsJobTable jobs={items.failed} emptyTitle="没有失败作业" emptyHint="最近没有处于 failed 状态的作业。" /> : <SkeletonTableRows rows={3} columns={6} />}

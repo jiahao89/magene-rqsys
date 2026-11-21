@@ -2732,9 +2732,17 @@ describe("集团需求池 UI（方案 A）", () => {
     });
     render(<OpsPanel />);
     await waitFor(() => expect(fetchMock.mock.calls.map((call) => String(call[0]))).toContain("/api/ops/jobs?limit=50"));
+    // 产品池保留「上线 Gate」整块。
+    expect(await screen.findByText("上线 Gate")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "集团池" }));
     await waitFor(() => expect(fetchMock.mock.calls.map((call) => String(call[0]))).toContain("/api/ops/jobs?limit=50&pool=group"));
     expect(fetchMock.mock.calls.map((call) => String(call[0]))).toContain("/api/ops/metrics?days=7&pool=group");
+    // 集团池：产品口径的 Gate 整块不渲染，避免 G1「已推送 334 条」误导。
+    expect(screen.queryByText("上线 Gate")).toBeNull();
+    expect(screen.queryByText(/G1/)).toBeNull();
+    // 切回产品池恢复。
+    fireEvent.click(screen.getByRole("button", { name: "产品池" }));
+    expect(await screen.findByText("上线 Gate")).toBeInTheDocument();
   });
 });
 
