@@ -1,6 +1,6 @@
 import type { SourceProjectConfig } from "../../domain/workflow.js";
 import type { TeambitionTaskRecord } from "./raw-types.js";
-import { SourceProjectResolutionError, type TeambitionSourceProjectResolver } from "../../application/ports.js";
+import { SourceProjectResolutionError, type TeambitionMemberDirectory, type TeambitionSourceProjectResolver } from "../../application/ports.js";
 
 const SKILL_GATEWAY_URL = "";
 const DEFAULT_GATEWAY_API_KEY = "";
@@ -60,7 +60,7 @@ function normalizeName(value: string): string {
   return value.normalize("NFC").trim().replace(/\s+/g, " ");
 }
 
-export class TeambitionClient implements TeambitionSourceProjectResolver {
+export class TeambitionClient implements TeambitionSourceProjectResolver, TeambitionMemberDirectory {
   private readonly baseUrl: string;
   private readonly apiKey: string;
   private readonly timeoutMs: number;
@@ -117,6 +117,16 @@ export class TeambitionClient implements TeambitionSourceProjectResolver {
       throw new SourceProjectResolutionError("requirement_type_ambiguous", `项目“${projectName}”中存在多个需求任务类型，无法自动确定同步范围。`);
     }
     return { projectId: project.id, requirementTypeId: candidates[0]!.id };
+  }
+
+  /**
+   * 组织成员目录（网关 getMembers）：返回 userId → {name,...} 的映射，也兼容数组形状。
+   * 只用于把集团池执行人展示名解析成 user_id；调用方不得把 userId 回传浏览器。
+   */
+  async listOrganizationMembers(): Promise<Array<{ userId: string; name: string }>> {
+    const payload = await this.getJson("getMembers");
+    const members = namedEntities(payload).map((entity) => ({ userId: entity.id, name: normalizeName(entity.name) }));
+    return members.filter((member) => member.userId.length > 0 && member.name.length > 0);
   }
 
   async listRequirementTasks(config: SourceProjectConfig): Promise<TeambitionTaskRecord[]> {

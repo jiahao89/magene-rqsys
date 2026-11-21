@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { shouldProcessSyncDownstream, SyncOrchestrator, type SyncPersistence, type SyncSourceReader } from "./service.js";
+import { NON_RETRYABLE_SYNC_ITEM_CODES, shouldProcessSyncDownstream, SyncOrchestrator, type SyncPersistence, type SyncSourceReader } from "./service.js";
 import type { AnalysisState, SourceProjectConfig } from "../domain/workflow.js";
 
 
@@ -13,7 +13,7 @@ test("source-only mode suppresses every downstream stage while omitted mode keep
 const task = (id: string, content: string, extra: Record<string, unknown> = {}) => ({ id, content, created: "2026-01-01", custom_fields: [{ _customfieldid: "allowed", value: "yes" }, { _customfieldid: "private", value: "secret" }], private_provider_field: "secret", ...extra });
 const capturedPayloads: Record<string, unknown>[] = [];
 
-function harness(tasks: ReturnType<typeof task>[], failId?: string, pages?: Array<{ items: ReturnType<typeof task>[]; hasMore: boolean; nextCursor: string | null }>) {
+function harness(tasks: ReturnType<typeof task>[], failId?: string, pages?: Array<{ items: ReturnType<typeof task>[]; hasMore: boolean; nextCursor: string | null }>, knownIds: string[] = []) {
   const calls: string[] = [];
   const summaries: Array<string | null> = [];
   const rows = new Map<string, { id: string; teambitionRequirementId: string; title: string; sourceCreatedAt: string | null; duplicateOfRequirementId: string | null }>();
@@ -31,6 +31,7 @@ function harness(tasks: ReturnType<typeof task>[], failId?: string, pages?: Arra
     async writeSyncItem(input) { calls.push(`item:${input.teambitionRequirementId}:${input.status}`); },
     async completeBatch(_batch, input) { calls.push(`complete:${input.status}:${input.totalCount}:${input.succeededCount}:${input.failedCount}`); summaries.push(input.errorSummary); },
     async markSourceMissing(input) { calls.push(`missing:${[...input.seenTeambitionIds].sort().join(",")}`); return 0; },
+    async listKnownTeambitionIds() { return knownIds; },
     async listTitleCandidates() { return [...rows.values()]; },
     async setDuplicateOf(requirementId, canonicalRequirementId) {
       const row = rows.get(requirementId);
@@ -237,4 +238,51 @@ test("标记失败不改变批次状态，但写进批次摘要（Q4）", async 
   const result = await h.orchestrator.run({ batchId: "batch-1", sourceConfigId: config.id, config });
   assert.equal(result.status, "succeeded");
   assert.match(h.summaries[0] ?? "", /removed-source hints could not be refreshed/);
+});
+
+// 0031 集团池执行人过滤：名单外的新任务跳过且不计失败；已在池内的需求继续同步（不误标缺失）。
+test("group pool skips new tasks outside the executor allowlist without failing the batch", async () => {
+  const h = harness([
+    task("in", "In list", { executor_id: "u-in" }),
+    task("out", "Out of list", { executor_id: "u-out" }),
+  ]);
+  const result = await h.orchestrator.run({ batchId: "batch-1", sourceConfigId: config.id, config, executorAllowlist: ["u-in"] });
+  assert.equal(result.status, "succeeded");
+  assert.equal(result.totalCount, 1);
+  assert.equal(result.succeededCount, 1);
+  assert.equal(result.failedCount, 0);
+  assert.equal(result.filteredCount, 1);
+  assert.ok(h.calls.includes("upsert:in"));
+  assert.equal(h.calls.some((call) => call.startsWith("upsert:out")), false);
+  assert.ok(h.calls.includes("item:out:") === false);
+  // 过滤不制造“来源已移除”：seen 仍包含被过滤的任务。
+  assert.ok(h.calls.some((call) => call.startsWith("missing:") && call.includes("out")));
+});
+
+test("group pool keeps syncing a requirement whose executor left the allowlist", async () => {
+  const h = harness([
+    task("kept", "Already in pool", { executor_id: "u-other" }),
+    task("new", "Not yet in pool", { executor_id: "u-other" }),
+  ], undefined, undefined, ["kept"]);
+  const result = await h.orchestrator.run({ batchId: "batch-1", sourceConfigId: config.id, config, executorAllowlist: ["u-in"] });
+  assert.equal(result.totalCount, 1);
+  assert.equal(result.filteredCount, 1);
+  // 已在池内的需求继续同步：不会被执行人变更误标为来源已移除。
+  assert.ok(h.calls.includes("upsert:kept"));
+  assert.equal(h.calls.some((call) => call.startsWith("upsert:new")), false);
+});
+
+test("an empty executor allowlist leaves the product pool unfiltered", async () => {
+  const h = harness([task("a", "A", { executor_id: "u-1" }), task("b", "B", { executor_id: "u-2" })]);
+  const result = await h.orchestrator.run({ batchId: "batch-1", sourceConfigId: config.id, config, executorAllowlist: [] });
+  assert.equal(result.totalCount, 2);
+  assert.equal(result.filteredCount, 0);
+  assert.ok(h.calls.includes("upsert:a"));
+  assert.ok(h.calls.includes("upsert:b"));
+});
+
+test("the empty-allowlist skip is a non-retryable terminal code", () => {
+  // 集团池名单为空时同步在拉取前被拦下；重跑不会拉取，必须直接终态而不是重试 5 次。
+  assert.equal(NON_RETRYABLE_SYNC_ITEM_CODES.has("sync.filtered_empty_allowlist"), true);
+  assert.equal(NON_RETRYABLE_SYNC_ITEM_CODES.has("source_item_invalid"), true);
 });

@@ -21,6 +21,13 @@ export type PriorityLevel = "P0" | "P1" | "P2" | "P3";
 export type PublishStatus = "draft" | "published" | "retired";
 export type PipelineJobType = "sync" | "analysis" | "base_push" | "kano_run";
 export type PipelineJobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+/** 来源池：产品池是现有业务，集团池是数据完全隔离的第二来源（方案 A）。 */
+export type SourcePool = "product" | "group";
+/** 集团池执行人名单条目：保存已解析的 TB user_id + 展示名。 */
+export interface SourceExecutorBinding {
+  userId: string;
+  name: string;
+}
 
 // AI 只能使用模块名称；责任人只用于工作台展示和维护，不参与模型输入。
 export interface FunctionModuleEntry {
@@ -28,11 +35,14 @@ export interface FunctionModuleEntry {
   personName: string | null;
 }
 
-// source_configs：单项目来源、需求类型、周计划、负责人名单和字段映射。
+// source_configs：一个来源 = (provider, pool) 唯一；需求类型、周计划、负责人名单和字段映射。
 // 凭据不落库，由服务端从环境读取。
+// pool / executorAllowlist 为可选：旧测试替身与历史数据按 product / 空名单处理。
 export interface SourceConfigRecord {
   id: string;
   provider: "teambition";
+  /** 缺省视为 product（现有产品池行为不变）。 */
+  pool?: SourcePool;
   externalProjectId: string;
   externalProjectName: string;
   requirementTypeId: string;
@@ -44,6 +54,8 @@ export interface SourceConfigRecord {
   scheduleTimezone: string | null; // 显式时区；调度计算永不回退到机器本地时区
   ownerNames: string[];
   fieldMap: Record<string, string>;
+  /** 集团池执行人名单（已解析 user_id）；产品池恒为空数组。 */
+  executorAllowlist?: SourceExecutorBinding[];
   createdAt: string;
   updatedAt: string;
 }
@@ -62,6 +74,8 @@ export interface SyncBatchRecord {
   totalCount: number;
   succeededCount: number;
   failedCount: number;
+  /** 本次同步因执行人名单被跳过的任务数（0031）；旧批次/替身缺省为 0。 */
+  filteredCount?: number;
   errorSummary: string | null; // 安全摘要，不含 provider 原始错误
   createdAt: string;
 }

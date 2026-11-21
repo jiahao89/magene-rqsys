@@ -67,6 +67,8 @@ const FORBIDDEN_KEY_PATTERNS: readonly RegExp[] = [
 const ALLOWED_DETAIL_KEYS: readonly string[] = [
   "sourceProjectId",
   "sourceRequirementId",
+  // 0031：Base 推送按池路由时的池标签（诊断用；不含任何企业/人员标识）。
+  "pool",
   "sourceVersion",
   "analysisVersion",
   "priorAnalysisVersion",

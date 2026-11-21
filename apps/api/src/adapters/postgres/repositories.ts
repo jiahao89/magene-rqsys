@@ -155,10 +155,9 @@ export class PostgresRequirementRepository implements RequirementQueryRepository
 }
 // V02-T02/T04：手工收录（web_manual）。需求、首个来源快照、幂等回执与首分析作业在同一事务提交；
 // 失败整体回滚，不留"已收录却永久无任务"的半条需求。编号与 TB 导入复用同一事务锁分配器。
-// V02-T07/PRD-30：手工与多维表格编辑（web_manual/base_form）。一个事务内完成：回执幂等判定 → 行锁版本比对 →
+// V02-T07：手工编辑（仅 web_manual）。一个事务内完成：回执幂等判定 → 行锁版本比对 →
 // 实质/元数据分流（实质=标题/描述/产品/边界：新版本+快照+审计+分析任务+推送重置；
 // 元数据=渠道/链接/类型：仅更新投影并入队非实质推送）；无变化不新建版本。
-// base_form 编辑只改平台侧、不回写收集表；source_payload 原样保留（含 formRecordId 与原始表单投影）用于溯源。
 async updateManualRequirement(p:{requirementId:string;expectedSourceVersion:number;idempotencyKey:string;actorId:string;requestHash:string;title?:string;description?:string;sourceChannel?:string;productModel?:string|null;requirementType?:string|null;constraintNotes?:string|null;supplementUrl?:string|null;}){
   const c=await this.pool.connect();
   try{
@@ -174,8 +173,7 @@ async updateManualRequirement(p:{requirementId:string;expectedSourceVersion:numb
       return{outcome:"replay" as const,sourceVersion:Number(hit.source_version),substantiveChanged:Boolean(hit.substantive_changed)};
     }
     if(!row){await c.query("COMMIT");return{outcome:"not_found" as const};}
-    const sourceType=String(row.source_type);
-    if(sourceType!=="web_manual"&&sourceType!=="base_form"){await c.query("COMMIT");return{outcome:"not_manual" as const};}
+    if(String(row.source_type)!=="web_manual"){await c.query("COMMIT");return{outcome:"not_manual" as const};}
     const currentVersion=Number(row.source_version);
     if(currentVersion!==p.expectedSourceVersion){await c.query("COMMIT");return{outcome:"version_conflict" as const,currentSourceVersion:currentVersion};}
     const nextTitle=p.title!==undefined?p.title.trim():String(row.title);
@@ -187,11 +185,7 @@ async updateManualRequirement(p:{requirementId:string;expectedSourceVersion:numb
     const nextUrl=p.supplementUrl!==undefined?p.supplementUrl:row.supplement_url===null?null:String(row.supplement_url);
     // 编辑不改来源标记与提出人：重建 source_payload 时原样带过来，否则详情「提出人」与 5c 的来源徽标会在第一次编辑后丢失。
     const preservedProvenance=row.source_payload&&typeof row.source_payload==="object"?row.source_payload as Record<string,unknown>:{};
-    // base_form：编辑只改平台侧，收集表原文与溯源键（formRecordId、原始表单投影）原样保留，不写回收集表。
-    // web_manual：沿用原逻辑重建投影，保留 intakeOrigin/proposerName。
-    const payload=sourceType==="base_form"
-      ? preservedProvenance
-      : {sourceType:"web_manual",title:nextTitle,description:nextDescription,sourceChannel:nextChannel,productModel:nextProduct,requirementType:nextType,constraintNotes:nextNotes,supplementUrl:nextUrl,intakeModule:row.intake_module===null||row.intake_module===undefined?null:String(row.intake_module),...(typeof preservedProvenance.intakeOrigin==="string"?{intakeOrigin:preservedProvenance.intakeOrigin}:{}),...(row.proposer_name?{proposerName:String(row.proposer_name)}:{})};
+    const payload={sourceType:"web_manual",title:nextTitle,description:nextDescription,sourceChannel:nextChannel,productModel:nextProduct,requirementType:nextType,constraintNotes:nextNotes,supplementUrl:nextUrl,intakeModule:row.intake_module===null||row.intake_module===undefined?null:String(row.intake_module),...(typeof preservedProvenance.intakeOrigin==="string"?{intakeOrigin:preservedProvenance.intakeOrigin}:{}),...(row.proposer_name?{proposerName:String(row.proposer_name)}:{})};
     const nextSubstantive=substantiveHash({title:nextTitle,description:nextDescription,scope:null,acceptanceCriteria:null,attachmentRefs:[]});
     const metadataChanged=(nextChannel!==String(row.source_channel))||(nextUrl!==(row.supplement_url===null?null:String(row.supplement_url)))||(nextType!==(row.requirement_type===null?null:String(row.requirement_type)));
     const definitionChanged=(nextSubstantive!==String(row.substantive_hash))||(nextProduct!==(row.product_model===null?null:String(row.product_model)))||(nextNotes!==(row.constraint_notes===null?null:String(row.constraint_notes)));
@@ -216,7 +210,7 @@ async updateManualRequirement(p:{requirementId:string;expectedSourceVersion:numb
       // 的同键作业重新排队（排队中/执行中的保持去重），既挡住重复入队又不丢最后一次改动。
       await c.query("INSERT INTO pipeline_jobs(id,job_type,dedupe_key,payload,available_at,max_attempts) VALUES($1,'base_push',$2,$3,now(),5) ON CONFLICT(dedupe_key) DO UPDATE SET status='queued',attempt_count=0,available_at=now(),locked_until=NULL,last_error_code=NULL,last_error_summary=NULL,payload=EXCLUDED.payload,updated_at=now() WHERE pipeline_jobs.status IN ('succeeded','failed','cancelled')",[randomUUID(),`base-push:${p.requirementId}:sv${currentVersion}:av${analysisVersion}:meta:${p.requestHash.slice(0,16)}`,JSON.stringify({requirementId:p.requirementId,actorId:p.actorId,sourceVersion:currentVersion,analysisVersion})]);
     }
-    await c.query("INSERT INTO audit_events(id,actor_id,event_type,entity_type,entity_id,result,safe_details,occurred_at) VALUES($1,$2,'intake.updated','requirement',$3,'succeeded',$4,now())",[randomUUID(),p.actorId,p.requirementId,JSON.stringify({sourceVersion:newVersion,substantive:definitionChanged,sourceType})]);
+    await c.query("INSERT INTO audit_events(id,actor_id,event_type,entity_type,entity_id,result,safe_details,occurred_at) VALUES($1,$2,'intake.updated','requirement',$3,'succeeded',$4,now())",[randomUUID(),p.actorId,p.requirementId,JSON.stringify({sourceVersion:newVersion,substantive:definitionChanged})]);
     await c.query("INSERT INTO requirement_edit_receipts(idempotency_key,actor_id,request_hash,requirement_id,outcome,substantive_changed,source_version) VALUES($1,$2,$3,$4,'updated',$5,$6)",[p.idempotencyKey,p.actorId,p.requestHash,p.requirementId,definitionChanged,newVersion]);
     await c.query("COMMIT");
     return{outcome:"updated" as const,sourceVersion:newVersion,substantiveChanged:definitionChanged,replay:false as const};

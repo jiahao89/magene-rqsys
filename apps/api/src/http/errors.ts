@@ -57,15 +57,18 @@ export interface ErrorBody {
   error: {
     code: ErrorCode;
     message: string;
+    /** 结构化补充信息（如未解析的执行人名单）；只在调用方显式传入时出现。 */
+    details?: Record<string, unknown>;
   };
 }
 
 // 构造错误响应体：默认消息或调用方提供的消息（自动脱敏）。
-export function errorBody(code: ErrorCode, message?: string): ErrorBody {
+export function errorBody(code: ErrorCode, message?: string, details?: Record<string, unknown>): ErrorBody {
   return {
     error: {
       code,
       message: redactSecrets(message ?? DEFAULT_MESSAGES[code]),
+      ...(details ? { details } : {}),
     },
   };
 }
@@ -75,8 +78,9 @@ export function jsonError(
   code: ErrorCode,
   message?: string,
   statusOverride?: number,
+  details?: Record<string, unknown>,
 ): Response {
-  return Response.json(errorBody(code, message), {
+  return Response.json(errorBody(code, message, details), {
     status: statusOverride ?? ERROR_STATUS[code],
   });
 }

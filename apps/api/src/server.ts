@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { randomUUID } from "node:crypto";
 import { createPool } from "./adapters/postgres/pool.js";
 import { PostgresRepositories } from "./adapters/postgres/repositories.js";
 import { createPostgresSyncPersistence } from "./adapters/postgres/sync-persistence.js";
@@ -18,6 +19,7 @@ import { reapExhaustedJobs, reapOrphanedBatches } from "./scheduler/reap.js";
 import { enqueueMissingAnalysisJobs, recoverAnalysisPipeline } from "./scheduler/analysis-recovery.js";
 import { recheckOwnerMappings } from "./scheduler/owner-recheck.js";
 import { FeishuBasePushAdapter, type BaseFieldMap } from "./base/client.js";
+import { parseBaseFields } from "./base/field-map.js";
 import { FeishuBitableClient } from "./base/transport.js";
 import { RateLimitedBaseClient } from "./base/rate-limit.js";
 import { DEFAULT_BASE_FORM_FIELDS, parseBaseFormFields, publishedModuleNames, syncBaseFormIntake } from "./base/form-sync.js";
@@ -66,12 +68,24 @@ const syncJobRunner: SyncJobRunner | undefined = repositories ? async (job) => {
     schedule: { enabled: source.scheduleEnabled, weekday: source.scheduleWeekday, weekdays: source.scheduleWeekdays ?? (source.scheduleWeekday === null ? null : [source.scheduleWeekday]), time: source.scheduleLocalTime, timezone: source.scheduleTimezone },
     ownerNames: source.ownerNames, fieldMap: source.fieldMap,
   };
+  // 0031：集团池执行人名单（已解析 user_id）；为空表示不过滤（产品池恒为空）。
+  const executorAllowlist = (source.executorAllowlist ?? []).map((binding) => binding.userId);
+  // 0031：集团池名单为空时在拉取前拦下——不拉全项目，写审计并让批次终态（不重试）。
+  if ((source.pool ?? "product") === "group" && executorAllowlist.length === 0) {
+    const completedAt = new Date().toISOString();
+    await repositories.batches.complete(job.batchId, { status: "failed", totalCount: 0, succeededCount: 0, failedCount: 0, filteredCount: 0, errorSummary: "Sync skipped: group-pool executor allowlist is empty.", completedAt });
+    try {
+      await repositories.audit.append({ id: randomUUID(), actorId: job.actorId, eventType: "sync.filtered_empty_allowlist", entityType: "sync_batch", entityId: job.batchId, result: "failed", safeDetails: { pool: "group" }, occurredAt: completedAt });
+    } catch { /* 审计失败不掩盖跳过结果 */ }
+    return { batchId: job.batchId, status: "failed", totalCount: 0, succeededCount: 0, failedCount: 0, filteredCount: 0, failedCodes: ["sync.filtered_empty_allowlist"] };
+  }
+
   const persistence = createPostgresSyncPersistence(repositories, job.sourceConfigId);
   const taskSource = fixture
     ? { async listRequirements(cfg: SourceProjectConfig) { return { items: createSyntheticFixtureTasks(job.batchId, cfg.requirementTypeId, job.onlyIds), hasMore: false, nextCursor: null }; } }
     : { async listRequirements(cfg: SourceProjectConfig) { return { items: await new TeambitionClient().listRequirementTasks(cfg), hasMore: false, nextCursor: null }; } };
   const orchestrator = new SyncOrchestrator(taskSource, persistence);
-  const result = await orchestrator.run({ batchId: job.batchId, sourceConfigId: job.sourceConfigId, config, ...(job.mode === undefined ? {} : { mode: job.mode }), ...(job.onlyIds === undefined ? {} : { onlyIds: job.onlyIds }) });
+  const result = await orchestrator.run({ batchId: job.batchId, sourceConfigId: job.sourceConfigId, config, ...(job.mode === undefined ? {} : { mode: job.mode }), ...(job.onlyIds === undefined ? {} : { onlyIds: job.onlyIds }), ...(executorAllowlist.length > 0 ? { executorAllowlist } : {}) });
   // 打通同步 → AI 分析链路：下游推进（入队首分析 / 元数据推进）收敛在共用 workflow 模块。
   if (result.status !== "failed" && shouldProcessSyncDownstream(job.mode)) {
     if (!requirementWorkflow) throw new Error("Requirement workflow is not assembled");
@@ -86,48 +100,9 @@ const analysisJobHandler: ((job: { payload: Record<string, unknown> }) => Promis
 } : undefined;
 
 // ---- Feishu Base 推送装配：env 凭证齐全时构建真实 transport（工单 00/W7 目标环境验证）----
-const DEFAULT_BASE_FIELDS = {
-  requirementId: "TB需求ID", platformRequirementId: "需求平台ID", owner: "执行人",
-  // The selected TB project's custom-field type/binding is unverified. Only map
-  // standard fields whose semantics and the Base column type are verified.
-  source: { title: "标题", createdAt: "TB创建时间", sourceUrl: "TB地址" } as Record<string, string>,
-  ai: { module: "AI模块建议", priority: "AI优先级建议", analysisVersion: "AI分析版本" } as Record<string, string>,
-  pm: ["PM状态", "PM确认模块", "PM确认优先级", "处理人", "处理时间", "结构化备注"] as string[],
-  metadata: { sourceVersion: "源版本", pushState: "推送状态", lastPushedAt: "最后推送时间" } as Record<string, string>,
-  // 通知由 Base 自动化规则发送；应用只写四个通知「系统字段」，外加一个给 PM 点击的需求深链字段。
-  // requirementLink 每次推送都写，与通知事件无关（首推静默也写）。
-  // 用精确形状而不是 Record<string,string>，以便直接满足 BaseFieldMap.notification 的结构类型。
-  notification: { eventId: "系统通知事件ID", eventType: "系统通知类型", recipient: "系统通知收件人", ownerMergeValue: "系统负责人通知归并值", requirementLink: "系统需求链接" },
-  selectOptions: {
-    // Verified against the safe POC Base schema; override via BASE_FIELDS_JSON
-    // together with Base options when the product module dictionary changes.
-    module: ["需求澄清", "方案设计", "缺陷修复", "其他"], priority: ["P0", "P1", "P2", "P3"],
-  } as Record<string, string[]>,
-};
-function parseBaseFields(raw: string | undefined): BaseFieldMap {
-  if (!raw) return DEFAULT_BASE_FIELDS;
-  try {
-    const parsed = JSON.parse(raw) as Partial<BaseFieldMap>;
-    const source = { ...DEFAULT_BASE_FIELDS.source, ...(parsed.source ?? {}) };
-    if (source.sourceUrl === "TB链接") source.sourceUrl = "TB地址";
-    return {
-      requirementId: parsed.requirementId ?? DEFAULT_BASE_FIELDS.requirementId,
-      platformRequirementId: parsed.platformRequirementId ?? DEFAULT_BASE_FIELDS.platformRequirementId,
-      owner: parsed.owner ?? DEFAULT_BASE_FIELDS.owner,
-      source,
-      ai: { ...DEFAULT_BASE_FIELDS.ai, ...(parsed.ai ?? {}) },
-      pm: Array.isArray(parsed.pm) ? parsed.pm : DEFAULT_BASE_FIELDS.pm,
-      metadata: { ...DEFAULT_BASE_FIELDS.metadata, ...(parsed.metadata ?? {}) },
-      // 缺省回落默认值：notification 整段缺失（或部分缺失）时仍指向 POC 验证过的四个通知字段与需求链接字段。
-      notification: { ...DEFAULT_BASE_FIELDS.notification, ...(parsed.notification ?? {}) },
-      selectOptions: { ...DEFAULT_BASE_FIELDS.selectOptions, ...(parsed.selectOptions ?? {}), priority: ["P0", "P1", "P2", "P3"] },
-      ...(typeof parsed.sourceMethod === "string" && parsed.sourceMethod.trim() ? { sourceMethod: parsed.sourceMethod.trim() } : {}),
-    };
-  } catch {
-    return DEFAULT_BASE_FIELDS;
-  }
-}
 const baseFields = parseBaseFields(process.env.BASE_FIELDS_JSON);
+// 0031：集团池 Base 字段映射独立解析——链接列是「TB链接」，不得套用产品池的历史改写。
+const groupBaseFields = parseBaseFields(process.env.GROUP_BASE_FIELDS_JSON, { pool: "group" });
 // PRD-26：聊天抽取器进程内只建一次（限流器按它缓存）；未配置 AI_API_KEY 时调用会返回明确的不可用提示。
 const chatIntake = { extractor: createChatIntakeExtractor() };
 // 0030：按需需求评估；仓储在时注入，未配置 AI key 时 runner 会在调用时返回配置错误。
@@ -164,8 +139,22 @@ let lastBaseIntakeSyncAt = 0;
 const duplicateMarker = baseClient
   ? (input: Parameters<typeof markDuplicateInBase>[1]) => markDuplicateInBase({ base: baseClient, fields: baseFields, webBaseUrl: process.env.RQSYS_WEB_BASE_URL ?? null }, input)
   : undefined;
+// 集团池 Base 客户端：独立表 ID；缺任一配置就不构建，推送作业记 base_config_missing，绝不回落产品表。
+const groupBaseClient = process.env.FEISHU_APP_ID && process.env.FEISHU_APP_SECRET && process.env.GROUP_BASE_APP_TOKEN && process.env.GROUP_BASE_TABLE_ID
+  ? new RateLimitedBaseClient(new FeishuBitableClient({
+      appId: process.env.FEISHU_APP_ID, appSecret: process.env.FEISHU_APP_SECRET,
+      appToken: process.env.GROUP_BASE_APP_TOKEN, tableId: process.env.GROUP_BASE_TABLE_ID,
+      keyFields: { requirementId: groupBaseFields.requirementId, ...(groupBaseFields.platformRequirementId ? { platformRequirementId: groupBaseFields.platformRequirementId } : {}) },
+    }), { minIntervalMs: Number(process.env.BASE_MIN_INTERVAL_MS ?? 100) })
+  : undefined;
+if (process.env.GROUP_BASE_TABLE_ID && !groupBaseClient) process.stderr.write("group-pool Base push disabled: GROUP_BASE_APP_TOKEN/TABLE_ID or Feishu credentials are incomplete\n");
 const baseAdapter = baseClient && repositories
   ? new FeishuBasePushAdapter(baseClient, baseFields, {
+      async savePmSnapshot(input) { await repositories.pmSnapshots.append({ ...input, capturedAt: new Date().toISOString() }); },
+    })
+  : undefined;
+const groupBaseAdapter = groupBaseClient && repositories
+  ? new FeishuBasePushAdapter(groupBaseClient, groupBaseFields, {
       async savePmSnapshot(input) { await repositories.pmSnapshots.append({ ...input, capturedAt: new Date().toISOString() }); },
     })
   : undefined;
@@ -175,6 +164,10 @@ const requirementWorkflow = repositories
       repositories,
       ...(baseAdapter ? { base: baseAdapter } : {}),
       baseFields,
+      ...((baseAdapter || groupBaseAdapter) ? { baseTargets: {
+        ...(baseAdapter ? { product: { base: baseAdapter, baseFields } } : {}),
+        ...(groupBaseAdapter ? { group: { base: groupBaseAdapter, baseFields: groupBaseFields } } : {}),
+      } } : {}),
       fixtureEnvironment,
       // 本地开发专用上限：只限制「入队分析」的数量，不同步范围。默认 0 = 不限制；目标环境不要设置。
       ...(Number(process.env.RQSYS_MAX_ANALYSIS_PER_SYNC ?? 0) > 0 ? { analysisEnqueueCap: Number(process.env.RQSYS_MAX_ANALYSIS_PER_SYNC) } : {}),
@@ -183,7 +176,7 @@ const requirementWorkflow = repositories
       aiPause: readAiPauseConfig(process.env),
     })
   : undefined;
-const basePushJobHandler: ((job: { payload: Record<string, unknown> }) => Promise<void>) | undefined = repositories && baseAdapter ? async (job) => {
+const basePushJobHandler: ((job: { payload: Record<string, unknown> }) => Promise<void>) | undefined = repositories && (baseAdapter || groupBaseAdapter) ? async (job) => {
   if (!requirementWorkflow) throw new Error("Requirement workflow is not assembled");
   await requirementWorkflow.handleBasePushJob(job);
   // conflict：等待人工映射不是失败，人工映射持久化后会重新入队（见 requirements/processing.ts）
@@ -230,7 +223,7 @@ const server = createServer(async (incoming, outgoing) => {
     const request = new Request(`http://${incoming.headers.host ?? "localhost"}${incoming.url ?? "/"}`, {
       method: incoming.method ?? "GET", headers, ...(body.length > 0 ? { body } : {}),
     });
-    const dependencies: ApiDependencies = { database, repositories, identity, chatIntake, ...(assessments ? { assessments } : {}), ...(duplicateMarker ? { duplicateMarker } : {}), ...(teambitionSourceProjects ? { teambitionSourceProjects } : {}), ...(feishuUserDirectory ? { feishuUsers: feishuUserDirectory } : {}), now: undefined };
+    const dependencies: ApiDependencies = { database, repositories, identity, chatIntake, ...(assessments ? { assessments } : {}), ...(duplicateMarker ? { duplicateMarker } : {}), ...(teambitionSourceProjects ? { teambitionSourceProjects, teambitionMembers: teambitionSourceProjects } : {}), ...(feishuUserDirectory ? { feishuUsers: feishuUserDirectory } : {}), now: undefined };
     const response = await handleApiRequest(request, dependencies);
     outgoing.statusCode = response.status;
     response.headers.forEach((value, key) => outgoing.setHeader(key, value));

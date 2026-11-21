@@ -12,14 +12,21 @@ export interface SyncPersistence {
   upsertRequirement(input: NormalizedTeambitionRequirement & { sourceHash: string; substantiveHash: string; sourceVersion: number; latestBatchId: string; analysisRequired: boolean; snapshot: { payload: Record<string, unknown>; isSubstantiveChange: boolean; capturedAt: string } }): Promise<{id:string;created:boolean}>;
   appendSourceSnapshot(input:{requirementId:string;sourceVersion:number;sourceHash:string;substantiveHash:string;payload:Record<string,unknown>;isSubstantiveChange:boolean;capturedAt:string}):Promise<void>;
   writeSyncItem(input:{batchId:string;requirementId:string|null;teambitionRequirementId:string;action:"created"|"updated"|"unchanged";status:"succeeded"|"failed";errorCode:string|null;errorDetail:string|null;startedAt:string;completedAt:string}):Promise<void>;
-  completeBatch(batchId:string,result:{status:BatchState;totalCount:number;succeededCount:number;failedCount:number;errorSummary:string|null;completedAt:string;counts?:{fetched:number;duplicateIds:number}}):Promise<void>;
+  completeBatch(batchId:string,result:{status:BatchState;totalCount:number;succeededCount:number;failedCount:number;filteredCount?:number;errorSummary:string|null;completedAt:string;counts?:{fetched:number;duplicateIds:number;filtered?:number}}):Promise<void>;
+  /**
+   * 集团池执行人过滤需要知道“哪些 TB 需求已在池内”：已在池内的需求即使执行人迁出名单也继续同步，
+   * 避免被误标为来源已移除。可选：未实现时按“全部未入池”处理（只跳过，不误标缺失）。
+   */
+  listKnownTeambitionIds?(sourceConfigId:string):Promise<string[]>;
   // 疑似重复检测：读取当前来源全部需求，再把同标题后出现的记录指向最早一条。
   listTitleCandidates(sourceConfigId:string):Promise<Array<{id:string;teambitionRequirementId:string;title:string;sourceCreatedAt:string|null;duplicateOfRequirementId:string|null}>>;
   setDuplicateOf(requirementId:string,canonicalRequirementId:string|null):Promise<void>;
   /** Q4：全量成功后标记本次未出现的 TB 需求（可选；仓储未实现时跳过）。 */
   markSourceMissing?(input:{sourceConfigId:string;seenTeambitionIds:string[];now:string}):Promise<number>;
 }
-export interface SyncInput { batchId:string;sourceConfigId:string;config:SourceProjectConfig;startedAt?:string;onlyIds?:string[];mode?:SyncExecutionMode }
+export interface SyncInput { batchId:string;sourceConfigId:string;config:SourceProjectConfig;startedAt?:string;onlyIds?:string[];mode?:SyncExecutionMode;
+  /** 集团池执行人名单（TB user_id）；为空数组或不传表示不过滤。 */
+  executorAllowlist?:string[] }
 // Queue payloads resolve configuration at the application composition seam; the orchestrator stays provider-agnostic.
 export type SyncExecutionMode = "full_pipeline" | "source_only";
 export interface SyncJobContext { batchId:string;sourceConfigId:string;trigger:"manual"|"scheduled";actorId:string|null;onlyIds?:string[];testFixture?:boolean;mode?:SyncExecutionMode }
@@ -29,14 +36,20 @@ export interface SyncResult {batchId:string;status:BatchState;totalCount:number;
   /** V02-T15-AC04：接口取得数与重复源 ID 数——批次计数只报实际处理数，这里补充计数来源说明。 */
   fetchedCount?:number;duplicateIdCount?:number;
   /** 失败条目的错误码去重集合：worker 据此区分"重试有意义"和"重试也不会变"（见 NON_RETRYABLE_SYNC_ITEM_CODES）。 */
-  failedCodes?:string[];}
+  failedCodes?:string[];
+  /** 因执行人不在集团池名单而跳过的任务数（未入池的新任务）。 */
+  filteredCount?:number;}
 
 /**
  * 重试不可能改变结果的条目级错误：源记录缺 ID、字段无法解析。
  * 这类失败重跑整批只会把全部条目再拉一遍，最后仍以 max_attempts 收场，把"数据问题"伪装成"偶发失败"。
  * 由 SyncDataError 交给 worker 直接落终态，人工在批次明细里按条目重试。
  */
-export const NON_RETRYABLE_SYNC_ITEM_CODES: ReadonlySet<string> = new Set(["source_item_invalid"]);
+export const NON_RETRYABLE_SYNC_ITEM_CODES: ReadonlySet<string> = new Set([
+  "source_item_invalid",
+  // 0031：集团池名单为空时同步在拉取前被拦下；重跑同样不会拉取，直接终态并人工处理名单。
+  "sync.filtered_empty_allowlist",
+]);
 
 /** 只有数据类失败时抛出：worker 视为终态，不重排、不重拉整批。 */
 export class SyncDataError extends Error {
@@ -114,6 +127,22 @@ export class SyncOrchestrator {
     // 单项重试：只处理指定需求（按源需求 ID 过滤）
     const onlyIds=input.onlyIds?new Set(input.onlyIds):null;
     if(onlyIds)all=all.filter((record)=>record.id!==undefined&&onlyIds.has(record.id));
+    // 集团池执行人过滤：名单外的新任务直接跳过，不计失败；已在池内的需求继续同步。
+    // 已在池内的记录必须先查出来，否则执行人一变就会被 markSourceMissing 误标为“来源已移除”。
+    // seen 已在拉取阶段记录全部拉到的 ID（含被过滤的），因此过滤不会造成误标缺失。
+    const allow=new Set((input.executorAllowlist??[]).filter((id):id is string=>typeof id==="string"&&id.length>0));
+    let filteredCount=0;
+    if(allow.size>0){
+      const knownIds=await this.persistence.listKnownTeambitionIds?.(input.sourceConfigId).catch(()=>[] as string[])??[];
+      const known=new Set(knownIds);
+      all=all.filter((record)=>{
+        if(!record.id)return true;
+        if(allow.has(record.executor_id??""))return true;
+        if(known.has(record.id))return true;
+        filteredCount+=1;
+        return false;
+      });
+    }
     let succeededCount=0,failedCount=0;const failedCodes=new Set<string>();
     for(const record of all){const began=clock().toISOString();
       // 无 ID 的源记录也要留痕：此前被静默丢弃，批次计数与明细完全看不到"少了一条"。
@@ -151,9 +180,9 @@ export class SyncOrchestrator {
       try{await this.persistence.markSourceMissing?.({sourceConfigId:input.sourceConfigId,seenTeambitionIds:[...seen],now:clock().toISOString()});}
       catch{missingMarkFailed=true;}
     }
-    const result:SyncResult={batchId:input.batchId,status:failedCount===0?"succeeded":succeededCount===0?"failed":"partial_failure",totalCount:all.length,succeededCount,failedCount,fetchedCount,duplicateIdCount,failedCodes:[...failedCodes]};
+    const result:SyncResult={batchId:input.batchId,status:failedCount===0?"succeeded":succeededCount===0?"failed":"partial_failure",totalCount:all.length,succeededCount,failedCount,fetchedCount,duplicateIdCount,filteredCount,failedCodes:[...failedCodes]};
     const errorSummary=failedCount?`${failedCount} item(s) failed; inspect item results.`:duplicateHintsFailed?"All items synced, but duplicate-title hints could not be refreshed; manual retry is available.":missingMarkFailed?"All items synced, but removed-source hints could not be refreshed; the next full sync retries.":null;
-    await this.persistence.completeBatch(input.batchId,{...result,errorSummary,completedAt:clock().toISOString(),counts:{fetched:fetchedCount,duplicateIds:duplicateIdCount}});return result;
+    await this.persistence.completeBatch(input.batchId,{...result,errorSummary,completedAt:clock().toISOString(),counts:{fetched:fetchedCount,duplicateIds:duplicateIdCount,filtered:filteredCount}});return result;
   }
 }
 

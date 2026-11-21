@@ -26,6 +26,8 @@ const CursorSchema = z.string();
 // GET /api/batches 查询参数
 export const BatchListQuerySchema = z.object({
   status: z.enum(["running", "succeeded", "partial_failure", "failed"]).optional(),
+  // 池作用域：集合接口显式传 pool，缺省 product（现有前端零改动）。
+  pool: z.enum(["product", "group"]).default("product"),
   since: z.iso.datetime({ offset: true }).optional(),
   until: z.iso.datetime({ offset: true }).optional(),
   limit: LimitSchema.default(25),
@@ -48,6 +50,8 @@ export const RequirementListQuerySchema = z.object({
   // base_form 为 5b 预留（当前无数据，筛选结果为空是正确行为）。
   source: z.enum(["teambition", "web_manual", "base_form", "chat_paste"]).optional(),
   sort: z.enum(["created_desc", "priority_asc"]).optional(),
+  // 池作用域：缺省 product；集团池页面显式传 group。
+  pool: z.enum(["product", "group"]).default("product"),
   batchId: z.uuid().optional(),
   since: z.iso.datetime({ offset: true }).optional(),
   until: z.iso.datetime({ offset: true }).optional(),
@@ -68,11 +72,15 @@ export const GateConfirmSchema = z.strictObject({
 // GET /api/ops/metrics — 运营指标窗口（天）。
 export const OpsMetricsQuerySchema = z.object({
   days: z.coerce.number().int().min(1).max(90).default(7),
+  /** 集团池运维看板显式传 group；缺省 product。 */
+  pool: z.enum(["product", "group"]).default("product"),
 });
 
 // GET /api/ops/jobs — 只读运维视图：失败作业与卡住的运行中作业。
 export const OpsJobsQuerySchema = z.object({
   limit: LimitSchema.default(50),
+  /** 集团池作业显式传 group；缺省 product。 */
+  pool: z.enum(["product", "group"]).default("product"),
 });
 
 export const AuditListQuerySchema = z.object({

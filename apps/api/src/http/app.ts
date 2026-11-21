@@ -21,7 +21,7 @@ import { DEFAULT_TEAM_MEMBERS } from "../domain/team-directory.js";
 import { BASE_FORM_SYNC_STATE_FLAG } from "../base/form-sync.js";
 import { isDatabaseReady } from "../adapters/postgres/health.js";
 import { EXPECTED_LATEST_MIGRATION } from "../db/expected-migration.js";
-import { jsonError, redactSecrets } from "./errors.js";
+import { jsonError } from "./errors.js";
 import { CHAT_PROMPT_VERSION, ChatDraftRequestSchema, createDraftRateLimiter, type ChatIntakeExtractor, type DraftRateLimit } from "../intake/chat-extract.js";
 import { ASSESSMENT_RUNNING_STALE_MS, AssessmentContractError, type AssessmentRunner } from "../assessment/service.js";
 import { readAiPause } from "../ops/ai-pause.js";
@@ -135,30 +135,10 @@ function safeCauseType(error: unknown): string {
   }
   return causeType;
 }
-/** 运维展示的 lastError 只保留类别摘要：复用通用脱敏，并把 Base record/table ID 掩码。 */
-function redactBaseError(text: string): string {
-  return redactSecrets(text)
-    .replace(/\brec[A-Za-z0-9]{6,}\b/g, "rec…")
-    .replace(/\btbl[A-Za-z0-9]{6,}\b/g, "tbl…")
-    .slice(0, 200);
-}
-/** 数据源页展示收集表分享地址：只读环境变量；未配置/非法 URL 不返回，也不回传表 ID/record ID。 */
-function baseFormShareUrl(): string | null {
-  const raw = process.env.BASE_FORM_SHARE_URL?.trim();
-  if (!raw) return null;
-  try {
-    const url = new URL(raw);
-    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-    if (url.username || url.password) return null;
-    return url.toString();
-  } catch { return null; }
-}
 /** 5b：收集表同步的运维状态只读 system_flags；字段做类型收敛，读不到时 baseForm 为 null 不影响其它指标。 */
 function baseFormOpsState(value: Record<string, unknown>) {
   const num = (candidate: unknown) => typeof candidate === "number" && Number.isFinite(candidate) ? candidate : 0;
-  const shareUrl = baseFormShareUrl();
   return {
-    ...(shareUrl === null ? {} : { shareUrl }),
     lastRunAt: typeof value.lastRunAt === "string" ? value.lastRunAt : null,
     pages: num(value.pages),
     scanned: num(value.scanned),
@@ -168,7 +148,7 @@ function baseFormOpsState(value: Record<string, unknown>) {
     rejected: num(value.rejected),
     writeBackFailed: num(value.writeBackFailed),
     readFailed: value.readFailed === true,
-    lastError: typeof value.lastError === "string" ? redactBaseError(value.lastError) : null,
+    lastError: typeof value.lastError === "string" ? value.lastError.slice(0, 200) : null,
   };
 }
 function reportAiStatsFailure(dependencies: ApiDependencies, stat: "analysis" | "intake", error: unknown): void {
@@ -337,8 +317,6 @@ function requirementDto(req: RequirementRecord, analysis: Record<string, unknown
     // PR-05：TB 执行人原始姓名（未映射时用于“待匹配负责人”分组；不替代映射后的 ownerName）。
     executorName: req.executorName ?? null,
     sourceVersion: req.sourceVersion,
-    // 0030/F1：详情页「创建时间」读服务端字段；四种来源统一返回（加法，不替代 updatedAt）。
-    createdAt: req.createdAt,
     updatedAt: req.updatedAt,
     sourceUrl: req.sourceType === "teambition" ? req.sourceUrl ?? `${TEAMBITION_TASK_BASE_URL}/${req.teambitionRequirementId}` : req.sourceUrl,
     lastPushedAt: req.lastPushedAt,
@@ -635,8 +613,6 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
         if (state && state.value && typeof state.value === "object") baseForm = baseFormOpsState(state.value);
       } catch { /* 同步状态不可用只让这一块为空，不影响其它运营指标 */ }
     }
-    // 地址与统计解耦：配了 shareUrl 但同步状态缺失时仍返回 baseForm（统计按 0/null），两者都无才为 null。
-    if (!baseForm && baseFormShareUrl()) baseForm = baseFormOpsState({});
     return json({ metrics: { ...metrics, baseForm } });
   }
   if (method === "GET" && url.pathname === "/api/rules/dictionary") {
@@ -890,7 +866,7 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
   }
   const intakeEditMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)$/);
   if (method === "PATCH" && intakeEditMatch) {
-    // V02-T07/PRD-30：手工与多维表格编辑（base_form 只改平台侧，不回写收集表）。TB 事实只读；期望源版本 + 幂等键。
+    // V02-T07：手工编辑（仅 web_manual）。TB 事实只读；期望源版本 + 幂等键。
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
     const requirementId = pathUuid(intakeEditMatch[1]!, dependencies); if (!requirementId) return jsonError("NOT_FOUND");
@@ -910,7 +886,7 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
         ...(body.supplementUrl !== undefined ? { supplementUrl: body.supplementUrl } : {}),
       });
       if (result.outcome === "not_found") return jsonError("NOT_FOUND");
-      if (result.outcome === "not_manual") return jsonError("CONFLICT", "Teambition 来源的事实由 Teambition 维护，Web 仅编辑手工/多维表格需求。");
+      if (result.outcome === "not_manual") return jsonError("CONFLICT", "Teambition 来源的事实由 Teambition 维护，Web 仅编辑手工需求。");
       if (result.outcome === "key_conflict") return jsonError("CONFLICT", "该幂等键已用于不同的提交内容。");
       if (result.outcome === "version_conflict") return jsonError("CONFLICT", `版本冲突：该需求已被更新到源版本 ${result.currentSourceVersion}，请刷新后重试。`);
       return json({ requirementId, outcome: result.outcome, sourceVersion: result.sourceVersion, ...(result.outcome === "updated" || result.outcome === "replay" ? { substantiveChanged: result.substantiveChanged } : {}) }, 200);

@@ -12,6 +12,14 @@ export interface TeambitionSourceProjectResolver {
   resolveProject(projectName: string): Promise<{ projectId: string; requirementTypeId: string }>;
 }
 
+/**
+ * 组织成员目录：集团池执行人名单在保存时把展示名解析为 TB user_id。
+ * 仅供服务端解析，名单本身只回传展示名，不向浏览器暴露 user_id。
+ */
+export interface TeambitionMemberDirectory {
+  listOrganizationMembers(): Promise<Array<{ userId: string; name: string }>>;
+}
+
 export class SourceProjectResolutionError extends Error {
   constructor(
     readonly reason: "project_not_found" | "project_ambiguous" | "requirement_type_not_found" | "requirement_type_ambiguous",

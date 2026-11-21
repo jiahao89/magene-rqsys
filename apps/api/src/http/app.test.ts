@@ -582,9 +582,6 @@ test("V02-T02 manual requirements read back with source fields and no TB link fa
   // 手工需求不拼接 TB 地址兜底（AC05）
   assert.equal(body.sourceUrl, null);
   assert.equal((body.pipeline as Record<string, string>).pull, "collected");
-  // F1：详情 DTO 必须返回服务端创建时间（四种来源统一），前端不再退回 source.createdAt。
-  assert.equal(body.createdAt, requirement.createdAt);
-  assert.equal(body.updatedAt, requirement.updatedAt);
 });
 
 test("empty requirement search returns an empty page without querying mappings with an empty source id", async () => {
@@ -718,56 +715,6 @@ test("ops metrics expose the base form sync state without leaking the table id",
   withoutFlags.repositories!.ops = { getOpsMetrics: async (input) => ({ window: { days: input.days, since: input.now } } as never) };
   const degraded = await (await handleApiRequest(new Request("http://localhost/api/ops/metrics"), withoutFlags)).json() as { metrics: { baseForm: unknown } };
   assert.equal(degraded.metrics.baseForm, null);
-});
-
-test("ops metrics expose the configured base form share url read-only and reject invalid values", async () => {
-  const previous = process.env.BASE_FORM_SHARE_URL;
-  const d = makeDependencies();
-  d.repositories!.ops = { getOpsMetrics: async (input) => ({ window: { days: input.days, since: input.now } } as never) };
-  d.repositories!.flags = {
-    get: async () => ({ value: { tableId: "tbl_internal", lastRunAt: "2026-11-20T09:00:00.000Z", scanned: 0, created: 0, rejected: 0, readFailed: false, lastError: null }, updatedAt: "2026-11-20T09:00:00.000Z" }),
-    set: async () => undefined,
-  };
-  const read = async () => {
-    const response = await handleApiRequest(new Request("http://localhost/api/ops/metrics"), d);
-    return (await response.json() as { metrics: { baseForm: Record<string, unknown> } }).metrics.baseForm;
-  };
-  try {
-    process.env.BASE_FORM_SHARE_URL = "https://aimagene.feishu.cn/share/base/shrcn-test";
-    const configured = await read();
-    assert.equal(configured.shareUrl, "https://aimagene.feishu.cn/share/base/shrcn-test");
-    assert.equal(JSON.stringify(configured).includes("tbl_internal"), false);
-
-    // lastError 只保留类别摘要：rec/tbl ID 必须掩码。
-    const withError = makeDependencies();
-    withError.repositories!.ops = d.repositories!.ops;
-    withError.repositories!.flags = {
-      get: async () => ({ value: { lastRunAt: "2026-11-20T09:00:00.000Z", scanned: 0, created: 0, rejected: 0, readFailed: false, lastError: "record reczz28brz00SUAx missing in tbl6Gfi0KJ2a1llK" }, updatedAt: "2026-11-20T09:00:00.000Z" }),
-      set: async () => undefined,
-    };
-    const errored = await (await handleApiRequest(new Request("http://localhost/api/ops/metrics"), withError)).json() as { metrics: { baseForm: Record<string, unknown> } };
-    assert.match(String(errored.metrics.baseForm.lastError), /rec…/);
-    assert.match(String(errored.metrics.baseForm.lastError), /tbl…/);
-    assert.equal(String(errored.metrics.baseForm.lastError).includes("reczz28"), false);
-    assert.equal(String(errored.metrics.baseForm.lastError).includes("tbl6Gfi"), false);
-
-    // 只配了 shareUrl、没有同步状态：仍返回 baseForm，统计按 0/null。
-    const withoutState = makeDependencies();
-    withoutState.repositories!.ops = d.repositories!.ops;
-    const fallback = await (await handleApiRequest(new Request("http://localhost/api/ops/metrics"), withoutState)).json() as { metrics: { baseForm: Record<string, unknown> } };
-    assert.equal(fallback.metrics.baseForm.shareUrl, "https://aimagene.feishu.cn/share/base/shrcn-test");
-    assert.equal(fallback.metrics.baseForm.lastRunAt, null);
-    assert.equal(fallback.metrics.baseForm.scanned, 0);
-
-    process.env.BASE_FORM_SHARE_URL = "javascript:alert(1)";
-    assert.equal((await read()).shareUrl, undefined, "非 http(s) 地址不返回");
-
-    delete process.env.BASE_FORM_SHARE_URL;
-    assert.equal((await read()).shareUrl, undefined, "未配置不返回");
-  } finally {
-    if (previous === undefined) delete process.env.BASE_FORM_SHARE_URL;
-    else process.env.BASE_FORM_SHARE_URL = previous;
-  }
 });
 
 test("ops job view lists failed and stuck jobs without leaking payload", async () => {

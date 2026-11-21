@@ -18,7 +18,7 @@ import type {
   SourceSnapshotRepository,
   SystemFlagRepository,
 } from "../application/repositories.js";
-import type { RequirementRecord } from "../domain/persistence.js";
+import type { RequirementRecord, SourcePool } from "../domain/persistence.js";
 import { randomUUID } from "node:crypto";
 import { computeUmcScore } from "../analysis/scoring.js";
 import { DEFAULT_FUNCTION_MODULES } from "../domain/team-directory.js";
@@ -69,6 +69,12 @@ export interface RequirementWorkflowDeps {
   /** Base 传输与字段映射由组合根按环境装配；缺省（本地无 Base 凭据）时仅推送作业不可用。 */
   base?: FeishuBasePushAdapter | undefined;
   baseFields: BasePushServiceDeps["baseFields"];
+  /**
+   * 0031：按池选择 Base 目标（产品池 / 集团池各自一张表）。
+   * 未提供时退回单一 `base`（旧装配/测试）；提供了但缺该池条目时，推送失败记 base_config_missing，
+   * **绝不回落到另一个池的表**。
+   */
+  baseTargets?: Partial<Record<SourcePool, { base: FeishuBasePushAdapter; baseFields: BasePushServiceDeps["baseFields"] }>>;
   /** 夹具守卫环境（各组合根从同一组环境变量构建，作业体在每个外部调用前复检）。 */
   fixtureEnvironment: NodeJS.ProcessEnv;
   /** 默认按环境构造 DeepSeek；测试可注入受控 provider。 */
@@ -291,7 +297,6 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
 
     /** base_push 作业体：夹具守卫与版本守卫后经推送服务幂等执行；记账失败不重推外部。 */
     async handleBasePushJob(job: { payload: Record<string, unknown> }): Promise<void> {
-      if (!deps.base) throw new Error("Base push transport is not configured");
       const requirementId = job.payload.requirementId;
       if (typeof requirementId !== "string") throw new Error("Invalid base_push job payload");
       const requirement = await deps.repositories.requirements.get(requirementId);
@@ -303,6 +308,12 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
       // 平台键切换前的过渡空值由 V02-T03 以需求平台 ID 替代。
       const source = requirement.sourceConfigId ? await deps.repositories.sources.get(requirement.sourceConfigId) : null;
       if (requirement.sourceConfigId && !source?.externalProjectId) throw new Error("Base push source project is not configured");
+      // 0031：按需求归属池选择 Base 表；集团池未配置时记 base_config_missing 并终态，绝不回落产品表。
+      const pool: SourcePool = (source?.pool ?? "product");
+      const target = deps.baseTargets
+        ? deps.baseTargets[pool] ?? null
+        : (deps.base ? { base: deps.base, baseFields: deps.baseFields } : null);
+      if (!target) return failBaseConfigMissing(deps, requirement, job, pool);
       const expectedSourceVersion = job.payload.sourceVersion;
       if (typeof expectedSourceVersion === "number" && expectedSourceVersion !== requirement.sourceVersion) return;
       const latestAnalysis = await deps.repositories.analyses.latest(requirement.id);
@@ -311,7 +322,7 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
       const service = createBasePushService({
         requirements: deps.repositories.requirements, people: deps.repositories.people, basePushes: deps.repositories.basePushes,
         audit: deps.repositories.audit, analyses: deps.repositories.analyses, ...(deps.repositories.scoring ? { scoring: deps.repositories.scoring } : {}), sourceSnapshots: deps.repositories.sourceSnapshots,
-        base: deps.base, sourceProjectId: source?.externalProjectId ?? "", baseFields: deps.baseFields, actorId: typeof job.payload.actorId === "string" ? job.payload.actorId : null,
+        base: target.base, sourceProjectId: source?.externalProjectId ?? "", baseFields: target.baseFields, actorId: typeof job.payload.actorId === "string" ? job.payload.actorId : null,
       });
       const idempotencyKey = typeof job.payload.idempotencyKey === "string"
         ? job.payload.idempotencyKey
@@ -339,6 +350,47 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
       }
     },
   };
+}
+
+/**
+ * 0031：目标池的 Base 未配置（当前只有集团池会走到）。
+ * 记一次失败推送（base_config_missing）+ 审计 + 推送状态 failed，并抛永久失败让 worker 不再重试。
+ * **绝不回落到产品池表**：宁可这一条推不上去，也不把集团需求写进产品 PM 表。
+ */
+async function failBaseConfigMissing(
+  deps: RequirementWorkflowDeps,
+  requirement: RequirementRecord,
+  job: { payload: Record<string, unknown> },
+  pool: SourcePool,
+): Promise<never> {
+  const completedAt = new Date().toISOString();
+  const actorId = typeof job.payload.actorId === "string" ? job.payload.actorId : null;
+  const idempotencyKey = typeof job.payload.idempotencyKey === "string"
+    ? job.payload.idempotencyKey
+    : basePushIdempotencyKey(requirement.id, requirement.sourceVersion, 0);
+  try {
+    const latest = await deps.repositories.basePushes.latest(requirement.id);
+    const run = await deps.repositories.basePushes.append({
+      requirementId: requirement.id, sourceVersion: requirement.sourceVersion,
+      pushVersion: (latest?.pushVersion ?? 0) + 1, idempotencyKey, startedAt: completedAt,
+    });
+    await deps.repositories.basePushes.updateResult(run.id, {
+      status: "failed", safeErrorCode: "base_config_missing",
+      safeErrorSummary: "Base table is not configured for this requirement pool; push skipped.",
+      completedAt,
+    });
+  } catch { /* 记账失败不掩盖"配置缺失"本身 */ }
+  try { if (requirement.pipeline.push !== "failed") await deps.repositories.requirements.setPushState(requirement.id, "failed"); }
+  catch { /* 推送状态是咨询性的：永久失败已由作业终态表达 */ }
+  try {
+    await deps.repositories.audit.append({
+      id: randomUUID(), actorId, eventType: "base.push", entityType: "requirement", entityId: requirement.id, result: "failed",
+      safeDetails: { sourceVersion: requirement.sourceVersion, errorClass: "base_config_missing", pool }, occurredAt: completedAt,
+    });
+  } catch { /* 审计失败不改变终态 */ }
+  const error = new Error("Base push skipped: the target pool's Base table is not configured.");
+  error.name = "BasePushPermanentError";
+  throw error;
 }
 
 /** 推送期间内容前进了（同步把 push_state 重置为 pending）：为当前版本补入队一次推送，

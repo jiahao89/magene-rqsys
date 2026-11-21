@@ -42,6 +42,49 @@ test("requirements receive stable sequential RQ IDs without changing the TB upse
     assert.equal((await ctx.repos.requirements.get(second.id))?.platformRequirementId,"RQ-000002");
   }finally{await cleanup(ctx);}
 });
+test("product and group pools each keep one source and stay isolated by scope",async()=>{
+  const ctx=await setup();
+  try{
+    const product=await ctx.repos.sources.create(config);
+    const group=await ctx.repos.sources.create({...config,pool:"group",projectId:"group-project",executorAllowlist:[{userId:"tb-u1",name:"张三"}]});
+    assert.equal((await ctx.repos.sources.get(product.id))?.pool,"product");
+    assert.equal((await ctx.repos.sources.get(group.id))?.pool,"group");
+    assert.deepEqual((await ctx.repos.sources.get(group.id))?.executorAllowlist,[{userId:"tb-u1",name:"张三"}]);
+    // (provider, pool) 唯一：同池第二个来源被拒绝，跨池允许。
+    await assert.rejects(()=>ctx.repos.sources.create({...config,projectId:"another-product"}),{code:"23505"});
+    await assert.rejects(()=>ctx.repos.sources.create({...config,pool:"group",projectId:"another-group"}),{code:"23505"});
+    const batch=await ctx.repos.batches.create({sourceConfigId:group.id,triggerType:"manual",actorId:null,idempotencyKey:"group-batch-0001",startedAt:"2026-10-08T00:00:00Z"});
+    await ctx.repos.requirements.upsertRequirement(group.id,"group-task",requirementWrite(group.id,batch.id,{teambitionRequirementId:"group-task"}));
+    const groupPage=await ctx.repos.requirements.search({pool:"group",limit:10});
+    assert.equal(groupPage.items.length,1);
+    const productPage=await ctx.repos.requirements.search({pool:"product",limit:10});
+    assert.equal(productPage.items.length,0);
+    assert.equal((await ctx.repos.requirements.sourceCounts("group")).all,1);
+    assert.equal((await ctx.repos.requirements.sourceCounts("product")).all,0);
+    const groupBatches=await ctx.repos.batches.list({pool:"group",limit:10});
+    assert.equal(groupBatches.items.length,1);
+    const productBatches=await ctx.repos.batches.list({pool:"product",limit:10});
+    assert.equal(productBatches.items.length,0);
+  }finally{await cleanup(ctx);}
+});
+test("the global RQ sequence never reuses a deleted number",async()=>{
+  const ctx=await setup();
+  try{
+    const source=await ctx.repos.sources.create(config);
+    const batch=await ctx.repos.batches.create({sourceConfigId:source.id,triggerType:"manual",actorId:null,idempotencyKey:"seq-batch-0001",startedAt:"2026-10-08T00:00:00Z"});
+    const first=await ctx.repos.requirements.upsertRequirement(source.id,"seq-1",requirementWrite(source.id,batch.id,{teambitionRequirementId:"seq-1"}));
+    const second=await ctx.repos.requirements.upsertRequirement(source.id,"seq-2",requirementWrite(source.id,batch.id,{teambitionRequirementId:"seq-2"}));
+    const firstId=(await ctx.repos.requirements.get(first.id))?.platformRequirementId ?? "";
+    const secondId=(await ctx.repos.requirements.get(second.id))?.platformRequirementId ?? "";
+    const number=(value:string)=>Number(value.replace("RQ-",""));
+    assert.equal(number(secondId),number(firstId)+1);
+    // 删掉当前最大号后新建：序号必须继续增长（MAX+1 会复用被删号码）。
+    await ctx.pool.query("DELETE FROM requirements WHERE id=$1",[second.id]);
+    const third=await ctx.repos.requirements.upsertRequirement(source.id,"seq-3",requirementWrite(source.id,batch.id,{teambitionRequirementId:"seq-3"}));
+    const thirdId=(await ctx.repos.requirements.get(third.id))?.platformRequirementId ?? "";
+    assert.ok(number(thirdId)>number(secondId),"new RQ number must be greater than the deleted maximum");
+  }finally{await cleanup(ctx);}
+});
 test("sync batch create is idempotent and blocks a parallel active batch",async()=>{const ctx=await setup();try{const source=await ctx.repos.sources.create(config);const p={sourceConfigId:source.id,triggerType:"manual" as const,actorId:null,idempotencyKey:"manual-key-0001",startedAt:"2026-10-08T00:00:00Z"};const one=await ctx.repos.batches.create(p);assert.equal((await ctx.repos.batches.create(p)).id,one.id);await assert.rejects(()=>ctx.repos.batches.create({...p,idempotencyKey:"manual-key-0002"}),{name:"ActiveBatchConflict"});}finally{await cleanup(ctx);}});
 test("persistent job queue claims a lease and completes the job with fencing",async()=>{const ctx=await setup();try{const job=await ctx.repos.jobs.enqueue({jobType:"sync",dedupeKey:"job-1",payload:{sourceId:"s"},availableAt:"2026-10-08T00:00:00Z"});const claimed=await ctx.repos.jobs.claimNext("worker",30000,"2026-10-08T00:00:01Z");assert.equal(claimed?.id,job.id);assert.equal(claimed?.attemptCount,1);const stale=await ctx.repos.jobs.claimNext("worker-b",30000,"2026-10-08T00:00:35Z");assert.equal(stale?.attemptCount,2);assert.equal(await ctx.repos.jobs.complete(job.id,{expectedAttempt:1,status:"succeeded",now:"2026-10-08T00:00:40Z"}),null);const recovered=await ctx.repos.jobs.complete(job.id,{expectedAttempt:2,status:"succeeded",now:"2026-10-08T00:00:40Z"});assert.equal(recovered?.status,"succeeded");}finally{await cleanup(ctx);}});
 

@@ -350,3 +350,83 @@ test("rate_limited 失败达到阈值时写入 AI 暂停标记（I3-3）", async
   await createRequirementWorkflow(h.deps).handleAnalysisJob({ payload: { requirementId: "req-1" } });
   assert.equal((stored as Record<string, unknown> | null)?.["reason"], "ai_rate_limited");
 });
+
+test("group-pool Base push records base_config_missing and never falls back to the product table", async () => {
+  // 0031：集团池独立 Base 表；缺配置时宁可这条推不上去，也不能写进产品 PM 表。
+  const h = harness();
+  const productPushes: unknown[] = [];
+  const runs: Array<Record<string, unknown>> = [];
+  const results: Array<Record<string, unknown>> = [];
+  const audits: Array<Record<string, unknown>> = [];
+  let pushStateFailed = false;
+  const repositories = {
+    ...h.deps.repositories,
+    sources: { async get() { return { id: "source-1", pool: "group", externalProjectId: "project-1", ownerNames: [] }; } },
+    basePushes: {
+      async latest() { return { pushVersion: 4 } as never; },
+      async append(input: Record<string, unknown>) {
+        runs.push(input);
+        return { ...input, id: "push-run-1", status: "running", baseRecordId: null, safeErrorCode: null, safeErrorSummary: null, completedAt: null } as never;
+      },
+      async updateResult(id: string, result: Record<string, unknown>) { results.push({ id, ...result }); return null; },
+      async findByIdempotencyKey() { return null; },
+      async latestSuccessful() { return null; },
+    },
+    requirements: {
+      ...h.deps.repositories.requirements,
+      async setPushState(_id: string, state: string) { if (state === "failed") pushStateFailed = true; },
+    },
+    audit: { async append(event: Record<string, unknown>) { audits.push(event); } },
+  } as unknown as RequirementWorkflowDeps["repositories"];
+  const workflow = createRequirementWorkflow({
+    ...h.deps,
+    repositories,
+    baseTargets: { product: { base: { push: async () => { productPushes.push("product"); throw new Error("must not be used"); } } as never, baseFields: h.deps.baseFields } },
+  });
+
+  await assert.rejects(
+    () => workflow.handleBasePushJob({ payload: { requirementId: "req-1", sourceVersion: 1 } }),
+    (error: unknown) => error instanceof Error && error.name === "BasePushPermanentError",
+  );
+  assert.equal(productPushes.length, 0, "集团池缺配置时绝不能把需求写进产品表");
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0]!.pushVersion, 5);
+  assert.equal(results[0]!.safeErrorCode, "base_config_missing");
+  assert.equal(pushStateFailed, true);
+  const audit = audits.find((event) => event.eventType === "base.push");
+  assert.equal(audit?.result, "failed");
+  assert.equal((audit?.safeDetails as Record<string, unknown>).errorClass, "base_config_missing");
+  assert.equal((audit?.safeDetails as Record<string, unknown>).pool, "group");
+});
+
+test("group-pool Base push uses the group target, never the product adapter", async () => {
+  const h = harness();
+  const pushed: string[] = [];
+  let usedFields: Record<string, unknown> | null = null;
+  const repositories = {
+    ...h.deps.repositories,
+    sources: { async get() { return { id: "source-1", pool: "group", externalProjectId: "project-1", ownerNames: [] }; } },
+    basePushes: {
+      async findByIdempotencyKey() { return null; },
+      async latestSuccessful() { return null; },
+      async latest() { return null; },
+      async append(input: Record<string, unknown>) { return { ...input, id: "push-run-2", status: "running", baseRecordId: null, safeErrorCode: null, safeErrorSummary: null, completedAt: null } as never; },
+      async updateResult() { return null; },
+    },
+  } as unknown as RequirementWorkflowDeps["repositories"];
+  const workflow = createRequirementWorkflow({
+    ...h.deps,
+    repositories,
+    baseTargets: {
+      product: { base: { push: async () => { pushed.push("product"); throw new Error("must not be used"); } } as never, baseFields: h.deps.baseFields },
+      group: {
+        base: { push: async () => { pushed.push("group"); usedFields = { sourceUrl: "TB链接" }; return { recordId: "rec-1", created: true, omittedFields: [] }; } } as never,
+        baseFields: { ...h.deps.baseFields, source: { sourceUrl: "TB链接" } },
+      },
+    },
+  });
+
+  await workflow.handleBasePushJob({ payload: { requirementId: "req-1", sourceVersion: 1, analysisVersion: 0 } });
+  assert.deepEqual(pushed, ["group"]);
+  assert.deepEqual(usedFields, { sourceUrl: "TB链接" });
+});

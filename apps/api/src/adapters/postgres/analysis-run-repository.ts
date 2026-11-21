@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 import { randomUUID } from "node:crypto";
-import type { AnalysisRunRecord, PriorityLevel } from "../../domain/persistence.js";
+import type { AnalysisRunRecord, PriorityLevel, SourcePool } from "../../domain/persistence.js";
 import type { AnalysisRunRepository } from "../../application/repositories.js";
 
 const asDate=(v:Date|string|null):string|null=>v===null?null:new Date(v).toISOString();
@@ -26,11 +26,14 @@ export class PostgresAnalysisRunRepository implements AnalysisRunRepository{
   // 总览 AI 区：拆成三条最简查询（全量/今日/最近一次）。不用 FILTER、标量子查询或数组参数——
   // 妙搭的 Drizzle 传输层会把数组参数按 chunk 展开（ANY(($2,$3)::text[]) 报 42809，2026-11-18 线上事故）。
   // analysis_runs 没有 started_at 索引（加索引要迁移，暂不做），当前量级下 count(*) 是全表扫描，可接受。
-  async aiCallStats(since:string){
+  async aiCallStats(since:string,pool?:SourcePool){
+    // 0031：总览固定产品池，AI 调用统计也按池作用域，集团池的分析调用不进入总览。
+    const scoped=(param:number)=>`r.requirement_id IN (SELECT req.id FROM requirements req LEFT JOIN source_configs sc ON sc.id=req.source_config_id WHERE ($${param}::text='product' AND (req.source_config_id IS NULL OR sc.pool='product')) OR ($${param}::text='group' AND sc.pool='group'))`;
+    const target=pool??"product";
     const[total,today,last]=await Promise.all([
-      this.pool.query("SELECT count(*)::int AS total FROM analysis_runs"),
-      this.pool.query("SELECT count(*)::int AS today FROM analysis_runs WHERE started_at>=$1::timestamptz",[since]),
-      this.pool.query("SELECT status,started_at FROM analysis_runs ORDER BY started_at DESC,id DESC LIMIT 1"),
+      this.pool.query(`SELECT count(*)::int AS total FROM analysis_runs r WHERE ${scoped(1)}`,[target]),
+      this.pool.query(`SELECT count(*)::int AS today FROM analysis_runs r WHERE r.started_at>=$1::timestamptz AND ${scoped(2)}`,[since,target]),
+      this.pool.query(`SELECT r.status,r.started_at FROM analysis_runs r WHERE ${scoped(1)} ORDER BY r.started_at DESC,r.id DESC LIMIT 1`,[target]),
     ]);
     const lastRow=last.rows[0];
     return{total:Number(total.rows[0]?.total??0),today:Number(today.rows[0]?.today??0),lastAt:lastRow?.started_at?new Date(lastRow.started_at).toISOString():null,lastStatus:lastRow?.status===null||lastRow?.status===undefined?null:String(lastRow.status)};
