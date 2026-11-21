@@ -355,6 +355,64 @@ export async function createRequirementAssessment(
   return assessment;
 }
 
+// ---------- PRD 提示词（rq-prd-prompt-v1）：按需生成、版本化、不写 Base ----------
+
+/** 模型输出契约：一段中文 Markdown 提示词 + 假设 + 开放问题。 */
+export interface PrdPromptOutput {
+  prompt: string;
+  assumptions: string[];
+  openQuestions: string[];
+}
+
+export interface PrdPromptInputs {
+  assessmentId?: string;
+  assessmentVersion?: number;
+  investigationNotes?: string;
+}
+
+/** 一条 PRD 提示词版本；失败版本 output 为 null 且保留 errorCode。 */
+export interface PrdPromptVersion {
+  id: string;
+  version: number;
+  status: "running" | "succeeded" | "failed";
+  output: PrdPromptOutput | null;
+  inputs?: PrdPromptInputs;
+  errorCode: string | null;
+  model: string | null;
+  promptVersion: string | null;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+/** 版本历史：服务端返回 `{items}` 或裸数组都接受；按 version DESC 排序。 */
+export async function listPrdPrompts(id: string, fetcher: typeof fetch = fetch): Promise<PrdPromptVersion[]> {
+  const result = await requestJson<{ items?: PrdPromptVersion[] } | PrdPromptVersion[]>(`/api/requirements/${id}/prd-prompts`, fetcher);
+  const items = Array.isArray(result) ? result : result?.items;
+  return Array.isArray(items) ? [...items].sort((a, b) => b.version - a.version) : [];
+}
+
+/**
+ * 按需生成一条 PRD 提示词版本。assessmentId 缺省时由服务端取最新成功评估；
+ * 服务端最长 90s，调用方负责超时提示（前端 95s）。
+ */
+export async function createPrdPrompt(
+  id: string,
+  input: { assessmentId?: string; investigationNotes: string },
+  fetcher: typeof fetch = fetch,
+  signal?: AbortSignal,
+): Promise<PrdPromptVersion> {
+  const body = await postJson<PrdPromptVersion | { item?: PrdPromptVersion }>(
+    `/api/requirements/${id}/prd-prompts`,
+    input,
+    fetcher,
+    {},
+    signal,
+  );
+  const item = (body as { item?: PrdPromptVersion })?.item ?? (body as PrdPromptVersion);
+  if (!item || typeof item.version !== "number") throw new ApiError("PRD 提示词接口返回了无法识别的结果。", 502, "INVALID_PRD_PROMPT_RESPONSE");
+  return item;
+}
+
 export function retryAnalysis(id: string, options: { force?: boolean } = {}, fetcher: typeof fetch = fetch): Promise<{ requirementId: string; status: string }> {
   return postJson<{ requirementId: string; status: string }>(`/api/analysis/${id}/retry`, options.force ? { force: true } : null, fetcher);
 }

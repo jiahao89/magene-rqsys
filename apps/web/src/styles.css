@@ -1697,3 +1697,17 @@ html[data-theme="dark"] input[type="datetime-local"] { color-scheme: dark; }
 .executor-tag-remove:disabled { opacity: .5; cursor: not-allowed; }
 .executor-add { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .executor-add .arco-input { max-width: 320px; }
+
+/* PRD 提示词（S2）：详情评估下方的独立区块。 */
+.req-prd-prompt-section .prd-prompt-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 4px 0 10px; }
+.prd-prompt-result { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; padding: 12px 14px; border: 1px solid var(--rq-border); border-radius: var(--rq-radius-md); background: var(--rq-surface-subtle); }
+.prd-prompt-result-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.prd-prompt-result-head .subtle-text { color: var(--rq-text-muted); font-size: var(--rq-font-caption); }
+.prd-prompt-chapters { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.prd-chapter-chip { padding: 1px 7px; border: 1px solid var(--rq-border); border-radius: 999px; color: var(--rq-text-muted); background: var(--rq-surface); font-size: 12px; line-height: 18px; white-space: nowrap; }
+.prd-prompt-text { max-height: 220px; margin: 0; padding: 10px 12px; overflow: hidden; border: 1px solid var(--rq-border); border-radius: var(--rq-radius-sm); background: var(--rq-surface); color: var(--rq-text-strong); font-family: var(--rq-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.prd-prompt-text.is-expanded { max-height: none; }
+.prd-prompt-list strong { display: block; margin-bottom: 2px; color: var(--rq-text-strong); font-size: var(--rq-font-caption); }
+.prd-prompt-list ul { margin: 0; padding-left: 18px; color: var(--rq-text-muted); font-size: var(--rq-font-caption); line-height: 1.7; }
+.prd-prompt-versions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding-top: 6px; border-top: 1px dashed var(--rq-border); }
+.prd-prompt-versions .subtle-text { color: var(--rq-text-muted); font-size: var(--rq-font-caption); }

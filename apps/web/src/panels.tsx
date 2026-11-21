@@ -15,6 +15,7 @@ import { emptyRequirementListFilters, readRequirementListFilters, requirementFil
 import { formatDateTime, requirementDisplayId, requirementOwnerView, requirementSourceFacts, requirementSourceName, requirementTime, sortRequirementsForAttention } from "./requirement-view";
 import { AUDIT_PAGE_LIMIT, ApiError, addTeamPerson, applyRequirementAiScore, bindTeamPersonFeishu, createSource, createRequirementAssessment, deleteTeamPerson, getBatch, getFunctionModules, getRequirement, exportRequirementsCsv, getGates, getOpsJobs, getOpsMetrics, getReadiness, getRequirementSourceCounts, listRequirementAssessments, setGate, listAudit, listBatches, listDictionaryVersions, listMappings, listRequirements, listTeamPeople, pushRequirement, renameTeamPerson, revokeDuplicateDecision, saveAnalysisContext, saveFunctionModules, retryAnalysis, setPriorityOverride, retrySyncItem, saveRequirementScore, searchFeishuUsers, setDuplicateDecision, setOwner, unbindTeamPersonFeishu, updateSource, type AnalysisVersionSummary, type AuditEvent, type OpsJob, type OpsMetrics, type GatesResponse, type AssessmentConfidence, type AssessmentVerdict, type BatchDetail, type BatchSummary, type DictionaryVersion, type DuplicateDecision, type PersonMapping, type PublishStatus, type FeishuUserSelection, type FeishuUserCandidate, type FunctionModuleEntry, type RequirementDetail, type RequirementProcessingState, type RequirementResolution, type RequirementAssessment, type RequirementScoreVersion, type RequirementSourceCounts, type RequirementSummary, type ScoringInputs, type SourceConfig, type SourceConfigUpdate, type TeamPerson, type RequirementPool, clearOwner } from "./api";
 import type { WorkbenchTab } from "./workbench-routing";
+import { PrdPromptSection } from "./prd-prompt";
 
 export type LoadState = "loading" | "ready" | "error";
 
@@ -2428,6 +2429,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
     <AnalysisContextSection detail={detail} onSaved={() => onSaved(detail.id)} />
 
     <RequirementAssessmentSection requirementId={detail.id} />
+    <PrdPromptSection requirementId={detail.id} />
 
     <section className="req-section" aria-labelledby="req-status-heading">
       <div className="req-section-head"><h3 id="req-status-heading">处理与推送</h3><span className="req-source-note">系统状态</span></div>
