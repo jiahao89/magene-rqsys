@@ -1,6 +1,6 @@
 # 集团需求池 · 前端 UI 开发方案（方案 A）
 
-> 状态：开发文档的 UI 部分（2026-11-21 按六条决定更新），供并入本轮集团需求池开发文档；未改代码。
+> 状态：开发文档的 UI 部分（2026-11-21 按六条决定 + 五条补充定稿），供并入本轮集团需求池开发文档；未改代码。
 > 方案 A：同一应用内做数据完全隔离的「集团池」，入口仍是现有地址，只在左侧菜单新增「集团需求池」。
 > 产品池（现有业务）行为保持不变：请求不带 `pool` 时后端默认 `product`，现有页面与 URL 不变。
 
@@ -12,6 +12,13 @@
 4. **集团池不显示来源 Tab、不显示来源徽标/色条**：集团池只有一个 Teambition 来源，列表直接展示；产品池完全不变。
 5. **集合接口显式 `pool`，详情/写接口不传 `pool`**：列表、来源计数、导出、同步批次传 `pool=product|group`（缺省 `product`）；详情与全部写操作（编辑、负责人、评分、评估、重复判定、优先级、分析上下文、重试分析/推送）由服务端按需求 UUID 的 `source_config.pool` 推导，客户端不得附加 `pool`。
 6. **审计本期不做分池筛选**：同步记录页只在「同步批次」页签提供池筛选，「审计日志」页签不提供，并在页面注明审计不支持按池筛选。
+
+**补充口径（2026-11-21 二次定稿）**
+
+7. **集团池页头条数**：请求 `GET /api/requirements/source-counts?pool=group`，只取 `all` 一个数字，不渲染五个来源 Tab；不为一个数字另开接口。
+8. **404 分两层**：显式带 `pool` 且与归属不符 → 404；不带 `pool` → 200 返回 `detail.pool`，页面按当前路由 scope 守卫，`detail.pool` 与 scope 不一致时按 404 错误态展示。
+9. **无来源徽标只限列表**：集团池列表不挂 TB 徽标/色条；详情照常显示来源「Teambition」，TB 字段标签（执行人、状态等）保留，不删。
+10. **两个 UI 增量已定**：作业运维页加「产品池 / 集团池」切换；集团池详情标题旁显示「集团池」标签（仅 `pool=group`）。
 
 
 ## 1. 范围与前提
@@ -47,6 +54,7 @@
 - `SecondaryContent` 增加分支：
   - `page === "GroupRequirements"` → `<RequirementsPanel scope="group" onRefresh={onRefresh} initialRequirementId={deepLinkRequirementId} />`。
 - 现有 `page === "Requirements"` 分支保持不变（不传 `scope`，默认 `product`）。
+- 详情分支同样带 `expectedPool`：产品池详情为 `product`、集团池详情为 `group`，用于 `detail.pool` 守卫。
 
 ## 3. 需求池页复用（`RequirementsPanel`）
 
@@ -56,25 +64,30 @@
 - 页面标题仍由 `App` 的 `pageTitles` 决定，组件内不写死「需求池」文案。
 - 集合类请求显式带 `pool`：
   - 列表：`listRequirements({ ...filters, pool })`
-  - 来源计数：`getRequirementSourceCounts(pool)`
+  - 来源计数：`getRequirementSourceCounts(pool)`；集团池只读取 `all` 用于页头条数，不使用其余五个来源计数
   - 导出：`exportRequirementsCsv({ ...filters, pool })`
 - **详情与写操作不传 `pool`**：`getRequirement(id)`、评估、评分、负责人、重复判定、优先级覆盖、分析上下文、重试分析、重试推送、人工编辑等全部按需求 UUID 由服务端从 `source_config.pool` 推导；前端 API 封装不提供 pool 参数，避免越权面。
-- `scope` 只用于两类前端行为：① 集合请求的 `pool` 取值；② 本页 UI 差异（集团池隐藏来源 Tab/徽标）。它不进入详情/写接口。
-- `RequirementDetailPage` 不需要 pool 上下文；详情页按 UUID 正常加载，跨池 UUID 由服务端返回 404，前端展示现有详情错误态（「无法载入需求详情 / 请求的资源不存在或已被删除」），不自动跳转、不探测其他池。
+- `scope` 用于三类前端行为：① 集合请求的 `pool` 取值；② 本页 UI 差异（集团池隐藏来源 Tab/徽标、页头条数、详情池标签）；③ 详情守卫的期望池。
+- `RequirementDetailPage` 接收 `expectedPool`（来自路由 scope）：详情响应返回 `detail.pool`；二者不一致时**不渲染详情**，直接展示现有错误态（「无法载入需求详情 / 请求的资源不存在或已被删除」），不自动跳转、不探测其他池。服务端 404（显式带 `pool` 的跨池访问）走同一错误态。
 
 ### 3.2 列表与筛选
 
 - 表格、筛选、分页、排序、批量、导出、键盘流、空态/错误态全部复用现有实现。
-- **来源 Tab：集团池不渲染**。集团池只有一个 Teambition 来源，五个来源 Tab 没有意义；「更多筛选」里的来源控件、来源计数请求也一并跳过（不请求 `source-counts?pool=group`）。
-- **来源徽标/色条：集团池不渲染**。列表行只显示标题/负责人/状态/时间等通用列，不挂 TB 徽标、不挂来源色条、不显示「来源渠道」徽标；产品池完全不变。
+- **来源 Tab：集团池不渲染**。集团池只有一个 Teambition 来源，五个来源 Tab 没有意义；「更多筛选」里的来源控件也不渲染。
+- **页头条数**：集团池标题「集团需求池」旁显示本池条数（`source-counts?pool=group` 的 `all`），加载失败时隐藏数字、不报错、不影响列表。
+- **来源徽标/色条：集团池不渲染**（仅列表）。列表行只显示标题/负责人/状态/时间等通用列，不挂 TB 徽标、不挂来源色条、不显示「来源渠道」徽标；产品池完全不变。详情页不受影响（见 §3.3）。
 - 集团池列表仍展示全局唯一的 RQ 编号（编号由服务端全局序列生成，前端不参与、不做分池处理）。
 - 空池文案沿用现有 `table-empty`（「没有匹配的需求」），不新增页面级空态。
 
 ### 3.3 详情页
 
 - 完全复用现有详情：需求信息、AI 分析、需求评估、评分、优先级、负责人、重复处理（集团池是 TB 来源，保留）、推送、审计历史。
+- **池标签**：`detail.pool === "group"` 时在详情标题旁显示「集团池」标签；产品池不显示。这是池标识，不是来源徽标。
+- **来源展示不变**：详情仍显示来源「Teambition」，TB 字段标签（执行人、状态、提出人等）保留；「无来源徽标」只约束列表行。
 - 写操作（改负责人、评分、优先级、重复判定、评估、重试分析/推送、编辑）全部作用于当前需求，**请求不携带 `pool`**；池归属由服务端按 UUID 推导。
-- 跨池详情防护：集团池页面打开产品池 UUID（或反向）时，服务端固定返回 **404**；前端展示现有详情错误态（「请求的资源不存在或已被删除」），不自动跳转、不尝试其他池。
+- 跨池详情防护分两层：
+  - 服务端显式带 `pool` 的跨池访问 → **404**；
+  - 客户端不传 `pool` 时服务端返回 200 + `detail.pool`；若 `detail.pool` 与当前路由 scope 不一致（例如在集团池页打开产品池 UUID），前端**按 404 错误态展示**，不渲染详情、不跳转、不探测其他池。
 - RQ 编号为跨池全局唯一且不回收；详情页只展示服务端编号，不添加池前缀或分池编号。
 
 ## 4. 数据源与计划页（`SourcesPanel`）
@@ -111,7 +124,9 @@
 - `GET /api/sources` 返回两条配置；前端按 `pool` 分组，不再用 `sources[0]`。
 - 多来源后，`checkScheduleHealth` 等单来源自检需要按池分别计算。
 
-## 5. 同步记录页（`SyncRecordsPanel`）
+## 5. 同步记录页与作业运维页
+
+### 5.1 同步记录页（`SyncRecordsPanel`）
 
 - 顶部增加池筛选（Arco Radio/Segmented）：「全部 / 产品池 / 集团池」，默认「全部」。
 - 同步批次页签：
@@ -125,14 +140,22 @@
   - 批次筛选状态不影响审计页签；切到审计页签时不请求带 pool 的审计接口。
 - 池筛选不做 URL 持久化；刷新回到「全部」。
 
+### 5.2 作业运维页（`OpsPanel`）
+
+- 增加「产品池 / 集团池」分段控件，默认产品池；切换时按 `pool` 重新拉 `GET /api/ops/metrics?pool=` 与 `GET /api/ops/jobs?pool=`（与现有 `days`、`limit` 参数组合），并重置作业列表。
+- 产品池视图与现状完全一致（含多维表格收集表同步卡片 `baseForm`）。
+- 集团池视图只展示集团池的指标与作业；`baseForm` 是产品池收集表的同步统计，集团池为空时不渲染该卡片（沿用现有「无数据不渲染」逻辑）。
+- 池切换状态不做 URL 持久化，刷新回到产品池；接口失败沿用现有 `StateBanner` 降级，不整页报错。
+- 总览页（`Overview`）按决定不改，只算产品池。
+
 ## 6. 前端需要的 API 契约清单
 
 | 能力 | 接口 | 前端传参 |
 |---|---|---|
 | 需求列表 | `GET /api/requirements` | `pool`（缺省 product） |
-| 来源计数 | `GET /api/requirements/source-counts` | `pool` |
+| 来源计数 | `GET /api/requirements/source-counts` | `pool`；集团池只读取 `all` 作为页头条数 |
 | 导出 | `GET /api/requirements/export` | `pool` |
-| 需求详情 | `GET /api/requirements/:id` | **不传 `pool`**，服务端按 UUID 推导；跨池 404；响应新增只读 `pool` |
+| 需求详情 | `GET /api/requirements/:id` | **不传 `pool`**，服务端按 UUID 推导；响应 `pool` 用于页面守卫（与 scope 不符按 404 展示）；显式带 `pool` 跨池 → 404 |
 | 详情子资源/写操作 | 现有各端点 | **不传 `pool`**，服务端按 UUID 推导 |
 | 来源配置列表 | `GET /api/sources` | 响应含 `pool` |
 | 来源创建/更新 | `POST/PUT /api/sources` | body 含 `pool`、`executorAllowlist`（姓名数组） |
@@ -151,12 +174,14 @@
 - `workbench-routing.ts`：`WorkbenchPage` 增加 `GroupRequirements`、`pageSegments`、`pageTitles` 由 App 维护。
 - `App.tsx`：`navigationGroups` 菜单项、`pageTitles`、`SecondaryContent` 分支。
 - `panels.tsx`：
-  - `RequirementsPanel` 增加 `scope`（集团池不渲染来源 Tab/徽标，集合请求带 `pool`；详情/写接口不带）；
-  - `SourcesPanel` 拆 `SourceConfigCard`，按 `pool` 渲染两张卡；
-  - `SyncRecordsPanel` 增加池筛选（仅批次页签），`BatchesPanel` 接收 `pool`；`AuditPanel` 不接收 `pool`。
-- `api.ts`：`pool` 参数、`SourceConfig.pool`、`executorAllowlist` 类型。
+  - `RequirementsPanel` 增加 `scope`（集团池不渲染来源 Tab/徽标，集合请求带 `pool`、页头取 `source-counts.all`；详情/写接口不带；详情按 `detail.pool` 守卫）；
+  - `RequirementDetailPage` 接收 `expectedPool`：不符按 404 错误态；`pool=group` 时标题旁显示「集团池」标签；TB 字段标签保留；
+  - `SourcesPanel` 拆 `SourceConfigCard`，按 `pool` 渲染两张卡；未解析姓名 400 的提示；
+  - `SyncRecordsPanel` 增加池筛选（仅批次页签），`BatchesPanel` 接收 `pool`；批次详情加池标签与 `filteredCount`；`AuditPanel` 不接收 `pool`；
+  - `OpsPanel` 增加产品池/集团池切换，`getOpsMetrics`/`getOpsJobs` 带 `pool`。
+- `api.ts`：`pool` 参数、`SourceConfig.pool`、`executorAllowlist: string[]`（读接口返回展示名）、`BatchSummary/BatchDetail.pool`、`BatchDetail.filteredCount`、`RequirementDetail.pool`、ops 接口 `pool`。
 - `requirements-url.ts`：需求池筛选参数不变；如同步记录页需要深链，再单独加参数（默认不做）。
-- 测试：`requirements-routing`/`App.test`（菜单与深链）、`panels.test`（池隔离请求参数、两卡保存互不影响、执行人名单校验、同步记录筛选）。
+- 测试：`requirements-routing`/`App.test`（菜单与深链）、`panels.test`（池隔离请求参数、详情池守卫、页头计数、两卡保存互不影响、执行人名单校验、同步记录筛选、批次池标签与 `filteredCount`、运维池切换）。
 - 样式：复用现有 `panel`/`status-chip`/`rules-form`；池标签复用 `status-chip`，不新增设计系统。
 
 ## 8. UI 测试计划
@@ -164,17 +189,15 @@
 1. **菜单与路由**：集团需求池菜单可见、点击进入 `#group-requirements`、active 态正确；移动端抽屉可用；面包屑正确；`?requirement=` 深链直达集团池详情；前进/后退正常。
 2. **池隔离**：
    - 集团池列表/导出/批次请求带 `pool=group`；产品池不传或传 `product`；
-   - 详情与写操作请求**不得出现 `pool` 参数**（mock 断言 URL 不含 pool）；跨池 UUID 返回 404 时显示错误态，不泄漏内容；
-   - 集团池页面不请求 `source-counts`，不渲染来源 Tab/徽标；产品池回归不变。
+   - 详情与写操作请求**不得出现 `pool` 参数**（mock 断言 URL 不含 pool）；显式 404 时显示错误态，不泄漏内容；
+   - **详情池守卫**：集团池路由下 mock 详情返回 `pool: "product"` → 不渲染详情、展示 404 错误态、不追加其他池请求；产品池路由下返回 `pool: "group"` 同理；
+   - 集团池只请求 `source-counts?pool=group` 并只读 `all`：页头显示「共 N 条」，不渲染来源 Tab；计数失败隐藏数字、不报错；
+   - 集团池列表不渲染来源徽标/色条；详情仍显示「Teambition」来源与 TB 字段标签，`pool=group` 时标题旁有「集团池」标签；产品池无该标签。
 3. **数据源页**：两张卡片独立保存、互不覆盖；集团池执行人名单为空时保存/启用均禁用并提示；名单去空格/去重、1/20 可存、21 拒绝；未解析姓名 400 时卡片内列出未解析名单且保留输入；未配置时卡片显示创建入口；产品池现有行为回归。
 4. **同步记录页**：仅批次页签有池筛选，切换重置游标与列表；「全部」视图池标签正确、批次详情也带池标签；集团池批次显示「名单外跳过 N」，产品池不显示；审计页签无池筛选并显示说明。
-5. **回归**：现有产品池的列表/筛选/详情/评估/R8 相似需求/数据源多维表格只读卡/同步记录不受影响；两仓行为一致；typecheck/build/alignment 通过。
+5. **作业运维页**：默认产品池且与现状一致；切到集团池后 `ops/metrics`、`ops/jobs` 均带 `pool=group` 并重拉；`baseForm` 为空时不渲染该卡片；切回产品池恢复；接口失败只降级本页。
+6. **回归**：现有产品池的列表/筛选/详情/评估/R8 相似需求/数据源多维表格只读卡/同步记录/运维页不受影响；两仓行为一致；typecheck/build/alignment 通过。
 
 ## 9. 待确认项（UI）
 
-已由 Chief 2026-11-21 拍定，不再讨论：数据源两卡**纵向**、执行人名单用**自由文本标签**、批次**详情也显示池标签**。
-
-剩余两条（不影响开工，影响本页增量）：
-
-1. **作业运维页（`OpsPanel`）是否加池切换**：开发文档给 `/api/ops/metrics`、`/api/ops/jobs` 增加了 `pool`（缺省 product）。若页面不加切换，集团池的作业在运维页看不到；建议加「产品池 / 集团池」分段控件（默认产品池，切换即重拉），改动很小。总览页按决定不改。
-2. **集团池详情页是否显示「集团池」标签**：详情响应已新增只读 `pool`；建议仅在 `pool=group` 时于详情标题旁显示一个池标签（不是来源徽标，产品池不出现），避免深链打开时不知道在哪个池。若认为重复，可不加。
+无。全部口径已拍定（含集团页条数取 `all`、404 两层、集团池详情标签、运维页池切换、列表无来源徽标而详情保留 TB 字段标签），等待后端接口形态落定后按本文开工。
