@@ -1,3 +1,6 @@
+/** 需求池作用域：product=现有产品池，group=集团需求池。 */
+export type RequirementPool = "product" | "group";
+
 export interface HealthResponse {
   status: string;
   service: string;
@@ -39,6 +42,10 @@ export interface SourceConfig {
   projectName: string;
   enabled: boolean;
   schedule: { enabled: boolean; weekday: number | null; weekdays?: number[] | null; time: string | null; timezone: string | null };
+  /** 池作用域；旧响应缺字段按 product 处理。 */
+  pool?: RequirementPool;
+  /** 集团池执行人名单（展示名；userId 留在服务端）。产品池为空数组。 */
+  executorAllowlist?: string[];
 }
 
 export interface SyncRunResponse {
@@ -90,7 +97,7 @@ export interface PriorityRuleVersion {
 
 export class ApiError extends Error {
   /** 429 时服务端给出的等待秒数（Retry-After）；没有该头时为 null。 */
-  constructor(message: string, readonly status: number, readonly code: string, readonly retryAfterSeconds: number | null = null) {
+  constructor(message: string, readonly status: number, readonly code: string, readonly retryAfterSeconds: number | null = null, /** 服务端 error.details；页面只读已知字段。 */ readonly details: unknown = null) {
     super(message);
     this.name = "ApiError";
   }
@@ -100,11 +107,11 @@ async function parseJsonResponse<T>(response: Response): Promise<T> {
   const body: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     const error = body && typeof body === "object" && "error" in body ? body.error : undefined;
-    const detail = error && typeof error === "object" ? error as { code?: string; message?: string } : {};
+    const detail = error && typeof error === "object" ? error as { code?: string; message?: string; details?: unknown } : {};
     // Retry-After 可能是秒数或 HTTP 日期；契约里只发秒数，其他格式按未知处理。
     const retryHeader = response.headers.get("retry-after");
     const retrySeconds = retryHeader && /^\d+$/.test(retryHeader.trim()) ? Math.max(1, Number(retryHeader)) : null;
-    throw new ApiError(detail.message ?? `Request failed (${response.status})`, response.status, detail.code ?? "REQUEST_FAILED", retrySeconds);
+    throw new ApiError(detail.message ?? `Request failed (${response.status})`, response.status, detail.code ?? "REQUEST_FAILED", retrySeconds, detail.details ?? null);
   }
   return body as T;
 }
@@ -224,6 +231,10 @@ export interface SourceConfigUpdate {
   projectName: string;
   enabled: boolean;
   schedule: { enabled: boolean; weekday: number | null; weekdays?: number[] | null; time: string | null; timezone: string | null };
+  /** 仅创建时提交；更新时不改池。 */
+  pool?: RequirementPool;
+  /** 仅集团池：执行人展示名（1–20 个，服务端 trim/去重并解析TB user_id）。 */
+  executorAllowlist?: string[];
 }
 
 export function createSource(update: SourceConfigUpdate, fetcher: typeof fetch = fetch): Promise<SourceConfig> {
@@ -257,6 +268,8 @@ export interface BatchDetail {
   startedAt?: string;
   completedAt?: string;
   errorSummary?: string | null;
+  pool?: RequirementPool;
+  filteredCount?: number;
   items: SyncItem[];
 }
 
@@ -579,6 +592,8 @@ export interface RequirementDetail {
   createdAt?: string | null;
   updatedAt?: string | null;
   lastPushedAt?: string | null;
+  /** 池归属（服务端按来源推导）；页面用于跨池守卫与「集团池」标签。 */
+  pool?: RequirementPool;
 }
 
 export interface BatchSummary {
@@ -590,6 +605,10 @@ export interface BatchSummary {
   succeededCount: number;
   failedCount: number;
   startedAt?: string;
+  /** 池归属；旧响应缺字段按 product 处理。 */
+  pool?: RequirementPool;
+  /** 执行人名单外跳过数（仅集团池有意义）。 */
+  filteredCount?: number;
 }
 
 // 列表查询参数统一拼装（剔除空值）
@@ -603,16 +622,16 @@ function buildSearch(query: Record<string, string | number | undefined>): string
 }
 
 /** I3-2：按当前筛选导出需求池 CSV（服务端上限 5000 条）。 */
-export async function exportRequirementsCsv(params: { q?: string; executorName?: string; pullState?: string; ownerState?: string; analysisState?: string; pushState?: string; processingState?: "active" | "suppressed"; priority?: string; source?: string; sort?: string; batchId?: string; since?: string; until?: string; fetcher?: typeof fetch } = {}): Promise<{ csv: string; truncated: boolean }> {
+export async function exportRequirementsCsv(params: { q?: string; executorName?: string; pullState?: string; ownerState?: string; analysisState?: string; pushState?: string; processingState?: "active" | "suppressed"; priority?: string; source?: string; sort?: string; batchId?: string; since?: string; until?: string; pool?: RequirementPool; fetcher?: typeof fetch } = {}): Promise<{ csv: string; truncated: boolean }> {
   const { fetcher = fetch, ...rest } = params;
   const response = await (fetcher as typeof fetch)(`/api/requirements/export${buildSearch(rest)}`);
   if (!response.ok) throw new ApiError("导出失败，请重试。", response.status, "EXPORT_FAILED");
   return { csv: await response.text(), truncated: response.headers.get("x-rq-truncated") === "true" };
 }
 
-export async function listRequirements(params: { q?: string; executorName?: string; pullState?: string; ownerState?: string; analysisState?: string; pushState?: string; processingState?: "active" | "suppressed"; priority?: "P0" | "P1" | "P2" | "P3"; source?: "teambition" | "web_manual" | "base_form" | "chat_paste"; sort?: "created_desc" | "priority_asc"; batchId?: string; since?: string; until?: string; limit?: number; cursor?: string; fetcher?: typeof fetch; signal?: AbortSignal } = {}): Promise<{ items: RequirementSummary[]; nextCursor: string | null }> {
-  const { fetcher = fetch, q, executorName, pullState, ownerState, analysisState, pushState, processingState, priority, source, sort, batchId, since, until, limit, cursor, signal } = params;
-  return requestJson<{ items: RequirementSummary[]; nextCursor: string | null }>(`/api/requirements${buildSearch({ q, executorName, pullState, ownerState, analysisState, pushState, processingState, priority, source, sort, batchId, since, until, limit, cursor })}`, fetcher, signal);
+export async function listRequirements(params: { q?: string; executorName?: string; pullState?: string; ownerState?: string; analysisState?: string; pushState?: string; processingState?: "active" | "suppressed"; priority?: "P0" | "P1" | "P2" | "P3"; source?: "teambition" | "web_manual" | "base_form" | "chat_paste"; sort?: "created_desc" | "priority_asc"; batchId?: string; since?: string; until?: string; pool?: RequirementPool; limit?: number; cursor?: string; fetcher?: typeof fetch; signal?: AbortSignal } = {}): Promise<{ items: RequirementSummary[]; nextCursor: string | null }> {
+  const { fetcher = fetch, q, executorName, pullState, ownerState, analysisState, pushState, processingState, priority, source, sort, batchId, since, until, pool, limit, cursor, signal } = params;
+  return requestJson<{ items: RequirementSummary[]; nextCursor: string | null }>(`/api/requirements${buildSearch({ q, executorName, pullState, ownerState, analysisState, pushState, processingState, priority, source, sort, batchId, since, until, pool, limit, cursor })}`, fetcher, signal);
 }
 
 /**
@@ -628,15 +647,18 @@ export interface RequirementSourceCounts {
   all: number;
 }
 
-export async function getRequirementSourceCounts(fetcher: typeof fetch = fetch): Promise<RequirementSourceCounts | null> {
+export async function getRequirementSourceCounts(params: { pool?: RequirementPool; fetcher?: typeof fetch } = {}): Promise<RequirementSourceCounts | null> {
+  const { fetcher = fetch, pool } = params;
   try {
-    const result = await requestJson<{ counts?: Partial<Record<keyof RequirementSourceCounts, unknown>> | null }>("/api/requirements/source-counts", fetcher);
+    const result = await requestJson<{ counts?: Partial<Record<keyof RequirementSourceCounts, unknown>> | null }>(`/api/requirements/source-counts${buildSearch({ pool })}`, fetcher);
     const counts = result?.counts;
     if (!counts || typeof counts !== "object") return null;
     const keys: Array<keyof RequirementSourceCounts> = ["teambition", "web_manual", "base_form", "chat_paste", "all"];
-    const normalized = {} as RequirementSourceCounts;
+    const normalized = { teambition: 0, web_manual: 0, base_form: 0, chat_paste: 0, all: 0 } as RequirementSourceCounts;
     for (const key of keys) {
       const value = counts[key];
+      // 集团池只消费 all：其余来源键即使缺省也不影响页头条数（集团池只有 TB 一个来源）。
+      if (pool === "group" && key !== "all" && value === undefined) { normalized[key] = 0; continue; }
       // 缺字段或负数都按「计数不可用」降级：宁可不显示，也不显示假数字。
       if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return null;
       normalized[key] = Math.trunc(value);
@@ -648,9 +670,9 @@ export async function getRequirementSourceCounts(fetcher: typeof fetch = fetch):
   }
 }
 
-export async function listBatches(params: { status?: string; since?: string; until?: string; limit?: number; cursor?: string; fetcher?: typeof fetch } = {}): Promise<{ items: BatchSummary[]; nextCursor: string | null }> {
-  const { fetcher = fetch, status, since, until, limit, cursor } = params;
-  return requestJson<{ items: BatchSummary[]; nextCursor: string | null }>(`/api/batches${buildSearch({ status, since, until, limit, cursor })}`, fetcher);
+export async function listBatches(params: { status?: string; since?: string; until?: string; pool?: RequirementPool; limit?: number; cursor?: string; fetcher?: typeof fetch } = {}): Promise<{ items: BatchSummary[]; nextCursor: string | null }> {
+  const { fetcher = fetch, status, since, until, pool, limit, cursor } = params;
+  return requestJson<{ items: BatchSummary[]; nextCursor: string | null }>(`/api/batches${buildSearch({ status, since, until, pool, limit, cursor })}`, fetcher);
 }
 
 export interface FeishuUserSelection {
@@ -744,14 +766,14 @@ export interface OpsMetrics {
 }
 
 /** 运营指标（PRD §10）：窗口内成功率/耗时 + 当前快照。 */
-export function getOpsMetrics(params: { days?: number; fetcher?: typeof fetch } = {}): Promise<OpsMetrics> {
-  const { fetcher = fetch, days } = params;
-  return requestJson<{ metrics: OpsMetrics }>(`/api/ops/metrics${buildSearch({ days })}`, fetcher as typeof fetch).then((result) => result.metrics);
+export function getOpsMetrics(params: { days?: number; pool?: RequirementPool; fetcher?: typeof fetch } = {}): Promise<OpsMetrics> {
+  const { fetcher = fetch, days, pool } = params;
+  return requestJson<{ metrics: OpsMetrics }>(`/api/ops/metrics${buildSearch({ days, pool })}`, fetcher as typeof fetch).then((result) => result.metrics);
 }
 
-export function getOpsJobs(params: { limit?: number; fetcher?: typeof fetch } = {}): Promise<{ now: string; items: { failed: OpsJob[]; stuck: OpsJob[] } }> {
-  const { fetcher = fetch, limit } = params;
-  return requestJson<{ now: string; items: { failed: OpsJob[]; stuck: OpsJob[] } }>(`/api/ops/jobs${buildSearch({ limit })}`, fetcher);
+export function getOpsJobs(params: { limit?: number; pool?: RequirementPool; fetcher?: typeof fetch } = {}): Promise<{ now: string; items: { failed: OpsJob[]; stuck: OpsJob[] } }> {
+  const { fetcher = fetch, limit, pool } = params;
+  return requestJson<{ now: string; items: { failed: OpsJob[]; stuck: OpsJob[] } }>(`/api/ops/jobs${buildSearch({ limit, pool })}`, fetcher);
 }
 
 export function listAudit(params: { entityId?: string; eventType?: string; since?: string; until?: string; limit?: number; fetcher?: typeof fetch } = {}): Promise<AuditEvent[]> {

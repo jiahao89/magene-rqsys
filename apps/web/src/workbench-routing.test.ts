@@ -18,6 +18,12 @@ describe("workbench routes", () => {
     expect(readWorkbenchRoute("#sync-records", "")).toEqual({ page: "SyncRecords", tab: null });
     expect(readWorkbenchRoute("#ops", "")).toEqual({ page: "Ops", tab: null });
     expect(readWorkbenchRoute("#sop", "")).toEqual({ page: "Sop", tab: null });
+    expect(readWorkbenchRoute("#group-requirements", "")).toEqual({ page: "GroupRequirements", tab: null });
+  });
+
+  it("keeps the group pool deep link on the group page", () => {
+    expect(readWorkbenchRoute("#group-requirements", "?requirement=req-9")).toEqual({ page: "GroupRequirements", tab: null });
+    expect(workbenchUrl("/app/app-id", "?requirement=req-9", "GroupRequirements")).toBe("/app/app-id#group-requirements");
   });
 
   it("keeps notification deep links on the requirement page", () => {

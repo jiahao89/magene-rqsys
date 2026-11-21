@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
-import { Activity, ArrowDownToLine, ArrowRight, Blocks, BookOpen, Check, CircleAlert, CircleHelp, Clock3, Database, FolderSync, Gauge, GitBranch, Layers3, ListChecks, LoaderCircle, Menu, Moon, Play, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Sun, Users, X } from "lucide-react";
+import { Activity, ArrowDownToLine, ArrowRight, Blocks, BookOpen, Building2, Check, CircleAlert, CircleHelp, Clock3, Database, FolderSync, Gauge, GitBranch, Layers3, ListChecks, LoaderCircle, Menu, Moon, Play, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Sun, Users, X } from "lucide-react";
 import { ApiError, createPriorityRuleDraft, getHealth, getOverviewMetrics, listPriorityRules, listSources, publishPriorityRule, runSync, type OverviewMetrics, type PriorityRuleVersion, type RequirementSummary, type SourceConfig, type SyncExecutionMode } from "./api";
 import { GuidePanel, ModulesPanel, OpsPanel, PanelErrorBoundary, PublishStatusChip, RequirementsPanel, SourcesPanel, SyncRecordsPanel, TeamPanel } from "./panels";
 import { SopPanel } from "./sop";
@@ -29,7 +29,7 @@ function readStoredTheme(): Theme {
 // 使用指南不在侧栏重复出现，只保留顶栏一个稳定入口。
 const navigationGroups: { title: string; items: { label: Page; icon: typeof Gauge }[] }[] = [
   { title: "工作台", items: [
-    { label: "Overview", icon: Gauge }, { label: "Requirements", icon: ListChecks }, { label: "SyncRecords", icon: FolderSync },
+    { label: "Overview", icon: Gauge }, { label: "Requirements", icon: ListChecks }, { label: "GroupRequirements", icon: Building2 }, { label: "SyncRecords", icon: FolderSync },
   ] },
   { title: "管理", items: [
     { label: "Team", icon: Users }, { label: "Modules", icon: Blocks }, { label: "Sop", icon: BookOpen },
@@ -38,7 +38,7 @@ const navigationGroups: { title: string; items: { label: Page; icon: typeof Gaug
     { label: "Sources", icon: Database }, { label: "Rules", icon: Settings2 }, { label: "Ops", icon: Activity },
   ] },
 ];
-const pageTitles: Record<Page, string> = { Overview: "总览", Requirements: "需求池", Team: "团队管理", Modules: "功能模块", SyncRecords: "同步记录", Sources: "数据源与计划", Rules: "优先级规则", Ops: "作业运维", Guide: "使用指南", Sop: "SOP 与培训" };
+const pageTitles: Record<Page, string> = { Overview: "总览", Requirements: "需求池", GroupRequirements: "集团需求池", Team: "团队管理", Modules: "功能模块", SyncRecords: "同步记录", Sources: "数据源与计划", Rules: "优先级规则", Ops: "作业运维", Guide: "使用指南", Sop: "SOP 与培训" };
 
 const API_ERROR_TEXT: Record<string, string> = {
   INTERNAL: "服务暂时不可用，请稍后重试。",
@@ -157,7 +157,11 @@ function App() {
   // 通知按钮深链只在启动时读取一次：`?requirement=<requirements.id>`。
   // 缺失/无效时保持默认总览页；命中时直接进入需求池并打开该需求详情。
   const [deepLinkRequirementId, setDeepLinkRequirementId] = useState(() => readRequirementDeepLink(window.location.search));
+  // 集团池页头条数：由列表面板拿到 source-counts 的 all 后回填，避免同一数字拉两次。
+  const [groupRequirementCount, setGroupRequirementCount] = useState<number | null>(null);
   const [page, setPageState] = useState<Page>(() => readWorkbenchPage(window.location.hash, window.location.search));
+  // 离开集团池时清掉条数，避免下次进入先闪一帧旧数字。
+  useEffect(() => { if (page !== "GroupRequirements") setGroupRequirementCount(null); }, [page]);
   // 合并页签（团队管理：人员/负责人映射；同步记录：批次/审计）。旧链接解析出的页签也在这里落地。
   const [tab, setTabState] = useState<WorkbenchTab | null>(() => readWorkbenchRoute(window.location.hash, window.location.search).tab);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -451,7 +455,7 @@ function App() {
             <footer className="page-footer"><span>RQ-Sys MVP</span><span><ShieldCheck size={14} />状态由 API 返回；不展示飞书 PM 处理状态</span></footer>
           </>}
 
-          {page !== "Overview" && <section className="secondary-page"><div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" />WORKSPACE</div><h1>{pageTitles[page]}</h1><p>{pageDescription(page)}</p></div>{page === "SyncRecords" && <div className="heading-actions"><AdvancedActions busy={busy} health={health} onRunSourceOnly={() => void handleRunSync("source_only")} /><ArcoButton type="primary" onClick={() => void handleRunSync()} disabled={busy || health !== "ready"}><Play size={15} fill="currentColor" />{busy ? "提交中…" : "立即同步"}</ArcoButton></div>}</div><SecondaryContent page={page} tab={tab} sources={sources} loadState={health} deepLinkRequirementId={deepLinkRequirementId} onNavigate={setPage} onRefresh={() => void loadData()} /></section>}
+          {page !== "Overview" && <section className="secondary-page"><div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" />WORKSPACE</div><h1>{pageTitles[page]}{page === "GroupRequirements" && groupRequirementCount !== null ? <span className="page-count">共 {groupRequirementCount} 条</span> : null}</h1><p>{pageDescription(page)}</p></div>{page === "SyncRecords" && <div className="heading-actions"><AdvancedActions busy={busy} health={health} onRunSourceOnly={() => void handleRunSync("source_only")} /><ArcoButton type="primary" onClick={() => void handleRunSync()} disabled={busy || health !== "ready"}><Play size={15} fill="currentColor" />{busy ? "提交中…" : "立即同步"}</ArcoButton></div>}</div><SecondaryContent page={page} tab={tab} sources={sources} loadState={health} deepLinkRequirementId={deepLinkRequirementId} onNavigate={setPage} onRefresh={() => void loadData()} onGroupCountChange={setGroupRequirementCount} /></section>}
           </PanelErrorBoundary>
         </div>
       </main>
@@ -481,8 +485,9 @@ function RequirementsTable({ rows, loading }: { rows: Requirement[]; loading: bo
   />;
 }
 
-function SecondaryContent({ page, tab, sources, loadState, deepLinkRequirementId, onNavigate, onRefresh }: { page: Page; tab: WorkbenchTab | null; sources: SourceConfig[]; loadState: LoadState; deepLinkRequirementId: string | null; onNavigate: (page: Page) => void; onRefresh: () => void }) {
+function SecondaryContent({ page, tab, sources, loadState, deepLinkRequirementId, onNavigate, onRefresh, onGroupCountChange }: { page: Page; tab: WorkbenchTab | null; sources: SourceConfig[]; loadState: LoadState; deepLinkRequirementId: string | null; onNavigate: (page: Page) => void; onRefresh: () => void; onGroupCountChange: (count: number | null) => void }) {
   if (page === "Requirements") return <RequirementsPanel onRefresh={onRefresh} initialRequirementId={deepLinkRequirementId} />;
+  if (page === "GroupRequirements") return <RequirementsPanel scope="group" onRefresh={onRefresh} initialRequirementId={deepLinkRequirementId} onGroupCountChange={onGroupCountChange} />;
   if (page === "Team") return <TeamPanel initialTab={tab} onRefresh={onRefresh} />;
   if (page === "SyncRecords") return <SyncRecordsPanel initialTab={tab} onRefresh={onRefresh} />;
   if (page === "Sources") return <SourcesPanel sources={sources} loadState={loadState} onRefresh={onRefresh} />;
@@ -588,7 +593,7 @@ function EmptyPanel({ loading, title, description }: { loading: boolean; title: 
 }
 
 function pageDescription(page: Page): string {
-  const descriptions: Record<Page, string> = { Overview: "同步流程的当前健康状态与执行概况。", Requirements: "按需求标题、TB负责人和处理状态检索需求；负责人分配在需求详情页完成。", Team: "维护组内人员、飞书账号绑定和 Teambition 负责人映射。", Modules: "维护 AI 分类使用的功能模块、责任人员及词典版本历史。", SyncRecords: "检查同步批次、失败项与可追踪的审计操作。", Sources: "单项目的数据源与周计划设置。", Rules: "管理已校准的优先级规则；评分映射与校准证据在高级设置中维护。", Ops: "只读查看失败与卡住的作业，辅助定位同步、分析和推送中断。", Guide: "系统工作流、状态含义与日常操作说明。", Sop: "按角色整理的试点标准作业流程（SOP）与 30 分钟培训议程。" };
+  const descriptions: Record<Page, string> = { Overview: "同步流程的当前健康状态与执行概况。", Requirements: "按需求标题、TB负责人和处理状态检索需求；负责人分配在需求详情页完成。", GroupRequirements: "集团需求池：仅同步执行人名单内的集团需求，数据与产品池完全隔离。", Team: "维护组内人员、飞书账号绑定和 Teambition 负责人映射。", Modules: "维护 AI 分类使用的功能模块、责任人员及词典版本历史。", SyncRecords: "检查同步批次、失败项与可追踪的审计操作。", Sources: "单项目的数据源与周计划设置。", Rules: "管理已校准的优先级规则；评分映射与校准证据在高级设置中维护。", Ops: "只读查看失败与卡住的作业，辅助定位同步、分析和推送中断。", Guide: "系统工作流、状态含义与日常操作说明。", Sop: "按角色整理的试点标准作业流程（SOP）与 30 分钟培训议程。" };
   return descriptions[page];
 }
 

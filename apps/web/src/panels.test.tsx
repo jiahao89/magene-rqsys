@@ -1,7 +1,7 @@
 // 工单 16/17 面板测试：数据全部来自 mock API；覆盖正向、权限拒绝与详情/重试交互。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { AnalysisContextSection, AuditPanel, OpsPanel, BatchesPanel, MappingsPanel, ModulesPanel, PeoplePanel, PriorityOverrideSection, RequirementsPanel, ScoringPanel, SourcesPanel } from "./panels";
+import { AnalysisContextSection, AuditPanel, OpsPanel, BatchesPanel, MappingsPanel, ModulesPanel, PeoplePanel, PriorityOverrideSection, RequirementsPanel, ScoringPanel, SourcesPanel, SyncRecordsPanel } from "./panels";
 import { AudienceEditor, IntakeForm } from "./intake-form";
 import type { RequirementDetail, SourceConfig, TeamPerson } from "./api";
 
@@ -2539,5 +2539,201 @@ describe("OpsPanel", () => {
     expect(await screen.findByText("没有失败作业")).toBeInTheDocument();
     expect(screen.getByText("没有卡住的作业")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /刷新/ })).toBeEnabled();
+  });
+});
+
+// ---------- 方案 A：集团需求池（同应用、数据隔离） ----------
+
+describe("集团需求池 UI（方案 A）", () => {
+  const groupRow = {
+    id: "group-req-1",
+    sourceRequirementId: "tb-g-1",
+    title: "集团需求样例",
+    sourceVersion: 1,
+    pipeline: { pull: "synced", analysis: "pending", owner: "pending_mapping", push: "pending" },
+    ownerName: null,
+    updatedAt: "2026-11-21T00:00:00.000Z",
+    source: { created: "2026-11-21T00:00:00.000Z", description: "集团池描述" },
+  };
+  const groupCounts = { teambition: 7, web_manual: 0, base_form: 0, chat_paste: 0, all: 7 };
+  function groupDetail(overrides: Record<string, unknown> = {}) {
+    return { ...groupRow, analysis: null, analyses: [], pool: "group", ...overrides };
+  }
+
+  it("requests the group scope, hides source tabs and reports only the all count", async () => {
+    const calls: string[] = [];
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      calls.push(path);
+      if (path === "/api/people") return jsonOk({ items: [] });
+      if (path === "/api/requirements/source-counts?pool=group") return jsonOk({ counts: groupCounts });
+      if (path.startsWith("/api/requirements/export")) return new Response("", { status: 200 });
+      if (path.startsWith("/api/requirements/")) return jsonOk(groupDetail());
+      return jsonOk({ items: [groupRow], nextCursor: null });
+    });
+    const onCount = vi.fn();
+    render(<RequirementsPanel scope="group" onRefresh={() => undefined} onGroupCountChange={onCount} />);
+
+    expect(await screen.findByText("集团需求样例")).toBeInTheDocument();
+    // 集团池只有一个 TB 来源：不渲染五个来源 Tab。
+    expect(screen.queryByRole("tablist", { name: "需求来源" })).toBeNull();
+    // 列表请求显式带 pool=group，且不带 source。
+    const listCall = calls.find((path) => path.startsWith("/api/requirements?"));
+    expect(listCall).toContain("pool=group");
+    expect(listCall).not.toContain("source=");
+    // 只取 all 作为页头条数。
+    await waitFor(() => expect(onCount).toHaveBeenCalledWith(7));
+    expect(calls).toContain("/api/requirements/source-counts?pool=group");
+  });
+
+  it("exports the group scope and never sends pool on detail or write calls", async () => {
+    const calls: Array<{ path: string; method?: string }> = [];
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      calls.push({ path, method: init?.method });
+      if (path === "/api/people") return jsonOk({ items: [] });
+      if (path.startsWith("/api/requirements/source-counts")) return jsonOk({ counts: groupCounts });
+      if (path.startsWith("/api/requirements/export")) return new Response("\uFEFF平台ID\r\nRQ-000001", { status: 200, headers: { "content-type": "text/csv; charset=utf-8", "x-rq-truncated": "false" } });
+      if (path.startsWith("/api/requirements/")) return jsonOk(groupDetail());
+      return jsonOk({ items: [groupRow], nextCursor: null });
+    });
+    render(<RequirementsPanel scope="group" onRefresh={() => undefined} />);
+    fireEvent.click(await screen.findByRole("button", { name: "导出 CSV" }));
+    await waitFor(() => expect(calls.some((call) => call.path.startsWith("/api/requirements/export?"))).toBe(true));
+    const exportPath = calls.find((call) => call.path.startsWith("/api/requirements/export?"))!.path;
+    expect(exportPath).toContain("pool=group");
+    // 详情与写接口一律不带 pool（服务端按 UUID 推导归属）。
+    expect(calls.filter((call) => call.method === "PUT" || call.method === "POST").every((call) => !call.path.includes("pool="))).toBe(true);
+    fireEvent.click(await screen.findByText("集团需求样例"));
+    await screen.findByRole("heading", { name: /集团需求样例/ });
+    const detailCall = calls.find((call) => call.path === "/api/requirements/group-req-1");
+    expect(detailCall).toBeTruthy();
+  });
+
+  it("guards cross-pool details by detail.pool even without a server 404", async () => {
+    window.history.replaceState(null, "", "/?requirement=product-req-1#group-requirements");
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/people") return jsonOk({ items: [] });
+      if (path.startsWith("/api/requirements/source-counts")) return jsonOk({ counts: groupCounts });
+      if (path.startsWith("/api/requirements/")) return jsonOk(groupDetail({ id: "product-req-1", pool: "product", title: "产品池需求" }));
+      return jsonOk({ items: [groupRow], nextCursor: null });
+    });
+    render(<RequirementsPanel scope="group" onRefresh={() => undefined} />);
+
+    // 服务端返回 200 + pool=product：页面按 404 展示，不渲染对方数据。
+    expect(await screen.findByText("请求的资源不存在或已被删除。")).toBeInTheDocument();
+    expect(screen.getByText("无法载入需求详情")).toBeInTheDocument();
+    expect(screen.queryByText("产品池需求")).toBeNull();
+  });
+
+  it("labels group details with a pool chip while keeping the TB field labels", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/people") return jsonOk({ items: [] });
+      if (path.startsWith("/api/requirements/source-counts")) return jsonOk({ counts: groupCounts });
+      if (path.startsWith("/api/requirements/")) return jsonOk(groupDetail());
+      return jsonOk({ items: [groupRow], nextCursor: null });
+    });
+    render(<RequirementsPanel scope="group" onRefresh={() => undefined} />);
+    fireEvent.click(await screen.findByText("集团需求样例"));
+    const heading = await screen.findByRole("heading", { name: /集团需求样例/ });
+    expect(within(heading).getByText("集团池")).toBeInTheDocument();
+    // 详情仍按 TB 展示来源与字段标签；「无来源徽标」只限制列表行。
+    expect(screen.getAllByText("TB").length).toBeGreaterThan(0);
+    expect(screen.getByText("执行人")).toBeInTheDocument();
+  });
+
+  it("renders two source cards, blocks empty allowlists and sends the group payload", async () => {
+    let createBody: Record<string, unknown> | undefined;
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/sources" && init?.method === "POST") {
+        createBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+        return jsonOk({ id: "source-g", pool: "group", projectName: "需求收集与管理", enabled: false, schedule: { enabled: false, weekday: 1, weekdays: [1], time: "09:00", timezone: "Asia/Shanghai" }, executorAllowlist: ["贾浩"] }, 201);
+      }
+      if (path.startsWith("/api/ops/metrics")) return jsonOk({ metrics: {} });
+      return jsonOk({ items: [] });
+    });
+    render(<SourcesPanel sources={[source]} loadState="ready" onRefresh={() => undefined} />);
+    const groupCard = screen.getByRole("region", { name: "集团需求池来源配置" });
+    expect(within(groupCard).getByLabelText("集团池项目名称")).toHaveValue("需求收集与管理");
+    // 空名单：保存与启用同步都禁用，并给出明确提示。
+    expect(within(groupCard).getByRole("button", { name: "创建集团池来源" })).toBeDisabled();
+    expect(within(groupCard).getByLabelText("启用集团池同步")).toBeDisabled();
+    expect(within(groupCard).getByText(/请至少填写 1 个执行人/)).toBeInTheDocument();
+
+    const addInput = within(groupCard).getByLabelText("添加执行人");
+    fireEvent.change(addInput, { target: { value: " 贾浩 " } });
+    fireEvent.keyDown(addInput, { key: "Enter" });
+    expect(within(groupCard).getByText("贾浩")).toBeInTheDocument();
+    expect(within(groupCard).getByRole("button", { name: "创建集团池来源" })).toBeEnabled();
+
+    fireEvent.click(within(groupCard).getByRole("button", { name: "创建集团池来源" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/sources", expect.objectContaining({ method: "POST" })));
+    expect(createBody).toMatchObject({ pool: "group", projectName: "需求收集与管理", executorAllowlist: ["贾浩"] });
+  });
+
+  it("lists unresolved executor names from a 400 without losing the draft", async () => {
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/sources" && init?.method === "POST") {
+        return jsonOk({ error: { code: "VALIDATION_FAILED", message: "执行人未解析", details: { unresolvedExecutorNames: ["李四"] } } }, 400);
+      }
+      if (path.startsWith("/api/ops/metrics")) return jsonOk({ metrics: {} });
+      return jsonOk({ items: [] });
+    });
+    render(<SourcesPanel sources={[]} loadState="ready" onRefresh={() => undefined} />);
+    const groupCard = screen.getByRole("region", { name: "集团需求池来源配置" });
+    const addInput = within(groupCard).getByLabelText("添加执行人");
+    fireEvent.change(addInput, { target: { value: "李四" } });
+    fireEvent.keyDown(addInput, { key: "Enter" });
+    fireEvent.click(within(groupCard).getByRole("button", { name: "创建集团池来源" }));
+
+    expect(await within(groupCard).findByText(/李四：请填写 Teambition 组织目录中的准确姓名/)).toBeInTheDocument();
+    expect(within(groupCard).getByText("李四")).toBeInTheDocument();
+    expect(within(groupCard).getByRole("button", { name: "创建集团池来源" })).toBeEnabled();
+  });
+
+  it("sends the batch pool filter and shows the pool chip plus filtered count", async () => {
+    const batch = { id: "batch-g-1", status: "succeeded", triggerType: "scheduled", totalCount: 3, succeededCount: 3, failedCount: 0, filteredCount: 12, pool: "group", startedAt: "2026-11-21T01:00:00.000Z" };
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/batches/batch-g-1") return jsonOk({ ...batch, completedAt: null, items: [] });
+      return jsonOk({ items: [batch], nextCursor: null });
+    });
+    render(<BatchesPanel onRefresh={() => undefined} pool="group" />);
+    expect(await screen.findByText("集团池")).toBeInTheDocument();
+    const listCall = fetchMock.mock.calls.map((call) => String(call[0])).find((path) => path.startsWith("/api/batches?"));
+    expect(listCall).toContain("pool=group");
+    fireEvent.click(screen.getByRole("button", { name: "查看" }));
+    expect(await screen.findByText(/名单外跳过 12/)).toBeInTheDocument();
+  });
+
+  it("switches the sync records batch pool and states that audit has no pool filter", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      return jsonOk({ items: [], nextCursor: null, path });
+    });
+    render(<SyncRecordsPanel onRefresh={() => undefined} />);
+    await waitFor(() => expect(fetchMock.mock.calls.map((call) => String(call[0])).some((path) => path.startsWith("/api/batches?"))).toBe(true));
+    expect(screen.getByText("审计日志暂不支持按池筛选。")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "集团池" }));
+    await waitFor(() => expect(fetchMock.mock.calls.map((call) => String(call[0])).some((path) => path.startsWith("/api/batches?") && path.includes("pool=group"))).toBe(true));
+  });
+
+  it("switches the ops page scope and keeps product as the default", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/health/ready") return jsonOk({ status: "ready" });
+      if (path.startsWith("/api/ops/gates")) return jsonOk({ ready: true, gates: [] });
+      if (path.startsWith("/api/ops/metrics")) return jsonOk({ metrics: { window: { days: 7, since: "2026-11-14T00:00:00.000Z" }, sync: { total: 0, succeeded: 0, partialFailure: 0, failed: 0, successRate: null, avgDurationSeconds: null, lastCompletedAt: null }, analysis: { total: 0, analyzed: 0, failedRetryable: 0, running: 0, successRate: null, avgDurationSeconds: null, lowConfidence: 0, lowConfidenceRate: null, failureCodes: [] }, owner: { autoMapped: 0, manuallyMapped: 0, pendingMapping: 0, notRequired: 0 }, push: { total: 0, pushed: 0, failed: 0, successRate: null, avgDurationSeconds: null }, duplicate: { confirmedSuppressed: 0, suspected: 0 }, scoring: { aiSuggested: 0, manual: 0, aiApplied: 0, adoptionRate: null } } });
+      return jsonOk({ now: "2026-11-21T02:00:00.000Z", items: { failed: [], stuck: [] } });
+    });
+    render(<OpsPanel />);
+    await waitFor(() => expect(fetchMock.mock.calls.map((call) => String(call[0]))).toContain("/api/ops/jobs?limit=50"));
+    fireEvent.click(screen.getByRole("button", { name: "集团池" }));
+    await waitFor(() => expect(fetchMock.mock.calls.map((call) => String(call[0]))).toContain("/api/ops/jobs?limit=50&pool=group"));
+    expect(fetchMock.mock.calls.map((call) => String(call[0]))).toContain("/api/ops/metrics?days=7&pool=group");
   });
 });

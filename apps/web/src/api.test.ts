@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, getHealth, getOverviewMetrics, getRequirementSourceCounts, listBatches, listRequirements, listSources, retrySyncItem, revokeDuplicateDecision, runSync, searchFeishuUsers, type SourceConfig } from "./api";
+import { ApiError, getHealth, getOverviewMetrics, getRequirement, getRequirementSourceCounts, listBatches, listRequirements, listSources, retrySyncItem, revokeDuplicateDecision, runSync, searchFeishuUsers, updateSource, type SourceConfig } from "./api";
 
 const source: SourceConfig = {
   id: "source-1", projectName: "Product",
@@ -107,6 +107,20 @@ describe("workbench API client", () => {
     expect(Object.fromEntries(url.searchParams)).toEqual({ priority: "P2", sort: "priority_asc", processingState: "active" });
   });
 
+  it("sends the group pool scope on collection endpoints and keeps detail/write calls free of pool", async () => {
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ items: [], nextCursor: null, counts: { teambition: 0, web_manual: 0, base_form: 0, chat_paste: 0, all: 0 } }));
+    await listRequirements({ pool: "group", fetcher });
+    expect(Object.fromEntries(new URL(fetcher.mock.calls[0]![0] as string, "http://localhost").searchParams)).toEqual({ pool: "group" });
+    await listBatches({ pool: "group", fetcher });
+    expect(Object.fromEntries(new URL(fetcher.mock.calls[1]![0] as string, "http://localhost").searchParams)).toEqual({ pool: "group" });
+    await getRequirementSourceCounts({ pool: "group", fetcher });
+    expect(fetcher.mock.calls[2]![0]).toBe("/api/requirements/source-counts?pool=group");
+    const detail = vi.fn().mockResolvedValue(Response.json({ id: "req-1", pool: "group" }));
+    await getRequirement("req-1", detail);
+    expect(detail.mock.calls[0]![0]).toBe("/api/requirements/req-1");
+    expect(String(detail.mock.calls[0]![0])).not.toContain("pool=");
+  });
+
   it("sends batch time filters to the server", async () => {
     const fetcher = vi.fn().mockResolvedValue(Response.json({ items: [], nextCursor: null }));
     await listBatches({ status: "failed", since: "2026-01-01T00:00:00Z", until: "2026-01-02T00:00:00Z", fetcher });
@@ -117,18 +131,31 @@ describe("workbench API client", () => {
   it("reads source counts for the requirement pool tabs", async () => {
     const counts = { teambition: 320, web_manual: 4, base_form: 12, chat_paste: 4, all: 340 };
     const fetcher = vi.fn().mockResolvedValue(Response.json({ counts }));
-    await expect(getRequirementSourceCounts(fetcher)).resolves.toEqual(counts);
+    await expect(getRequirementSourceCounts({ fetcher })).resolves.toEqual(counts);
     expect(fetcher).toHaveBeenCalledWith("/api/requirements/source-counts", expect.objectContaining({ headers: { accept: "application/json" } }));
+  });
+
+  it("needs only the all count for the group pool", async () => {
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ counts: { all: 7 } }));
+    await expect(getRequirementSourceCounts({ pool: "group", fetcher })).resolves.toEqual({ teambition: 0, web_manual: 0, base_form: 0, chat_paste: 0, all: 7 });
+    // 产品池仍要求五个键齐全，缺字段就按计数不可用降级。
+    const partial = vi.fn().mockResolvedValue(Response.json({ counts: { all: 7 } }));
+    await expect(getRequirementSourceCounts({ fetcher: partial })).resolves.toBeNull();
   });
 
   it("hides source counts instead of showing partial numbers when the endpoint is unavailable or malformed", async () => {
     const failed = vi.fn().mockResolvedValue(Response.json({ error: { code: "DEPENDENCY_UNAVAILABLE" } }, { status: 503 }));
-    await expect(getRequirementSourceCounts(failed)).resolves.toBeNull();
+    await expect(getRequirementSourceCounts({ fetcher: failed })).resolves.toBeNull();
     // 缺字段或负数都按「计数不可用」处理：Tab 照常可点，只是不显示数字。
     const partial = vi.fn().mockResolvedValue(Response.json({ counts: { teambition: 1, web_manual: 2 } }));
-    await expect(getRequirementSourceCounts(partial)).resolves.toBeNull();
+    await expect(getRequirementSourceCounts({ fetcher: partial })).resolves.toBeNull();
     const negative = vi.fn().mockResolvedValue(Response.json({ counts: { teambition: -1, web_manual: 2, base_form: 0, chat_paste: 0, all: 1 } }));
-    await expect(getRequirementSourceCounts(negative)).resolves.toBeNull();
+    await expect(getRequirementSourceCounts({ fetcher: negative })).resolves.toBeNull();
+  });
+
+  it("exposes server error details for unresolved executor names", async () => {
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ error: { code: "VALIDATION_FAILED", message: "执行人未解析", details: { unresolvedExecutorNames: ["李四"] } } }, { status: 400 }));
+    await expect(updateSource("source-1", { projectName: "需求收集与管理", enabled: false, schedule: { enabled: false, weekday: 1, weekdays: [1], time: "09:00", timezone: "Asia/Shanghai" }, pool: "group", executorAllowlist: ["李四"] }, fetcher)).rejects.toMatchObject({ code: "VALIDATION_FAILED", details: { unresolvedExecutorNames: ["李四"] } });
   });
 
   it("searches Feishu user candidates through the server API", async () => {

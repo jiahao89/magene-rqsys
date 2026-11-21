@@ -13,7 +13,7 @@ import { checkScheduleHealth } from "./schedule";
 import { readRequirementDeepLink } from "./deep-link";
 import { emptyRequirementListFilters, readRequirementListFilters, requirementFilterCount, requirementPoolUrl, type RequirementListFilters, type RequirementProcessingView } from "./requirements-url";
 import { formatDateTime, requirementDisplayId, requirementOwnerView, requirementSourceFacts, requirementSourceName, requirementTime, sortRequirementsForAttention } from "./requirement-view";
-import { AUDIT_PAGE_LIMIT, ApiError, addTeamPerson, applyRequirementAiScore, bindTeamPersonFeishu, createSource, createRequirementAssessment, deleteTeamPerson, getBatch, getFunctionModules, getRequirement, exportRequirementsCsv, getGates, getOpsJobs, getOpsMetrics, getReadiness, getRequirementSourceCounts, listRequirementAssessments, setGate, listAudit, listBatches, listDictionaryVersions, listMappings, listRequirements, listTeamPeople, pushRequirement, renameTeamPerson, revokeDuplicateDecision, saveAnalysisContext, saveFunctionModules, retryAnalysis, setPriorityOverride, retrySyncItem, saveRequirementScore, searchFeishuUsers, setDuplicateDecision, setOwner, unbindTeamPersonFeishu, updateSource, type AnalysisVersionSummary, type AuditEvent, type OpsJob, type OpsMetrics, type GatesResponse, type AssessmentConfidence, type AssessmentVerdict, type BatchDetail, type BatchSummary, type DictionaryVersion, type DuplicateDecision, type PersonMapping, type PublishStatus, type FeishuUserSelection, type FeishuUserCandidate, type FunctionModuleEntry, type RequirementDetail, type RequirementProcessingState, type RequirementResolution, type RequirementAssessment, type RequirementScoreVersion, type RequirementSourceCounts, type RequirementSummary, type ScoringInputs, type SourceConfig, type SourceConfigUpdate, type TeamPerson, clearOwner } from "./api";
+import { AUDIT_PAGE_LIMIT, ApiError, addTeamPerson, applyRequirementAiScore, bindTeamPersonFeishu, createSource, createRequirementAssessment, deleteTeamPerson, getBatch, getFunctionModules, getRequirement, exportRequirementsCsv, getGates, getOpsJobs, getOpsMetrics, getReadiness, getRequirementSourceCounts, listRequirementAssessments, setGate, listAudit, listBatches, listDictionaryVersions, listMappings, listRequirements, listTeamPeople, pushRequirement, renameTeamPerson, revokeDuplicateDecision, saveAnalysisContext, saveFunctionModules, retryAnalysis, setPriorityOverride, retrySyncItem, saveRequirementScore, searchFeishuUsers, setDuplicateDecision, setOwner, unbindTeamPersonFeishu, updateSource, type AnalysisVersionSummary, type AuditEvent, type OpsJob, type OpsMetrics, type GatesResponse, type AssessmentConfidence, type AssessmentVerdict, type BatchDetail, type BatchSummary, type DictionaryVersion, type DuplicateDecision, type PersonMapping, type PublishStatus, type FeishuUserSelection, type FeishuUserCandidate, type FunctionModuleEntry, type RequirementDetail, type RequirementProcessingState, type RequirementResolution, type RequirementAssessment, type RequirementScoreVersion, type RequirementSourceCounts, type RequirementSummary, type ScoringInputs, type SourceConfig, type SourceConfigUpdate, type TeamPerson, type RequirementPool, clearOwner } from "./api";
 import type { WorkbenchTab } from "./workbench-routing";
 
 export type LoadState = "loading" | "ready" | "error";
@@ -141,26 +141,25 @@ function FeishuUserPicker({ disabled, onMap, saveLabel = "保存负责人并入�
 // ---------- 工单 16：数据源配置（创建唯一来源 / 更新现有配置） ----------
 
 const DEFAULT_TB_PROJECT_NAME = "室外产品-码表软固件需求池";
-const emptyUpdate: SourceConfigUpdate = {
-  projectName: DEFAULT_TB_PROJECT_NAME, enabled: false,
-  schedule: { enabled: false, weekday: 1, weekdays: [1], time: "09:00", timezone: "Asia/Shanghai" },
-};
-
+const DEFAULT_GROUP_PROJECT_NAME = "需求收集与管理";
 // ---------- Spec 04 连接自检：只反映已保存配置，不声称已校验服务端凭据 ----------
 
 /**
  * 连接自检清单。凭据校验发生在服务端；凭据值不下发浏览器，
  * 因此这里只展示「配置是否完整/合法」，绝不显示任何凭据内容或有效/无效结论。
  */
-function ConnectionSelfCheck({ existing, draft }: { existing?: SourceConfig; draft: SourceConfigUpdate }) {
+function ConnectionSelfCheck({ existing, draft, pool = "product" }: { existing?: SourceConfig; draft: SourceConfigUpdate; pool?: RequirementPool }) {
+  const isGroup = pool === "group";
   const schedule = existing ? existing.schedule : draft.schedule;
   const scheduleHealth = checkScheduleHealth(schedule);
+  const executorNames = normalizeExecutorNames(draft.executorAllowlist ?? []);
   const checks = [
     { label: "Teambition 项目名称", ok: Boolean((existing?.projectName ?? draft.projectName).trim()), detail: existing ? "已保存到服务端" : "保存后由服务端解析项目与需求任务类型" },
+    ...(isGroup ? [{ label: "执行人名单", ok: executorNames.length > 0, detail: executorNames.length > 0 ? `已填写 ${executorNames.length} 个执行人（任一命中即同步）` : "名单为空，保存与启用同步都会被拒绝" }] : []),
     { label: "周计划配置", ok: scheduleHealth.active, detail: scheduleHealth.active ? scheduleLabel(schedule) : scheduleHealth.reason ?? "未配置" },
     { label: "同步开关", ok: Boolean(existing?.enabled), detail: existing?.enabled ? "允许手动同步" : "未启用，手动同步会被拒绝" },
   ];
-  return <div className="self-check" role="group" aria-label="连接自检">
+  return <div className="self-check" role="group" aria-label={isGroup ? "集团池连接自检" : "连接自检"}>
     <div className="self-check-head"><strong>连接自检</strong><span>只反映已保存配置；服务端凭据与外部连通性不在此处断言</span></div>
     <ul className="self-check-list">{checks.map((check) => <li key={check.label}>
       <span className={`self-check-dot ${check.ok ? "ok" : "pending"}`} />
@@ -171,22 +170,87 @@ function ConnectionSelfCheck({ existing, draft }: { existing?: SourceConfig; dra
   </div>;
 }
 
-export function SourcesPanel({ sources, loadState, onRefresh }: { sources: SourceConfig[]; loadState: LoadState; onRefresh: () => void }) {
-  const existing = sources[0];
+function defaultSourceUpdate(pool: RequirementPool): SourceConfigUpdate {
+  return {
+    projectName: pool === "group" ? DEFAULT_GROUP_PROJECT_NAME : DEFAULT_TB_PROJECT_NAME,
+    enabled: false,
+    schedule: { enabled: false, weekday: 1, weekdays: [1], time: "09:00", timezone: "Asia/Shanghai" },
+    pool,
+    ...(pool === "group" ? { executorAllowlist: [] } : {}),
+  };
+}
+
+/** 集团池执行人名单：自由文本标签（无 TB 人员选择接口），trim/去重后 1–20 个。 */
+function normalizeExecutorNames(names: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const raw of names) {
+    const name = raw.trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    result.push(name);
+  }
+  return result;
+}
+
+/** 服务端 400 时返回未解析的姓名；其它错误返回空数组。 */
+function unresolvedExecutorNames(cause: unknown): string[] {
+  if (!(cause instanceof ApiError)) return [];
+  const details = cause.details as { unresolvedExecutorNames?: unknown } | null;
+  const names = details?.unresolvedExecutorNames;
+  return Array.isArray(names) ? names.filter((name): name is string => typeof name === "string" && name.trim() !== "") : [];
+}
+
+function ExecutorAllowlistEditor({ value, onChange, disabled }: { value: string[]; onChange: (next: string[]) => void; disabled?: boolean }) {
+  const [input, setInput] = useState("");
+  const add = () => {
+    const name = input.trim();
+    if (!name) return;
+    if (value.includes(name) || value.length >= 20) { setInput(""); return; }
+    onChange([...value, name]);
+    setInput("");
+  };
+  const remove = (name: string) => onChange(value.filter((item) => item !== name));
+  return <div className="executor-editor">
+    <div className="executor-tags" role="list" aria-label="执行人名单">
+      {value.map((name) => <span className="executor-tag" role="listitem" key={name}>{name}<button type="button" className="executor-tag-remove" aria-label={`移除执行人 ${name}`} onClick={() => remove(name)} disabled={disabled}>×</button></span>)}
+      {!value.length && <span className="req-empty-value">尚未添加执行人</span>}
+    </div>
+    <div className="executor-add">
+      <Input aria-label="添加执行人" placeholder="输入姓名后回车添加（1–20 个）" value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); add(); } }} />
+      <Button onPress={add} isDisabled={disabled || !input.trim() || value.length >= 20} variant="secondary" size="small">添加</Button>
+    </div>
+    <p className="status-hint">当前 {value.length}/20。任一执行人在名单内即同步；不处理执行人变更；名单为空不能保存或启用同步。</p>
+  </div>;
+}
+
+function SourceConfigCard({ pool, existing, loadState, onRefresh }: { pool: RequirementPool; existing?: SourceConfig; loadState: LoadState; onRefresh: () => void }) {
+  const isGroup = pool === "group";
   const [draft, setDraft] = useState<SourceConfigUpdate>(() => existing ? {
     projectName: existing.projectName,
-    enabled: existing.enabled, schedule: { ...existing.schedule },
-  } : emptyUpdate);
+    enabled: existing.enabled,
+    schedule: { ...existing.schedule },
+    pool,
+    ...(isGroup ? { executorAllowlist: existing.executorAllowlist ?? [] } : {}),
+  } : defaultSourceUpdate(pool));
   const [busy, setBusy] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [unresolvedNames, setUnresolvedNames] = useState<string[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
+  const executorNames = draft.executorAllowlist ?? [];
+  const emptyAllowlist = isGroup && executorNames.length === 0;
 
-  // 冷加载时 sources 还是空数组，useState 初始化只会拿到默认值；等数据到达后必须再同步一次，
-  // 否则页面写着「已启用」，开关却是关的，直接保存会把同步和周计划一起关掉。
-  const loadedKey = existing ? `${existing.id}|${existing.enabled}|${existing.projectName}|${existing.schedule.enabled}|${scheduleDays(existing.schedule).join(",")}|${existing.schedule.time}` : "";
+  // 冷加载/刷新：服务端配置实际变化时同步草稿；只在 key 变化时做，避免覆盖用户正在编辑的内容。
+  const loadedKey = existing ? `${existing.id}|${existing.enabled}|${existing.projectName}|${existing.schedule.enabled}|${scheduleDays(existing.schedule).join(",")}|${existing.schedule.time}|${(existing.executorAllowlist ?? []).join(",")}` : "";
   useEffect(() => {
     if (!existing) return;
-    setDraft({ projectName: existing.projectName, enabled: existing.enabled, schedule: { ...existing.schedule } });
+    setDraft({
+      projectName: existing.projectName,
+      enabled: existing.enabled,
+      schedule: { ...existing.schedule },
+      pool,
+      ...(isGroup ? { executorAllowlist: existing.executorAllowlist ?? [] } : {}),
+    });
     // 仅在服务端配置实际变化时重同步，避免覆盖用户正在编辑的草稿。
   }, [loadedKey]);
 
@@ -198,35 +262,63 @@ export function SourcesPanel({ sources, loadState, onRefresh }: { sources: Sourc
   };
 
   const save = async () => {
-    setBusy(true); setLoadError(null); setNotice(null);
+    if (emptyAllowlist) { setLoadError("请至少填写 1 个执行人后再保存或启用同步。"); return; }
+    setBusy(true); setLoadError(null); setUnresolvedNames([]); setNotice(null);
     try {
-      const saved = existing ? await updateSource(existing.id, draft) : await createSource(draft);
-      setDraft({ projectName: saved.projectName, enabled: saved.enabled, schedule: { ...saved.schedule } });
-      setNotice(existing ? "来源配置已保存并从 API 重新读取一致。" : "来源已创建。MVP 只允许一个产品组来源。");
+      const body: SourceConfigUpdate = { projectName: draft.projectName, enabled: draft.enabled, schedule: { ...draft.schedule } };
+      if (isGroup) body.executorAllowlist = normalizeExecutorNames(executorNames);
+      const saved = existing ? await updateSource(existing.id, body) : await createSource({ ...body, pool });
+      setDraft({
+        projectName: saved.projectName,
+        enabled: saved.enabled,
+        schedule: { ...saved.schedule },
+        pool,
+        ...(isGroup ? { executorAllowlist: saved.executorAllowlist ?? normalizeExecutorNames(executorNames) } : {}),
+      });
+      setNotice(existing
+        ? (isGroup ? "集团池来源配置已保存并从 API 重新读取一致。" : "来源配置已保存并从 API 重新读取一致。")
+        : (isGroup ? "集团池来源已创建。" : "来源已创建。"));
       onRefresh();
-    } catch (cause) { setLoadError(errorText(cause)); }
-    finally { setBusy(false); }
+    } catch (cause) {
+      const names = unresolvedExecutorNames(cause);
+      if (names.length) {
+        setUnresolvedNames(names);
+        setLoadError("以下执行人未解析到 Teambition 账号，请核对姓名后重试（名单已保留）。");
+      } else { setLoadError(errorText(cause)); }
+    } finally { setBusy(false); }
   };
 
-  const panel = <section className="panel requirements-panel">
-    <div className="panel-heading"><div><h2>连接与数据源</h2><p>填写 Teambition 项目名称；系统会自动匹配项目及需求任务类型。凭据保存在服务端。</p></div>{existing && <span className={`status-chip ${existing.enabled ? "status-live" : "status-muted"}`}><span />{existing.enabled ? "已启用" : "已停用"}</span>}</div>
+  const title = isGroup ? "集团需求池（Teambition）" : "产品需求池（Teambition）";
+  const description = isGroup
+    ? "集团池独立同步 Teambition「需求收集与管理」项目；仅收录执行人名单内的需求。凭据保存在服务端。"
+    : "填写 Teambition 项目名称；系统会自动匹配项目及需求任务类型。凭据保存在服务端。";
+  const prefix = isGroup ? "集团池" : "";
+
+  return <section className="panel requirements-panel" aria-label={isGroup ? "集团需求池来源配置" : "产品需求池来源配置"}>
+    <div className="panel-heading"><div><h2>{title}</h2><p>{description}</p></div>{existing && <span className={`status-chip ${existing.enabled ? "status-live" : "status-muted"}`}><span />{existing.enabled ? "已启用" : "已停用"}</span>}</div>
     <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
+    {unresolvedNames.length > 0 && <div className="alert-banner" role="alert"><div><strong>执行人未解析</strong><span>{unresolvedNames.join("、")}：请填写 Teambition 组织目录中的准确姓名。</span></div></div>}
+    {emptyAllowlist && <div className="notice-banner" role="status"><span>请至少填写 1 个执行人后再启用同步；名单为空时不能保存或启用。</span></div>}
     <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
-      <label className="field"><span>Teambition 项目名称</span><Input aria-label="项目名称" value={draft.projectName} onChange={(e) => set("projectName", e.target.value)} /></label>
-      <div className="rules-threshold"><ArcoCheckbox checked={draft.enabled} onChange={(checked: boolean) => set("enabled", checked)}>启用同步</ArcoCheckbox></div>
+      <label className="field"><span>Teambition 项目名称</span><Input aria-label={`${prefix}项目名称`} value={draft.projectName} onChange={(e) => set("projectName", e.target.value)} /></label>
+      <div className="rules-threshold"><ArcoCheckbox checked={draft.enabled} disabled={emptyAllowlist} onChange={(checked: boolean) => set("enabled", checked)}>{isGroup ? "启用集团池同步" : "启用同步"}</ArcoCheckbox></div>
     </div>
+    {isGroup && <div className="rules-form" style={{ alignItems: "stretch", flexDirection: "column" }}>
+      <div className="rules-threshold"><span>执行人名单（任一执行人在名单内即同步）</span></div>
+      <ExecutorAllowlistEditor value={executorNames} onChange={(next) => set("executorAllowlist", next)} disabled={busy} />
+    </div>}
     <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
       <div className="rules-threshold"><span>周计划（可多选）</span><div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-        {WEEKDAY_LABELS.map((label, index) => { const day = index + 1; return <ArcoButton key={label} htmlType="button" size="small" type={selectedDays.includes(day) ? "primary" : "secondary"} aria-label={label} aria-pressed={selectedDays.includes(day)} onClick={() => toggleWeekday(day)}>{label}</ArcoButton>; })}
+        {WEEKDAY_LABELS.map((label, index) => { const day = index + 1; return <ArcoButton key={label} htmlType="button" size="small" type={selectedDays.includes(day) ? "primary" : "secondary"} aria-label={isGroup ? `集团池${label}` : label} aria-pressed={selectedDays.includes(day)} onClick={() => toggleWeekday(day)}>{label}</ArcoButton>; })}
       </div></div>
-      <label className="field field--short"><span>执行时间（HH:MM）</span><Input aria-label="执行时间" placeholder="09:00" value={draft.schedule.time ?? ""} onChange={(e) => set("schedule", { ...draft.schedule, time: e.target.value === "" ? null : e.target.value })} /></label>
-      <label className="field"><span>时区</span><Input aria-label="时区" placeholder="Asia/Shanghai" value={draft.schedule.timezone ?? ""} onChange={(e) => set("schedule", { ...draft.schedule, timezone: e.target.value === "" ? null : e.target.value })} /></label>
-      <div className="rules-threshold"><ArcoCheckbox checked={draft.schedule.enabled} onChange={(checked: boolean) => set("schedule", { ...draft.schedule, enabled: checked })}>启用周计划</ArcoCheckbox></div>
+      <label className="field field--short"><span>执行时间（HH:MM）</span><Input aria-label={`${prefix}执行时间`} placeholder="09:00" value={draft.schedule.time ?? ""} onChange={(e) => set("schedule", { ...draft.schedule, time: e.target.value === "" ? null : e.target.value })} /></label>
+      <label className="field"><span>时区</span><Input aria-label={`${prefix}时区`} placeholder="Asia/Shanghai" value={draft.schedule.timezone ?? ""} onChange={(e) => set("schedule", { ...draft.schedule, timezone: e.target.value === "" ? null : e.target.value })} /></label>
+      <div className="rules-threshold"><ArcoCheckbox checked={draft.schedule.enabled} onChange={(checked: boolean) => set("schedule", { ...draft.schedule, enabled: checked })}>{isGroup ? "启用集团池周计划" : "启用周计划"}</ArcoCheckbox></div>
     </div>
-    <div className="rules-form"><Button onPress={() => void save()} isDisabled={busy || loadState === "loading"} variant="primary" size="small">{existing ? "保存更新" : "创建来源"}</Button></div>
-    {loadState === "ready" && <ConnectionSelfCheck existing={existing} draft={draft} />}
+    <div className="rules-form"><Button onPress={() => void save()} isDisabled={busy || loadState === "loading" || emptyAllowlist} variant="primary" size="small">{isGroup ? (existing ? "保存集团池设置" : "创建集团池来源") : (existing ? "保存更新" : "创建来源")}</Button></div>
+    {loadState === "ready" && <ConnectionSelfCheck existing={existing} draft={draft} pool={pool} />}
     {loadState === "error" && <div className="table-empty"><strong>无法读取来源配置</strong><span>请检查 API 连接后重试。</span></div>}
-    {!existing && loadState === "ready" && <div className="table-empty"><strong>尚未配置数据源</strong><span>填写项目名称并创建后，可手动同步；周计划启用后按设定执行。</span></div>}
+    {!existing && loadState === "ready" && <div className="table-empty"><strong>{isGroup ? "尚未配置集团池数据源" : "尚未配置数据源"}</strong><span>{isGroup ? "填写项目名称与执行人名单后创建；名单为空时不能启用同步。" : "填写项目名称并创建后，可手动同步；周计划启用后按设定执行。"}</span></div>}
     {existing && <ArcoTable<{ project: string; schedule: string }>
       rowKey="project"
       data={[{ project: existing.projectName, schedule: scheduleLabel(existing.schedule) }]}
@@ -235,7 +327,17 @@ export function SourcesPanel({ sources, loadState, onRefresh }: { sources: Sourc
       columns={[{ title: "项目", dataIndex: "project" }, { title: "定时同步", dataIndex: "schedule" }]}
     />}
   </section>;
-  return <>{panel}<BaseFormReadonlyPanel /></>;
+}
+
+export function SourcesPanel({ sources, loadState, onRefresh }: { sources: SourceConfig[]; loadState: LoadState; onRefresh: () => void }) {
+  // 方案 A：同一 provider 两条来源配置，按 pool 分组渲染，不再用 sources[0]。
+  const product = sources.find((item) => (item.pool ?? "product") === "product");
+  const group = sources.find((item) => item.pool === "group");
+  return <>
+    <SourceConfigCard pool="product" existing={product} loadState={loadState} onRefresh={onRefresh} />
+    <SourceConfigCard pool="group" existing={group} loadState={loadState} onRefresh={onRefresh} />
+    <BaseFormReadonlyPanel />
+  </>;
 }
 
 /** 数据源页的多维表格收集表只读卡片：来源地址、同步规则、最近一次同步（PRD §4.11）。 */
@@ -583,7 +685,7 @@ export function ModulesPanel() {
 
 // ---------- 工单 16/17：同步批次（status 筛选 + 游标分页 + 详情 + 失败项重试） ----------
 
-export function BatchesPanel({ onRefresh }: { onRefresh: () => void }) {
+export function BatchesPanel({ onRefresh, pool = "product" }: { onRefresh: () => void; pool?: RequirementPool }) {
   const [batches, setBatches] = useState<BatchSummary[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState("");
@@ -604,7 +706,7 @@ export function BatchesPanel({ onRefresh }: { onRefresh: () => void }) {
     appliedFiltersRef.current = filter;
     setLoadState("loading"); setLoadError(null);
     try {
-      const page = await listBatches({ status: filter.status || undefined, since: filter.since ? new Date(filter.since).toISOString() : undefined, until: filter.until ? new Date(filter.until).toISOString() : undefined, limit: 10, ...(nextCursor ? { cursor: nextCursor } : {}) });
+      const page = await listBatches({ status: filter.status || undefined, since: filter.since ? new Date(filter.since).toISOString() : undefined, until: filter.until ? new Date(filter.until).toISOString() : undefined, pool: pool === "group" ? ("group" as const) : undefined, limit: 10, ...(nextCursor ? { cursor: nextCursor } : {}) });
       setBatches((prev) => nextCursor ? [...prev, ...page.items] : page.items);
       setCursor(page.nextCursor);
       setLoadState("ready");
@@ -612,7 +714,7 @@ export function BatchesPanel({ onRefresh }: { onRefresh: () => void }) {
       if (!nextCursor) { setBatches([]); setCursor(null); }
       setLoadError(errorText(cause)); setLoadState("error");
     }
-  }, []);
+  }, [pool]);
   useEffect(() => { void load({ status: "", since: "", until: "" }, null); }, [load]);
 
   const open = async (id: string) => {
@@ -647,7 +749,7 @@ export function BatchesPanel({ onRefresh }: { onRefresh: () => void }) {
     <StateBanner loadError={loadError ?? detailError} notice={notice} onCloseNotice={() => setNotice(null)} />
     {openBatch && <div className="config-source" style={{ flexDirection: "column", alignItems: "stretch" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><strong>批次 {openBatch.id}</strong><Button onPress={() => setOpenBatch(null)} variant="secondary" size="small">收起</Button></div>
-      <span>{stateChip(openBatch.status)} · 总数 {openBatch.totalCount} · 成功 {openBatch.succeededCount} · 失败 {openBatch.failedCount} · {openBatch.errorSummary ?? ""}</span>
+      <span>{stateChip(openBatch.status)} · {poolChip(openBatch.pool)} · 总数 {openBatch.totalCount} · 成功 {openBatch.succeededCount} · 失败 {openBatch.failedCount}{(openBatch.pool === "group" || (pool === "group" && openBatch.pool === undefined)) && openBatch.filteredCount !== undefined ? ` · 名单外跳过 ${openBatch.filteredCount}` : ""} · {openBatch.errorSummary ?? ""}</span>
       <ArcoTable<BatchDetail["items"][number]> scroll={{ x: 960 }}
         rowKey="id"
         data={openBatch.items}
@@ -670,6 +772,7 @@ export function BatchesPanel({ onRefresh }: { onRefresh: () => void }) {
         border={false}
         columns={[
           { title: "批次 ID", dataIndex: "id", render: (_value, batch) => <span className="mono-cell">{batch.id}</span> },
+          { title: "池", dataIndex: "pool", width: 90, render: (_value, batch) => poolChip(batch.pool) },
           { title: "状态", dataIndex: "status", render: (_value, batch) => stateChip(batch.status) },
           { title: "触发", dataIndex: "triggerType", render: (_value, batch) => triggerLabel(batch) },
           { title: "需求总数", dataIndex: "totalCount" },
@@ -692,6 +795,12 @@ function triggerLabel(batch: { triggerType?: string; actorId?: string | null }):
 function stateChip(status: string) {
   const tone = status === "failed" ? "status-danger" : status === "running" ? "status-live" : "status-muted";
   return <span className={`status-chip ${tone}`}><span />{stateLabel(status)}</span>;
+}
+
+/** 池标识：产品池/集团池共用同一视觉，只在需要区分池的地方出现。 */
+function poolChip(pool?: RequirementPool) {
+  const value = pool ?? "product";
+  return <span className="pool-chip">{value === "group" ? "集团池" : "产品池"}</span>;
 }
 
 // ---------- 工单 17 / design.md 第 8–10 章：需求池列表 + 独立详情页 ----------
@@ -847,13 +956,15 @@ function TextList({ items, prefix }: { items: string[]; prefix?: string }) {
   return <ul className="req-evidence-list">{items.map((item, index) => <li key={`${index}-${item}`}>{prefix ?? ""}{item}</li>)}</ul>;
 }
 
-function requirementListQuery(filter: RequirementListFilters) {
+function requirementListQuery(filter: RequirementListFilters, pool: RequirementPool = "product") {
   const toIso = (value: string): string | undefined => {
     if (!value) return undefined;
     const time = new Date(value);
     return Number.isNaN(time.getTime()) ? undefined : time.toISOString();
   };
   return {
+    // 产品池是服务端默认：不序列化 pool，保持既有请求 URL 不变。
+    pool: pool === "group" ? ("group" as const) : undefined,
     q: filter.title || undefined,
     executorName: filter.owner || undefined,
     pullState: filter.pull || undefined,
@@ -862,7 +973,8 @@ function requirementListQuery(filter: RequirementListFilters) {
     pushState: filter.push || undefined,
     processingState: filter.processingState === "all" ? undefined : filter.processingState,
     priority: (filter.priority || undefined) as "P0" | "P1" | "P2" | "P3" | undefined,
-    source: (filter.source || undefined) as "teambition" | "web_manual" | "base_form" | "chat_paste" | undefined,
+    // 集团池没有来源 Tab，也不接受来源筛选（数据只有 TB 一个来源）。
+    source: pool === "group" ? undefined : (filter.source || undefined) as "teambition" | "web_manual" | "base_form" | "chat_paste" | undefined,
     sort: filter.sort === "priority_asc" ? ("priority_asc" as const) : undefined,
     batchId: filter.batchId || undefined,
     since: toIso(filter.from),
@@ -870,8 +982,13 @@ function requirementListQuery(filter: RequirementListFilters) {
   };
 }
 
-export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefresh: () => void; initialRequirementId?: string | null }) {
-  const [initialFilters] = useState(() => readRequirementListFilters(window.location.search));
+export function RequirementsPanel({ onRefresh, initialRequirementId, scope = "product", onGroupCountChange }: { onRefresh: () => void; initialRequirementId?: string | null; scope?: RequirementPool; onGroupCountChange?: (count: number | null) => void }) {
+  const isGroup = scope === "group";
+  // 集团池没有来源维度：即使 URL 带了 source（从产品池复制/手改地址），也不把它带进请求。
+  const [initialFilters] = useState(() => { const parsed = readRequirementListFilters(window.location.search); return scope === "group" ? { ...parsed, source: "" } : parsed; });
+  // 页头条数回填用 ref：父组件传内联回调时不应触发计数请求重跑。
+  const onGroupCountChangeRef = useRef(onGroupCountChange);
+  useEffect(() => { onGroupCountChangeRef.current = onGroupCountChange; }, [onGroupCountChange]);
   const [initialDetailId] = useState(() => readRequirementDeepLink(window.location.search) ?? initialRequirementId?.trim() ?? null);
   const [rows, setRows] = useState<RequirementSummary[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
@@ -952,7 +1069,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
     try {
       // 分诊视图（priority_asc）按优先级排序且不分页：单页最多 100 条，避免游标与排序不一致。
       const priorityMode = filter.sort === "priority_asc";
-      const page = await listRequirements({ ...requirementListQuery(filter), limit: priorityMode ? 100 : 25, ...(!priorityMode && nextCursor ? { cursor: nextCursor } : {}) });
+      const page = await listRequirements({ ...requirementListQuery(filter, scope), limit: priorityMode ? 100 : 25, ...(!priorityMode && nextCursor ? { cursor: nextCursor } : {}) });
       if (version !== listRequestVersion.current) return;
       setRows((prev) => nextCursor ? [...prev, ...page.items] : page.items);
       setCursor(page.nextCursor);
@@ -963,12 +1080,16 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
       if (!nextCursor) { setRows([]); setCursor(null); }
       setLoadError(errorText(cause)); setLoadState("error");
     }
-  }, []);
+  }, [scope]);
 
   // 来源计数只影响 Tab 上的数字：接口失败/未部署时静默降级，不打断列表。
+  // 集团池只取 all 作为页头条数，不渲染五个来源 Tab。
   const loadSourceCounts = useCallback(() => {
-    void getRequirementSourceCounts().then(setSourceCounts);
-  }, []);
+    void getRequirementSourceCounts({ pool: scope === "group" ? "group" : undefined }).then((counts) => {
+      setSourceCounts(counts);
+      if (isGroup) onGroupCountChangeRef.current?.(counts?.all ?? null);
+    });
+  }, [scope, isGroup]);
 
   useEffect(() => {
     void load(initialFilters, null);
@@ -990,6 +1111,9 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
     const version = ++detailRequestVersion.current;
     try {
       const detail = await getRequirement(id);
+      // 跨池守卫：详情接口按 UUID 返回所属池；与当前页面 scope 不符时按 404 展示，
+      // 不渲染详情、不跳转、不探测其他池（服务端对显式带 pool 的跨池请求同样返回 404）。
+      if (detail.pool && detail.pool !== scope) throw new ApiError(API_ERROR_TEXT.NOT_FOUND ?? "请求的资源不存在或已被删除。", 404, "NOT_FOUND");
       if (version === detailRequestVersion.current) {
         setSelected(detail);
         // 用最新详情同步当前列表行，操作后返回列表无需重新加载、也不会丢分页。
@@ -1006,7 +1130,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
     } catch (cause) {
       if (version === detailRequestVersion.current) { setDetailError(errorText(cause)); setDetailLoading(false); }
     }
-  }, []);
+  }, [scope]);
 
   // 通知深链/分享链接：URL 的 requirement 是唯一入口；只在首次挂载时自动打开。
   const deepLinkOpened = useRef(false);
@@ -1119,7 +1243,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
   const exportCsv = async () => {
     setExportBusy(true); setExportNotice(null);
     try {
-      const { csv, truncated } = await exportRequirementsCsv(requirementListQuery(appliedFiltersRef.current));
+      const { csv, truncated } = await exportRequirementsCsv(requirementListQuery(appliedFiltersRef.current, scope));
       const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
@@ -1155,8 +1279,9 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
   }
 
   return <section className="panel requirements-panel">
-    {/* 5c-1：来源是一等维度。Tab 直接顶在列表上方，带计数、可深链；计数拿不到时只显示文字。 */}
-    <div className="source-tabs" role="tablist" aria-label="需求来源">
+    {/* 5c-1：来源是一等维度。Tab 直接顶在列表上方，带计数、可深链；计数拿不到时只显示文字。
+        集团池只有一个 TB 来源，不渲染来源 Tab，也不请求五来源计数。 */}
+    {!isGroup && <div className="source-tabs" role="tablist" aria-label="需求来源">
       {SOURCE_TABS.map((tab, index) => {
         const active = sourceFilter === tab.value;
         const countKey = sourceCountKey(tab.value);
@@ -1178,7 +1303,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
           {count !== null ? <span className="source-tab-count">{count}</span> : null}
         </button>;
       })}
-    </div>
+    </div>}
     <div className="processing-view-switch" role="group" aria-label="重复处理视图">
       <span className="processing-view-switch-label">重复处理</span>
       {PROCESSING_VIEWS.map((view) => <ArcoButton
@@ -1264,7 +1389,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId }: { onRefre
       <span className="list-summary-sort">{prioritySort === "priority_asc" ? "分诊视图：按生效优先级 P0 → P3 排序，单页最多 100 条（不分页）" : "排序仅作用于已加载的记录：待分配 → 推送失败 → 待推送 → 已推送"}</span>
     </div>
     <div id="requirement-tab-panel" role="tabpanel" aria-label="需求列表">
-      <RequirementsTable rows={sortedRows} loading={loadState === "loading"} onOpen={(row) => void open(row.id, { push: true })} onAssign={(row) => void open(row.id, { push: true, openOwnerPicker: true })} />
+      <RequirementsTable rows={sortedRows} loading={loadState === "loading"} showSource={!isGroup} onOpen={(row) => void open(row.id, { push: true })} onAssign={(row) => void open(row.id, { push: true, openOwnerPicker: true })} />
       {cursor && prioritySort !== "priority_asc" && <div className="rules-form"><Button onPress={() => void load(appliedFiltersRef.current, cursor)} isDisabled={loadState === "loading"} variant="secondary" size="small">加载更多</Button></div>}
     </div>
   </section>;
@@ -2166,7 +2291,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
       <div className="req-summary-backbar"><Button onPress={onBack} variant="secondary" size="small"><ArrowLeft size={14} />返回需求池</Button></div>
       <div className="req-summary-hero">
         <div className="req-summary-copy">
-          <h2 className="req-summary-title">{detail.title}</h2>
+          <h2 className="req-summary-title">{detail.title}{detail.pool === "group" ? <span className="pool-chip">集团池</span> : null}</h2>
           <span className="req-summary-id">{detail.platformRequirementId ?? (detail.sourceRequirementId ? `REQ-${detail.sourceRequirementId.slice(0, 8)}` : "WEB")} · v{detail.sourceVersion}</span>
           {detail.duplicateOf && <div className="req-duplicate-notice" role="note">
             该需求与另一条需求标题相同，仅作疑似重复提示；两条记录仍按各自的来源 ID 独立保留，是否压制由人工判定决定。<a href={`?requirement=${detail.duplicateOf}`}>查看另一条</a>
@@ -2375,7 +2500,7 @@ function isRowActionTarget(target: EventTarget | null): boolean {
   return target instanceof Element && Boolean(target.closest("button, a, input, select, textarea"));
 }
 
-function RequirementsTable({ rows, loading, onOpen, onAssign }: { rows: RequirementSummary[]; loading: boolean; onOpen: (row: RequirementSummary) => void; onAssign: (row: RequirementSummary) => void }) {
+function RequirementsTable({ rows, loading, showSource = true, onOpen, onAssign }: { rows: RequirementSummary[]; loading: boolean; showSource?: boolean; onOpen: (row: RequirementSummary) => void; onAssign: (row: RequirementSummary) => void }) {
   // 首屏加载骨架屏；静默刷新时保留已渲染的行，避免整块列表闪烁。
   if (!rows.length) return loading
     ? <SkeletonTableRows rows={6} columns={5} />
@@ -2387,7 +2512,7 @@ function RequirementsTable({ rows, loading, onOpen, onAssign }: { rows: Requirem
       render: (_value: unknown, row: RequirementSummary) => {
         const badge = processingBadge(row);
         const suppressed = requirementProcessingState(row) !== "active";
-        const sourceInfo = requirementSourceInfo(row);
+        const sourceInfo = showSource ? requirementSourceInfo(row) : null;
         return <div className="req-row-title-cell">
           <span className="req-row-title" title={row.title}>{row.title}</span>
           {sourceInfo ? <span className={`source-badge is-${sourceInfo.kind}`} title={sourceInfo.note}><span className="source-badge-name">{sourceInfo.name}</span>{sourceInfo.channel ? <span className="source-badge-channel">·{sourceInfo.channel}</span> : null}</span> : null}
@@ -2465,7 +2590,7 @@ function RequirementsTable({ rows, loading, onOpen, onAssign }: { rows: Requirem
       rowClassName={(row: RequirementSummary) => {
         const owner = requirementOwnerView(row);
         const suppressed = requirementProcessingState(row) !== "active";
-        const sourceKind = requirementSourceKind(row);
+        const sourceKind = showSource ? requirementSourceKind(row) : null;
         // 非默认来源在行首加 3px 竖色条，扫视时比 chip 更快；TB 行不加，避免整屏噪音。
         return `req-row${owner.unassigned ? " is-pending-owner" : ""}${sourceKind ? ` is-source-${sourceKind}` : ""}${suppressed ? " is-suppressed" : ""}`;
       }}
@@ -2593,7 +2718,7 @@ export function AuditPanel() {
   useEffect(() => { void load({ entityId: "", eventType: "", since: "", until: "" }); }, [load]);
 
   return <section className="panel requirements-panel">
-    <div className="panel-heading"><div><h2>审计日志</h2><p>同步、分析、映射、推送与配置操作的留痕；对象、事件类型与时间筛选由服务端执行。</p></div><div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+    <div className="panel-heading"><div><h2>审计日志</h2><p>同步、分析、映射、推送与配置操作的留痕；对象、事件类型与时间筛选由服务端执行。审计日志暂不支持按池筛选。</p></div><div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
       <Input aria-label="对象 ID 筛选" placeholder="按对象 ID 筛选" value={entityId} onChange={(e) => setEntityId(e.target.value)} />
       <Input aria-label="事件类型筛选" placeholder="事件类型，如 analysis.retry_requested" value={eventType} onChange={(e) => setEventType(e.target.value)} />
       <label className="field"><span>开始时间</span><Input type="datetime-local" aria-label="开始时间" value={since} onChange={(e) => setSince(e.target.value)} /></label>
@@ -2649,19 +2774,21 @@ export function OpsPanel() {
   const [gateEvidence, setGateEvidence] = useState("");
   const [gateError, setGateError] = useState<string | null>(null);
   const [days, setDays] = useState(7);
+  // 作业与指标按池查看；迁移/Gate 是两个池共用的平台状态，不随池变化。
+  const [pool, setPool] = useState<RequirementPool>("product");
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoadState("loading"); setLoadError(null);
     // 迁移与指标是辅助信息：读取失败不影响作业列表。
-    const [jobsResult, readyResult, metricsResult, gatesResult] = await Promise.allSettled([getOpsJobs({ limit: 50 }), getReadiness(), getOpsMetrics({ days }), getGates()]);
+    const [jobsResult, readyResult, metricsResult, gatesResult] = await Promise.allSettled([getOpsJobs({ limit: 50, pool: pool === "group" ? "group" : undefined }), getReadiness(), getOpsMetrics({ days, pool: pool === "group" ? "group" : undefined }), getGates()]);
     if (jobsResult.status === "fulfilled") { setItems(jobsResult.value.items); setLoadState("ready"); }
     else { setLoadError(errorText(jobsResult.reason)); setLoadState("error"); }
     setMigrations(readyResult.status === "fulfilled" ? readyResult.value.migrations ?? null : null);
     setMetrics(metricsResult.status === "fulfilled" ? metricsResult.value : null);
     setGates(gatesResult.status === "fulfilled" && Array.isArray(gatesResult.value.gates) ? gatesResult.value : null);
-  }, [days]);
+  }, [days, pool]);
 
   const confirmGateAction = async (id: string) => {
     const evidence = gateEvidence.trim();
@@ -2682,7 +2809,12 @@ export function OpsPanel() {
 
   return <section className="panel requirements-panel">
     <div className="panel-heading"><div><h2>作业运维</h2><p>只读视图：最近失败的作业，以及尝试次数用尽且租约过期的运行中作业。</p></div>
-      <ArcoButton size="small" onClick={() => void load()} disabled={loadState === "loading"} htmlType="button"><RefreshCw size={14} />刷新</ArcoButton>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <div className="pool-switch pool-switch--compact" role="group" aria-label="作业运维池筛选">
+          {(["product", "group"] as const).map((value) => <ArcoButton key={value} size="small" htmlType="button" type={pool === value ? "primary" : "secondary"} aria-pressed={pool === value} onClick={() => setPool(value)}>{value === "group" ? "集团池" : "产品池"}</ArcoButton>)}
+        </div>
+        <ArcoButton size="small" onClick={() => void load()} disabled={loadState === "loading"} htmlType="button"><RefreshCw size={14} />刷新</ArcoButton>
+      </div>
     </div>
     <StateBanner loadError={loadError} notice={null} onCloseNotice={() => undefined} />
     <p className={`status-hint${migrations?.upToDate === false ? " field-error" : ""}`} role="status">
@@ -2716,7 +2848,7 @@ export function OpsPanel() {
           评分：AI 建议 {metrics.scoring.aiSuggested} · 人工修改 {metrics.scoring.manual} · 采用 AI {metrics.scoring.aiApplied}（采纳率 {opsRate(metrics.scoring.adoptionRate)}）
         </p>
         {metrics.analysis.failureCodes.length > 0 && <p className="status-hint ops-failures">分析失败码：{metrics.analysis.failureCodes.map((item) => `${item.code}×${item.count}`).join("、")}</p>}
-        {metrics.baseForm && <p className="status-hint">多维表格同步：扫描 {metrics.baseForm.scanned} 行 · 已收录 {metrics.baseForm.created + metrics.baseForm.recorded} · 校验失败 {metrics.baseForm.rejected} · 写回失败 {metrics.baseForm.writeBackFailed} · 读取失败 {metrics.baseForm.readFailed ? "是" : "否"} · 最近 {metrics.baseForm.lastRunAt ? timeLabel(metrics.baseForm.lastRunAt) : "—"}{metrics.baseForm.lastError ? ` · ${metrics.baseForm.lastError}` : ""}</p>}
+        {pool === "product" && metrics.baseForm && <p className="status-hint">多维表格同步：扫描 {metrics.baseForm.scanned} 行 · 已收录 {metrics.baseForm.created + metrics.baseForm.recorded} · 校验失败 {metrics.baseForm.rejected} · 写回失败 {metrics.baseForm.writeBackFailed} · 读取失败 {metrics.baseForm.readFailed ? "是" : "否"} · 最近 {metrics.baseForm.lastRunAt ? timeLabel(metrics.baseForm.lastRunAt) : "—"}{metrics.baseForm.lastError ? ` · ${metrics.baseForm.lastError}` : ""}</p>}
       </> : <p className="status-hint">运营指标暂不可用。</p>}
     </div>
     <div className="ops-gates">
@@ -2799,11 +2931,18 @@ export function TeamPanel({ initialTab, onRefresh }: { initialTab?: WorkbenchTab
 
 export function SyncRecordsPanel({ initialTab, onRefresh }: { initialTab?: WorkbenchTab | null; onRefresh: () => void }) {
   const [tab, setTab] = useState<"batches" | "audit">(initialTab === "audit" ? "audit" : "batches");
+  // 批次按池筛选：接口不支持 pool=all，不做「全部」视图（两次请求的游标无法合并）。
+  const [pool, setPool] = useState<RequirementPool>("product");
   useEffect(() => { if (initialTab === "batches" || initialTab === "audit") setTab(initialTab); }, [initialTab]);
   return <div className="composite-page">
+    {tab === "batches" && <div className="pool-switch" role="group" aria-label="同步批次池筛选">
+      <span className="pool-switch-label">批次所属池</span>
+      {(["product", "group"] as const).map((value) => <ArcoButton key={value} size="small" htmlType="button" type={pool === value ? "primary" : "secondary"} aria-pressed={pool === value} onClick={() => setPool(value)}>{value === "group" ? "集团池" : "产品池"}</ArcoButton>)}
+      <span className="pool-switch-hint">审计日志暂不支持按池筛选。</span>
+    </div>}
     {/* ARCO-06：同 TeamPanel，受控 Arco Tabs。 */}
     <AccessibleTabs label="同步记录" activeTab={tab} onChange={(key) => setTab(key as "batches" | "audit")}>
-      <ArcoTabs.TabPane key="batches" title="同步批次"><BatchesPanel onRefresh={onRefresh} /></ArcoTabs.TabPane>
+      <ArcoTabs.TabPane key="batches" title="同步批次"><BatchesPanel onRefresh={onRefresh} pool={pool} /></ArcoTabs.TabPane>
       <ArcoTabs.TabPane key="audit" title="审计日志"><AuditPanel /></ArcoTabs.TabPane>
     </AccessibleTabs>
   </div>;

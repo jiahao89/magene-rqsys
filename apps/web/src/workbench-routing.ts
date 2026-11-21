@@ -2,7 +2,7 @@ import { readRequirementDeepLink } from "./deep-link";
 import { buildRequirementPoolSearch, emptyRequirementListFilters, type RequirementListFilters } from "./requirements-url";
 
 // 菜单收敛后的页面：人员与负责人映射合并为「团队管理」，同步批次与审计日志合并为「同步记录」。
-export type WorkbenchPage = "Overview" | "Requirements" | "Team" | "Modules" | "SyncRecords" | "Sources" | "Rules" | "Ops" | "Guide" | "Sop";
+export type WorkbenchPage = "Overview" | "Requirements" | "GroupRequirements" | "Team" | "Modules" | "SyncRecords" | "Sources" | "Rules" | "Ops" | "Guide" | "Sop";
 
 // 合并页的页签。旧链接（#people/#mappings/#batches/#audit）继续解析到对应页签。
 export type WorkbenchTab = "people" | "mappings" | "batches" | "audit";
@@ -10,6 +10,7 @@ export type WorkbenchTab = "people" | "mappings" | "batches" | "audit";
 const pageSegments: Record<WorkbenchPage, string> = {
   Overview: "overview",
   Requirements: "requirements",
+  GroupRequirements: "group-requirements",
   Team: "team",
   Modules: "modules",
   SyncRecords: "sync-records",

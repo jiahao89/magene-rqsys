@@ -494,6 +494,29 @@ describe("RQ-Sys local workbench", () => {
     expect(new URLSearchParams(window.location.search).get("push")).toBe("failed");
   });
 
+  it("opens the group requirements pool from the sidebar with its own scope and count", async () => {
+    fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/sources") return Response.json({ items: [] });
+      if (path.startsWith("/api/batches")) return Response.json({ items: [] });
+      if (path === "/api/overview/metrics") return Response.json({ counts: { total: 12, pullSynced: 12, analysisAnalyzed: 8, ownerResolved: 9, pushPushed: 6, failed: 2 } });
+      if (path === "/api/people") return Response.json({ items: [] });
+      if (path === "/api/requirements/source-counts?pool=group") return Response.json({ counts: { teambition: 7, web_manual: 0, base_form: 0, chat_paste: 0, all: 7 } });
+      if (path.startsWith("/api/requirements")) return Response.json({ items: [], nextCursor: null });
+      return Response.json({ items: [], nextCursor: null });
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("link", { name: "集团需求池" }));
+
+    expect(window.location.hash).toBe("#group-requirements");
+    expect(await screen.findByRole("heading", { name: /集团需求池/ })).toBeInTheDocument();
+    // 页头条数来自 source-counts?pool=group 的 all。
+    expect(await screen.findByText("共 7 条")).toBeInTheDocument();
+    await waitFor(() => expect(fetchMock.mock.calls.map((call) => String(call[0])).some((path) => path.startsWith("/api/requirements?") && path.includes("pool=group"))).toBe(true));
+  });
+
   it("does not present unavailable dashboard counts as zero", async () => {
     fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
       const path = typeof input === "string" ? input : new Request(input).url;
