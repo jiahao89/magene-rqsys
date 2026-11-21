@@ -948,8 +948,10 @@ paths:
       summary: List PRD prompt versions (2026-11-21)
       description: >-
         Newest first; no pagination. Stale running versions (older than two minutes) are marked
-        failed/timeout on read. The endpoint takes no pool parameter: it resolves the requirement by
-        UUID and works for both the product and the group pool.
+        failed/timeout on read. The requirement is resolved by UUID, so both the product and the
+        group pool work when pool is omitted. An explicit `?pool=` that does not match the
+        requirement's own pool returns 404 (the same guard as the detail endpoints); a matching pool
+        behaves exactly like omitting it.
       parameters:
         - $ref: '#/components/parameters/Id'
       responses:
@@ -975,6 +977,8 @@ paths:
         Requires at least one succeeded assessment (409 ASSESSMENT_REQUIRED otherwise). Failures
         never fall back to a template: the version is stored as failed with errorCode and 503 is
         returned, so the PM keeps the input and can retry. Rate limit 2/minute and 20/day per actor.
+        The requirement is resolved by UUID; an explicit `?pool=` that does not match its own pool
+        returns 404, while a matching pool (or none) generates normally for either pool.
       parameters:
         - $ref: '#/components/parameters/Id'
       requestBody:
@@ -1001,7 +1005,13 @@ paths:
               schema: { $ref: '#/components/schemas/RequirementPrdPrompt' }
         '400': { $ref: '#/components/responses/Validation' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '404': { $ref: '#/components/responses/NotFound' }
+        '404':
+          description: >-
+            Unknown requirement, or an explicit `?pool=` that does not match the requirement's own
+            pool.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '409':
           description: >-
             ASSESSMENT_REQUIRED when the requirement has no succeeded assessment (no version is
