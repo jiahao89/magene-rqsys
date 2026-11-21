@@ -186,6 +186,15 @@ function baseUserFieldValue(value: unknown): { userId: string; idType: "open_id"
   return idType ? { userId: id, idType } : null;
 }
 
+/**
+ * URL 类型文本字段（如集团表「TB链接」）的值形状：飞书要 {link,text}，直接给字符串会
+ * 1254068 URLFieldConvFail。空值原样返回，让调用方按空单元格处理。
+ */
+function urlFieldValue(value: unknown): unknown {
+  const text = typeof value === "string" ? value.trim() : "";
+  return text ? { link: text, text } : value;
+}
+
 export class FeishuBasePushAdapter {
   constructor(private readonly client: BaseClient, private readonly fields: BaseFieldMap, private readonly snapshots?: PmSnapshotWriter) {}
 
@@ -259,7 +268,9 @@ export class FeishuBasePushAdapter {
     const sourceValues = { title: input.title, ...(input.description === undefined ? {} : { description: input.description }), ...input.sourceValues };
     for (const [name, value] of Object.entries(sourceValues)) {
       const field = this.fields.source[name];
-      if (field) delta[field] = value;
+      if (!field) continue;
+      // 集团表「TB链接」是 URL 类型字段：飞书只接受 {link,text}，直接写字符串会 1254068 URLFieldConvFail。
+      delta[field] = name === "sourceUrl" ? urlFieldValue(value) : value;
     }
     for (const [name, value] of Object.entries(input.aiValues ?? {})) {
       const field = this.fields.ai[name];

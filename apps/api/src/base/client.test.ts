@@ -651,3 +651,19 @@ test("V02-T03 create-timeout recovery: a landed row is reused by the platform ke
   assert.equal(replay.recordId, "record-landed");
   assert.equal(createCalls, 1);
 });
+
+test("URL 类型的来源链接写成 {link,text}，普通文本字段仍是字符串", async () => {
+  const fake = fakeBase();
+  await new FeishuBasePushAdapter(fake.client, {
+    requirementId: "TB需求ID", platformRequirementId: "需求平台ID", owner: "执行人",
+    source: { title: "标题", sourceUrl: "TB链接" }, ai: {}, pm: [],
+  }).push({
+    projectId: "p", requirementId: "tb-1", platformRequirementId: "RQ-000051",
+    requirementDbId: "11111111-2222-4333-8444-555555555555", title: "Group requirement",
+    owner: null, sourceVersion: 1, substantiveChanged: false, idempotencyKey: "group:v1",
+    sourceValues: { createdAt: Date.parse("2026-01-02T03:04:05Z"), sourceUrl: "https://teambition.magene.cn/task/tb-1" },
+  });
+  const fields = fake.row()!.fields as Record<string, unknown>;
+  assert.deepEqual(fields["TB链接"], { link: "https://teambition.magene.cn/task/tb-1", text: "https://teambition.magene.cn/task/tb-1" });
+  assert.equal(fields["标题"], "Group requirement");
+});
