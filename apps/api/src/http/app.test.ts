@@ -1346,3 +1346,68 @@ test("列表行的 Base 记录链接按请求的池取模板，集团池未配�
     delete process.env.RQSYS_GROUP_BASE_RECORD_URL_TEMPLATE;
   }
 });
+
+// ---- 2026-11-21：PRD 提示词（POST/GET /api/requirements/:id/prd-prompts） ----
+
+test("PRD 提示词：无成功评估 409、生成 201、GET 列版本、单飞与超时映射", async () => {
+  const d = makeDependencies();
+  const repositories = d.repositories as unknown as Record<string, unknown>;
+  const assessments = [{ id: "assessment-1", requirementId: requirement.id, version: 3, status: "succeeded", promptVersion: "rq-assessment-v1", model: "m", inputs: {}, output: {}, errorCode: null, createdAt: "2026-10-07T00:00:00.000Z", completedAt: "2026-10-07T00:00:01.000Z" }];
+  let expired: Array<[string, string, string]> = [];
+  repositories.assessments = {
+    list: async () => assessments,
+    expireStaleRunning: async (id: string, before: string, at: string) => { expired.push([id, before, at]); return 0; },
+  };
+  const listed: Array<{ id: string; version: number }> = [assessments[0]!];
+  repositories.prdPrompts = {
+    list: async () => [{ id: "prd-1", requirementId: requirement.id, version: 1, status: "succeeded", promptVersion: "rq-prd-prompt-v1", model: "stub", inputs: { investigationNotes: "第一版调研", assessmentVersion: 3 }, output: { prompt: "x", assumptions: [], openQuestions: [] }, errorCode: null, createdAt: "2026-10-07T00:00:00.000Z", completedAt: "2026-10-07T00:00:10.000Z" }],
+    expireStaleRunning: async (id: string, before: string, at: string) => { expired.push([id, before, at]); return 0; },
+    create: async () => { throw new Error("unused"); },
+    complete: async () => null,
+    fail: async () => null,
+  };
+  const runs: Array<Record<string, unknown>> = [];
+  const record = {
+    id: "prd-2", requirementId: requirement.id, version: 2, status: "succeeded" as const, promptVersion: "rq-prd-prompt-v1", model: "stub",
+    inputs: { investigationNotes: "访谈 5 位用户", assessmentVersion: 3 }, output: { prompt: "## 角色与任务", assumptions: [], openQuestions: [] },
+    errorCode: null, createdAt: "2026-10-08T00:00:00.000Z", completedAt: "2026-10-08T00:00:30.000Z",
+  };
+  d.prdPrompt = { runner: { run: async (input: Record<string, unknown>) => { runs.push(input); return record; } } as never };
+
+  // GET：先清理过期 running，再按版本倒序列出；只回传回填需要的字段。
+  const list = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/prd-prompts`), d);
+  assert.equal(list.status, 200);
+  const items = (await list.json() as { items: Array<Record<string, unknown>> }).items;
+  assert.equal(items.length, 1);
+  assert.deepEqual(Object.keys(items[0]!).sort(), ["assessmentVersion", "completedAt", "createdAt", "errorCode", "id", "investigationNotes", "model", "output", "promptVersion", "requirementId", "status", "version"]);
+  assert.equal(items[0]!.investigationNotes, "第一版调研");
+  assert.deepEqual(expired[0], [requirement.id, "2026-10-07T23:58:00.000Z", "2026-10-08T00:00:00.000Z"]);
+
+  // POST：201 裸对象；评估与调研结论都传入 runner。
+  const ok = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/prd-prompts`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ investigationNotes: "访谈 5 位用户" }),
+  }), d);
+  assert.equal(ok.status, 201);
+  const body = await ok.json() as Record<string, unknown>;
+  assert.equal(body.id, "prd-2");
+  assert.equal(body.version, 2);
+  assert.equal(body.investigationNotes, "访谈 5 位用户");
+  assert.equal(runs[0]!.assessment instanceof Object, true);
+  assert.equal(runs[0]!.investigationNotes, "访谈 5 位用户");
+
+  // 无成功评估：409 ASSESSMENT_REQUIRED，不调模型。
+  repositories.assessments = { list: async () => [], expireStaleRunning: async () => 0 };
+  const required = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/prd-prompts`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ investigationNotes: "" }),
+  }), d);
+  assert.equal(required.status, 409);
+  assert.equal((await required.json() as { error: { code: string } }).error.code, "ASSESSMENT_REQUIRED");
+  assert.equal(runs.length, 1);
+
+  // 显式指定不属于本需求的评估：400（先恢复一条成功评估）。
+  repositories.assessments = { list: async () => assessments, expireStaleRunning: async () => 0 };
+  const foreign = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/prd-prompts`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ assessmentId: "99999999-9999-4999-8999-999999999999" }),
+  }), d);
+  assert.equal(foreign.status, 400);
+});

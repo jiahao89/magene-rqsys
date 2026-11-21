@@ -6,6 +6,7 @@ import { createPostgresSyncPersistence } from "./adapters/postgres/sync-persiste
 import { markDuplicateInBase } from "./base/duplicate-marker.js";
 import { createChatIntakeExtractor } from "./intake/chat-extract.js";
 import { createAssessmentRunner } from "./assessment/service.js";
+import { createPrdPromptRunner } from "./prd-prompt/service.js";
 import { MAX_JSON_BODY_BYTES, type ApiDependencies, handleApiRequest } from "./http/app.js";
 import { errorBody } from "./http/errors.js";
 import { PipelineJobWorker } from "./jobs/worker.js";
@@ -103,6 +104,7 @@ const groupBaseFields = parseBaseFields(process.env.GROUP_BASE_FIELDS_JSON, { po
 const chatIntake = { extractor: createChatIntakeExtractor() };
 // 0030：按需需求评估；仓储在时注入，未配置 AI key 时 runner 会在调用时返回配置错误。
 const assessments = repositories?.assessments ? createAssessmentRunner({ assessments: repositories.assessments }) : undefined;
+const prdPrompt = repositories?.prdPrompts ? { runner: createPrdPromptRunner({ prdPrompts: repositories.prdPrompts }) } : undefined;
 const feishuUserDirectory = process.env.FEISHU_USER_ACCESS_TOKEN
   ? new FeishuUserDirectoryClient({ userAccessToken: async () => process.env.FEISHU_USER_ACCESS_TOKEN ?? "" })
   : undefined;
@@ -218,7 +220,7 @@ const server = createServer(async (incoming, outgoing) => {
     const request = new Request(`http://${incoming.headers.host ?? "localhost"}${incoming.url ?? "/"}`, {
       method: incoming.method ?? "GET", headers, ...(body.length > 0 ? { body } : {}),
     });
-    const dependencies: ApiDependencies = { database, repositories, identity, chatIntake, ...(assessments ? { assessments } : {}), ...(duplicateMarker ? { duplicateMarker } : {}), ...(teambitionSourceProjects ? { teambitionSourceProjects, teambitionMembers: teambitionSourceProjects } : {}), ...(feishuUserDirectory ? { feishuUsers: feishuUserDirectory } : {}), now: undefined };
+    const dependencies: ApiDependencies = { database, repositories, identity, chatIntake, ...(assessments ? { assessments } : {}), ...(prdPrompt ? { prdPrompt } : {}), ...(duplicateMarker ? { duplicateMarker } : {}), ...(teambitionSourceProjects ? { teambitionSourceProjects, teambitionMembers: teambitionSourceProjects } : {}), ...(feishuUserDirectory ? { feishuUsers: feishuUserDirectory } : {}), now: undefined };
     const response = await handleApiRequest(request, dependencies);
     outgoing.statusCode = response.status;
     response.headers.forEach((value, key) => outgoing.setHeader(key, value));

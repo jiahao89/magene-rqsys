@@ -6,7 +6,7 @@
 import type { AuditEventRecord, BasePushRunRecord, BatchState, AnalysisRunRecord, FunctionModuleEntry, ModuleDictionaryVersionRecord, PersonMappingRecord, PmSnapshotRecord, PipelineJobRecord, PipelineJobType, PriorityLevel, PriorityRuleVersionRecord, SourceConfigRecord, SourceSnapshotRecord, SyncBatchRecord, SyncItemAction, SyncItemRecord, SyncTrigger, FeishuIdType, AudienceLevel, RiceDraftRecord, KanoEvidenceVersion, KanoRunRecord, RequirementScoreVersionRecord, SourcePool } from "../domain/persistence.js";
 import type { AnalysisState, OwnerState, PullState, PushState } from "../domain/workflow.js";
 import type { ResolvedSourceConfigUpdate } from "../contracts/source.js";
-import type { RequirementManualOwner, RequirementRecord, RequirementPriorityOverride, RequirementAnalysisContext, BaseFormRequirementInput, RequirementAssessmentRecord } from "../domain/persistence.js";
+import type { RequirementManualOwner, RequirementRecord, RequirementPriorityOverride, RequirementAnalysisContext, BaseFormRequirementInput, RequirementAssessmentRecord, RequirementPrdPromptRecord } from "../domain/persistence.js";
 import type { TeamPersonBindingInput, TeamPersonRecord } from "../domain/team-directory.js";
 
 export type AuditEventInput = Omit<AuditEventRecord, "entityId">;
@@ -159,6 +159,28 @@ export interface RequirementAssessmentRepository {
   complete(id: string, output: Record<string, unknown>, at: string): Promise<RequirementAssessmentRecord | null>;
   fail(id: string, errorCode: string, at: string): Promise<RequirementAssessmentRecord | null>;
   list(requirementId: string): Promise<RequirementAssessmentRecord[]>;
+  /** GET 兜底：把开始时间早于 before 的 running 版本标为 failed/timeout，返回处理条数。 */
+  expireStaleRunning(requirementId: string, before: string, at: string): Promise<number>;
+}
+
+/** 2026-11-21：PRD 提示词同需求单飞。create 在事务锁内先清理超过 staleAfterMs 的 running，再判断是否已有 running。 */
+export type RequirementPrdPromptCreateResult =
+  | { outcome: "created"; record: RequirementPrdPromptRecord }
+  | { outcome: "in_progress"; record: RequirementPrdPromptRecord };
+
+/** 2026-11-21：PRD 提示词版本仓储（单飞与版本号在同一把锁内推进）。 */
+export interface RequirementPrdPromptRepository {
+  create(input: {
+    requirementId: string;
+    promptVersion: string;
+    model: string | null;
+    inputs: Record<string, unknown>;
+    at: string;
+    staleAfterMs: number;
+  }): Promise<RequirementPrdPromptCreateResult>;
+  complete(id: string, output: Record<string, unknown>, at: string): Promise<RequirementPrdPromptRecord | null>;
+  fail(id: string, errorCode: string, at: string): Promise<RequirementPrdPromptRecord | null>;
+  list(requirementId: string): Promise<RequirementPrdPromptRecord[]>;
   /** GET 兜底：把开始时间早于 before 的 running 版本标为 failed/timeout，返回处理条数。 */
   expireStaleRunning(requirementId: string, before: string, at: string): Promise<number>;
 }

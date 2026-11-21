@@ -281,6 +281,22 @@ export interface RequirementAssessmentRecord {
   completedAt: string | null;
 }
 
+// 2026-11-21：PRD 提示词版本（按需生成、独立表，不改需求与评估）。
+export type RequirementPrdPromptStatus = "running" | "succeeded" | "failed";
+export interface RequirementPrdPromptRecord {
+  id: string;
+  requirementId: string;
+  version: number;
+  status: RequirementPrdPromptStatus;
+  promptVersion: string;
+  model: string | null;
+  inputs: Record<string, unknown>;
+  output: Record<string, unknown> | null;
+  errorCode: string | null;
+  createdAt: string;
+  completedAt: string | null;
+}
+
 // V02-S06：需求评分版本（AI 建议、人工确认、历史）。
 export type ScoreVersionStatus = "ai_suggested" | "current" | "confirmed" | "superseded";
 export type ScoreOrigin = "ai" | "manual" | "ai_applied";

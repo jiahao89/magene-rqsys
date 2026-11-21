@@ -111,6 +111,14 @@ export const RequirementAssessmentInputSchema = z.strictObject({
   scenario: z.string().trim().max(2000).optional(),
 });
 export type RequirementAssessmentInput = z.infer<typeof RequirementAssessmentInputSchema>;
+// 2026-11-21：PRD 提示词生成请求。investigationNotes 是 PM 回填的调研结论（0–8,000 字，可空）；
+// assessmentId 可选：不传用最新成功评估，传了必须属于同一需求且成功。
+export const PrdPromptRequestSchema = z.strictObject({
+  assessmentId: z.string().uuid().optional(),
+  investigationNotes: z.string().max(8000).default(""),
+});
+export type PrdPromptRequest = z.infer<typeof PrdPromptRequestSchema>;
+
 
 export type RequirementListQuery = z.infer<typeof RequirementListQuerySchema>;
 export type AuditListQuery = z.infer<typeof AuditListQuerySchema>;

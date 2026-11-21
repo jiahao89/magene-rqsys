@@ -943,6 +943,88 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '503': { $ref: '#/components/responses/DependencyUnavailable' }
+  /api/requirements/{id}/prd-prompts:
+    get:
+      summary: List PRD prompt versions (2026-11-21)
+      description: >-
+        Newest first; no pagination. Stale running versions (older than two minutes) are marked
+        failed/timeout on read. The endpoint takes no pool parameter: it resolves the requirement by
+        UUID and works for both the product and the group pool.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: PRD prompt version list, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/RequirementPrdPrompt' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/DependencyUnavailable' }
+    post:
+      summary: Generate a PRD prompt version on demand (2026-11-21)
+      description: >-
+        One model call turns the requirement facts, the current AI analysis, the latest succeeded
+        assessment and the PM's investigation notes into a structured, ready-to-copy PRD prompt.
+        Requires at least one succeeded assessment (409 ASSESSMENT_REQUIRED otherwise). Failures
+        never fall back to a template: the version is stored as failed with errorCode and 503 is
+        returned, so the PM keeps the input and can retry. Rate limit 2/minute and 20/day per actor.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                assessmentId:
+                  type: string
+                  format: uuid
+                  description: Optional; must belong to this requirement and be succeeded. Defaults to the newest succeeded version.
+                investigationNotes:
+                  type: string
+                  maxLength: 8000
+                  default: ''
+      responses:
+        '201':
+          description: New PRD prompt version
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RequirementPrdPrompt' }
+        '400': { $ref: '#/components/responses/Validation' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: >-
+            ASSESSMENT_REQUIRED when the requirement has no succeeded assessment (no version is
+            created); PRD_PROMPT_IN_PROGRESS when a non-stale running version exists (no model call,
+            no version created).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: Client rate limit (2/minute, 20/day). Retry-After carries the wait in seconds.
+          headers:
+            Retry-After: { schema: { type: integer } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '503':
+          description: >-
+            AI provider failure, timeout (default 90s, PRD_PROMPT_TIMEOUT_MS) or non-conforming
+            output. The failed version is kept with errorCode timeout / provider_error /
+            invalid_output.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /api/requirements/{id}/priority-override:
     put:
       summary: Set or clear the manual priority override
@@ -1838,6 +1920,39 @@ components:
             timezone: { type: [string, 'null'] }
           required: [enabled, weekday, time, timezone]
       required: [projectName, enabled, schedule]
+    RequirementPrdPrompt:
+      type: object
+      required: [id, requirementId, version, status, promptVersion, model, output, errorCode, investigationNotes, assessmentVersion, createdAt, completedAt]
+      properties:
+        id: { type: string, format: uuid }
+        requirementId: { type: string, format: uuid }
+        version: { type: integer, minimum: 1 }
+        status: { type: string, enum: [running, succeeded, failed] }
+        promptVersion: { type: string, description: Always rq-prd-prompt-v1 for versions created by this release. }
+        model: { type: [string, 'null'] }
+        output:
+          type: [object, 'null']
+          additionalProperties: false
+          description: >-
+            null while running or after a failure; on success {prompt, assumptions[], openQuestions[]}.
+            prompt is 1,500-8,000 characters of Chinese Markdown with the ten fixed level-2 headings.
+          properties:
+            prompt: { type: string }
+            assumptions:
+              type: array
+              items: { type: string }
+            openQuestions:
+              type: array
+              items: { type: string }
+        errorCode:
+          type: [string, 'null']
+          description: timeout / provider_error / invalid_output / analysis_failure when the version failed.
+        investigationNotes:
+          type: string
+          description: The PM notes captured for this version, echoed back so the UI can restore them.
+        assessmentVersion: { type: [integer, 'null'] }
+        createdAt: { type: string, format: date-time }
+        completedAt: { type: [string, 'null'], format: date-time }
     RequirementAssessment:
       type: object
       required: [id, requirementId, version, status, promptVersion, model, inputs, output, errorCode, createdAt, completedAt]

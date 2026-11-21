@@ -5,10 +5,10 @@ import { SourceProjectResolutionError, type FeishuUserDirectory, type FeishuUser
 import { isIntakeComplete, normalizeScheduleTime } from "../domain/workflow.js";
 import { stableJson } from "../sync/hashes.js";
 import { RICE_CONFIG_VERSION, RICE_EFFORT_UNIT, RICE_IMPACT_LEVELS, RICE_REACH_UNIT, computeRiceScore } from "../beta/rice.js";
-import type { AuditEventRepository, AnalysisRunRepository, PipelineJobRepository, SourceConfigRepository, SyncBatchRepository, SyncItemRepository, PersonMappingRepository, RequirementQueryRepository, BasePushRunRepository, ModuleDictionaryRepository, PriorityRuleRepository, SourceSnapshotRepository, TeamDirectoryRepository, RequirementScoringRepository, RequirementAssessmentRepository } from "../application/repositories.js";
-import type { PersonMappingRecord, AnalysisRunRecord, ModuleDictionaryVersionRecord, PriorityRuleVersionRecord, RequirementRecord, RequirementAssessmentRecord, SourceConfigRecord, SourceExecutorBinding, SourcePool, SyncBatchRecord, PipelineJobRecord } from "../domain/persistence.js";
+import type { AuditEventRepository, AnalysisRunRepository, PipelineJobRepository, SourceConfigRepository, SyncBatchRepository, SyncItemRepository, PersonMappingRepository, RequirementQueryRepository, BasePushRunRepository, ModuleDictionaryRepository, PriorityRuleRepository, SourceSnapshotRepository, TeamDirectoryRepository, RequirementScoringRepository, RequirementAssessmentRepository, RequirementPrdPromptRepository } from "../application/repositories.js";
+import type { PersonMappingRecord, AnalysisRunRecord, ModuleDictionaryVersionRecord, PriorityRuleVersionRecord, RequirementRecord, RequirementAssessmentRecord, RequirementPrdPromptRecord, SourceConfigRecord, SourceExecutorBinding, SourcePool, SyncBatchRecord, PipelineJobRecord } from "../domain/persistence.js";
 import type { TeamPersonRecord } from "../domain/team-directory.js";
-import { AnalysisContextUpdateSchema, AuditListQuerySchema, GateConfirmSchema, OpsJobsQuerySchema, OpsMetricsQuerySchema, RequirementExportQuerySchema, ClearDuplicateDecisionSchema, DuplicateDecisionSchema, PriorityOverrideUpdateSchema, RetryAnalysisRequestSchema, KanoEvidenceImportSchema, KanoRunRequestSchema, AudienceUpdateSchema, BatchListQuerySchema, RiceDraftUpdateSchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementIntakeEditSchema, RequirementIntakeSchema, RequirementListQuerySchema, RequirementAssessmentInputSchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
+import { AnalysisContextUpdateSchema, AuditListQuerySchema, GateConfirmSchema, OpsJobsQuerySchema, OpsMetricsQuerySchema, RequirementExportQuerySchema, ClearDuplicateDecisionSchema, DuplicateDecisionSchema, PriorityOverrideUpdateSchema, RetryAnalysisRequestSchema, KanoEvidenceImportSchema, KanoRunRequestSchema, AudienceUpdateSchema, BatchListQuerySchema, RiceDraftUpdateSchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementIntakeEditSchema, RequirementIntakeSchema, RequirementListQuerySchema, RequirementAssessmentInputSchema, PrdPromptRequestSchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
 import { createHash, randomUUID } from "node:crypto";
 import { ApplyAiScoringSchema, ManualScoringUpdateSchema, SCORING_FORMULA_TEXT, SCORING_THRESHOLDS, computeUmcScore } from "../analysis/scoring.js";
 import { maskPii } from "../analysis/contract.js";
@@ -24,6 +24,8 @@ import { EXPECTED_LATEST_MIGRATION } from "../db/expected-migration.js";
 import { jsonError, redactSecrets } from "./errors.js";
 import { CHAT_PROMPT_VERSION, ChatDraftRequestSchema, createDraftRateLimiter, type ChatIntakeExtractor, type DraftRateLimit } from "../intake/chat-extract.js";
 import { ASSESSMENT_RUNNING_STALE_MS, AssessmentContractError, type AssessmentRunner } from "../assessment/service.js";
+import { PRD_PROMPT_RUNNING_STALE_MS, PrdPromptFailure, type PrdPromptRunner } from "../prd-prompt/service.js";
+import { createPrdPromptRateLimiter, type PrdPromptRateLimit } from "../prd-prompt/rate-limit.js";
 import { analysisPiiMarkers, loadDirectoryRosterNames } from "../requirements/processing.js";
 import { readAiPause } from "../ops/ai-pause.js";
 import { decodeRequirementCursor } from "../application/requirement-cursor.js";
@@ -41,6 +43,7 @@ export interface ApiRepositories {
   basePushes?: BasePushRunRepository;
   analyses?: AnalysisRunRepository;
   assessments?: RequirementAssessmentRepository;
+  prdPrompts?: RequirementPrdPromptRepository;
   sourceSnapshots?: SourceSnapshotRepository;
   dictionaries?: ModuleDictionaryRepository;
   priorityRules?: PriorityRuleRepository;
@@ -65,6 +68,8 @@ export interface ApiDependencies {
   chatIntake?: { extractor: ChatIntakeExtractor; limit?: DraftRateLimit };
   /** 0030：按需需求评估；未注入时接口返回 503，详情页不可用。 */
   assessments?: AssessmentRunner;
+  /** 2026-11-21：按需 PRD 提示词生成；未注入时接口返回 503。 */
+  prdPrompt?: { runner: PrdPromptRunner; limit?: PrdPromptRateLimit };
   /** 目标环境的脱敏诊断通道；未注入时诊断落 stderr。只写错误类、SQLSTATE、状态码、字符数与请求号，不写 SQL、参数或聊天正文。 */
   diagnostics?: {
     error(event: "intake_draft_failed" | "overview_ai_stats_failed" | "assessment_failed", details: {
@@ -80,6 +85,13 @@ const draftRateLimiters = new WeakMap<object, ReturnType<typeof createDraftRateL
 function draftRateLimiterFor(chatIntake: NonNullable<ApiDependencies["chatIntake"]>) {
   let limiter = draftRateLimiters.get(chatIntake);
   if (!limiter) { limiter = createDraftRateLimiter(chatIntake.limit); draftRateLimiters.set(chatIntake, limiter); }
+  return limiter;
+}
+// 2026-11-21：PRD 提示词限流器同样随依赖对象缓存（妙搭每次请求展开新对象，runner 引用稳定）。
+const prdPromptRateLimiters = new WeakMap<object, ReturnType<typeof createPrdPromptRateLimiter>>();
+function prdPromptRateLimiterFor(dep: NonNullable<ApiDependencies["prdPrompt"]>) {
+  let limiter = prdPromptRateLimiters.get(dep);
+  if (!limiter) { limiter = createPrdPromptRateLimiter(dep.limit); prdPromptRateLimiters.set(dep, limiter); }
   return limiter;
 }
 function json(body: unknown, status = 200): Response { return Response.json(body, { status }); }
@@ -384,6 +396,16 @@ function personDto(person: TeamPersonRecord) {
 }
 function assessmentDto(r: RequirementAssessmentRecord) {
   return { id: r.id, requirementId: r.requirementId, version: r.version, status: r.status, promptVersion: r.promptVersion, model: r.model, inputs: r.inputs, output: r.output, errorCode: r.errorCode, createdAt: r.createdAt, completedAt: r.completedAt };
+}
+function prdPromptDto(r: RequirementPrdPromptRecord) {
+  return {
+    id: r.id, requirementId: r.requirementId, version: r.version, status: r.status,
+    promptVersion: r.promptVersion, model: r.model, output: r.output, errorCode: r.errorCode,
+    // 版本回填要还原当时的调研结论与评估版本；其它 inputs（需求快照、分析摘要）不回传。
+    investigationNotes: typeof r.inputs.investigationNotes === "string" ? r.inputs.investigationNotes : "",
+    assessmentVersion: typeof r.inputs.assessmentVersion === "number" ? r.inputs.assessmentVersion : null,
+    createdAt: r.createdAt, completedAt: r.completedAt,
+  };
 }
 function requirementSearchDto(req: RequirementRecord) { return requirementDto(req); }
 // 逐条人工负责人优先于 TB 执行人映射；两者都没有时为空。
@@ -1342,6 +1364,75 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
       if (errorClass === "rate_limited") return rateLimited(PROVIDER_RATE_LIMIT_RETRY_AFTER_SECONDS, "AI 评估请求太频繁，请稍后再试。");
       if (errorClass === "auth_error" || errorClass === "request_error") return jsonError("INTERNAL", "AI 评估服务异常，请稍后重试。");
       return jsonError("DEPENDENCY_UNAVAILABLE", "AI 评估暂时不可用，请稍后重试。");
+    }
+  }
+  // 2026-11-21：PRD 提示词（按需生成）。GET 列版本；POST 生成一条新版本（同步调模型，失败也保留 failed 版本）。
+  // 契约：requirement_prd_prompts / /prd-prompts / investigationNotes；不接收 pool，按需求 UUID 推导，两池都可用。
+  const prdPromptMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/prd-prompts$/);
+  if (prdPromptMatch && (method === "GET" || method === "POST")) {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const prdRequirementId = pathUuid(prdPromptMatch[1]!, dependencies); if (!prdRequirementId) return jsonError("NOT_FOUND");
+    let prdRequirement: RequirementRecord | null;
+    try { prdRequirement = await repositories.requirements.get(prdRequirementId); } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
+    if (!prdRequirement) return jsonError("NOT_FOUND");
+    if (!repositories.prdPrompts) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const prdNow = (dependencies.now ?? (() => new Date()))().toISOString();
+    if (method === "GET") {
+      try {
+        // 规格 §4：running 超过 2 分钟不允许永久停在「生成中」，读取时兜底转 failed/timeout。
+        await repositories.prdPrompts.expireStaleRunning(prdRequirementId, new Date(Date.parse(prdNow) - PRD_PROMPT_RUNNING_STALE_MS).toISOString(), prdNow);
+        return json({ items: (await repositories.prdPrompts.list(prdRequirementId)).map(prdPromptDto) });
+      } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
+    }
+    if (!dependencies.prdPrompt) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const parsedPrdBody = PrdPromptRequestSchema.safeParse(await readJson(request)); if (!parsedPrdBody.success) return jsonError("VALIDATION_FAILED");
+    if (!repositories.assessments) return jsonError("DEPENDENCY_UNAVAILABLE");
+    let prdAssessment: RequirementAssessmentRecord | null;
+    try {
+      await repositories.assessments.expireStaleRunning(prdRequirementId, new Date(Date.parse(prdNow) - ASSESSMENT_RUNNING_STALE_MS).toISOString(), prdNow);
+      const versions = await repositories.assessments.list(prdRequirementId);
+      prdAssessment = parsedPrdBody.data.assessmentId
+        ? versions.find((item) => item.id === parsedPrdBody.data.assessmentId) ?? null
+        : versions.find((item) => item.status === "succeeded") ?? null;
+    } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
+    // 显式指定评估：必须属于本需求且成功；不指定：用最新成功版本。
+    if (parsedPrdBody.data.assessmentId && prdAssessment?.status !== "succeeded") return jsonError("VALIDATION_FAILED", "所选评估不存在或不是成功版本。");
+    if (!prdAssessment) return jsonError("ASSESSMENT_REQUIRED");
+    // 限流先于创建版本：超限不落库、不调模型。
+    const prdLimit = prdPromptRateLimiterFor(dependencies.prdPrompt).check(auth.actor.id);
+    if (!prdLimit.ok) return rateLimited(prdLimit.retryAfterSeconds ?? 60, "PRD 提示词生成太频繁，请稍后再试。");
+    try {
+      const prdAnalysis = repositories.analyses
+        ? await repositories.analyses.latest(prdRequirementId).catch(() => null)
+        : null;
+      // 与评估同口径的 PII 名单：来源花名册 + 目录花名册 + 提出人/执行人。
+      const prdRosterNames: string[] = [];
+      if (prdRequirement.sourceConfigId) {
+        try { prdRosterNames.push(...(await repositories.sources.get(prdRequirement.sourceConfigId))?.ownerNames ?? []); }
+        catch { /* 来源读取失败只降低掩码覆盖，不阻断生成 */ }
+      }
+      prdRosterNames.push(...await loadDirectoryRosterNames({ directory: repositories.directory, audit: repositories.audit }));
+      const prdMarkers = analysisPiiMarkers(prdRequirement, prdRosterNames);
+      const record = await dependencies.prdPrompt.runner.run({
+        requirement: prdRequirement,
+        assessment: prdAssessment,
+        investigationNotes: parsedPrdBody.data.investigationNotes,
+        actorId: auth.actor.id,
+        analysis: prdAnalysis,
+        piiMarkers: prdMarkers,
+      });
+      return json(prdPromptDto(record), 201);
+    } catch (cause) {
+      const errorClass = String((cause as { code?: unknown })?.code ?? "unknown");
+      if (errorClass === "prd_prompt_in_progress") return jsonError("PRD_PROMPT_IN_PROGRESS");
+      if (cause instanceof PrdPromptFailure) {
+        // 失败版本已落库（timeout / provider_error / invalid_output）；这里只回稳定错误码，不回显模型输出。
+        if (errorClass === "timeout") return jsonError("DEPENDENCY_UNAVAILABLE", "PRD 提示词生成超时，请重试。");
+        if (errorClass === "invalid_output") return jsonError("DEPENDENCY_UNAVAILABLE", "AI 返回的提示词不合规，请重试。");
+        return jsonError("DEPENDENCY_UNAVAILABLE", "AI 暂时不可用，请稍后重试。");
+      }
+      return jsonError("DEPENDENCY_UNAVAILABLE", "PRD 提示词暂时不可用，请稍后重试。");
     }
   }
   const requirementMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)$/);
