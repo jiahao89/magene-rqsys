@@ -1016,7 +1016,7 @@ export class PostgresRequirementScoringRepository implements RequirementScoringR
     }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}
   }
 }
-export class PostgresOpsMetricsRepository{constructor(private readonly pool:Pool){}
+export class PostgresOpsMetricsRepository implements OpsMetricsRepository{constructor(private readonly pool:Pool){}
 async getOpsMetrics(p:{days:number;now:string;pool?:SourcePool}){
   const since=new Date(new Date(p.now).getTime()-p.days*24*60*60*1000).toISOString();
   // 0031：按池作用域统计；缺省 product，集团池数字不混入产品池运维视图。

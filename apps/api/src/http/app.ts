@@ -1051,7 +1051,7 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     const mappings = repositories.people ? (await Promise.all(pageSourceIds.map((id) => repositories.people!.listActive(id)))).flat() : [];
     const nameByTbUser = new Map(mappings.filter((m) => m.teambitionUserId && m.teambitionDisplayName).map((m) => [`${m.sourceConfigId}:${m.teambitionUserId}`, m.teambitionDisplayName as string]));
     return json({
-      items: page.items.map((item) => ({ ...requirementSearchDto(item), ownerName: manualOwnerName(item) ?? (item.executorUserId && item.sourceConfigId ? nameByTbUser.get(`${item.sourceConfigId}:${item.executorUserId}`) ?? null : null) })),
+      items: page.items.map((item) => ({ ...requirementSearchDto(item), baseRecordUrl: baseRecordUrl(item.baseRecordId, parsed.data.pool), ownerName: manualOwnerName(item) ?? (item.executorUserId && item.sourceConfigId ? nameByTbUser.get(`${item.sourceConfigId}:${item.executorUserId}`) ?? null : null) })),
       nextCursor: page.nextCursor,
     });
   }
