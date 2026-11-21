@@ -384,7 +384,10 @@ paths:
   /api/requirements:
     get:
       summary: Search requirements by source and pipeline state
-      description: 集团需求池用 pool=group 查询；缺省 product 保持现有行为。
+      description: >-
+        集团需求池用 pool=group 查询；缺省 product 保持现有行为。
+        行内 baseRecordUrl 按请求的 pool 取对应 Base 的记录链接模板（产品池 RQSYS_BASE_RECORD_URL_TEMPLATE，
+        集团池 RQSYS_GROUP_BASE_RECORD_URL_TEMPLATE）；集团池未配置模板时为 null，不回落产品池模板。
       parameters:
         - $ref: '#/components/parameters/Pool'
         - name: q
@@ -1157,6 +1160,10 @@ paths:
       description: >-
         运营指标（窗口内同步/分析/推送成功率与耗时、当前快照、AI 调用统计）。
         缺省只算产品池；集团池由运维页切换后显式传 pool=group。AI 调用统计也按池过滤。
+        推送（push）口径：按需求取窗口内「最后一次」推送尝试计数，而不是逐次尝试计数。
+        同一条需求先失败后重试成功只记一次成功，历史失败不再进入失败数与成功率；
+        因此与按尝试计数的旧版本数字不可直接对比（产品池亦然）。同步、分析口径不变，
+        仅增加按池过滤。
       parameters:
         - $ref: '#/components/parameters/Pool'
         - name: days

@@ -2793,7 +2793,7 @@ export function OpsPanel() {
   const [gateEvidence, setGateEvidence] = useState("");
   const [gateError, setGateError] = useState<string | null>(null);
   const [days, setDays] = useState(7);
-  // 作业与指标按池查看；迁移/Gate 是两个池共用的平台状态，不随池变化。
+  // 作业与指标按池查看；迁移是两个池共用的平台状态；上线 Gate 只属于产品池（集团池视图不显示、不请求）。
   const [pool, setPool] = useState<RequirementPool>("product");
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -2801,12 +2801,13 @@ export function OpsPanel() {
   const load = useCallback(async () => {
     setLoadState("loading"); setLoadError(null);
     // 迁移与指标是辅助信息：读取失败不影响作业列表。
-    const [jobsResult, readyResult, metricsResult, gatesResult] = await Promise.allSettled([getOpsJobs({ limit: 50, pool: pool === "group" ? "group" : undefined }), getReadiness(), getOpsMetrics({ days, pool: pool === "group" ? "group" : undefined }), getGates()]);
+    // 上线 Gate 只在产品池视图显示，集团池视图不请求；切回产品池时 load 会重新取。
+    const [jobsResult, readyResult, metricsResult, gatesResult] = await Promise.allSettled([getOpsJobs({ limit: 50, pool: pool === "group" ? "group" : undefined }), getReadiness(), getOpsMetrics({ days, pool: pool === "group" ? "group" : undefined }), pool === "product" ? getGates() : Promise.resolve(null)]);
     if (jobsResult.status === "fulfilled") { setItems(jobsResult.value.items); setLoadState("ready"); }
     else { setLoadError(errorText(jobsResult.reason)); setLoadState("error"); }
     setMigrations(readyResult.status === "fulfilled" ? readyResult.value.migrations ?? null : null);
     setMetrics(metricsResult.status === "fulfilled" ? metricsResult.value : null);
-    setGates(gatesResult.status === "fulfilled" && Array.isArray(gatesResult.value.gates) ? gatesResult.value : null);
+    setGates(gatesResult.status === "fulfilled" && gatesResult.value && Array.isArray(gatesResult.value.gates) ? gatesResult.value : null);
   }, [days, pool]);
 
   const confirmGateAction = async (id: string) => {

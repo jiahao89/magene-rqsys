@@ -1339,3 +1339,25 @@ test("集团池详情的 Base 记录链接按集团模板生成，产品池仍�
     delete process.env.RQSYS_GROUP_BASE_RECORD_URL_TEMPLATE;
   }
 });
+
+test("列表行的 Base 记录链接按请求的池取模板，集团池未配模板时为 null 而不是回落产品模板", async () => {
+  const d = poolDependencies();
+  const groupRow = { ...groupRequirement, baseRecordId: "rec-group-1" };
+  (d.repositories!.requirements as unknown as Record<string, unknown>).search = async () => ({ items: [groupRow], nextCursor: null });
+  process.env.RQSYS_BASE_RECORD_URL_TEMPLATE = "https://x.feishu.cn/base/PRODUCT?table=tblP&record={recordId}";
+  process.env.RQSYS_GROUP_BASE_RECORD_URL_TEMPLATE = "https://x.feishu.cn/base/GROUP?table=tblG&record={recordId}";
+  try {
+    const list = async (query: string) => (await (await handleApiRequest(new Request(`http://localhost/api/requirements${query}`), d)).json() as { items: Array<{ baseRecordUrl?: string | null; pool?: string }> }).items[0]!;
+    const group = await list("?pool=group");
+    assert.equal(group.baseRecordUrl, "https://x.feishu.cn/base/GROUP?table=tblG&record=rec-group-1");
+    // 列表行契约不带 pool 字段：只覆盖链接，不能顺带把 pool 暴露出来。
+    assert.equal("pool" in group, false);
+    // 缺省按产品池取模板（现有前端零改动）。
+    assert.equal((await list("")).baseRecordUrl, "https://x.feishu.cn/base/PRODUCT?table=tblP&record=rec-group-1");
+    delete process.env.RQSYS_GROUP_BASE_RECORD_URL_TEMPLATE;
+    assert.equal((await list("?pool=group")).baseRecordUrl, null);
+  } finally {
+    delete process.env.RQSYS_BASE_RECORD_URL_TEMPLATE;
+    delete process.env.RQSYS_GROUP_BASE_RECORD_URL_TEMPLATE;
+  }
+});
