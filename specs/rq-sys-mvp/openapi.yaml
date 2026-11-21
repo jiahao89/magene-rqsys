@@ -1175,6 +1175,83 @@ paths:
                   当前快照、AI 调用统计（statsAvailable 为 false 时只有 AI 卡片降级）。
         '401': { $ref: '#/components/responses/Unauthorized' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /api/ops/gates:
+    get:
+      summary: Read the production go-live gates (PR-15)
+      description: >-
+        返回上线 Gate G1–G8 的当前状态。每项由自动检查（只读应用内事实：正式 Base 配置与已推送数、
+        已发布规则、待匹配未推送、告警通道）与人工确认（写入 system_flags，见 PUT）组成。
+        任一自动项 fail → fail；自动通过但人工未确认 → pending；两者都通过 → pass。
+        ready 仅在全部 gate 为 pass 时为 true。本接口只读，不执行发布或切换。
+      responses:
+        '200':
+          description: Gate statuses
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ready: { type: boolean }
+                  gates:
+                    type: array
+                    items: { $ref: '#/components/schemas/GateStatus' }
+                required: [ready, gates]
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/ops/gates/{id}:
+    put:
+      summary: Confirm or withdraw the manual part of a go-live gate
+      description: >-
+        只对需要人工取证的 gate 有效（G3 纯自动，视为不存在）。确认通过（confirmed=true）时必须带 evidence。
+        成功后写 system_flags（gate:<id>）并追加审计 ops.gate_confirmed / ops.gate_unconfirmed。
+        未知或纯自动的 gate id 返回 404。
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, enum: [G1, G2, G4, G5, G6, G7, G8] }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                confirmed: { type: boolean }
+                evidence: { type: string, minLength: 1, maxLength: 500, description: confirmed=true 时必填。 }
+              required: [confirmed]
+      responses:
+        '200':
+          description: Confirmation saved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  gateId: { type: string }
+                  confirmed: { type: boolean }
+                required: [gateId, confirmed]
+        '400': { $ref: '#/components/responses/Validation' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/DependencyUnavailable' }
+  /api/dev/fixtures/status:
+    get:
+      summary: Report whether synthetic test fixtures are enabled
+      description: >-
+        仅用于验收环境判断是否允许提交合成夹具；只读，不触发任何同步或写入。
+        enabled 由服务端配置决定，默认关闭。
+      responses:
+        '200':
+          description: Fixture switch state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: { type: boolean }
+                required: [enabled]
+        '401': { $ref: '#/components/responses/Unauthorized' }
   /api/ops/jobs:
     get:
       summary: Read-only ops view of failed and exhausted running pipeline jobs
@@ -1602,11 +1679,48 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
+    # 以下两个名称在多处路径中已被引用（V0.2 起），此前未定义；与 BadRequest / ServiceUnavailable 同义。
+    Validation:
+      description: Request validation failed (error code VALIDATION_FAILED)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    DependencyUnavailable:
+      description: A required dependency is unavailable (error code DEPENDENCY_UNAVAILABLE)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
   schemas:
     SourcePool:
       type: string
       enum: [product, group]
       description: product 为现有产品池（缺省）；group 为集团需求池，数据完全隔离。
+    GateStatus:
+      type: object
+      description: 单个上线 Gate 的状态（PR-15）。
+      properties:
+        id: { type: string, enum: [G1, G2, G3, G4, G5, G6, G7, G8] }
+        title: { type: string }
+        requirement: { type: string }
+        auto:
+          type: object
+          description: 自动检查结果；na 表示该项没有自动检查。
+          properties:
+            status: { type: string, enum: [pass, fail, na] }
+            detail: { type: string }
+          required: [status, detail]
+        manual:
+          type: object
+          description: 人工确认；required=false 表示该项不需要人工取证。
+          properties:
+            required: { type: boolean }
+            confirmed: { type: boolean }
+            evidence: { type: string }
+            by: { type: string }
+            at: { type: string, format: date-time }
+          required: [required, confirmed]
+        status: { type: string, enum: [pass, fail, pending] }
+      required: [id, title, requirement, auto, manual, status]
     Error:
       type: object
       description: Uniform error envelope; messages never echo credentials, personal contact information or raw provider responses.

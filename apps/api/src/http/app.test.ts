@@ -1319,3 +1319,23 @@ test("updating a source cannot move it between pools", async () => {
   const response = await handleApiRequest(new Request(`http://localhost/api/sources/${source.id}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(sourceBody({ pool: "group", executorAllowlist: ["张三"] })) }), d);
   assert.equal(response.status, 400);
 });
+
+test("集团池详情的 Base 记录链接按集团模板生成，产品池仍用产品模板", async () => {
+  const d = poolDependencies();
+  d.repositories!.sources.get = (async (id: string) => id === groupSource.id ? groupSource : id === source.id ? source : null) as never;
+  process.env.RQSYS_BASE_RECORD_URL_TEMPLATE = "https://x.feishu.cn/base/PRODUCT?table=tblP&record={recordId}";
+  process.env.RQSYS_GROUP_BASE_RECORD_URL_TEMPLATE = "https://x.feishu.cn/base/GROUP?table=tblG&record={recordId}";
+  try {
+    const groupRow = { ...groupRequirement, baseRecordId: "rec-group-1" };
+    d.repositories!.requirements!.get = (async (id: string) => id === groupRow.id ? groupRow : requirement) as never;
+    const groupDetail = await (await handleApiRequest(new Request(`http://localhost/api/requirements/${groupRow.id}`), d)).json() as { baseRecordUrl?: string };
+    assert.equal(groupDetail.baseRecordUrl, "https://x.feishu.cn/base/GROUP?table=tblG&record=rec-group-1");
+    const productRow = { ...requirement, baseRecordId: "rec-product-1" };
+    d.repositories!.requirements!.get = (async (id: string) => id === productRow.id ? productRow : groupRow) as never;
+    const productDetail = await (await handleApiRequest(new Request(`http://localhost/api/requirements/${productRow.id}`), d)).json() as { baseRecordUrl?: string };
+    assert.equal(productDetail.baseRecordUrl, "https://x.feishu.cn/base/PRODUCT?table=tblP&record=rec-product-1");
+  } finally {
+    delete process.env.RQSYS_BASE_RECORD_URL_TEMPLATE;
+    delete process.env.RQSYS_GROUP_BASE_RECORD_URL_TEMPLATE;
+  }
+});

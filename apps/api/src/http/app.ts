@@ -290,8 +290,10 @@ const TEAMBITION_TASK_BASE_URL = process.env.RQSYS_TEAMBITION_TASK_BASE_URL ?? "
 // 由 RQSYS_BASE_RECORD_URL_TEMPLATE 配置，必须是 https 且包含 {recordId}，例如
 // https://<租户>.feishu.cn/base/<app>?table=<table>&record={recordId}。未配置或不合法时返回 null，
 // 详情页只提供复制记录 ID。
-function baseRecordUrl(recordId: string | null): string | null {
-  const template = process.env.RQSYS_BASE_RECORD_URL_TEMPLATE?.trim();
+// 集团池有自己的 Base，模板必须按池取；配错模板只会让人点开空表，所以缺配置时宁可返回 null。
+function baseRecordUrl(recordId: string | null, pool: SourcePool = "product"): string | null {
+  const envKey = pool === "group" ? "RQSYS_GROUP_BASE_RECORD_URL_TEMPLATE" : "RQSYS_BASE_RECORD_URL_TEMPLATE";
+  const template = process.env[envKey]?.trim();
   if (!recordId || !template || !template.startsWith("https://") || !template.includes("{recordId}")) return null;
   return template.replaceAll("{recordId}", encodeURIComponent(recordId));
 }
@@ -362,7 +364,7 @@ function requirementDto(req: RequirementRecord, analysis: Record<string, unknown
     source: req.sourcePayload,
     analysis,
     baseRecordId: req.baseRecordId,
-    baseRecordUrl: baseRecordUrl(req.baseRecordId),
+    baseRecordUrl: baseRecordUrl(req.baseRecordId, pool ?? "product"),
     manualOwner: req.manualOwner ? { feishuUserId: req.manualOwner.feishuUserId, feishuIdType: req.manualOwner.feishuIdType, name: req.manualOwner.name, assignedAt: req.manualOwner.assignedAt, assignmentVersion: req.manualOwner.assignmentVersion } : null,
     duplicateOf: req.duplicateOfRequirementId ?? null,
     analyses,
