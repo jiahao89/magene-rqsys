@@ -1132,6 +1132,23 @@ export function RequirementsPanel({ onRefresh, initialRequirementId, scope = "pr
     }
   }, [scope]);
 
+  // 同一页面实例切池（产品池 ↔ 集团池）时 React 会复用本组件：必须作废上一个池的详情与列表，
+  // 否则集团池页面会继续渲染产品池详情（跨池展示），或短暂显示对方的列表行。
+  const previousScope = useRef(scope);
+  useEffect(() => {
+    if (previousScope.current === scope) return;
+    previousScope.current = scope;
+    detailRequestVersion.current += 1;
+    setRows([]); setCursor(null); setLoadState("loading");
+    setSelected(null); setAutoOpenOwnerPicker(false);
+    if (detailId) {
+      // 保留 detailId 让详情区进入错误态，而不是静默回到列表：切池后不可能再渲染上一池的数据。
+      setDetailLoading(false);
+      setDetailError(API_ERROR_TEXT.NOT_FOUND ?? "请求的资源不存在或已被删除。");
+    }
+    setSourceCounts(null);
+  }, [scope, detailId]);
+
   // 通知深链/分享链接：URL 的 requirement 是唯一入口；只在首次挂载时自动打开。
   const deepLinkOpened = useRef(false);
   useEffect(() => {
@@ -1367,7 +1384,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId, scope = "pr
           </div>}
         </div>
       </div>
-      <IntakeForm onCreated={(id) => { refresh(); void open(id, { push: true }); }} />
+      {!isGroup && <IntakeForm onCreated={(id) => { refresh(); void open(id, { push: true }); }} />}
       <div className="toolbar-actions">
         {appliedFilterCount > 0 && <span className="toolbar-active-count" role="status">{appliedFilterCount} 个筛选已生效</span>}
         {activeFilterCount > 0 && <ArcoButton type="text" className="link-button" onClick={clearFilters} htmlType="button">清除筛选</ArcoButton>}

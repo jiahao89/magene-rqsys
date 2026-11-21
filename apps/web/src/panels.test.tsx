@@ -2737,3 +2737,52 @@ describe("集团需求池 UI（方案 A）", () => {
     expect(fetchMock.mock.calls.map((call) => String(call[0]))).toContain("/api/ops/metrics?days=7&pool=group");
   });
 });
+
+describe("集团需求池切池守卫与创建入口（P2 修复）", () => {
+  const productRow = {
+    id: "req-1",
+    sourceRequirementId: "tb-1",
+    title: "产品池需求标题",
+    sourceVersion: 2,
+    pipeline: { pull: "synced", analysis: "analyzed", owner: "auto_mapped", push: "pushed" },
+    ownerName: "Ada",
+    updatedAt: "2026-10-09T00:00:00.000Z",
+    source: { created: "2026-10-08T00:00:00.000Z", description: "产品池描述" },
+  };
+  const productDetail = { ...productRow, pool: "product", analysis: null, analyses: [] };
+  const counts = { teambition: 0, web_manual: 0, base_form: 0, chat_paste: 0, all: 0 };
+
+  function mockPoolApi(rows: unknown[] = []) {
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/people") return jsonOk({ items: [] });
+      if (path.startsWith("/api/requirements/source-counts")) return jsonOk({ counts });
+      if (path === "/api/requirements/req-1") return jsonOk(productDetail);
+      if (path.startsWith("/api/requirements/")) return jsonOk({ items: rows, nextCursor: null });
+      return jsonOk({ items: rows, nextCursor: null });
+    });
+  }
+
+  it("shows a 404 detail state instead of the previous pool's detail when the scope switches", async () => {
+    window.history.replaceState(null, "", "/?requirement=req-1");
+    mockPoolApi();
+    const { rerender } = render(<RequirementsPanel scope="product" onRefresh={() => undefined} />);
+    expect(await screen.findByRole("heading", { name: "产品池需求标题" })).toBeInTheDocument();
+
+    rerender(<RequirementsPanel scope="group" onRefresh={() => undefined} />);
+
+    // 切池后详情区必须进入错误态，且不再出现上一池的需求标题。
+    expect(await screen.findByText("请求的资源不存在或已被删除。")).toBeInTheDocument();
+    expect(screen.getByText("无法载入需求详情")).toBeInTheDocument();
+    expect(screen.queryByText("产品池需求标题")).toBeNull();
+  });
+
+  it("hides the manual intake entries in the group pool, including the empty state", async () => {
+    mockPoolApi([]);
+    render(<RequirementsPanel scope="group" onRefresh={() => undefined} />);
+    // 空态也不渲染跨池写入入口。
+    expect(await screen.findByText("没有匹配的需求")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "新建需求" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "从聊天粘贴" })).toBeNull();
+  });
+});

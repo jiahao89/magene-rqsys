@@ -517,6 +517,33 @@ describe("RQ-Sys local workbench", () => {
     await waitFor(() => expect(fetchMock.mock.calls.map((call) => String(call[0])).some((path) => path.startsWith("/api/requirements?") && path.includes("pool=group"))).toBe(true));
   });
 
+  it("does not keep a product detail when the sidebar switches to the group pool", async () => {
+    const row = { id: "req-1", sourceRequirementId: "tb-1", title: "产品池需求标题", sourceVersion: 2, pipeline: { pull: "synced", analysis: "analyzed", owner: "auto_mapped", push: "pushed" }, ownerName: "Ada", updatedAt: "2026-10-09T00:00:00.000Z", source: { created: "2026-10-08T00:00:00.000Z" } };
+    fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/sources") return Response.json({ items: [] });
+      if (path.startsWith("/api/batches")) return Response.json({ items: [] });
+      if (path === "/api/overview/metrics") return Response.json({ counts: { total: 1, pullSynced: 1, analysisAnalyzed: 1, ownerResolved: 1, pushPushed: 1, failed: 0 } });
+      if (path === "/api/people") return Response.json({ items: [] });
+      if (path.startsWith("/api/requirements/source-counts")) return Response.json({ counts: { teambition: 1, web_manual: 0, base_form: 0, chat_paste: 0, all: 1 } });
+      if (path === "/api/requirements/req-1") return Response.json({ ...row, pool: "product", analysis: null, analyses: [] });
+      if (path.startsWith("/api/requirements")) return Response.json({ items: [row], nextCursor: null });
+      return Response.json({ items: [], nextCursor: null });
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("link", { name: "需求池" }));
+    fireEvent.click(await screen.findByText("产品池需求标题"));
+    expect(await screen.findByRole("heading", { name: "产品池需求标题" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("link", { name: "集团需求池" }));
+
+    expect(await screen.findByText("请求的资源不存在或已被删除。")).toBeInTheDocument();
+    expect(screen.getByText("无法载入需求详情")).toBeInTheDocument();
+    expect(screen.queryByText("产品池需求标题")).toBeNull();
+  });
+
   it("does not present unavailable dashboard counts as zero", async () => {
     fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
       const path = typeof input === "string" ? input : new Request(input).url;
