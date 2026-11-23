@@ -1543,17 +1543,18 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
       retryAllowed = !jobs.some((job) => job && ["queued", "running"].includes(job.status));
     }
     if (!isIntakeComplete(req.pipeline.pull) || !retryAllowed) return jsonError("CONFLICT");
-    // V02-T26：可选 body { force?: boolean }。force=true 用于“保存补充上下文后立即重跑”，
-    // 需要唯一 dedupe key 越过同源版本已分析的幂等短路（分析作业侧再按 payload.force 跳过守卫）。
-    // 显式读 body 以区分“无 body”和“非法 JSON”：非法 JSON 返回 400，而不是静默按 false 处理。
+    // 2026-11-23：人工「重新分析」默认 force。此前缺省 force=false，已分析过的需求命中
+    // handler 的同源版本幂等守卫：只入队、不调模型，UI 却提示「已入队」，看起来成功实则什么都没跑。
+    // 现在缺省强制重跑一版新分析（唯一 dedupe key + payload.force）；只有显式 { force: false }
+    // 才保留旧的轻量重试语义。显式读 body 以区分「无 body」和「非法 JSON」：非法 JSON 返回 400。
     const retryText = await request.text().catch(() => "");
-    let force = false;
+    let force = true;
     if (retryText.trim().length > 0) {
       let retryBody: unknown;
       try { retryBody = JSON.parse(retryText); } catch { return jsonError("VALIDATION_FAILED"); }
       const retryParsed = RetryAnalysisRequestSchema.safeParse(retryBody);
       if (!retryParsed.success) return jsonError("VALIDATION_FAILED");
-      force = retryParsed.data.force === true;
+      force = retryParsed.data.force !== false;
     }
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
     // force 键是确定性的（同一 sourceVersion/prior 只有一个）：重复点击、并发请求命中同一键而复用活作业，

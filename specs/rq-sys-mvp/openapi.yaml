@@ -1203,10 +1203,12 @@ paths:
     post:
       summary: Queue a new analysis attempt
       description: >-
-        V02-T26 adds an optional body. `force: true` re-runs the analysis even when the same
-        source version was already analyzed (used after saving the analysis context). The
-        server generates a unique dedupe key for the forced job; if a first-pass analysis job
-        is already queued/running it is reused instead of starting a second concurrent run.
+        A manual retry forces a new analysis version by default: an already analyzed source
+        version is re-run instead of being skipped by the idempotency guard (the button spends
+        one model call). Pass `force: false` explicitly to keep the old lightweight retry that
+        only re-queues when the current source version was not analyzed yet. The server
+        generates a unique dedupe key for the forced job; if an analysis job is already
+        queued/running it is reused instead of starting a second concurrent run.
       parameters:
         - $ref: '#/components/parameters/Id'
       requestBody:
@@ -1216,7 +1218,7 @@ paths:
             schema:
               type: object
               properties:
-                force: { type: boolean, default: false, description: Force a new analysis version even if the current source version is already analyzed. }
+                force: { type: boolean, default: true, description: Force a new analysis version even if the current source version is already analyzed (default). Pass false for the old lightweight retry. }
               additionalProperties: false
       responses:
         '202': { description: Analysis retry accepted; push is not blocked }

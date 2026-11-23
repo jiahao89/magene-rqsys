@@ -238,12 +238,22 @@ test("a running requirement whose live job is a force job is not treated as a cr
   assert.equal(recorded.enqueued.length, 0);
 });
 
-test("retry without body keeps force=false and the legacy dedupe key", async () => {
+test("retry without body forces a new analysis run (2026-11-23)", async () => {
+  // 回归：缺省 force=false 时，已分析需求被同源幂等守卫短路，只入队不执行。
   const { deps, recorded } = makeDeps();
   const response = await handleApiRequest(new Request(`http://localhost/api/analysis/${requirement.id}/retry`, { method: "POST" }), deps);
   assert.equal(response.status, 202);
+  assert.equal(recorded.enqueued[0]!.dedupeKey, `analysis:${requirement.id}:sv1:after0:force`);
+  assert.equal(recorded.enqueued[0]!.payload.force, true);
+});
+
+test("retry with an explicit force:false keeps the legacy lightweight key", async () => {
+  const { deps, recorded } = makeDeps();
+  const response = await handleApiRequest(new Request(`http://localhost/api/analysis/${requirement.id}/retry`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ force: false }),
+  }), deps);
+  assert.equal(response.status, 202);
   assert.equal(recorded.enqueued[0]!.dedupeKey, `analysis:${requirement.id}:sv1:after0`);
-  // 非 force 路径不带 force 字段：保持既有作业 payload 形状不变。
   assert.equal("force" in recorded.enqueued[0]!.payload, false);
 });
 

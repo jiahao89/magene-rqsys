@@ -387,7 +387,9 @@ test("queues a retry for a pending analysis when its current queue job is missin
   assert.equal(response.status, 202);
   assert.deepEqual(await response.json(), { requirementId: requirement.id, status: "queued" });
   assert.equal(queued.length, 1);
-  assert.equal(queued[0]?.dedupeKey, `analysis:${requirement.id}:sv1:after2`);
+  // 2026-11-23：人工重新分析缺省 force——真正的重跑必须带 force 键与 payload 标记。
+  assert.equal(queued[0]?.dedupeKey, `analysis:${requirement.id}:sv1:after2:force`);
+  assert.equal((queued[0]?.payload as Record<string, unknown>).force, true);
 });
 test("audits an analysis retry request when an existing queued job is reused", async () => {
   const d = makeDependencies();
@@ -395,7 +397,7 @@ test("audits an analysis retry request when an existing queued job is reused", a
   d.repositories!.requirements!.get = async (id: string) => id === requirement.id
     ? { ...requirement, pipeline: { ...requirement.pipeline, analysis: "pending" as const } } as RequirementRecord
     : null;
-  d.repositories!.jobs.findByDedupeKey = async (key) => key === `analysis:${requirement.id}:sv1:after2`
+  d.repositories!.jobs.findByDedupeKey = async (key) => key === `analysis:${requirement.id}:sv1:after2:force`
     ? { id: "analysis-job", jobType: "analysis", dedupeKey: key, payload: {}, status: "queued", attemptCount: 0, maxAttempts: 3, availableAt: "2026-10-08T00:00:00.000Z", lockedUntil: null, lastErrorCode: null, lastErrorSummary: null, createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z" }
     : null;
   d.repositories!.audit.append = async (event) => { auditEvents.push(event as unknown as Record<string, unknown>); };
@@ -405,7 +407,7 @@ test("audits an analysis retry request when an existing queued job is reused", a
   assert.equal(auditEvents.length, 1);
   assert.equal(auditEvents[0]?.eventType, "analysis.retry_requested");
   assert.equal(auditEvents[0]?.actorId, "actor-1");
-  assert.deepEqual(auditEvents[0]?.safeDetails, { sourceVersion: 1, priorAnalysisVersion: 2, analysisStatus: "reused_existing_job" });
+  assert.deepEqual(auditEvents[0]?.safeDetails, { sourceVersion: 1, priorAnalysisVersion: 2, analysisStatus: "reused_existing_job", force: true });
 });
 test("lists and retrieves batches with items", async () => { const d = makeDependencies(); assert.equal((await handleApiRequest(new Request("http://localhost/api/batches?limit=10"), d)).status, 200); const r = await handleApiRequest(new Request(`http://localhost/api/batches/${batch.id}`), d); assert.equal(r.status, 200); assert.deepEqual((await r.json() as { items: SyncItemRecord[] }).items, [item]); });
 test("failed item retry is idempotent across repeated requests", async () => {
@@ -1438,4 +1440,28 @@ test("PRD §4.7.5：duplicateCandidates 只保留同标题候选，duplicates �
   delete (legacy.repositories as unknown as { requirements: Record<string, unknown> }).requirements.listDuplicateCandidates;
   const fallback = await (await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`), legacy)).json() as { duplicateCandidates: unknown };
   assert.deepEqual(fallback.duplicateCandidates, []);
+});
+
+test("重新分析已分析过的需求缺省强制重跑，显式 force:false 才走轻量重试", async () => {
+  // 回归：此前不带 body 时 force=false，已分析需求被 handler 的同源幂等守卫短路——只入队不执行。
+  const d = makeDependencies();
+  const queued: Record<string, unknown>[] = [];
+  d.repositories!.requirements!.get = async (id: string) => id === requirement.id
+    ? { ...requirement, pipeline: { ...requirement.pipeline, analysis: "analyzed" as const } } as RequirementRecord
+    : null;
+  d.repositories!.jobs.enqueue = async (input) => {
+    queued.push(input as unknown as Record<string, unknown>);
+    return { ...input, id: "analysis-job", status: "queued", attemptCount: 0, maxAttempts: 3, lockedUntil: null, lastErrorCode: null, lastErrorSummary: null, createdAt: input.availableAt, updatedAt: input.availableAt };
+  };
+  const forced = await handleApiRequest(new Request(`http://localhost/api/analysis/${requirement.id}/retry`, { method: "POST" }), d);
+  assert.equal(forced.status, 202);
+  assert.equal(queued[0]?.dedupeKey, `analysis:${requirement.id}:sv1:after2:force`);
+  assert.equal((queued[0]?.payload as Record<string, unknown>).force, true);
+
+  const light = await handleApiRequest(new Request(`http://localhost/api/analysis/${requirement.id}/retry`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ force: false }),
+  }), d);
+  assert.equal(light.status, 202);
+  assert.equal(queued[1]?.dedupeKey, `analysis:${requirement.id}:sv1:after2`);
+  assert.equal((queued[1]?.payload as Record<string, unknown>).force, undefined);
 });
