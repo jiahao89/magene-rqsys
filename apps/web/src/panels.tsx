@@ -1652,7 +1652,15 @@ function DuplicateDecisionSection({ detail, onSaved }: { detail: RequirementDeta
   const [conflict, setConflict] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const candidates = (detail.duplicates ?? []).map((item) => ({ id: item.id, title: item.title, hint: item.teambitionRequirementId }));
+  // 候选优先取后端 duplicateCandidates（同标题的其他 active 需求），旧响应回退 duplicates。
+  type DuplicateCandidateLike = { id: string; title: string; platformRequirementId?: string | null; teambitionRequirementId?: string | null };
+  const candidateSource: DuplicateCandidateLike[] = detail.duplicateCandidates ?? detail.duplicates ?? [];
+  const candidates = candidateSource.map((item) => ({
+    id: item.id,
+    title: item.title,
+    // 手工需求没有 TB 任务号：优先显示 RQ 编号，避免候选行出现 "null"。
+    hint: item.platformRequirementId ?? item.teambitionRequirementId ?? "手工需求",
+  }));
   const currentCanonicalId = resolution?.canonicalRequirementId ?? detail.duplicateOf ?? null;
   const canonicalOptions = currentCanonicalId && !candidates.some((candidate) => candidate.id === currentCanonicalId)
     ? [{ id: currentCanonicalId, title: "当前疑似主记录", hint: resolution?.canonicalPlatformRequirementId ?? currentCanonicalId }, ...candidates]

@@ -648,6 +648,8 @@ export interface RequirementDetail {
   manualOwner?: { feishuUserId: string; feishuIdType: "open_id" | "user_id" | "union_id"; name: string | null; assignedAt: string } | null;
   duplicateOf?: string | null;
   duplicates?: Array<{ id: string; title: string; teambitionRequirementId: string }>;
+  /** 重复候选：同标题的其他 active 需求（排除自身与已压制）。旧响应没有该字段时回退 duplicates。 */
+  duplicateCandidates?: Array<{ id: string; title: string; platformRequirementId?: string | null; teambitionRequirementId?: string | null }>;
   scoring?: ScoringData | null;
   /** 服务端创建时间（四种来源都返回）；非 TB 来源没有 payload 创建时间，必须读这里。 */
   createdAt?: string | null;

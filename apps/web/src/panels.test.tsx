@@ -1232,6 +1232,30 @@ describe("RequirementsPanel (ticket 17)", () => {
     expect(await screen.findByLabelText("主记录候选")).toBeInTheDocument();
   });
 
+  it("takes candidates from duplicateCandidates and never renders a null hint", async () => {
+    // 后端 2026-11-23：候选改为「同标题的其他 active 需求」，走新字段 duplicateCandidates；
+    // 手工需求没有 TB 任务号（teambitionRequirementId=null），提示必须回退到 RQ 编号而不是 "null"。
+    mockPanel({
+      detailBody: detail({
+        duplicates: [],
+        duplicateCandidates: [
+          { id: "req-2", title: "重复的需求", platformRequirementId: "RQ-000291", teambitionRequirementId: "tb-2" },
+          { id: "req-3", title: "手工同标题需求", platformRequirementId: "RQ-000300", teambitionRequirementId: null },
+        ],
+      }),
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await openFirstRow();
+
+    expect(screen.getByRole("heading", { name: "重复处理" })).toBeInTheDocument();
+    expect(screen.queryByText(/暂无重复候选/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "确认重复（选择主记录）" }));
+    expect(await screen.findByLabelText("主记录候选")).toBeInTheDocument();
+    await chooseArcoOption("主记录候选", "手工同标题需求（RQ-000300）");
+    expect(arcoSelectText("主记录候选")).toContain("手工同标题需求");
+    expect(arcoSelectText("主记录候选")).not.toContain("null");
+  });
+
   it("keeps only revoke for a suppressed requirement without candidates", async () => {
     mockPanel({ detailBody: detail({ processingState: "suppressed_ignored" }) });
     render(<RequirementsPanel onRefresh={() => undefined} />);
