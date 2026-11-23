@@ -1836,7 +1836,7 @@ export function AnalysisContextSection({ detail, onSaved }: { detail: Requiremen
     <StateBanner loadError={error} notice={notice} onCloseNotice={() => setNotice(null)} />
     <div className="req-summary-actions">
       <ArcoButton htmlType="button" size="small" onClick={() => void save(false)} disabled={busy || suppressed} title={suppressed ? "已压制需求不能保存补充上下文；请先撤销判定" : "仅保存补充上下文"}>{busy ? "保存中…" : "保存"}</ArcoButton>
-      <ArcoButton type="primary" htmlType="button" size="small" onClick={() => void save(true)} disabled={busy || suppressed} title={suppressed ? "已压制需求不能重新分析" : "保存补充上下文后强制重跑一次 AI 分析"}>{busy ? "提交中…" : "保存并重新分析"}</ArcoButton>
+      <ArcoButton type="primary" htmlType="button" size="small" onClick={() => void save(true)} disabled={busy || suppressed} title={suppressed ? "已压制需求不能重新分析" : "保存补充上下文后强制重跑一次 AI 分析（会消耗一次模型调用）"}>{busy ? "提交中…" : "保存并重新分析"}</ArcoButton><span className="subtle-text">会消耗一次模型调用</span>
     </div>
   </section>;
 }
@@ -2325,7 +2325,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
     : <div className="req-empty-state">
       <strong>尚未分析</strong>
       <span>{detail.pipeline.analysis === "running" ? "AI 分析正在进行中；完成后刷新查看结果。" : "该需求还没有可用的 AI 分析结果。"}</span>
-      <ArcoButton htmlType="button" size="small" onClick={() => void onAct(async () => { await retryAnalysis(detail.id); return "AI 分析重试已入队"; }, detail.id)} disabled={busy || !analysisRetryable} title={analysisRetryable ? "提交 AI 分析" : analysisDisabledReason}>{analysisActionLabel}</ArcoButton>
+      <ArcoButton htmlType="button" size="small" onClick={() => void onAct(async () => { await retryAnalysis(detail.id); return "AI 分析重试已入队"; }, detail.id)} disabled={busy || !analysisRetryable} title={analysisRetryable ? "提交 AI 分析（会消耗一次模型调用）" : analysisDisabledReason}>{analysisActionLabel}</ArcoButton><span className="subtle-text">会消耗一次模型调用</span>
     </div>;
   const aiAnalysisContent = <>{audienceEditor}{aiAnalysisBody}<div className="score-analysis-beta"><BetaPanel requirementId={detail.id} /></div></>;
 
@@ -2366,7 +2366,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
         <div className="req-stage-row" role="group" aria-label="处理状态">{stages.map(([stage, state]) => <StageBadge key={stage} stage={stage} state={state} />)}</div>
         <div className="req-summary-actions" role="group" aria-label="需求操作">
           <Button aria-expanded={ownerPickerOpen} aria-controls={ownerEditorId} onPress={() => setOwnerPickerOpen((open) => !open)} isDisabled={busy || suppressed} variant="primary" size="small">{suppressed ? "分配 / 变更负责人（已压制）" : "分配 / 变更负责人"}</Button>
-          <ArcoButton htmlType="button" size="small" onClick={() => void onAct(async () => { await retryAnalysis(detail.id); return "AI 分析重试已入队"; }, detail.id)} disabled={busy || !analysisRetryable} title={analysisRetryable ? "重新提交 AI 分析" : analysisDisabledReason}>{analysisActionLabel}</ArcoButton>
+          <ArcoButton htmlType="button" size="small" onClick={() => void onAct(async () => { await retryAnalysis(detail.id); return "AI 分析重试已入队"; }, detail.id)} disabled={busy || !analysisRetryable} title={analysisRetryable ? "重新提交 AI 分析（会消耗一次模型调用）" : analysisDisabledReason}>{analysisActionLabel}</ArcoButton><span className="subtle-text">会消耗一次模型调用</span>
           <ArcoButton htmlType="button" size="small" onClick={() => void onAct(async () => { const result = await pushRequirement(detail.id); return result.status === "queued" ? "Base 推送重试已入队" : `推送状态：${result.status}`; }, detail.id)} disabled={busy || !pushRetryable} title={pushRetryable ? "重新提交 Base 推送" : pushDisabledReason}>重试 Base 推送</ArcoButton>
           <Button onPress={onRefresh} isDisabled={busy} variant="secondary" size="small"><RefreshCw size={14} />刷新</Button>
         </div>

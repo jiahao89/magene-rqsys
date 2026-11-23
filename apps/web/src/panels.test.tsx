@@ -1267,6 +1267,17 @@ describe("RequirementsPanel (ticket 17)", () => {
     expect(screen.queryByRole("button", { name: "忽略" })).not.toBeInTheDocument();
   });
 
+  it("marks both analysis rerun entries with the one-model-call hint", async () => {
+    // PRD §4.2.6：手动重跑一律强制真跑，两处入口都要固定标注会消耗一次模型调用。
+    mockPanel();
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await openFirstRow();
+    const actions = screen.getByRole("group", { name: "需求操作" });
+    expect(within(actions).getByText("会消耗一次模型调用")).toBeInTheDocument();
+    const contextSection = screen.getByRole("region", { name: "补充上下文" });
+    expect(within(contextSection).getByText("会消耗一次模型调用")).toBeInTheDocument();
+  });
+
   it("labels chat-paste rows and filters the pool by source", async () => {
     const chatRow = { ...row, id: "req-chat", title: "聊天粘贴需求", sourceType: "web_manual", sourceChannel: "售后", source: { sourceType: "web_manual", intakeOrigin: "chat_paste" } };
     const manualRow = { ...row, id: "req-manual", title: "手工录入需求", sourceType: "web_manual", sourceChannel: "销售", source: { sourceType: "web_manual" } };
@@ -1562,7 +1573,7 @@ describe("RequirementsPanel (ticket 17)", () => {
     expect(actions.getByRole("button", { name: "分配 / 变更负责人" })).toBeEnabled();
     const retryAnalysis = actions.getByRole("button", { name: "重新分析" });
     expect(retryAnalysis).toBeEnabled();
-    expect(retryAnalysis.getAttribute("title")).toBe("重新提交 AI 分析");
+    expect(retryAnalysis.getAttribute("title")).toBe("重新提交 AI 分析（会消耗一次模型调用）");
     const retryPush = actions.getByRole("button", { name: "重试 Base 推送" });
     expect(retryPush).toBeDisabled();
     expect(retryPush.getAttribute("title")).toContain("无需重试");
