@@ -48,11 +48,16 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .muted-icon { color: var(--rq-text-muted); }
 .nav-label { font-size: var(--rq-font-body); padding: 0 10px 9px; color: var(--rq-text-muted); font-size: var(--rq-font-caption); font-weight: 700; letter-spacing: .9px; }
 .main-nav { display: flex; flex-direction: column; gap: 3px; }
-.nav-item { position: relative; display: flex; align-items: center; gap: 11px; width: 100%; min-height: 37px; padding: 0 10px; border: 0; border-radius: var(--rq-radius-sm); color: #596373; background: transparent; text-align: left; text-decoration: none; cursor: pointer; transition: background .15s, color .15s; }
-.nav-item:hover { color: #28364f; background: #f5f6f8; }
+/* 侧栏菜单项度量按 Arco Menu 规范：行高 36px、圆角 4px（--border-radius-medium）、图标与文字间距 8px。 */
+.nav-item { position: relative; display: flex; align-items: center; gap: 8px; width: 100%; min-height: 36px; padding: 0 10px; border: 0; border-radius: var(--rq-radius-sm); color: var(--color-text-2); background: transparent; text-align: left; text-decoration: none; cursor: pointer; transition: background .15s, color .15s; }
+.nav-item:hover { color: var(--color-text-1); background: var(--color-fill-2); }
 .nav-item.active { color: var(--rq-accent-text); background: var(--rq-accent-soft); font-weight: 620; }
 .nav-item.active::before { position: absolute; top: 9px; bottom: 9px; left: 0; width: 2px; border-radius: var(--rq-radius-xs); background: var(--rq-brand-active); content: ""; }
-.nav-item span:nth-child(2) { flex: 1; font-size: var(--rq-font-caption); }
+/* Arco 语义色：图标默认 text-3（次要），悬停/激活用主色；图标固定 16px 且不参与压缩。 */
+.nav-item > svg { width: 16px; height: 16px; flex: none; color: var(--color-text-3); transition: color .15s; }
+.nav-item:hover > svg, .nav-item.is-active > svg { color: rgb(var(--primary-6)); }
+/* 标签单行省略：窄侧栏（215px 起）也不折行，长标题截断为省略号。 */
+.nav-item-label { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: var(--rq-font-caption); }
 .nav-count { padding: 2px 6px; border-radius: var(--rq-radius-md); color: var(--rq-text-muted); background: #f0f1f4; font-size: var(--rq-font-caption); }
 .sidebar-spacer { flex: 1; }
 .side-help { display: flex; align-items: center; gap: 9px; margin: 0 0 12px; padding: 11px 7px; border-top: 1px solid var(--rq-divider); color: #727c8d; }
@@ -1711,3 +1716,34 @@ html[data-theme="dark"] input[type="datetime-local"] { color-scheme: dark; }
 .prd-prompt-list ul { margin: 0; padding-left: 18px; color: var(--rq-text-muted); font-size: var(--rq-font-caption); line-height: 1.7; }
 .prd-prompt-versions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding-top: 6px; border-top: 1px dashed var(--rq-border); }
 .prd-prompt-versions .subtle-text { color: var(--rq-text-muted); font-size: var(--rq-font-caption); }
+
+/* ==================== 重复处理视图与客户端等效组件 ====================
+ * 这组类在两仓 panels.tsx 中共用（重复处理切换、抑制行、详情判定、建议卡）。
+ * 89d244e 用根仓 styles.css 整份覆盖妙搭样式时，这些规则被误删，导致妙搭线上
+ * 「重复处理」视图无样式；两仓必须同时保留本节，同步样式时不要整份覆盖。
+ */
+.badge { display: inline-flex; width: fit-content; align-items: center; gap: 5px; padding: 3px 7px; border: 1px solid var(--rq-border); border-radius: var(--rq-radius-sm); color: var(--rq-text-muted); background: var(--rq-surface); font-size: var(--rq-font-caption); white-space: nowrap; }
+.advice-card { display: flex; flex-direction: column; gap: 6px; padding: 13px 14px; border: 1px solid var(--rq-border); border-radius: var(--rq-radius-md); background: var(--rq-surface); }
+html[data-theme="dark"] .advice-card { background: var(--rq-surface-subtle); border-color: var(--rq-border); }
+
+/* ---------- P1 重复处理视图 / 列表徽标 / 详情判定 ---------- */
+.processing-view-switch { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 10px 0 2px; }
+.processing-view-switch-label { color: var(--rq-text-muted); font-size: var(--rq-font-caption); font-weight: 600; }
+.processing-view-switch button {
+  height: 30px; padding: 0 12px; border: 1px solid var(--rq-border); border-radius: 999px;
+  background: var(--rq-surface); color: var(--rq-text-secondary, var(--rq-text)); font-size: 12.5px; cursor: pointer;
+}
+.processing-view-switch button:hover { border-color: var(--rq-focus-border, var(--rq-accent-text)); }
+.processing-view-switch button.is-active { border-color: var(--rq-accent-text); background: var(--rq-accent-soft); color: var(--rq-accent-text); font-weight: 600; }
+.processing-view-switch button:focus-visible { outline: 2px solid var(--rq-accent-text); outline-offset: 2px; }
+.processing-view-hint { color: var(--rq-text-muted); font-size: var(--rq-font-caption); }
+.processing-badge { margin-left: 6px; }
+.req-row.is-suppressed { opacity: .66; }
+.req-row.is-suppressed:hover, .req-row.is-suppressed:focus-within { opacity: .95; }
+.req-row.is-suppressed td:first-child { box-shadow: inset 3px 0 0 var(--rq-muted); }
+.suppressed-detail-banner { align-items: flex-start; flex-wrap: wrap; }
+.suppressed-detail-banner a { margin-left: auto; text-decoration: none; }
+.duplicate-current-state { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; margin-bottom: 8px; }
+.duplicate-current-state code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--rq-font-caption); }
+.duplicate-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.duplicate-form { margin-top: 4px; }
