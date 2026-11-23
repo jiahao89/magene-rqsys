@@ -591,8 +591,9 @@ describe("RequirementsPanel (ticket 17)", () => {
     expect(screen.getByText("适用人群")).toBeInTheDocument();
     expect(screen.getByText("处理与推送")).toBeInTheDocument();
     expect(screen.getByText("系统状态")).toBeInTheDocument();
-    // TB 需求有稳定来源身份，重复判定区块应当可见。
+    // TB 需求没有同标题候选：显示精简态，只留「忽略」作为独立动作。
     expect(screen.getByRole("heading", { name: "重复处理" })).toBeInTheDocument();
+    expect(screen.getByText(/暂无重复候选/)).toBeInTheDocument();
     expect(screen.getByText("查看依据与历史")).toBeInTheDocument();
     // TB 原始字段同时使用「TB」小徽标与分区来源标注。
     expect(screen.getAllByText("TB").length).toBeGreaterThanOrEqual(8);
@@ -1202,6 +1203,44 @@ describe("RequirementsPanel (ticket 17)", () => {
     await waitFor(() => expect(releaseRefresh).not.toBeNull());
     await act(async () => { releaseRefresh!(); });
     await waitFor(() => expect(screen.queryByRole("button", { name: "撤销判定（恢复活跃）" })).not.toBeInTheDocument());
+  });
+
+  it("falls back to a compact duplicate section without candidates: ignore only", async () => {
+    // 用户口径（2026-11-23）：没有同标题候选时进入精简态。整块隐藏会连「忽略」一起藏掉，
+    // 而忽略是压制垃圾需求的独立入口，所以保留它，隐藏主记录与「确认非重复」。
+    mockPanel();
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await openFirstRow();
+    expect(screen.getByRole("heading", { name: "重复处理" })).toBeInTheDocument();
+    expect(screen.getByText(/暂无重复候选/)).toBeInTheDocument();
+    expect(screen.getByText(/可直接忽略/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "忽略" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "确认重复（选择主记录）" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "确认非重复" })).not.toBeInTheDocument();
+  });
+
+  it("shows resolve-duplicate and confirm-unique only when a same-title candidate exists", async () => {
+    mockPanel({ detailBody: detail({ duplicates: [{ id: "req-2", title: "重复的需求", teambitionRequirementId: "tb-2" }] }) });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await openFirstRow();
+    expect(screen.getByRole("heading", { name: "重复处理" })).toBeInTheDocument();
+    expect(screen.queryByText(/暂无重复候选/)).not.toBeInTheDocument();
+    const resolve = screen.getByRole("button", { name: "确认重复（选择主记录）" });
+    expect(resolve).toBeEnabled();
+    expect(screen.getByRole("button", { name: "确认非重复" })).toBeInTheDocument();
+    fireEvent.click(resolve);
+    expect(await screen.findByLabelText("主记录候选")).toBeInTheDocument();
+  });
+
+  it("keeps only revoke for a suppressed requirement without candidates", async () => {
+    mockPanel({ detailBody: detail({ processingState: "suppressed_ignored" }) });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await openFirstRow();
+    expect(screen.getByRole("heading", { name: "重复处理" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "撤销判定（恢复活跃）" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "确认重复（选择主记录）" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "确认非重复" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "忽略" })).not.toBeInTheDocument();
   });
 
   it("labels chat-paste rows and filters the pool by source", async () => {

@@ -1658,6 +1658,13 @@ function DuplicateDecisionSection({ detail, onSaved }: { detail: RequirementDeta
     ? [{ id: currentCanonicalId, title: "当前疑似主记录", hint: resolution?.canonicalPlatformRequirementId ?? currentCanonicalId }, ...candidates]
     : candidates;
 
+  // 用户口径（2026-11-23）：没有同标题候选时进入精简态——只保留「忽略」这个独立动作，
+  // 主记录与「确认非重复」都没有可判断的对象；已有判定时只保留撤销。
+  const reviewState = resolution?.reviewState ?? null;
+  const undecided = reviewState !== "suspected" && reviewState !== "confirmed";
+  const noCandidates = canonicalOptions.length === 0;
+  const compact = !suppressed && undecided && noCandidates;
+
   const openMode = (next: DuplicateDecisionMode) => {
     setMode(next); setError(null); setConflict(false); setNotice(null);
     setReason(next === "revoke" ? "撤销判定，恢复为活跃需求" : "");
@@ -1699,7 +1706,7 @@ function DuplicateDecisionSection({ detail, onSaved }: { detail: RequirementDeta
   const stateChipClassName = state === "suppressed_duplicate" ? "status-danger" : state === "suppressed_ignored" ? "status-muted" : resolution?.reviewState === "suspected" ? "status-warning" : "status-live";
   const stateChipLabel = state !== "active"
     ? processingStateLabels[state]
-    : resolution?.reviewState === "suspected" ? "疑似重复（待确认）" : resolution?.reviewState === "confirmed" ? "已确认非重复" : "未作判定";
+    : resolution?.reviewState === "suspected" ? "疑似重复（待确认）" : resolution?.reviewState === "confirmed" ? "已确认非重复" : compact ? "未作判定 · 暂无重复候选" : "未作判定";
 
   return <section className="req-section req-duplicate-section" aria-labelledby="req-duplicate-heading">
     <div className="req-section-head"><h3 id="req-duplicate-heading">重复处理</h3><span className="req-source-note">人工判定 · 影响处理链路</span></div>
@@ -1709,13 +1716,13 @@ function DuplicateDecisionSection({ detail, onSaved }: { detail: RequirementDeta
       {(resolution?.canonicalPlatformRequirementId ?? resolution?.canonicalRequirementId) && <span className="subtle-text">主记录：<code>{resolution.canonicalPlatformRequirementId ?? resolution.canonicalRequirementId}</code></span>}
       {typeof resolution?.version === "number" && <span className="subtle-text">判定版本 v{resolution.version}</span>}
     </div>
-    <p className="detail-note">确认重复或忽略后该需求会被压制：不再进入 AI 分析、Base 推送与通知，记录保留、可随时撤销；撤销判定会把处理状态恢复为活跃。</p>
+    <p className="detail-note">{compact ? "暂未发现同标题的重复候选，主记录与「确认非重复」暂不可用；如需压制这条需求，可直接忽略：不再进入 AI 分析、Base 推送与通知，记录保留、可随时撤销。" : "确认重复或忽略后该需求会被压制：不再进入 AI 分析、Base 推送与通知，记录保留、可随时撤销；撤销判定会把处理状态恢复为活跃。"}</p>
     {error && <div className="alert-banner" role="alert"><div><strong>{conflict ? "判定未保存" : "操作未完成"}</strong><span>{error}</span></div>{conflict && <ArcoButton htmlType="button" size="small" onClick={onSaved}>刷新详情</ArcoButton>}</div>}
     {notice && <div className="notice-banner" role="status"><span>{notice}</span></div>}
     {mode === null ? <div className="duplicate-actions">
-      <ArcoButton htmlType="button" size="small" onClick={() => openMode("duplicate")} disabled={busy || canonicalOptions.length === 0} title={canonicalOptions.length === 0 ? "没有可选的主记录候选（尚未发现同标题需求）" : "从同标题候选中选择主记录"}>确认重复（选择主记录）</ArcoButton>
-      <ArcoButton htmlType="button" size="small" onClick={() => openMode("confirmed_unique")} disabled={busy}>确认非重复</ArcoButton>
-      <ArcoButton htmlType="button" size="small" onClick={() => openMode("ignored")} disabled={busy}>忽略</ArcoButton>
+      {!suppressed && !noCandidates && <ArcoButton htmlType="button" size="small" onClick={() => openMode("duplicate")} disabled={busy} title="从同标题候选中选择主记录">确认重复（选择主记录）</ArcoButton>}
+      {!suppressed && !noCandidates && <ArcoButton htmlType="button" size="small" onClick={() => openMode("confirmed_unique")} disabled={busy}>确认非重复</ArcoButton>}
+      {!suppressed && <ArcoButton htmlType="button" size="small" onClick={() => openMode("ignored")} disabled={busy}>忽略</ArcoButton>}
       {suppressed && <ArcoButton type="primary" htmlType="button" size="small" onClick={() => openMode("revoke")} disabled={busy}>撤销判定（恢复活跃）</ArcoButton>}
     </div> : <div className="rules-form duplicate-form">
       <strong style={{ flexBasis: "100%" }}>{heading}</strong>
