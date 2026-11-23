@@ -728,7 +728,7 @@ export function BatchesPanel({ onRefresh, pool = "product" }: { onRefresh: () =>
     try {
       const key = retryKeys.current.get(item.id) ?? crypto.randomUUID();
       retryKeys.current.set(item.id, key);
-      const result = await retrySyncItem(item.id, fetch, key);
+      const result = await retrySyncItem(item.id, undefined, key);
       retryKeys.current.delete(item.id);
       onRefresh(); setNotice(`失败项已重新入队：批次 ${result.batchId}`);
       if (openBatch) {
@@ -2038,7 +2038,7 @@ function RequirementAssessmentSection({ requirementId }: { requirementId: string
     // 服务端排队上限 60s：客户端留 5s 余量，避免在服务端刚好完成时抢跑。PRD 4.10 A5。
     const timer = window.setTimeout(() => controller.abort(), 65000);
     try {
-      const created = await createRequirementAssessment(requirementId, inputs, fetch, controller.signal);
+      const created = await createRequirementAssessment(requirementId, inputs, undefined, controller.signal);
       setHistory((previous) => [created, ...previous.filter((item) => item.version !== created.version)]);
       setSelectedVersion(created.version);
       setNotice(created.status === "succeeded"

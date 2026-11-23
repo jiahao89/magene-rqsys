@@ -543,7 +543,7 @@ function RulesPanel() {
     let validationEvidence: unknown[] = [];
     try { validationEvidence = evidenceInput.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => JSON.parse(line) as unknown); }
     catch { throw new ApiError("校准证据每行必须是一个合法 JSON 对象。", 400, "INVALID_EVIDENCE"); }
-    const created = await createPriorityRuleDraft({ scoring, thresholds }, fetch, validationEvidence);
+    const created = await createPriorityRuleDraft({ scoring, thresholds }, undefined, validationEvidence);
     return `规则 v${created.version} 草稿已创建`;
   });
 
