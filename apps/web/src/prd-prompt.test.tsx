@@ -177,6 +177,27 @@ describe("PrdPromptSection (S2)", () => {
     expect(screen.getByLabelText("调研结论")).toHaveValue("超时也要保留");
   });
 
+  it("refetches assessments when the detail page reports a fresh one", async () => {
+    // P2（2026-11-23）：详情页生成评估成功后，同页提示词块要自己解锁，不能要求刷新页面。
+    let assessments: unknown[] = [];
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path.endsWith("/assessments")) return jsonOk({ items: assessments });
+      if (path.endsWith("/prd-prompts")) return jsonOk({ items: [] });
+      return jsonOk({});
+    });
+    const { rerender } = render(<PrdPromptSection requirementId="req-1" />);
+    expect(await screen.findByText(/先生成一条成功的需求评估/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "生成 PRD 提示词" })).toBeDisabled();
+
+    assessments = [assessment];
+    rerender(<PrdPromptSection requirementId="req-1" assessmentRevision={1} />);
+
+    await waitFor(() => expect(screen.queryByText(/先生成一条成功的需求评估/)).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "生成 PRD 提示词" })).toBeEnabled();
+    expect(screen.getByText(/评估 v3/)).toBeInTheDocument();
+  });
+
   it("shows the empty state without generating", async () => {
     mockApi();
     render(<PrdPromptSection requirementId="req-1" />);

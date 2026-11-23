@@ -61,7 +61,7 @@ function errorMessage(cause: unknown, timedOut = false): string {
   return "生成失败：无法连接服务，请稍后重试。";
 }
 
-export function PrdPromptSection({ requirementId, timeoutMs = 95_000 }: { requirementId: string; timeoutMs?: number }) {
+export function PrdPromptSection({ requirementId, assessmentRevision = 0, timeoutMs = 95_000 }: { requirementId: string; assessmentRevision?: number; timeoutMs?: number }) {
   const [assessments, setAssessments] = useState<RequirementAssessment[] | null>(null);
   const [items, setItems] = useState<PrdPromptVersion[] | null>(null);
   const [assessError, setAssessError] = useState<string | null>(null);
@@ -105,6 +105,8 @@ export function PrdPromptSection({ requirementId, timeoutMs = 95_000 }: { requir
   }, [requirementId]);
 
   useEffect(() => { void loadAssessments(); void loadHistory(); }, [loadAssessments, loadHistory]);
+  // 详情页生成评估成功后 revision 递增：只重拉评估列表，解锁生成按钮（历史与输入不动）。
+  useEffect(() => { if (assessmentRevision > 0) void loadAssessments(); }, [assessmentRevision, loadAssessments]);
   useEffect(() => () => { if (copyTimer.current !== null) window.clearTimeout(copyTimer.current); }, []);
 
   const latestAssessment = (assessments ?? [])

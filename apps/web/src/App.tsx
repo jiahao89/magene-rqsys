@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { Activity, ArrowDownToLine, ArrowRight, Blocks, BookOpen, Building2, Check, CircleAlert, CircleHelp, Clock3, Database, FolderSync, Gauge, GitBranch, Layers3, ListChecks, LoaderCircle, Menu, Moon, Play, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Sun, Users, X } from "lucide-react";
-import { ApiError, createPriorityRuleDraft, getHealth, getOverviewMetrics, listPriorityRules, listSources, publishPriorityRule, runSync, type OverviewMetrics, type PriorityRuleVersion, type RequirementSummary, type SourceConfig, type SyncExecutionMode } from "./api";
+import { ApiError, createPriorityRuleDraft, getHealth, getRequirement, getOverviewMetrics, listPriorityRules, listSources, publishPriorityRule, runSync, type OverviewMetrics, type PriorityRuleVersion, type RequirementSummary, type SourceConfig, type SyncExecutionMode } from "./api";
 import { GuidePanel, ModulesPanel, OpsPanel, PanelErrorBoundary, PublishStatusChip, RequirementsPanel, SourcesPanel, SyncRecordsPanel, TeamPanel } from "./panels";
 import { SopPanel } from "./sop";
 import { SkeletonBlock, SkeletonCards, SkeletonTableRows } from "./skeleton";
@@ -194,6 +194,30 @@ function App() {
     // 广播一次 popstate 让面板按 URL 收起详情回到列表。
     if (nextPage === "Requirements" && !requirementFilters) window.dispatchEvent(new PopStateEvent("popstate"));
   }, []);
+
+  // ?requirement=<UUID> 深链不带池信息：先按 UUID 反查所属池，再切到对应页，
+  // 否则集团需求分享链接会落在产品池页被判 404（此前只能从集团列表点进去）。
+  const resolvedDeepLinkPool = useRef<string | null>(null);
+  useEffect(() => {
+    const id = deepLinkRequirementId;
+    if (!id) return;
+    if (page !== "Requirements" && page !== "GroupRequirements") return;
+    if (resolvedDeepLinkPool.current === id) return;
+    let cancelled = false;
+    void getRequirement(id).then((detail) => {
+      if (cancelled) return;
+      resolvedDeepLinkPool.current = id;
+      if (!detail.pool) return;
+      const target: Page = detail.pool === "group" ? "GroupRequirements" : "Requirements";
+      if (target === page) return;
+      setPageState(target);
+      // 只换分页 hash，保留 ?requirement= 深链参数：刷新或复制链接仍直达详情。
+      const next = new URL(workbenchUrl(window.location.pathname, window.location.search, target), window.location.origin);
+      next.searchParams.set("requirement", id);
+      window.history.replaceState(null, "", `${next.pathname}${next.search}${next.hash}`);
+    }).catch(() => { resolvedDeepLinkPool.current = id; });
+    return () => { cancelled = true; };
+  }, [deepLinkRequirementId, page]);
 
   const pageHref = (target: Page) => workbenchUrl(window.location.pathname, window.location.search, target);
   const navigateLink = (event: ReactMouseEvent<HTMLAnchorElement>, target: Page) => {

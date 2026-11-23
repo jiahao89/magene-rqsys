@@ -325,6 +325,31 @@ describe("RQ-Sys local workbench", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/requirements/req-1", expect.anything());
   });
 
+  it("resolves a group requirement deep link into the group pool instead of a 404", async () => {
+    // P3（2026-11-23）：?requirement=<集团UUID> 不带池信息时按 UUID 反查所属池，切到集团池页，
+    // 否则分享链接会落在产品池页、被跨池守卫判成 404，只能从集团列表点进去。
+    window.history.replaceState(null, "", "/?requirement=group-req-1");
+    const row = { id: "group-req-1", sourceRequirementId: "tb-9", title: "集团需求", sourceVersion: 1, pipeline: { pull: "synced", analysis: "analyzed", owner: "auto_mapped", push: "pushed" }, pool: "group" };
+    fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/sources" || path.startsWith("/api/batches")) return Response.json({ items: [] });
+      if (path.startsWith("/api/requirements/source-counts")) return Response.json({ counts: { all: 191 } });
+      if (path === "/api/requirements/group-req-1") return Response.json({ ...row, analysis: null, analyses: [] });
+      if (path.startsWith("/api/requirements")) return Response.json({ items: [row], nextCursor: null });
+      return Response.json({ items: [] });
+    });
+
+    render(<App />);
+
+    expect((await screen.findAllByRole("heading", { name: "集团需求池" })).length).toBeGreaterThan(0);
+    // 详情摘要标题带「集团池」标签（h2 的可读名会连同标签一起变长），用标签本身断言详情已打开。
+    expect(await screen.findByText("集团池", { selector: ".pool-chip" })).toBeInTheDocument();
+    expect(screen.getByText("REQ-tb-9 · v1")).toBeInTheDocument();
+    expect(window.location.hash).toBe("#group-requirements");
+    expect(window.location.search).toContain("requirement=group-req-1");
+  });
+
   it("keeps the default overview when the deep-link parameter is missing or empty", async () => {
     window.history.replaceState(null, "", "/?requirement=");
     fetchMock.mockImplementation(async () => Response.json({ items: [] }));

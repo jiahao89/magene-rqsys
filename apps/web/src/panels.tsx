@@ -1142,13 +1142,17 @@ export function RequirementsPanel({ onRefresh, initialRequirementId, scope = "pr
     detailRequestVersion.current += 1;
     setRows([]); setCursor(null); setLoadState("loading");
     setAutoOpenOwnerPicker(false);
-    // 详情还在加载、没有池信息可判：保守显示 404，避免把在途请求的结果渲染到错误的池。
-    if (!selected && detailId) {
+    // 深链分享链接跨池时会复用同一个面板实例：按新池重新打开该需求，而不是停在 404。
+    if (initialDetailId) {
+      setDetailError(null);
+      void open(initialDetailId);
+    } else if (!selected && detailId) {
+      // 详情还在加载、没有池信息可判：保守显示 404，避免把在途请求的结果渲染到错误的池。
       setDetailLoading(false);
       setDetailError(API_ERROR_TEXT.NOT_FOUND ?? "请求的资源不存在或已被删除。");
     }
     setSourceCounts(null);
-  }, [scope, detailId, selected]);
+  }, [scope, detailId, selected, initialDetailId, open]);
 
   // 通知深链/分享链接：URL 的 requirement 是唯一入口；只在首次挂载时自动打开。
   const deepLinkOpened = useRef(false);
@@ -1951,7 +1955,7 @@ function AssessmentResult({ assessment }: { assessment: RequirementAssessment })
  * 需求评估区：补充背景/目标/场景后按需生成；
  * 历史版本来自独立表，不修改需求本体，也不回写 Base。
  */
-function RequirementAssessmentSection({ requirementId }: { requirementId: string }) {
+function RequirementAssessmentSection({ requirementId, onSaved }: { requirementId: string; onSaved?: () => void }) {
   const [history, setHistory] = useState<RequirementAssessment[]>([]);
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -2059,6 +2063,8 @@ function RequirementAssessmentSection({ requirementId }: { requirementId: string
       setNotice(created.status === "succeeded"
         ? `评估 v${created.version} 已生成。`
         : `评估 v${created.version} 生成失败（${created.errorCode ?? "未知原因"}）。`);
+      // 同页的 PRD 提示词块按「是否有成功评估」解锁；生成完立刻通知它重新拉取，不必刷新页面。
+      onSaved?.();
     } catch (cause) {
       // 同一需求已有未超时的 running 版本（409 单飞）：提示等待并禁用按钮，不重复烧 token。
       if (cause instanceof ApiError && cause.status === 409) {
@@ -2174,6 +2180,8 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
 }) {
   const [ownerPickerOpen, setOwnerPickerOpen] = useState(autoOpenOwnerPicker);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
+  // 递增后让 PRD 提示词块重新拉取评估列表（评估生成成功后解锁前置门禁）。
+  const [assessmentRevision, setAssessmentRevision] = useState(0);
   const ownerEditorId = useId();
   useEffect(() => { setOwnerPickerOpen(autoOpenOwnerPicker); }, [detail?.id, autoOpenOwnerPicker]);
   useEffect(() => { setDescriptionExpanded(false); }, [detail?.id]);
@@ -2443,8 +2451,8 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
 
     <AnalysisContextSection detail={detail} onSaved={() => onSaved(detail.id)} />
 
-    <RequirementAssessmentSection requirementId={detail.id} />
-    <PrdPromptSection requirementId={detail.id} />
+    <RequirementAssessmentSection requirementId={detail.id} onSaved={() => setAssessmentRevision((value) => value + 1)} />
+    <PrdPromptSection requirementId={detail.id} assessmentRevision={assessmentRevision} />
 
     <section className="req-section" aria-labelledby="req-status-heading">
       <div className="req-section-head"><h3 id="req-status-heading">处理与推送</h3><span className="req-source-note">系统状态</span></div>
