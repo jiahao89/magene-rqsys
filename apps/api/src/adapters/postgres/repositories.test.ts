@@ -630,3 +630,23 @@ test("Teambition facts remain non-editable", async () => {
   assert.deepEqual(result, { outcome: "not_manual" });
   assert.equal(statements.some((statement) => statement.text.startsWith("UPDATE requirements")), false);
 });
+
+test("疑似重复候选按「同来源 + active + 排除自身」查询，标题在调用方归一比对", async () => {
+  const calls: Array<{ sql: string; values: unknown[] }> = [];
+  const query = async (sql: string, values: unknown[] = []) => {
+    calls.push({ sql, values });
+    return { rows: [{ id: "req-2", title: "低温掉电", platform_requirement_id: "RQ-000002", teambition_requirement_id: "tb-2" }], rowCount: 1 };
+  };
+  const repositories = new PostgresRepositories({ query, connect: async () => ({ query, release() {} }) } as never);
+  const result = await repositories.requirements.listDuplicateCandidates({ requirementId: "req-1", sourceConfigId: "source-1" });
+  assert.deepEqual(result, [{ id: "req-2", title: "低温掉电", platformRequirementId: "RQ-000002", teambitionRequirementId: "tb-2" }]);
+  const sql = calls[0]!.sql;
+  assert.match(sql, /id<>\$1/, "排除自身");
+  assert.match(sql, /COALESCE\(processing_state,'active'\)='active'/, "排除已压制需求");
+  assert.match(sql, /source_config_id=\$2::uuid/, "限定同一来源");
+  assert.deepEqual(calls[0]!.values, ["req-1", "source-1"]);
+  // 手工需求（无来源配置）：只在同为手工的范围内找候选。
+  await repositories.requirements.listDuplicateCandidates({ requirementId: "req-1", sourceConfigId: null });
+  assert.deepEqual(calls[1]!.values, ["req-1", null]);
+  assert.match(calls[1]!.sql, /\$2::uuid IS NULL AND source_config_id IS NULL/);
+});

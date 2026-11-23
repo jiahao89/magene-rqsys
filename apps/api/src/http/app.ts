@@ -27,6 +27,7 @@ import { ASSESSMENT_RUNNING_STALE_MS, AssessmentContractError, type AssessmentRu
 import { PRD_PROMPT_RUNNING_STALE_MS, PrdPromptFailure, type PrdPromptRunner } from "../prd-prompt/service.js";
 import { createPrdPromptRateLimiter, type PrdPromptRateLimit } from "../prd-prompt/rate-limit.js";
 import { analysisPiiMarkers, loadDirectoryRosterNames } from "../requirements/processing.js";
+import { requirementTitleKey } from "../sync/service.js";
 import { readAiPause } from "../ops/ai-pause.js";
 import { decodeRequirementCursor } from "../application/requirement-cursor.js";
 import { decodeBatchCursor } from "../application/batch-cursor.js";
@@ -1454,6 +1455,13 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
       } catch { /* 姓名是展示增强，解析失败不影响详情返回 */ }
     }
     const duplicates = await repositories.requirements.listDuplicates(req.id);
+    // PRD §4.7.5：候选是「同标题的其他 active 需求」，与 duplicates（以本需求为主记录的子记录）是两件事。
+    // 仓储只做来源与压制过滤；标题按 markDuplicateTitles 同一套 requirementTitleKey 归一后比对。
+    const titleKey = requirementTitleKey(req.title);
+    const duplicateCandidates = titleKey
+      ? (await repositories.requirements.listDuplicateCandidates?.({ requirementId: req.id, sourceConfigId: req.sourceConfigId }) ?? [])
+          .filter((candidate) => requirementTitleKey(candidate.title) === titleKey)
+      : [];
     const resolution = await repositories.requirements.getResolution?.(req.id) ?? null;
     const currentScore = repositories.scoring ? await repositories.scoring.current(req.id) : null;
     const aiScore = repositories.scoring ? await repositories.scoring.aiSuggestion(req.id) : null;
@@ -1461,6 +1469,7 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     return json({
       ...requirementDto(req, latest && latest.status === "analyzed" ? latest.structuredResult : null, history.map(analysisVersionDto), ownerName, currentScore?.priority ?? null, detailPool),
       duplicates,
+      duplicateCandidates,
       resolution: resolution ?? requirementResolutionDto(req),
       scoring: {
         current: currentScore,

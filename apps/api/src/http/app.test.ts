@@ -1411,3 +1411,31 @@ test("PRD 提示词：无成功评估 409、生成 201、GET 列版本、单飞�
   }), d);
   assert.equal(foreign.status, 400);
 });
+
+test("PRD §4.7.5：duplicateCandidates 只保留同标题候选，duplicates 语义不变", async () => {
+  const d = makeDependencies();
+  const repositories = d.repositories as unknown as { requirements: Record<string, unknown> };
+  repositories.requirements.listDuplicateCandidates = async () => [
+    { id: "req-2", title: requirement.title, platformRequirementId: "RQ-000002", teambitionRequirementId: "tb-2" },
+    { id: "req-3", title: `  ${requirement.title}  `, platformRequirementId: "RQ-000003", teambitionRequirementId: null },
+    { id: "req-4", title: "完全不同的标题", platformRequirementId: "RQ-000004", teambitionRequirementId: "tb-4" },
+  ];
+  const response = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`), d);
+  assert.equal(response.status, 200);
+  const body = await response.json() as { duplicateCandidates: Array<{ id: string }>; duplicates: unknown[] };
+  // 同标题（含首尾空白）保留；不同标题丢弃；duplicates 仍是「以本需求为主记录的子记录」。
+  assert.deepEqual(body.duplicateCandidates.map((item) => item.id), ["req-2", "req-3"]);
+  assert.deepEqual(body.duplicates, []);
+
+  // 无候选返回空数组而不是 null/缺字段。
+  const none = makeDependencies();
+  (none.repositories as unknown as { requirements: Record<string, unknown> }).requirements.listDuplicateCandidates = async () => [];
+  const empty = await (await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`), none)).json() as { duplicateCandidates: unknown };
+  assert.deepEqual(empty.duplicateCandidates, []);
+
+  // 仓储未实现该方法（旧桩/旧适配器）时降级为空数组，不影响详情。
+  const legacy = makeDependencies();
+  delete (legacy.repositories as unknown as { requirements: Record<string, unknown> }).requirements.listDuplicateCandidates;
+  const fallback = await (await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`), legacy)).json() as { duplicateCandidates: unknown };
+  assert.deepEqual(fallback.duplicateCandidates, []);
+});

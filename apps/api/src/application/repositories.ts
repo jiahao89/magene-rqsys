@@ -630,6 +630,8 @@ export interface RequirementQueryRepository {
   listKnownTeambitionIds?(sourceConfigId: string): Promise<string[]>;
   // 标题重复检测的输入：当前来源全部需求（含已标记重复项）。
   listTitleCandidates(sourceConfigId: string): Promise<Array<{ id: string; teambitionRequirementId: string; title: string; sourceCreatedAt: string | null; duplicateOfRequirementId: string | null }>>;
+  /** 2026-11-23：PRD §4.7.5 的「疑似重复候选」——同来源、其他 active 需求，排除自身与已压制；标题比对在调用方用 requirementTitleKey。 */
+  listDuplicateCandidates?(input: { requirementId: string; sourceConfigId: string | null }): Promise<Array<{ id: string; title: string; platformRequirementId: string; teambitionRequirementId: string | null }>>;
   setDuplicateOf(requirementId: string, canonicalRequirementId: string | null): Promise<void>;
   setBaseRecord(requirementId: string, baseRecordId: string, pushedAt: string): Promise<void>;
   setPushState(requirementId: string, state: PushState): Promise<void>;

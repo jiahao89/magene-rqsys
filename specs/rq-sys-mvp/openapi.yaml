@@ -2086,6 +2086,22 @@ components:
               title: { type: string }
               teambitionRequirementId: { type: string }
             required: [id, title, teambitionRequirementId]
+        # 2026-11-23：PRD §4.7.5 的疑似重复候选（同标题的其他 active 需求，排除自身与已压制）。
+        # 与 duplicates 是两件事：duplicates 是以本需求为主记录的子记录，这里是可以选为主记录的候选。
+        duplicateCandidates:
+          type: array
+          description: >-
+            同来源下与本需求标题相同（NFKC + 去首尾空白 + 折叠空白 + 小写后相等）的其它 active 需求，
+            排除自身与已压制需求；无候选时为 []。
+          items:
+            type: object
+            properties:
+              id: { type: string, format: uuid }
+              title: { type: string }
+              platformRequirementId: { type: string }
+              teambitionRequirementId: { type: [string, 'null'] }
+            required: [id, title, platformRequirementId]
+
         pipeline:
           type: object
           properties:
