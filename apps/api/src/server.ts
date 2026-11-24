@@ -335,6 +335,7 @@ if (worker && repositories && workerPollMs > 0) {
         if (reverted.length > 0) {
           process.stdout.write(`recovered ${reverted.length} stranded analysis(es): ${reverted.map((row) => `${row.requirementId}(${row.reason})`).join(", ")}\n`);
         }
+        if (recovery.closedRuns > 0) process.stdout.write(`closed ${recovery.closedRuns} superseded running analysis run(s)\n`);
         if (exhausted.length > 0) process.stderr.write(`gave up auto-retrying ${exhausted.length} analysis(es): retry budget exhausted\n`);
         for (const error of recovery.errors) process.stderr.write(`analysis recovery item failed: ${error}\n`);
       } catch (error) {

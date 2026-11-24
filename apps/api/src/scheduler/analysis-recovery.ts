@@ -24,10 +24,12 @@ import type {
   AnalysisRunRepository, AuditEventRepository, PipelineJobRepository, RequirementQueryRepository,
   SystemFlagRepository,
 } from "../application/repositories.js";
-import type { PipelineJobRecord, RequirementRecord } from "../domain/persistence.js";
+import type { PipelineJobRecord, RequirementRecord, SourcePool } from "../domain/persistence.js";
 
 /** 单轮扫描上限：避免一次 tick 拉太多需求。 */
 export const ANALYSIS_RECOVERY_SCAN_LIMIT = 20;
+/** 恢复覆盖面：两个池各自独立扫描。需求检索缺省只看产品池（2026-11-24 修正的盲区）。 */
+export const ANALYSIS_RECOVERY_POOLS: readonly SourcePool[] = ["product", "group"];
 /** 同一需求同一源版本累计自动调度重试上限；达到后放弃并留审计。 */
 export const MAX_SCHEDULER_ANALYSIS_RETRIES = 3;
 /** 审计反查窗口：调度重试预算按同一需求的历次调度重试事件累计（窗口内足够覆盖，见下方注释）。 */
@@ -36,7 +38,7 @@ const AUDIT_SCAN_LIMIT = 200;
 /** 恢复逻辑只依赖的仓储切片，便于用内存桩做纯服务测试。 */
 export type AnalysisRecoveryRepositories = {
   requirements: Pick<RequirementQueryRepository, "search" | "updateAnalysisState">;
-  analyses: Pick<AnalysisRunRepository, "latest">;
+  analyses: Pick<AnalysisRunRepository, "latest" | "closeSupersededRunning">;
   jobs: Pick<PipelineJobRepository, "findByDedupeKey" | "enqueue" | "complete">;
   audit: Pick<AuditEventRepository, "append" | "search">;
 };
@@ -63,6 +65,8 @@ export interface AnalysisStuckOutcome {
 export interface AnalysisRecoveryReport {
   retried: AnalysisRetryOutcome[];
   recovered: AnalysisStuckOutcome[];
+  /** 本轮收尾的被新版本取代的 running 分析行数（只动 analysis_runs）。 */
+  closedRuns: number;
   /** 单条需求/单个阶段的异常。调用方只记录，不因此让整轮 poll 失败。 */
   errors: string[];
 }
@@ -156,9 +160,10 @@ async function recoverStuckRunningAnalyses(
   repositories: AnalysisRecoveryRepositories,
   now: Date,
   limit: number,
+  pool: SourcePool,
 ): Promise<{ outcomes: AnalysisStuckOutcome[]; errors: string[] }> {
   const nowIso = now.toISOString();
-  const page = await repositories.requirements.search({ analysisState: "running", limit });
+  const page = await repositories.requirements.search({ analysisState: "running", pool, limit });
   const outcomes: AnalysisStuckOutcome[] = [];
   const errors: string[] = [];
 
@@ -254,9 +259,10 @@ async function retryFailedAnalyses(
   limit: number,
   maxRetries: number,
   excludeRequirementIds: ReadonlySet<string>,
+  pool: SourcePool,
 ): Promise<{ outcomes: AnalysisRetryOutcome[]; errors: string[] }> {
   const nowIso = now.toISOString();
-  const page = await repositories.requirements.search({ pullState: "synced", analysisState: "failed_retryable", limit });
+  const page = await repositories.requirements.search({ pullState: "synced", analysisState: "failed_retryable", pool, limit });
   const outcomes: AnalysisRetryOutcome[] = [];
   const errors: string[] = [];
 
@@ -390,29 +396,32 @@ export async function enqueueMissingAnalysisJobs(
   const report: MissingAnalysisReport = { scanned: 0, enqueued: 0, errors: [] };
   // I3-3：AI 额度暂停期间不补排首分析；恢复后由下一轮接管。
   if ((await readAiPause(params.flags, params.now)).paused) return report;
-  let items: RequirementRecord[];
-  try {
-    const page = await params.requirements.search({ analysisState: "pending", limit: params.limit ?? ANALYSIS_RECOVERY_SCAN_LIMIT });
-    items = page.items;
-  } catch (error) {
-    report.errors.push(`search pending analysis: ${safeErrorMessage(error)}`);
-    return report;
-  }
-  report.scanned = items.length;
-  for (const requirement of items) {
+  // 两个池各扫一遍：需求检索缺省只看产品池，集团池的 pending 需求否则永远补不到作业。
+  for (const pool of ANALYSIS_RECOVERY_POOLS) {
+    let items: RequirementRecord[];
     try {
-      const dedupeKey = `analysis:${requirement.id}:v${requirement.sourceVersion}`;
-      const existing = await params.jobs.findByDedupeKey?.(dedupeKey);
-      if (existing && existing.status !== "failed" && existing.status !== "cancelled") continue;
-      await params.jobs.enqueue({
-        jobType: "analysis",
-        dedupeKey,
-        payload: { requirementId: requirement.id, sourceVersion: requirement.sourceVersion, substantiveHash: requirement.substantiveHash, actorId: null },
-        availableAt: params.now.toISOString(),
-      });
-      report.enqueued += 1;
+      const page = await params.requirements.search({ analysisState: "pending", pool, limit: params.limit ?? ANALYSIS_RECOVERY_SCAN_LIMIT });
+      items = page.items;
     } catch (error) {
-      report.errors.push(`requirement ${requirement.id}: enqueue missing analysis: ${safeErrorMessage(error)}`);
+      report.errors.push(`search pending analysis (${pool}): ${safeErrorMessage(error)}`);
+      continue;
+    }
+    report.scanned += items.length;
+    for (const requirement of items) {
+      try {
+        const dedupeKey = `analysis:${requirement.id}:v${requirement.sourceVersion}`;
+        const existing = await params.jobs.findByDedupeKey?.(dedupeKey);
+        if (existing && existing.status !== "failed" && existing.status !== "cancelled") continue;
+        await params.jobs.enqueue({
+          jobType: "analysis",
+          dedupeKey,
+          payload: { requirementId: requirement.id, sourceVersion: requirement.sourceVersion, substantiveHash: requirement.substantiveHash, actorId: null },
+          availableAt: params.now.toISOString(),
+        });
+        report.enqueued += 1;
+      } catch (error) {
+        report.errors.push(`requirement ${requirement.id}: enqueue missing analysis: ${safeErrorMessage(error)}`);
+      }
     }
   }
   return report;
@@ -423,28 +432,37 @@ export async function recoverAnalysisPipeline(
 ): Promise<AnalysisRecoveryReport> {
   const limit = params.limit ?? ANALYSIS_RECOVERY_SCAN_LIMIT;
   const maxRetries = params.maxRetries ?? MAX_SCHEDULER_ANALYSIS_RETRIES;
-  const report: AnalysisRecoveryReport = { retried: [], recovered: [], errors: [] };
+  const report: AnalysisRecoveryReport = { retried: [], recovered: [], closedRuns: 0, errors: [] };
   // I3-3：额度暂停期间不自动重试/补排；手动重试不受影响。
   if ((await readAiPause(params.flags, params.now)).paused) return report;
-  const recoveredThisRound = new Set<string>();
-
+  // 先收历史孤儿：旧 running 行已有更高版本成功分析时，它只是永远的“分析中”计数。
+  // 只动 analysis_runs，不触发重试、不改需求状态；失败不影响后续阶段。
   try {
-    const running = await recoverStuckRunningAnalyses(params, params.now, limit);
-    report.recovered.push(...running.outcomes);
-    report.errors.push(...running.errors);
-    for (const outcome of running.outcomes) {
-      if (outcome.action === "reverted") recoveredThisRound.add(outcome.requirementId);
-    }
+    report.closedRuns = await params.analyses.closeSupersededRunning?.(params.now.toISOString()) ?? 0;
   } catch (error) {
-    report.errors.push(`running recovery phase: ${safeErrorMessage(error)}`);
+    report.errors.push(`close superseded running runs: ${safeErrorMessage(error)}`);
   }
+  // recoveredThisRound 跨池共用：同一需求不会在本轮先被回退又被立刻重试。
+  const recoveredThisRound = new Set<string>();
+  for (const pool of ANALYSIS_RECOVERY_POOLS) {
+    try {
+      const running = await recoverStuckRunningAnalyses(params, params.now, limit, pool);
+      report.recovered.push(...running.outcomes);
+      report.errors.push(...running.errors);
+      for (const outcome of running.outcomes) {
+        if (outcome.action === "reverted") recoveredThisRound.add(outcome.requirementId);
+      }
+    } catch (error) {
+      report.errors.push(`running recovery phase (${pool}): ${safeErrorMessage(error)}`);
+    }
 
-  try {
-    const failed = await retryFailedAnalyses(params, params.now, limit, maxRetries, recoveredThisRound);
-    report.retried.push(...failed.outcomes);
-    report.errors.push(...failed.errors);
-  } catch (error) {
-    report.errors.push(`failed-retry phase: ${safeErrorMessage(error)}`);
+    try {
+      const failed = await retryFailedAnalyses(params, params.now, limit, maxRetries, recoveredThisRound, pool);
+      report.retried.push(...failed.outcomes);
+      report.errors.push(...failed.errors);
+    } catch (error) {
+      report.errors.push(`failed-retry phase (${pool}): ${safeErrorMessage(error)}`);
+    }
   }
 
   return report;

@@ -52,6 +52,7 @@ type EnqueuedJob = { jobType: string; dedupeKey: string; payload: Record<string,
 function harness(options: { providerResult?: ValidatedAnalysis | Error } = {}) {
   const enqueued: EnqueuedJob[] = [];
   const analysisStates: string[] = [];
+  const closeCalls: Array<{ at: string; requirementId?: string }> = [];
   let providerInput: ProviderAnalysisInput | null = null;
   const requirements = new Map([["req-1", makeRequirement("req-1")], ["req-2", makeRequirement("req-2")]]);
   const repositories = {
@@ -70,6 +71,7 @@ function harness(options: { providerResult?: ValidatedAnalysis | Error } = {}) {
       async listByRequirement() { return []; },
       async append(input: Record<string, unknown>) { return { status: "running", completedAt: null, result: null, safeErrorCode: null, safeErrorSummary: null, ...input, id: "run-1", analysisVersion: 1 }; },
       async complete(_id: string, result: Record<string, unknown>) { return { requirementId: "req-1", sourceVersion: 1, startedAt: "2026-10-08T00:00:00.000Z", provider: "stub", model: "stub", promptVersion: "p1", moduleDictionaryVersion: 3, priorityRuleVersionId: null, id: "run-1", analysisVersion: 1, ...result }; },
+      async closeSupersededRunning(at: string, requirementId?: string) { closeCalls.push({ at, ...(requirementId === undefined ? {} : { requirementId }) }); return 1; },
     },
     jobs: { async enqueue(job: EnqueuedJob) { enqueued.push(job); return {} as never; } },
     people: { async resolveActive() { return null; } },
@@ -90,7 +92,7 @@ function harness(options: { providerResult?: ValidatedAnalysis | Error } = {}) {
       },
     }) satisfies AiProvider,
   };
-  return { deps, enqueued, analysisStates, providerInput: () => providerInput };
+  return { deps, enqueued, analysisStates, closeCalls, providerInput: () => providerInput };
 }
 
 
@@ -191,6 +193,24 @@ test("handleAnalysisJob with a failing provider still lands a retryable terminal
   await workflow.handleAnalysisJob({ payload: { requirementId: "req-1" } });
   assert.deepEqual(h.analysisStates, ["running", "failed_retryable"]);
   assert.equal(ofJobType(h.enqueued, "base_push").length, 1);
+});
+
+test("a successful analysis closes superseded running rows for that requirement", async () => {
+  const h = harness();
+  const workflow = createRequirementWorkflow(h.deps);
+  await workflow.handleAnalysisJob({ payload: { requirementId: "req-1" } });
+  assert.deepEqual(h.analysisStates, ["running", "analyzed"]);
+  assert.equal(h.closeCalls.length, 1);
+  assert.equal(h.closeCalls[0]?.requirementId, "req-1");
+  assert.equal(Number.isNaN(Date.parse(h.closeCalls[0]!.at)), false);
+});
+
+test("a failed analysis does not close superseded running rows", async () => {
+  const h = harness({ providerResult: new Error("provider unavailable") });
+  const workflow = createRequirementWorkflow(h.deps);
+  await workflow.handleAnalysisJob({ payload: { requirementId: "req-1" } });
+  assert.deepEqual(h.analysisStates, ["running", "failed_retryable"]);
+  assert.equal(h.closeCalls.length, 0);
 });
 
 test("handleAnalysisJob drops stale jobs whose substantive hash no longer matches", async () => {

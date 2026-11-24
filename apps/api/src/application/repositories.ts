@@ -134,6 +134,11 @@ export interface AnalysisRunRepository {
   listByRequirement(requirementId: string): Promise<AnalysisRunRecord[]>;
   /** I3-3：窗口内指定失败码的运行数（AI 额度暂停判定）。可选，内存实现可不提供。 */
   countRecentFailures?(safeErrorCode: string, since: string): Promise<number>;
+  /**
+   * 收尾被新版本取代的 running 行：同一需求已有更高版本成功分析时，旧行标记 failed_retryable/interrupted。
+   * 传 requirementId 只收该需求；不传则全局扫一遍（恢复器用）。只动 analysis_runs，不改需求状态。
+   */
+  closeSupersededRunning?(at: string, requirementId?: string): Promise<number>;
   /** 总览 AI 区：全部调用次数、今日调用次数、最近一次调用的时间与状态（无调用则 null）。 */
   /** 总览 AI 卡片统计；pool 缺省 product（集团池调用不计入总览）。 */
   aiCallStats?(since: string, pool?: SourcePool): Promise<{ total: number; today: number; lastAt: string | null; lastStatus: string | null }>;

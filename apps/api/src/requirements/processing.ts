@@ -238,6 +238,12 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
         piiMarkers: analysisPiiMarkers(requirement, rosterNames),
         dictionary, priorityRule,
       }, { repository: new AnalysisRepositoryAdapter(deps.repositories.analyses), provider });
+      // 2026-11-24：本次分析成功即说明该需求的旧 running 行已被取代（崩溃残留不会自己收尾，
+      // 会一直计入“分析中”）。只动 analysis_runs，异常不改变主分析终态。
+      if (run.status === "analyzed") {
+        try { await deps.repositories.analyses.closeSupersededRunning?.(new Date().toISOString(), requirement.id); }
+        catch (cause) { log(`stale running analysis cleanup failed for ${requirement.id}: ${(cause as Error)?.name ?? "unknown"}`); }
+      }
       // V02-S06：分析成功且评分合法时，落 AI 建议版本；评分持久化失败不改变主分析终态。
       if (run.status === "analyzed" && run.result?.scoring && run.result.priority && deps.repositories.scoring) {
         try {

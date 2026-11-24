@@ -42,4 +42,10 @@ export class PostgresAnalysisRunRepository implements AnalysisRunRepository{
     const{rows}=await this.pool.query("SELECT * FROM analysis_runs WHERE requirement_id=$1 ORDER BY analysis_version",[id]);
     return rows.map(from);
   }
+  // 2026-11-24：旧 running 行被更高版本的成功分析取代后永远不会收尾（线上集团池 4 条）。
+  // 只改 analysis_runs，不动 requirements 状态、不推 Base；interrupted 与历史崩溃残留口径一致。
+  async closeSupersededRunning(at:string,requirementId?:string){
+    const{rowCount}=await this.pool.query("UPDATE analysis_runs a SET status='failed_retryable',safe_error_code='interrupted',safe_error_summary='Superseded by a later successful analysis version.',completed_at=$1 WHERE a.status='running' AND ($2::uuid IS NULL OR a.requirement_id=$2::uuid) AND EXISTS (SELECT 1 FROM analysis_runs b WHERE b.requirement_id=a.requirement_id AND b.status='analyzed' AND b.analysis_version>a.analysis_version)",[at,requirementId??null]);
+    return rowCount??0;
+  }
 }

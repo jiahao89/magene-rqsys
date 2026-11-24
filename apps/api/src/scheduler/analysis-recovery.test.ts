@@ -60,6 +60,11 @@ function schedulerRetryEvent(priorAnalysisVersion: number, sourceVersion = 3): A
 function harness(input: {
   failed?: RequirementRecord[];
   running?: RequirementRecord[];
+  groupFailed?: RequirementRecord[];
+  groupRunning?: RequirementRecord[];
+  pending?: RequirementRecord[];
+  groupPending?: RequirementRecord[];
+  closedRuns?: number;
   jobs?: Record<string, PipelineJobRecord>;
   latestAnalysisVersion?: Record<string, number>;
   events?: AuditEventRecord[];
@@ -70,10 +75,15 @@ function harness(input: {
 }) {
   const failed = input.failed ?? [];
   const running = input.running ?? [];
+  const groupFailed = input.groupFailed ?? [];
+  const groupRunning = input.groupRunning ?? [];
+  const pending = input.pending ?? [];
+  const groupPending = input.groupPending ?? [];
   const jobs = new Map(Object.entries(input.jobs ?? {}));
   const latest = new Map(Object.entries(input.latestAnalysisVersion ?? {}));
   const state = {
-    failed, running, jobs, latest,
+    failed, running, groupFailed, groupRunning, pending, groupPending, jobs, latest,
+    closeCalls: [] as { at: string; requirementId?: string }[],
     events: [...(input.events ?? [])],
     searchQueries: [] as SearchQuery[],
     enqueueCalls: [] as { dedupeKey: string; payload: Record<string, unknown> }[],
@@ -88,7 +98,12 @@ function harness(input: {
         if (query.analysisState && input.searchErrors?.has(query.analysisState)) {
           throw new Error(`search ${query.analysisState} unavailable`);
         }
-        const source = query.analysisState === "running" ? state.running : state.failed;
+        const group = query.pool === "group";
+        const source = query.analysisState === "running"
+          ? (group ? state.groupRunning : state.running)
+          : query.analysisState === "pending"
+            ? (group ? state.groupPending : state.pending)
+            : (group ? state.groupFailed : state.failed);
         const items = source.filter((item) =>
           !query.pullState || item.pipeline.pull === query.pullState,
         );
@@ -96,7 +111,7 @@ function harness(input: {
       },
       async updateAnalysisState(requirementId: string, to: string) {
         state.stateUpdates.push({ id: requirementId, to });
-        const current = [...state.failed, ...state.running].find((item) => item.id === requirementId);
+        const current = [...state.failed, ...state.running, ...state.groupFailed, ...state.groupRunning].find((item) => item.id === requirementId);
         if (!current) throw new Error("Requirement not found");
         current.pipeline = { ...current.pipeline, analysis: to as RequirementRecord["pipeline"]["analysis"] };
         const index = state.running.indexOf(current);
@@ -104,12 +119,21 @@ function harness(input: {
           state.running.splice(index, 1);
           state.failed.push(current);
         }
+        const groupIndex = state.groupRunning.indexOf(current);
+        if (groupIndex >= 0) {
+          state.groupRunning.splice(groupIndex, 1);
+          state.groupFailed.push(current);
+        }
       },
     },
     analyses: {
       async latest(requirementId: string) {
         const version = state.latest.get(requirementId);
         return version === undefined ? null : { analysisVersion: version };
+      },
+      async closeSupersededRunning(at: string, requirementId?: string) {
+        state.closeCalls.push({ at, ...(requirementId === undefined ? {} : { requirementId }) });
+        return input.closedRuns ?? 0;
       },
     },
     jobs: {
@@ -158,7 +182,7 @@ function harness(input: {
     return recoverAnalysisPipeline({ ...deps, now: NOW, ...overrides } as never);
   }
 
-  return { state, deps: deps as never, run };
+  return { state, deps: deps as unknown as Record<string, unknown>, run };
 }
 
 test("failed_retryable 需求会被自动补排分析作业并写系统审计", async () => {
@@ -191,7 +215,7 @@ test("failed_retryable 需求会被自动补排分析作业并写系统审计", 
 
   // 扫描查询按 pull=synced + analysis=failed_retryable 过滤，并带单轮上限
   const failedQuery = h.state.searchQueries.find((query) => query.analysisState === "failed_retryable");
-  assert.deepEqual(failedQuery, { pullState: "synced", analysisState: "failed_retryable", limit: ANALYSIS_RECOVERY_SCAN_LIMIT });
+  assert.deepEqual(failedQuery, { pullState: "synced", analysisState: "failed_retryable", pool: "product", limit: ANALYSIS_RECOVERY_SCAN_LIMIT });
 });
 
 test("已有 queued/running 作业时不重复入队", async () => {
@@ -398,8 +422,10 @@ test("running 阶段查询异常时记录错误，但不阻断 failed_retryable 
     searchErrors: new Set(["running"]),
   });
   const report = await h.run();
-  assert.equal(report.errors.length, 1);
-  assert.match(report.errors[0] ?? "", /running recovery phase/);
+  // 两池各扫一次：running 查询在两个池都失败，错误各记一条，但重试阶段照常执行。
+  assert.equal(report.errors.length, 2);
+  assert.match(report.errors[0] ?? "", /running recovery phase \(product\)/);
+  assert.match(report.errors[1] ?? "", /running recovery phase \(group\)/);
   assert.equal(report.retried[0]?.action, "enqueued", "running 阶段失败不能阻断重试阶段");
   assert.equal(h.state.enqueueCalls.length, 1);
 });
@@ -454,5 +480,59 @@ test("AI 额度暂停期间补排与自动重试直接跳过（I3-3）", async (
   const missing = await enqueueMissingAnalysisJobs({ ...repos, now: NOW, flags } as never);
   assert.deepEqual(missing, { scanned: 0, enqueued: 0, errors: [] });
   const recovery = await recoverAnalysisPipeline({ ...repos, now: NOW, flags } as never);
-  assert.deepEqual(recovery, { retried: [], recovered: [], errors: [] });
+  assert.deepEqual(recovery, { retried: [], recovered: [], closedRuns: 0, errors: [] });
+});
+
+test("集团池的 failed_retryable 需求会被自动重试（两池各扫一遍）", async () => {
+  const h = harness({
+    failed: [requirement({ id: "req-p" })],
+    groupFailed: [requirement({ id: "req-g", sourceConfigId: "src-g", platformRequirementId: "RQ-000900" })],
+    latestAnalysisVersion: { "req-p": 0, "req-g": 0 },
+  });
+
+  const report = await h.run();
+
+  assert.deepEqual(report.retried.map((row) => row.requirementId).sort(), ["req-g", "req-p"]);
+  assert.ok(h.state.enqueueCalls.some((call) => call.dedupeKey === "analysis:req-g:sv3:after0"));
+  // 两个池都要被扫到，否则集团池失败永远停着。
+  assert.ok(h.state.searchQueries.some((query) => query.analysisState === "failed_retryable" && query.pool === "product"));
+  assert.ok(h.state.searchQueries.some((query) => query.analysisState === "failed_retryable" && query.pool === "group"));
+});
+
+test("集团池的 running 崩溃残留会被回退并写 analysis.recovery", async () => {
+  const h = harness({
+    groupRunning: [requirement({ id: "req-g", sourceConfigId: "src-g", pipeline: { pull: "synced", analysis: "running", owner: "pending_mapping", push: "pending" } })],
+  });
+
+  const report = await h.run();
+
+  const outcome = report.recovered.find((row) => row.requirementId === "req-g");
+  assert.equal(outcome?.action, "reverted");
+  assert.equal(outcome?.reason, "job_missing");
+  assert.deepEqual(h.state.stateUpdates, [{ id: "req-g", to: "failed_retryable" }]);
+  assert.ok(h.state.events.some((event) => event.eventType === "analysis.recovery" && event.entityId === "req-g"));
+});
+
+test("恢复入口先全局收尾被新版本取代的 running 行，并报告 closedRuns", async () => {
+  const h = harness({ closedRuns: 4 });
+
+  const report = await h.run();
+
+  assert.equal(report.closedRuns, 4);
+  assert.equal(h.state.closeCalls.length, 1);
+  assert.equal(h.state.closeCalls[0]?.requirementId, undefined);
+  assert.equal(h.state.closeCalls[0]?.at, NOW.toISOString());
+});
+
+test("补排 pending 分析时两池都扫，集团池的 pending 需求也能入队", async () => {
+  const h = harness({
+    pending: [requirement({ id: "req-p", pipeline: { pull: "synced", analysis: "pending", owner: "pending_mapping", push: "pending" } })],
+    groupPending: [requirement({ id: "req-g", sourceConfigId: "src-g", pipeline: { pull: "synced", analysis: "pending", owner: "pending_mapping", push: "pending" } })],
+  });
+
+  const report = await enqueueMissingAnalysisJobs({ ...h.deps, now: NOW } as never);
+
+  assert.equal(report.enqueued, 2);
+  assert.ok(h.state.enqueueCalls.some((call) => call.dedupeKey === "analysis:req-g:v3"));
+  assert.ok(h.state.searchQueries.some((query) => query.analysisState === "pending" && query.pool === "group"));
 });

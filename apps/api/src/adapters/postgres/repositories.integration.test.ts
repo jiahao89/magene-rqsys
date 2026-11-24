@@ -9,6 +9,7 @@ import { PostgresRepositories } from "./repositories.js";
 import { createBasePushService } from "../../base/push-service.js";
 import { buildPriorityRule } from "../../analysis/priority-rule.js";
 import { createPostgresSyncPersistence } from "./sync-persistence.js";
+import { recoverAnalysisPipeline } from "../../scheduler/analysis-recovery.js";
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),"../../../../../");
 async function getDatabaseUrl(){if(process.env.DATABASE_URL)return process.env.DATABASE_URL;const env=await readFile(resolve(root,".env"),"utf8").catch(()=>"");const value=env.match(/^DATABASE_URL=(.+)$/m)?.[1]?.trim();if(!value)throw new Error("PostgreSQL integration tests require DATABASE_URL in environment or repo .env");return value;}
@@ -848,5 +849,56 @@ test("ops duplicate.suspected counts active requirements linked to a canonical r
     assert.equal(product.duplicate.confirmedSuppressed, 1);
     const group = await ctx.repos.ops.getOpsMetrics({ days: 7, now: "2026-11-24T12:00:00.000Z", pool: "group" });
     assert.equal(group.duplicate.suspected, 0, "集团池不能被产品池数字污染");
+  } finally { await cleanup(ctx); }
+});
+
+
+// 2026-11-24：分析恢复此前按产品池缺省扫描，集团池的失败永远不会自动重试。
+test("analysis recovery retries a group-pool failure inside its pool scope", async () => {
+  const ctx = await setup();
+  try {
+    const productSource = await ctx.repos.sources.create(config);
+    const groupSource = await ctx.repos.sources.create({ ...config, pool: "group", projectId: "group-project" });
+    const productBatch = await ctx.repos.batches.create({ sourceConfigId: productSource.id, triggerType: "manual", actorId: null, idempotencyKey: "recovery-product-0001", startedAt: "2026-11-24T00:00:00Z" });
+    const groupBatch = await ctx.repos.batches.create({ sourceConfigId: groupSource.id, triggerType: "manual", actorId: null, idempotencyKey: "recovery-group-0001", startedAt: "2026-11-24T00:00:00Z" });
+    const productPending = await ctx.repos.requirements.upsertRequirement(productSource.id, "recovery-product", requirementWrite(productSource.id, productBatch.id));
+    const groupFailed = await ctx.repos.requirements.upsertRequirement(groupSource.id, "recovery-group", requirementWrite(groupSource.id, groupBatch.id));
+    await ctx.repos.requirements.updateAnalysisState(groupFailed.id, "running");
+    await ctx.repos.requirements.updateAnalysisState(groupFailed.id, "failed_retryable");
+
+    const report = await recoverAnalysisPipeline({
+      requirements: ctx.repos.requirements, analyses: ctx.repos.analyses, jobs: ctx.repos.jobs, audit: ctx.repos.audit,
+      now: new Date("2026-11-24T12:00:00.000Z"),
+    });
+
+    const groupOutcomes = report.retried.filter((row) => row.requirementId === groupFailed.id);
+    assert.deepEqual(groupOutcomes.map((row) => row.action), ["enqueued"]);
+    assert.equal((await ctx.repos.jobs.findByDedupeKey(`analysis:${groupFailed.id}:sv1:after0`))?.status, "queued");
+    assert.equal(report.retried.some((row) => row.requirementId === productPending.id), false, "pending 需求不应被失败重试阶段选中");
+  } finally { await cleanup(ctx); }
+});
+
+// 2026-11-24：旧版本的 running 行会被更高版本的成功分析取代，收尾只动 analysis_runs。
+test("closeSupersededRunning retires an older running row once a later version is analyzed", async () => {
+  const ctx = await setup();
+  try {
+    const source = await ctx.repos.sources.create(config);
+    const batch = await ctx.repos.batches.create({ sourceConfigId: source.id, triggerType: "manual", actorId: null, idempotencyKey: "superseded-runs-0001", startedAt: "2026-11-24T00:00:00Z" });
+    const requirement = await ctx.repos.requirements.upsertRequirement(source.id, "superseded-runs", requirementWrite(source.id, batch.id));
+    const v1 = await ctx.repos.analyses.append({ requirementId: requirement.id, sourceVersion: 1, analysisVersion: 1, startedAt: "2026-11-24T01:00:00Z" });
+    const v2 = await ctx.repos.analyses.append({ requirementId: requirement.id, sourceVersion: 1, analysisVersion: 2, startedAt: "2026-11-24T01:02:00Z" });
+    assert.equal((await ctx.repos.analyses.complete(v2.id, { status: "analyzed", completedAt: "2026-11-24T01:03:00Z" }))?.status, "analyzed");
+
+    assert.equal(await ctx.repos.analyses.closeSupersededRunning?.("2026-11-24T01:04:00Z", requirement.id), 1);
+    const runs = await ctx.repos.analyses.listByRequirement(requirement.id);
+    assert.deepEqual(runs.map((run) => [run.analysisVersion, run.status, run.safeErrorCode]), [
+      [1, "failed_retryable", "interrupted"],
+      [2, "analyzed", null],
+    ]);
+    // 再次扫为幂等：没有可收尾的行。
+    assert.equal(await ctx.repos.analyses.closeSupersededRunning?.("2026-11-24T01:05:00Z"), 0);
+    // 需求状态不受收尾影响。
+    assert.equal((await ctx.repos.requirements.get(requirement.id))?.pipeline.analysis, "pending");
+    assert.ok(v1.id);
   } finally { await cleanup(ctx); }
 });
