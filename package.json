@@ -17,7 +17,8 @@
     "check:contract": "node scripts/contract-matrix.mjs",
     "check:migrations": "node scripts/check-migrations.mjs",
     "check:arco-styles": "node scripts/check-arco-styles.mjs",
-    "rqsys:maintenance": "node scripts/rqsys-maintenance.mjs"
+    "rqsys:maintenance": "node scripts/rqsys-maintenance.mjs",
+    "release": "node scripts/release.mjs"
   },
   "engines": {
     "node": ">=22"
