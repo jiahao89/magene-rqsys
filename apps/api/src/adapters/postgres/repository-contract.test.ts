@@ -349,6 +349,43 @@ for (const mode of MODES) {
     }
   });
 
+  test(`repository contract [${mode}]: job lists keep pool scope but return product-pool jobs whose payload resolves to no entity`, async () => {
+    const ctx = await setup(mode);
+    try {
+      const productSource = await ctx.repositories.sources.create(sourceConfig);
+      const productBatch = await ctx.repositories.batches.create({ sourceConfigId: productSource.id, triggerType: "manual", actorId: null, idempotencyKey: `contract-pool-product-${randomUUID()}`, startedAt: "2026-10-28T00:00:00Z" });
+      const productRequirement = await ctx.repositories.requirements.upsertRequirement(productSource.id, "task-1", requirementWrite(productSource.id, productBatch.id));
+      const groupSource = await ctx.repositories.sources.create({ ...sourceConfig, pool: "group", projectId: "tb-project-group", projectName: "Group" });
+      const groupBatch = await ctx.repositories.batches.create({ sourceConfigId: groupSource.id, triggerType: "manual", actorId: null, idempotencyKey: `contract-pool-group-${randomUUID()}`, startedAt: "2026-10-28T00:00:00Z" });
+      const groupRequirement = await ctx.repositories.requirements.upsertRequirement(groupSource.id, "task-group-1", requirementWrite(groupSource.id, groupBatch.id, { teambitionRequirementId: "task-group-1" }));
+
+      const enqueue = (label: string, payload: Record<string, unknown>) => ctx.repositories.jobs.enqueue({ jobType: "base_push", dedupeKey: `contract-pool-${label}-${randomUUID()}`, payload, availableAt: "2026-10-28T00:00:00Z", maxAttempts: 1 });
+      const productJob = await enqueue("product", { requirementId: productRequirement.id });
+      const groupJob = await enqueue("group", { requirementId: groupRequirement.id });
+      // 两条都归属不到实体：一条只有不存在的 requirementId，一条只有不存在的 sourceId。
+      // 它们必须兜底归入产品池，而不是从回收器与失败作业列表里静默消失。
+      const orphanRequirementJob = await enqueue("orphan-requirement", { requirementId: `missing-${randomUUID()}` });
+      const orphanSourceJob = await enqueue("orphan-source", { sourceId: `missing-${randomUUID()}` });
+      const jobs = [productJob, groupJob, orphanRequirementJob, orphanSourceJob];
+      const now = "2026-10-28T01:00:00Z";
+      const ids = (rows: readonly { id: string }[]) => rows.map((row) => row.id).sort();
+
+      for (let index = 0; index < jobs.length; index += 1) {
+        assert.ok(await ctx.repositories.jobs.claimNext("worker-a", 0, "2026-10-28T00:00:04Z"), `第 ${index + 1} 个作业应能被认领`);
+      }
+      assert.deepEqual(ids(await ctx.repositories.jobs.listExhaustedRunning?.(now, 10, "product") ?? []), ids([productJob, orphanRequirementJob, orphanSourceJob]), "次数用尽的产品池作业与归属不到的作业都应被回收器看到");
+      assert.deepEqual(ids(await ctx.repositories.jobs.listExhaustedRunning?.(now, 10, "group") ?? []), ids([groupJob]), "集团池回收器只看到集团池作业");
+
+      for (const job of jobs) {
+        assert.equal((await ctx.repositories.jobs.complete(job.id, { expectedAttempt: 1, status: "failed", now }))?.status, "failed");
+      }
+      assert.deepEqual(ids(await ctx.repositories.jobs.listFailed?.(10, "product") ?? []), ids([productJob, orphanRequirementJob, orphanSourceJob]), "失败作业列表同样要兜底，不能丢掉归属不到的作业");
+      assert.deepEqual(ids(await ctx.repositories.jobs.listFailed?.(10, "group") ?? []), ids([groupJob]), "集团池失败列表只看到集团池作业");
+    } finally {
+      await cleanup(ctx);
+    }
+  });
+
   test(`repository contract [${mode}]: settling a failed sync job also closes its running batch atomically`, async () => {
     const ctx = await setup(mode);
     try {
