@@ -1,0 +1,25 @@
+{
+  "code": 0,
+  "data": {
+    "record": {
+      "fields": {
+        "AI优先级建议": "P1",
+        "AI分析版本": "2",
+        "AI模块建议": "赛段",
+        "PM状态": "待处理",
+        "TB创建时间": 1794389508812,
+        "TB需求ID": "6af436041f45c6ebd3175cd9",
+        "推送状态": "已推送",
+        "最后推送时间": 1795407100513,
+        "来源方式": "Teambition",
+        "标题": "【Beta测试反馈】【迪卡侬EDR-斌】【软固件功能缺陷】【反馈人：斌-今天下午这单，红色框出的2个赛段在码表上都触发成功，但是中途退出。看strava是正常完成的】",
+        "源版本": "1",
+        "系统需求链接": "https://ecn8egz1lhkq.feishu.link/app/app_17fqkjwyx1u?requirement=654edd88-bf2a-4d2d-8a22-2d0101ca85d4",
+        "需求平台ID": "RQ-000323"
+      },
+      "id": "reczz28Z3FKZpNet",
+      "record_id": "reczz28Z3FKZpNet"
+    }
+  },
+  "msg": "success"
+}

@@ -1,0 +1,57 @@
+{
+  "s4": {
+    "ownerState": "manually_mapped",
+    "ownerName": null,
+    "manualOwner": {
+      "feishuUserId": "99f56141",
+      "feishuIdType": "user_id",
+      "name": null,
+      "assignedAt": "2026-11-21T09:26:23.110Z",
+      "assignmentVersion": 2
+    },
+    "push": "pushed",
+    "baseRecordId": "reczz28bkO8tDeYC",
+    "baseRecordUrl": "https://aimagene.feishu.cn/base/GRnEboCIga7Omas8RwgcDmmgnib?table=tbl6Gfi0KJ2a1llK&record=reczz28bkO8tDeYC",
+    "lastPushedAt": "2026-11-21T09:26:36.653Z"
+  },
+  "s4ui": {
+    "hasJiaHao": false,
+    "hasManual": true,
+    "snippet": "负责人和处理状态检索需求；负责人分配在需求详情页完成。 |  | 返回需求池 | 【Onelapfit 2.3.0测试服-ios&安卓】【必现】App端路线详情中显示的坡段数量及坡段坡度等信息与码表端显示不一致 | RQ-000335 · v1 | 当前综合评分 | 6.00 | P2 | v1 · AI 建议 · 低置信度 | 查看"
+  },
+  "deleteStatus": 200,
+  "polls": [
+    {
+      "at": "2026-11-21T09:30:13.343Z",
+      "owner": "pending_mapping",
+      "ownerName": null,
+      "manualOwner": null,
+      "push": "running",
+      "lastPushedAt": "2026-11-21T09:26:36.653Z"
+    },
+    {
+      "at": "2026-11-21T09:30:18.794Z",
+      "owner": "pending_mapping",
+      "ownerName": null,
+      "manualOwner": null,
+      "push": "running",
+      "lastPushedAt": "2026-11-21T09:30:18.405Z"
+    },
+    {
+      "at": "2026-11-21T09:30:24.272Z",
+      "owner": "pending_mapping",
+      "ownerName": null,
+      "manualOwner": null,
+      "push": "pushed",
+      "lastPushedAt": "2026-11-21T09:30:18.405Z"
+    }
+  ],
+  "final": {
+    "at": "2026-11-21T09:30:24.272Z",
+    "owner": "pending_mapping",
+    "ownerName": null,
+    "manualOwner": null,
+    "push": "pushed",
+    "lastPushedAt": "2026-11-21T09:30:18.405Z"
+  }
+}

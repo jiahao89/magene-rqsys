@@ -1,0 +1,111 @@
+{
+  "counts": {
+    "teambition": 333,
+    "web_manual": 1,
+    "base_form": 0,
+    "chat_paste": 0,
+    "all": 334
+  },
+  "group": {
+    "teambition": 191,
+    "web_manual": 0,
+    "base_form": 0,
+    "chat_paste": 0,
+    "all": 191
+  },
+  "batches": [
+    {
+      "id": "9a7a1d92-8553-4172-a45c-bf103121098a",
+      "trig": "scheduled",
+      "actor": null,
+      "status": "succeeded",
+      "total": 191,
+      "ok": 191,
+      "fail": 0,
+      "filtered": 1106,
+      "start": "2026-11-21T10:12:34.400Z",
+      "end": "2026-11-21T10:12:50.857Z"
+    },
+    {
+      "id": "67084d6d-d90d-4e7f-a638-956529fb3408",
+      "trig": "manual",
+      "actor": "1868660374748201",
+      "status": "succeeded",
+      "total": 191,
+      "ok": 191,
+      "fail": 0,
+      "filtered": 1106,
+      "start": "2026-11-21T06:06:36.899Z",
+      "end": "2026-11-21T06:07:08.126Z"
+    },
+    {
+      "id": "8ccad96a-c190-43e1-b642-b104a2bf1f7d",
+      "trig": "manual",
+      "actor": "1868660374748201",
+      "status": "succeeded",
+      "total": 191,
+      "ok": 191,
+      "fail": 0,
+      "filtered": 1106,
+      "start": "2026-11-21T05:18:50.768Z",
+      "end": "2026-11-21T05:19:14.410Z"
+    },
+    {
+      "id": "aa6a35ba-06f9-45df-b940-b3f70d1c7bdb",
+      "trig": "manual",
+      "actor": "1868660374748201",
+      "status": "succeeded",
+      "total": 191,
+      "ok": 191,
+      "fail": 0,
+      "filtered": 1106,
+      "start": "2026-11-21T05:05:44.289Z",
+      "end": "2026-11-21T05:06:20.686Z"
+    }
+  ],
+  "sources": [
+    {
+      "pool": "product",
+      "project": "室外产品-码表软固件需求池",
+      "enabled": true,
+      "schedule": {
+        "enabled": true,
+        "weekday": 1,
+        "weekdays": [
+          1,
+          3,
+          5
+        ],
+        "time": "09:00",
+        "timezone": "Asia/Shanghai"
+      },
+      "allow": []
+    },
+    {
+      "pool": "group",
+      "project": "需求收集与管理",
+      "enabled": true,
+      "schedule": {
+        "enabled": true,
+        "weekday": 1,
+        "weekdays": [
+          1,
+          3,
+          5
+        ],
+        "time": "09:00",
+        "timezone": "Asia/Shanghai"
+      },
+      "allow": [
+        "刘媛媛",
+        "史东升",
+        "李晨璐",
+        "毕梓浩",
+        "盛永帮",
+        "贾浩",
+        "王赵云",
+        "兰诣伟"
+      ]
+    }
+  ]
+}

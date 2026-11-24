@@ -1,0 +1,114 @@
+{
+  "manifest_version": "v1",
+  "format": "ndjson",
+  "base_token": "HZ6NbvXKJa0o5Qs4hgQcSoirnde",
+  "table_id": "tblNVlrwYOPU5kuz",
+  "rev": 370,
+  "timezone": "Asia/Shanghai",
+  "query_context": {
+    "field_scope": "selected_fields",
+    "record_scope": "all_records"
+  },
+  "requested_limit": 2000,
+  "records_count": 191,
+  "page_count": 1,
+  "has_more": false,
+  "record_file": "/Volumes/Files/A_Projects/RQ-Sys/.scratch/full-acceptance-20261121/evidence/base-group.ndjson",
+  "record_file_size_bytes": 81118,
+  "manifest_file": "/Volumes/Files/A_Projects/RQ-Sys/.scratch/full-acceptance-20261121/evidence/base-group.manifest.json",
+  "columns": {
+    "TB链接": {
+      "field_id": "fldzpA7fA8",
+      "field_type": "text",
+      "physical_type": "string|null",
+      "stats": {
+        "null_count": 0,
+        "max_length": 120
+      },
+      "example": "[https://teambition.magene.cn/task/6780e04a177f3271e5db8b53](https://teambition.magene.cn/task/6780e04a177f3271e5db8b53)"
+    },
+    "TB需求ID": {
+      "field_id": "fldYm24lF6",
+      "field_type": "text",
+      "physical_type": "string|null",
+      "stats": {
+        "null_count": 0,
+        "max_length": 24
+      },
+      "example": "6780e04a177f3271e5db8b53"
+    },
+    "record_id": {
+      "physical_type": "string",
+      "stats": {
+        "max_length": 16
+      },
+      "example": "reczz28cES8MxWCv"
+    },
+    "推送状态": {
+      "field_id": "fldKeD0nvD",
+      "field_type": "select",
+      "physical_type": "array<string>",
+      "stats": {
+        "empty_count": 0,
+        "max_length": 1,
+        "avg_length": 1
+      },
+      "example": [
+        "已推送"
+      ]
+    },
+    "来源方式": {
+      "field_id": "fldDSqJKxc",
+      "field_type": "select",
+      "physical_type": "array<string>",
+      "stats": {
+        "empty_count": 0,
+        "max_length": 1,
+        "avg_length": 1
+      },
+      "example": [
+        "Teambition"
+      ]
+    },
+    "标题": {
+      "field_id": "fldvUV4Ihn",
+      "field_type": "text",
+      "physical_type": "string|null",
+      "stats": {
+        "null_count": 0,
+        "max_length": 203
+      },
+      "example": "C706码表建议"
+    },
+    "系统通知事件ID": {
+      "field_id": "fldBuTW8g8",
+      "field_type": "text",
+      "physical_type": "string|null",
+      "stats": {
+        "null_count": 180,
+        "max_length": 100
+      },
+      "example": "owner_changed:4d0fdbd1-e843-4c78-ad30-09aab25ce35f:sv3:av1:99f56141:70f70339efd660d54d1e84ab8f6e01a4"
+    },
+    "系统通知类型": {
+      "field_id": "fldGWxmxQJ",
+      "field_type": "text",
+      "physical_type": "string|null",
+      "stats": {
+        "null_count": 180,
+        "max_length": 5
+      },
+      "example": "负责人变更"
+    },
+    "需求平台ID": {
+      "field_id": "fldwPFzCQT",
+      "field_type": "text",
+      "physical_type": "string|null",
+      "stats": {
+        "null_count": 0,
+        "max_length": 9
+      },
+      "example": "RQ-000337"
+    }
+  }
+}

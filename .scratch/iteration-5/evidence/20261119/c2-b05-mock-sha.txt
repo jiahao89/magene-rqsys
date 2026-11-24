@@ -1,3 +1,0 @@
-commit 6ed22c1
-c1f764ea611bbc3f917d5f1c25c235280832a83c8acd605033c22b68eff96038  scripts/base-source-backfill.mjs
-457b3b584d46fb4591fc7d80f24a97d5e21882b0bf10e3026aee415d4010fad3  .scratch/iteration-5/evidence/20261119/c2-b05-mock-harness.mjs

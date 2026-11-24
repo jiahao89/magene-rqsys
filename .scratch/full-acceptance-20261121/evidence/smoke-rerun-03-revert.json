@@ -1,0 +1,22 @@
+{
+  "t0": "2026-11-21T09:39:33.876Z",
+  "deleteStatus": 200,
+  "polls": [
+    {
+      "at": "2026-11-21T09:39:40.533Z",
+      "owner": "pending_mapping",
+      "ownerName": null,
+      "manualOwner": null,
+      "push": "pushed",
+      "lastPushedAt": "2026-11-21T09:39:38.149Z"
+    }
+  ],
+  "final": {
+    "at": "2026-11-21T09:39:40.533Z",
+    "owner": "pending_mapping",
+    "ownerName": null,
+    "manualOwner": null,
+    "push": "pushed",
+    "lastPushedAt": "2026-11-21T09:39:38.149Z"
+  }
+}

@@ -1,0 +1,165 @@
+{
+  "t0": "2026-11-21T09:26:22.905Z",
+  "putStatus": 200,
+  "putBody": "{\"requirementId\":\"5f0c8561-9522-439e-88e0-12f4ed80285a\",\"ownerState\":\"manually_mapped\",\"status\":\"queued\"}",
+  "polls": [
+    {
+      "at": "2026-11-21T09:26:23.320Z",
+      "step": "put",
+      "status": 200,
+      "body": "{\"requirementId\":\"5f0c8561-9522-439e-88e0-12f4ed80285a\",\"ownerState\":\"manually_mapped\",\"status\":\"queued\"}"
+    },
+    {
+      "at": "2026-11-21T09:26:28.856Z",
+      "owner": "manually_mapped",
+      "ownerName": null,
+      "push": "running",
+      "lastPushedAt": "2026-11-20T04:01:56.141Z",
+      "baseRecordId": "reczz28bkO8tDeYC"
+    },
+    {
+      "at": "2026-11-21T09:26:34.359Z",
+      "owner": "manually_mapped",
+      "ownerName": null,
+      "push": "running",
+      "lastPushedAt": "2026-11-20T04:01:56.141Z",
+      "baseRecordId": "reczz28bkO8tDeYC"
+    },
+    {
+      "at": "2026-11-21T09:26:39.909Z",
+      "owner": "manually_mapped",
+      "ownerName": null,
+      "push": "pushed",
+      "lastPushedAt": "2026-11-21T09:26:36.653Z",
+      "baseRecordId": "reczz28bkO8tDeYC"
+    },
+    {
+      "at": "2026-11-21T09:26:45.541Z",
+      "owner": "manually_mapped",
+      "ownerName": null,
+      "push": "pushed",
+      "lastPushedAt": "2026-11-21T09:26:36.653Z",
+      "baseRecordId": "reczz28bkO8tDeYC"
+    },
+    {
+      "at": "2026-11-21T09:26:51.016Z",
+      "owner": "manually_mapped",
+      "ownerName": null,
+      "push": "pushed",
+      "lastPushedAt": "2026-11-21T09:26:36.653Z",
+      "baseRecordId": "reczz28bkO8tDeYC"
+    },
+    {
+      "at": "2026-11-21T09:26:56.536Z",
+      "owner": "manually_mapped",
+      "ownerName": null,
+      "push": "pushed",
+      "lastPushedAt": "2026-11-21T09:26:36.653Z",
+      "baseRecordId": "reczz28bkO8tDeYC"
+    },
+    {
+      "at": "2026-11-21T09:27:02.444Z",
+      "owner": "manually_mapped",
+      "ownerName": null,
+      "push": "pushed",
+      "lastPushedAt": "2026-11-21T09:26:36.653Z",
+      "baseRecordId": "reczz28bkO8tDeYC"
+    },
+    {
+      "at": "2026-11-21T09:27:08.029Z",
+      "owner": "manually_mapped",
+      "ownerName": null,
+      "push": "pushed",
+      "lastPushedAt": "2026-11-21T09:26:36.653Z",
+      "baseRecordId": "reczz28bkO8tDeYC"
+    },
+    {
+      "at": "2026-11-21T09:27:13.733Z",
+      "owner": "manually_mapped",
+      "ownerName": null,
+      "push": "pushed",
+      "lastPushedAt": "2026-11-21T09:26:36.653Z",
+      "baseRecordId": "reczz28bkO8tDeYC"
+    },
+    {
+      "at": "2026-11-21T09:27:19.187Z",
+      "owner": "manually_mapped",
+      "ownerName": null,
+      "push": "pushed",
+      "lastPushedAt": "2026-11-21T09:26:36.653Z",
+      "baseRecordId": "reczz28bkO8tDeYC"
+    },
+    {
+      "at": "2026-11-21T09:27:24.749Z",
+      "owner": "manually_mapped",
+      "ownerName": null,
+      "push": "pushed",
+      "lastPushedAt": "2026-11-21T09:26:36.653Z",
+      "baseRecordId": "reczz28bkO8tDeYC"
+    },
+    {
+      "at": "2026-11-21T09:27:30.289Z",
+      "owner": "manually_mapped",
+      "ownerName": null,
+      "push": "pushed",
+      "lastPushedAt": "2026-11-21T09:26:36.653Z",
+      "baseRecordId": "reczz28bkO8tDeYC"
+    },
+    {
+      "at": "2026-11-21T09:27:35.765Z",
+      "owner": "manually_mapped",
+      "ownerName": null,
+      "push": "pushed",
+      "lastPushedAt": "2026-11-21T09:26:36.653Z",
+      "baseRecordId": "reczz28bkO8tDeYC"
+    },
+    {
+      "at": "2026-11-21T09:27:41.304Z",
+      "owner": "manually_mapped",
+      "ownerName": null,
+      "push": "pushed",
+      "lastPushedAt": "2026-11-21T09:26:36.653Z",
+      "baseRecordId": "reczz28bkO8tDeYC"
+    },
+    {
+      "at": "2026-11-21T09:27:46.852Z",
+      "owner": "manually_mapped",
+      "ownerName": null,
+      "push": "pushed",
+      "lastPushedAt": "2026-11-21T09:26:36.653Z",
+      "baseRecordId": "reczz28bkO8tDeYC"
+    },
+    {
+      "at": "2026-11-21T09:27:52.356Z",
+      "owner": "manually_mapped",
+      "ownerName": null,
+      "push": "pushed",
+      "lastPushedAt": "2026-11-21T09:26:36.653Z",
+      "baseRecordId": "reczz28bkO8tDeYC"
+    },
+    {
+      "at": "2026-11-21T09:27:58.129Z",
+      "owner": "manually_mapped",
+      "ownerName": null,
+      "push": "pushed",
+      "lastPushedAt": "2026-11-21T09:26:36.653Z",
+      "baseRecordId": "reczz28bkO8tDeYC"
+    },
+    {
+      "at": "2026-11-21T09:28:03.942Z",
+      "owner": "manually_mapped",
+      "ownerName": null,
+      "push": "pushed",
+      "lastPushedAt": "2026-11-21T09:26:36.653Z",
+      "baseRecordId": "reczz28bkO8tDeYC"
+    }
+  ],
+  "final": {
+    "at": "2026-11-21T09:28:03.942Z",
+    "owner": "manually_mapped",
+    "ownerName": null,
+    "push": "pushed",
+    "lastPushedAt": "2026-11-21T09:26:36.653Z",
+    "baseRecordId": "reczz28bkO8tDeYC"
+  }
+}

@@ -1,0 +1,377 @@
+{
+  "manifest_version": "v1",
+  "format": "ndjson",
+  "base_token": "GRnEboCIga7Omas8RwgcDmmgnib",
+  "table_id": "tbl6Gfi0KJ2a1llK",
+  "rev": 2134,
+  "timezone": "Asia/Shanghai",
+  "query_context": {
+    "record_scope": "selected_record_ids",
+    "requested_record_count": 1
+  },
+  "records_count": 1,
+  "page_count": 1,
+  "has_more": false,
+  "record_file": "/Volumes/Files/A_Projects/RQ-Sys/tbl6Gfi0KJ2a1llK_20261121_171130_419.ndjson",
+  "record_file_size_bytes": 1223,
+  "manifest_file": "/Volumes/Files/A_Projects/RQ-Sys/tbl6Gfi0KJ2a1llK_20261121_171130_419.manifest.json",
+  "columns": {
+    "AI优先级建议": {
+      "field_id": "fldLw2Il5n",
+      "field_type": "select",
+      "physical_type": "array<string>",
+      "stats": {
+        "empty_count": 0,
+        "max_length": 1,
+        "avg_length": 1
+      },
+      "example": [
+        "P2"
+      ]
+    },
+    "AI分析版本": {
+      "field_id": "fldml0FVLp",
+      "field_type": "text",
+      "physical_type": "string|null",
+      "stats": {
+        "null_count": 0,
+        "max_length": 1
+      },
+      "example": "5"
+    },
+    "AI模块建议": {
+      "field_id": "fldCWEK5eK",
+      "field_type": "text",
+      "physical_type": "string|null",
+      "stats": {
+        "null_count": 1,
+        "max_length": 0
+      },
+      "hint": "All values are empty; type inference may be ambiguous. Avoid analyzing this column unless required."
+    },
+    "PM状态": {
+      "field_id": "fldsMgFOKX",
+      "field_type": "text",
+      "physical_type": "string|null",
+      "stats": {
+        "null_count": 0,
+        "max_length": 3
+      },
+      "example": "待处理"
+    },
+    "PM确认优先级": {
+      "field_id": "fldimykzBg",
+      "field_type": "text",
+      "physical_type": "string|null",
+      "stats": {
+        "null_count": 1,
+        "max_length": 0
+      },
+      "hint": "All values are empty; type inference may be ambiguous. Avoid analyzing this column unless required."
+    },
+    "PM确认模块": {
+      "field_id": "fldyEYVODV",
+      "field_type": "text",
+      "physical_type": "string|null",
+      "stats": {
+        "null_count": 1,
+        "max_length": 0
+      },
+      "hint": "All values are empty; type inference may be ambiguous. Avoid analyzing this column unless required."
+    },
+    "RQ主记录链接": {
+      "field_id": "fldAY4bPPb",
+      "field_type": "text",
+      "physical_type": "string|null",
+      "stats": {
+        "null_count": 1,
+        "max_length": 0
+      },
+      "hint": "All values are empty; type inference may be ambiguous. Avoid analyzing this column unless required."
+    },
+    "RQ重复标记": {
+      "field_id": "fldyhDQ0xo",
+      "field_type": "text",
+      "physical_type": "string|null",
+      "stats": {
+        "null_count": 1,
+        "max_length": 0
+      },
+      "hint": "All values are empty; type inference may be ambiguous. Avoid analyzing this column unless required."
+    },
+    "TB创建时间": {
+      "field_id": "fldqLBMpTr",
+      "field_type": "datetime",
+      "physical_type": "string|null",
+      "stats": {
+        "null_count": 0,
+        "min": "2026-11-18T14:00:45.382+08:00",
+        "max": "2026-11-18T14:00:45.382+08:00"
+      },
+      "example": "2026-11-18T14:00:45.382+08:00"
+    },
+    "TB更新时间": {
+      "field_id": "fld7XwHxyD",
+      "field_type": "datetime",
+      "physical_type": "string|null",
+      "stats": {
+        "null_count": 1
+      },
+      "hint": "All values are empty; type inference may be ambiguous. Avoid analyzing this column unless required."
+    },
+    "TB状态": {
+      "field_id": "fld1iDN5WP",
+      "field_type": "text",
+      "physical_type": "string|null",
+      "stats": {
+        "null_count": 1,
+        "max_length": 0
+      },
+      "hint": "All values are empty; type inference may be ambiguous. Avoid analyzing this column unless required."
+    },
+    "TB链接": {
+      "field_id": "fldbLCfB62",
+      "field_type": "text",
+      "physical_type": "string|null",
+      "stats": {
+        "null_count": 1,
+        "max_length": 0
+      },
+      "hint": "All values are empty; type inference may be ambiguous. Avoid analyzing this column unless required."
+    },
+    "TB需求ID": {
+      "field_id": "fldnvDm2rx",
+      "field_type": "text",
+      "physical_type": "string|null",
+      "stats": {
+        "null_count": 0,
+        "max_length": 24
+      },
+      "example": "6afd3f0d1f45c6ebd394764d"
+    },
+    "record_id": {
+      "physical_type": "string",
+      "stats": {
+        "max_length": 16
+      },
+      "example": "reczz28bkO8tDeYC"
+    },
+    "处理人": {
+      "field_id": "fldC0s9LSj",
+      "field_type": "user",
+      "physical_type": "array<struct<id string, name string>>",
+      "stats": {
+        "empty_count": 1,
+        "max_length": 0,
+        "avg_length": 0
+      },
+      "hint": "All values are empty; type inference may be ambiguous. Avoid analyzing this column unless required."
+    },
+    "处理时间": {
+      "field_id": "fldhQjua7R",
+      "field_type": "datetime",
+      "physical_type": "string|null",
+      "stats": {
+        "null_count": 1
+      },
+      "hint": "All values are empty; type inference may be ambiguous. Avoid analyzing this column unless required."
+    },
+    "执行人": {
+      "field_id": "fldHSG5muE",
+      "field_type": "user",
+      "physical_type": "array<struct<id string, name string>>",
+      "stats": {
+        "empty_count": 1,
+        "max_length": 0,
+        "avg_length": 0
+      },
+      "hint": "All values are empty; type inference may be ambiguous. Avoid analyzing this column unless required."
+    },
+    "推送状态": {
+      "field_id": "fldxYbHrWp",
+      "field_type": "select",
+      "physical_type": "array<string>",
+      "stats": {
+        "empty_count": 0,
+        "max_length": 1,
+        "avg_length": 1
+      },
+      "example": [
+        "已推送"
+      ]
+    },
+    "提出人": {
+      "field_id": "fldAnp7VKC",
+      "field_type": "text",
+      "physical_type": "string|null",
+      "stats": {
+        "null_count": 1,
+        "max_length": 0
+      },
+      "hint": "All values are empty; type inference may be ambiguous. Avoid analyzing this column unless required."
+    },
+    "最后推送时间": {
+      "field_id": "fldwF8naGh",
+      "field_type": "datetime",
+      "physical_type": "string|null",
+      "stats": {
+        "null_count": 0,
+        "min": "2026-11-20T12:01:50.120+08:00",
+        "max": "2026-11-20T12:01:50.120+08:00"
+      },
+      "example": "2026-11-20T12:01:50.120+08:00"
+    },
+    "来源方式": {
+      "field_id": "fldyflUEVv",
+      "field_type": "select",
+      "physical_type": "array<string>",
+      "stats": {
+        "empty_count": 0,
+        "max_length": 1,
+        "avg_length": 1
+      },
+      "example": [
+        "Teambition"
+      ]
+    },
+    "标题": {
+      "field_id": "fldBEyqgTm",
+      "field_type": "text",
+      "physical_type": "string|null",
+      "stats": {
+        "null_count": 0,
+        "max_length": 64
+      },
+      "example": "【Onelapfit 2.3.0测试服-ios&安卓】【必现】App端路线详情中显示的坡段数量及坡段坡度等信息与码表端显示不一致"
+    },
+    "源版本": {
+      "field_id": "fldY6nMwzi",
+      "field_type": "number",
+      "physical_type": "number|null",
+      "stats": {
+        "null_count": 0,
+        "min": 1,
+        "max": 1,
+        "avg": 1
+      },
+      "example": 1
+    },
+    "系统负责人通知归并值": {
+      "field_id": "fldq0FjVzJ",
+      "field_type": "user",
+      "physical_type": "array<struct<id string, name string>>",
+      "stats": {
+        "empty_count": 1,
+        "max_length": 0,
+        "avg_length": 0
+      },
+      "hint": "All values are empty; type inference may be ambiguous. Avoid analyzing this column unless required."
+    },
+    "系统通知事件ID": {
+      "field_id": "fldcfs5ABZ",
+      "field_type": "text",
+      "physical_type": "string|null",
+      "stats": {
+        "null_count": 0,
+        "max_length": 61
+      },
+      "example": "ai_retry_success:5f0c8561-9522-439e-88e0-12f4ed80285a:sv1:av5"
+    },
+    "系统通知收件人": {
+      "field_id": "flduaBbWfq",
+      "field_type": "user",
+      "physical_type": "array<struct<id string, name string>>",
+      "stats": {
+        "empty_count": 0,
+        "max_length": 1,
+        "avg_length": 1
+      },
+      "example": [
+        {
+          "id": "ou_4c148e99065bea6733205b9ff4724e0a",
+          "name": "王赵云"
+        }
+      ]
+    },
+    "系统通知类型": {
+      "field_id": "fldMLlmAFI",
+      "field_type": "text",
+      "physical_type": "string|null",
+      "stats": {
+        "null_count": 0,
+        "max_length": 7
+      },
+      "example": "AI 重试成功"
+    },
+    "系统需求链接": {
+      "field_id": "fldScibuTS",
+      "field_type": "text",
+      "physical_type": "string|null",
+      "stats": {
+        "null_count": 0,
+        "max_length": 101
+      },
+      "example": "https://ecn8egz1lhkq.feishu.link/app/app_17fqkjwyx1u?requirement=5f0c8561-9522-439e-88e0-12f4ed80285a"
+    },
+    "结构化备注": {
+      "field_id": "fldMPwjl47",
+      "field_type": "text",
+      "physical_type": "string|null",
+      "stats": {
+        "null_count": 1,
+        "max_length": 0
+      },
+      "hint": "All values are empty; type inference may be ambiguous. Avoid analyzing this column unless required."
+    },
+    "范围说明": {
+      "field_id": "fldqn51Qju",
+      "field_type": "text",
+      "physical_type": "string|null",
+      "stats": {
+        "null_count": 1,
+        "max_length": 0
+      },
+      "hint": "All values are empty; type inference may be ambiguous. Avoid analyzing this column unless required."
+    },
+    "附件引用": {
+      "field_id": "fldpwhLI6P",
+      "field_type": "text",
+      "physical_type": "string|null",
+      "stats": {
+        "null_count": 1,
+        "max_length": 0
+      },
+      "hint": "All values are empty; type inference may be ambiguous. Avoid analyzing this column unless required."
+    },
+    "需求平台ID": {
+      "field_id": "fldIohMQ0W",
+      "field_type": "text",
+      "physical_type": "string|null",
+      "stats": {
+        "null_count": 0,
+        "max_length": 9
+      },
+      "example": "RQ-000335"
+    },
+    "需求说明": {
+      "field_id": "fldZijXlxN",
+      "field_type": "text",
+      "physical_type": "string|null",
+      "stats": {
+        "null_count": 1,
+        "max_length": 0
+      },
+      "hint": "All values are empty; type inference may be ambiguous. Avoid analyzing this column unless required."
+    },
+    "验收标准": {
+      "field_id": "fldV5FrVM1",
+      "field_type": "text",
+      "physical_type": "string|null",
+      "stats": {
+        "null_count": 1,
+        "max_length": 0
+      },
+      "hint": "All values are empty; type inference may be ambiguous. Avoid analyzing this column unless required."
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "asset": "https://lf-miaoda-static.feishucdn.com/app_17fqkjwyx1u/649a6112015410d697b63b6d465eaa072f83c414/client/assets/index-DUGeYD8s.js",
+  "putStatus": 200,
+  "polls": [
+    {
+      "at": "2026-11-21T09:39:11.373Z",
+      "owner": "manually_mapped",
+      "ownerName": null,
+      "push": "running",
+      "lastPushedAt": "2026-11-21T09:30:18.405Z"
+    },
+    {
+      "at": "2026-11-21T09:39:17.428Z",
+      "owner": "manually_mapped",
+      "ownerName": null,
+      "push": "pushed",
+      "lastPushedAt": "2026-11-21T09:39:15.702Z"
+    }
+  ],
+  "final": {
+    "at": "2026-11-21T09:39:17.428Z",
+    "owner": "manually_mapped",
+    "ownerName": null,
+    "push": "pushed",
+    "lastPushedAt": "2026-11-21T09:39:15.702Z"
+  }
+}

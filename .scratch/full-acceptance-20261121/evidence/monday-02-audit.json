@@ -1,0 +1,44 @@
+{
+  "productToday": [
+    {
+      "id": "3c61d96a-e95e-4c99-8016-e039f4400006",
+      "trig": "scheduled",
+      "start": "2026-11-23T01:13:08.918Z",
+      "status": "succeeded",
+      "total": 333,
+      "ok": 333,
+      "filtered": 0
+    }
+  ],
+  "auditTypes": [
+    "base.push",
+    "source.metadata.updated",
+    "sync.completed",
+    "source.config_updated",
+    "owner.manual_cleared",
+    "owner.manually_mapped"
+  ],
+  "badEvents": 0,
+  "todayAudit": [
+    {
+      "t": "base.push",
+      "r": "succeeded",
+      "at": "2026-11-23T01:13:57.182Z"
+    },
+    {
+      "t": "source.metadata.updated",
+      "r": "succeeded",
+      "at": "2026-11-23T01:13:47.594Z"
+    },
+    {
+      "t": "sync.completed",
+      "r": "succeeded",
+      "at": "2026-11-23T01:13:34.023Z"
+    },
+    {
+      "t": "sync.completed",
+      "r": "succeeded",
+      "at": "2026-11-23T01:13:26.645Z"
+    }
+  ]
+}
