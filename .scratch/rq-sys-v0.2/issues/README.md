@@ -62,3 +62,6 @@ V0.2 当前决定和执行例外已记入[门槛表](../../../specs/rq-sys-v0.2/
 [Spec索引](../../../specs/rq-sys-v0.2/README.md)、各票稳定AC编号及[历史审阅包的PRD追踪表](../review/README.md)共同提供追踪。历史草案不作为当前状态；本目录与票内状态同步。机器可读依赖见[manifest.json](manifest.json)。
 
 本次文档发布只检查文件、链接、Spec章节、AC数量、状态和依赖无环，不作为代码测试、功能实现或线上验收证据。
+
+
+> 票据原文已于 2026-11-24 归档清理（V0.2，共 24 张）。需要查阅时从 git 历史取回：`git show 98d674c:.scratch/rq-sys-v0.2/issues/<文件名>`，或 `git checkout 98d674c -- .scratch/rq-sys-v0.2/issues`。
