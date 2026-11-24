@@ -54,21 +54,21 @@ if (ahead !== 0) fail(`本地领先远端 ${ahead} 个提交，先推送再发�
 process.stdout.write(`分支 ${branch}，工作区干净，已与远端同步。\n`);
 
 if (!skipGates) {
-  step("门禁：typecheck");
-  run("npm", ["run", "typecheck"], { stdio: "inherit" });
-  step("门禁：migrations / arco-styles");
-  run("npm", ["run", "check:migrations"], { stdio: "inherit" });
-  run("npm", ["run", "check:arco-styles"], { stdio: "inherit" });
-  step("门禁：测试（API + Web）");
-  run("npm", ["test"], { stdio: "inherit" });
-  step("门禁：build");
-  run("npm", ["run", "build"], { stdio: "inherit" });
-  step("门禁：两仓对齐");
+  // 门禁以 CI 为准：本地没有 PostgreSQL，API 用例会因 ENOENT 退出 1，
+  // 那是环境缺失、不是失败；GitHub 上的 verify 带 PG 服务，才是这 64 条契约用例的唯一真凭据。
+  step("门禁：CI 结论");
+  const sha = run("git", ["rev-parse", "HEAD"]);
+  let runs = [];
   try {
-    run("npm", ["run", "check:alignment"], { stdio: "inherit" });
-  } catch {
-    fail("两仓对齐未通过；确认 rq-sys-miaoda/ 已检出且与根仓同步。");
+    runs = JSON.parse(run("gh", ["api", `repos/jiahao89/magene-rqsys/actions/runs?head_sha=${sha}&per_page=10`]))?.workflow_runs ?? [];
+  } catch (error) {
+    fail(`读取 CI 状态失败：${error?.message ?? error}`);
   }
+  const verify = runs.find((item) => item.name === "verify");
+  if (!verify) fail(`提交 ${sha.slice(0, 7)} 还没有 CI 运行记录：等 verify 跑完再发版（或临时加 --skip-gates）。`);
+  if (verify.status !== "completed") fail(`CI 仍在 ${verify.status}，等它跑完再发版。`);
+  if (verify.conclusion !== "success") fail(`CI 结论是 ${verify.conclusion}（run ${verify.id}），先修再发。`);
+  process.stdout.write(`CI verify #${verify.id} success（${sha.slice(0, 7)}）。\n`);
 } else {
   process.stdout.write("\n[release] 已跳过门禁（--skip-gates），发版说明里必须写清原因。\n");
 }
