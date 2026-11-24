@@ -1,0 +1,129 @@
+name: release
+
+# 发布（CD）：手动触发，把妙搭 `sprint/default` 发到线上并做发布后核验。
+#
+# 为什么手动而不是 main 推送自动发版：
+# - 目标环境的发版要消耗真实模型/外部写入，且每次发版前需要人工确认范围（本次改动、回滚点）；
+# - 之前的人工流程就是「门禁 → 推送 → +release-create → 轮询 → 线上核验」，这里把它固化成一键。
+#
+# 为什么跑在 self-hosted：
+# - `lark-cli apps +release-create` 只支持用户身份（需要本机已登录的 lark-cli 凭据），
+#   GitHub 托管 runner 上没有这份凭据，硬塞进 Secrets 等于把长期用户 token 复制一份出去；
+#   self-hosted runner 直接复用本机已登录状态，凭据不出机器。
+# - 未注册 runner 时本工作流不会运行，不会假装成功。
+
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 发版说明（写进 release 申请理由）
+        required: true
+        type: string
+      branch:
+        description: 妙搭发版分支
+        required: false
+        default: sprint/default
+        type: string
+      skip_tests:
+        description: 跳过本地门禁（仅限紧急回滚，需在 reason 里写明原因）
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: release-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: [self-hosted, macOS]
+    timeout-minutes: 40
+    env:
+      APP_ID: app_17fqkjwyx1u
+      ONLINE_HEALTH: https://ecn8egz1lhkq.feishuapp.com/app/app_17fqkjwyx1u
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Toolchain check
+        run: |
+          node -v
+          npm -v
+          if ! command -v lark-cli >/dev/null 2>&1; then
+            echo "::error title=lark-cli missing::self-hosted runner 需要已安装并登录 lark-cli（brew install 或 npm i -g @larksuite/cli），且完成 auth login。"
+            exit 1
+          fi
+          lark-cli whoami
+
+      - name: Install
+        if: ${{ !inputs.skip_tests }}
+        run: npm ci
+
+      - name: Gates (typecheck + migrations + arco + tests + build)
+        if: ${{ !inputs.skip_tests }}
+        run: |
+          npm run typecheck
+          npm run check:migrations
+          npm run check:arco-styles
+          npm test
+          npm run build
+
+      - name: Two-repository alignment
+        if: ${{ !inputs.skip_tests }}
+        run: |
+          # 两仓都在本机时才能跑对齐；缺失时明确失败而不是跳过，避免"看起来通过"。
+          if [ -d ../rq-sys-miaoda ] || [ -d rq-sys-miaoda ]; then
+            npm run check:alignment
+          else
+            echo "::error title=alignment gate::缺少 rq-sys-miaoda 检出，无法做两仓对齐；请先把妙搭仓拉到工作目录旁边。"
+            exit 1
+          fi
+
+      - name: Create release
+        id: create
+        run: |
+          set -euo pipefail
+          out=$(lark-cli apps +release-create \
+            --app-id "$APP_ID" \
+            --branch "${{ inputs.branch }}" \
+            --apply-reason "${{ inputs.reason }}")
+          echo "$out"
+          id=$(printf '%s' "$out" | python3 -c 'import sys,json;print(json.load(sys.stdin)["data"]["release_id"])')
+          echo "release_id=$id" >> "$GITHUB_OUTPUT"
+
+      - name: Poll release status
+        run: |
+          set -euo pipefail
+          id="${{ steps.create.outputs.release_id }}"
+          for i in $(seq 1 40); do
+            out=$(lark-cli apps +release-get --app-id "$APP_ID" --release-id "$id")
+            status=$(printf '%s' "$out" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("data",{}).get("status","?"))')
+            echo "[$i] $status"
+            case "$status" in
+              finished)
+                printf '%s' "$out" | python3 -c 'import sys,json;d=json.load(sys.stdin)["data"];print("commit:",d.get("commit_id"));print("errors:",d.get("error_logs"))'
+                exit 0;;
+              failed|cancelled)
+                printf '%s' "$out"
+                echo "::error title=release $status::release $id 状态 $status"
+                exit 1;;
+            esac
+            sleep 15
+          done
+          echo "::error title=release timeout::10 分钟内未完成，请到妙搭控制台确认"
+          exit 1
+
+      - name: Online health check
+        run: |
+          set -euo pipefail
+          code=$(curl -s -o /dev/null -w '%{http_code}' "$ONLINE_HEALTH")
+          echo "app shell: $code"
+          # 302 是未带会话时的登录跳转，200 是已登录页面；两者都说明应用在服务。
+          case "$code" in
+            200|302) ;;
+            *) echo "::error title=online health::应用入口返回 $code"; exit 1;;
+          esac

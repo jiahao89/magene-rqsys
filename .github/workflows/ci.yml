@@ -10,8 +10,10 @@ name: verify
 
 on:
   push:
-    branches: [main, "sprint/**"]
+    # feature/** 必须在内：日常开发都在 feature 分支上，只盯 main 等于日常零门禁。
+    branches: [main, "sprint/**", "feature/**"]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
