@@ -157,6 +157,7 @@ export function normalizeTeambitionTask(
   projectId: string,
   task: TeambitionTaskRecord,
   fieldMap: TeambitionFieldMap,
+  executorNames?: ReadonlyMap<string, string>,
 ): NormalizedTeambitionRequirement {
   if (!task.id) throw new Error("Teambition task is missing its stable id");
 
@@ -191,6 +192,12 @@ export function normalizeTeambitionTask(
 
   const mappedIds = new Set(Object.values(fieldMap));
   const sourcePayload = allowlistedSourcePayload(task, customFields, mappedIds);
+  // 执行人姓名：显式映射优先；没有映射时用 TB 组织成员目录按 executor_id 补齐。
+  // 只落 requirements.executor_name 供展示/筛选，不进入 sourcePayload，避免无意义升版与重推 Base。
+  const mappedExecutorName = typeof mappedFields.executorName === "string" && mappedFields.executorName.trim().length > 0
+    ? mappedFields.executorName
+    : null;
+  const sourceExecutorName = mappedExecutorName ?? (task.executor_id ? executorNames?.get(task.executor_id) ?? null : null);
 
   return {
     sourceProjectId: projectId,
@@ -201,6 +208,7 @@ export function normalizeTeambitionTask(
     sourceUpdatedAt: null,
     sourceCreatorId: task.creator_id ?? null,
     sourceExecutorId: task.executor_id ?? null,
+    sourceExecutorName,
     sourceStatusId: task.taskflow_status_id ?? null,
     sourceTypeId: task.scenariofield_config_id ?? null,
     mappedFields,

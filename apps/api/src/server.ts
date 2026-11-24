@@ -80,9 +80,18 @@ const syncJobRunner: SyncJobRunner | undefined = repositories ? async (job) => {
   }
 
   const persistence = createPostgresSyncPersistence(repositories, job.sourceConfigId);
-  const taskSource = { async listRequirements(cfg: SourceProjectConfig) { return { items: await new TeambitionClient().listRequirementTasks(cfg), hasMore: false, nextCursor: null }; } };
+  const client = new TeambitionClient();
+  const taskSource = { async listRequirements(cfg: SourceProjectConfig) { return { items: await client.listRequirementTasks(cfg), hasMore: false, nextCursor: null }; } };
+  // 执行人姓名：来源没有 executorName 字段映射时，用组织成员目录按 executor_id 补齐，
+  // 否则列表按执行人筛选永远查不到（526 条需求只有 ID 没有姓名）。目录失败不阻断同步，姓名留空。
+  let executorNames: Record<string, string> | undefined;
+  try {
+    executorNames = Object.fromEntries((await client.listOrganizationMembers()).map((member) => [member.userId, member.name]));
+  } catch {
+    process.stderr.write("Teambition member directory unavailable; executor names stay empty for this batch.\n");
+  }
   const orchestrator = new SyncOrchestrator(taskSource, persistence);
-  const result = await orchestrator.run({ batchId: job.batchId, sourceConfigId: job.sourceConfigId, config, ...(job.mode === undefined ? {} : { mode: job.mode }), ...(job.onlyIds === undefined ? {} : { onlyIds: job.onlyIds }), ...(executorAllowlist.length > 0 ? { executorAllowlist } : {}) });
+  const result = await orchestrator.run({ batchId: job.batchId, sourceConfigId: job.sourceConfigId, config, ...(job.mode === undefined ? {} : { mode: job.mode }), ...(job.onlyIds === undefined ? {} : { onlyIds: job.onlyIds }), ...(executorAllowlist.length > 0 ? { executorAllowlist } : {}), ...(executorNames === undefined ? {} : { executorNames }) });
   // 打通同步 → AI 分析链路：下游推进（入队首分析 / 元数据推进）收敛在共用 workflow 模块。
   if (result.status !== "failed" && shouldProcessSyncDownstream(job.mode)) {
     if (!requirementWorkflow) throw new Error("Requirement workflow is not assembled");

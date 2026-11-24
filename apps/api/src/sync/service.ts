@@ -26,7 +26,9 @@ export interface SyncPersistence {
 }
 export interface SyncInput { batchId:string;sourceConfigId:string;config:SourceProjectConfig;startedAt?:string;onlyIds?:string[];mode?:SyncExecutionMode;
   /** 集团池执行人名单（TB user_id）；为空数组或不传表示不过滤。 */
-  executorAllowlist?:string[] }
+  executorAllowlist?:string[];
+  /** TB 组织成员目录（userId→姓名）；来源没有 executorName 映射时用它把执行人姓名写进需求。 */
+  executorNames?:Record<string,string> }
 // Queue payloads resolve configuration at the application composition seam; the orchestrator stays provider-agnostic.
 export type SyncExecutionMode = "full_pipeline" | "source_only";
 export interface SyncJobContext { batchId:string;sourceConfigId:string;trigger:"manual"|"scheduled";actorId:string|null;onlyIds?:string[];mode?:SyncExecutionMode }
@@ -144,6 +146,7 @@ export class SyncOrchestrator {
       });
     }
     let succeededCount=0,failedCount=0;const failedCodes=new Set<string>();
+    const executorNames=input.executorNames?new Map(Object.entries(input.executorNames)):undefined;
     for(const record of all){const began=clock().toISOString();
       // 无 ID 的源记录也要留痕：此前被静默丢弃，批次计数与明细完全看不到"少了一条"。
       if(!record.id){
@@ -153,7 +156,7 @@ export class SyncOrchestrator {
       }
       let requirementId:string|null=null;let action:"created"|"updated"|"unchanged"="created";let status:"succeeded"|"failed"="succeeded";let errorCode:string|null=null,errorDetail:string|null=null;let failureCode="source_item_invalid";
       try{
-        const normalized=normalizeTeambitionTask(input.config.projectId,record,input.config.fieldMap);const payload=persistedPayload(normalized);const hash=sourcePayloadHash(payload);const sub = substantiveHash(substantivePayload(normalized) as { title:string; description:string|null; scope:string|null; acceptanceCriteria:string|null; attachmentRefs:readonly string[] });failureCode="source_item_read_failed";const previous=await this.persistence.findRequirement(input.sourceConfigId,normalized.sourceRequirementId);const version=previous?previous.sourceVersion+(previous.sourceHash===hash?0:1):1;const changed=previous!==null&&previous.sourceHash!==hash;const substantive=isSubstantiveChange(previous?.substantiveHash??null,sub);
+        const normalized=normalizeTeambitionTask(input.config.projectId,record,input.config.fieldMap,executorNames);const payload=persistedPayload(normalized);const hash=sourcePayloadHash(payload);const sub = substantiveHash(substantivePayload(normalized) as { title:string; description:string|null; scope:string|null; acceptanceCriteria:string|null; attachmentRefs:readonly string[] });failureCode="source_item_read_failed";const previous=await this.persistence.findRequirement(input.sourceConfigId,normalized.sourceRequirementId);const version=previous?previous.sourceVersion+(previous.sourceHash===hash?0:1):1;const changed=previous!==null&&previous.sourceHash!==hash;const substantive=isSubstantiveChange(previous?.substantiveHash??null,sub);
         const analysisRequired=!previous||substantive||previous.analysisState==="pending";
         // Source-only leaves all downstream states untouched. A later full run
         // must re-touch even unchanged source rows so pending owner/push work can resume.

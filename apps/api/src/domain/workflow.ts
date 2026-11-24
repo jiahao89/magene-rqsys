@@ -61,6 +61,8 @@ export interface NormalizedTeambitionRequirement {
   sourceUpdatedAt: string | null;
   sourceCreatorId: string | null;
   sourceExecutorId: string | null;
+  /** 执行人显示名：优先来自 field_map 的 executorName，否则由 TB 组织成员目录按 executor_id 补齐。 */
+  sourceExecutorName: string | null;
   sourceStatusId: string | null;
   sourceTypeId: string | null;
   mappedFields: Record<string, unknown>;

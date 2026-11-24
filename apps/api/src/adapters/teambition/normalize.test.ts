@@ -120,3 +120,20 @@ test("rtf, user and array-shaped fields keep their previous projections", () => 
   assert.deepEqual(normalized.mappedFields.attachmentRefs, [{ title: "a.pdf" }]);
   assert.deepEqual(normalized.mappedFields.customFields, [{ title: "raw" }]);
 });
+
+// 2026-11-24：执行人姓名此前只来自 field_map.executorName，没映射时 525 条需求全部为空。
+test("executor name falls back to the organization member directory and an explicit mapping still wins", () => {
+  const members = new Map([["tb-user-1", "贾浩"]]);
+  const fromDirectory = normalizeTeambitionTask("project-1", { id: "t1", content: "Need", executor_id: "tb-user-1" }, {}, members);
+  assert.equal(fromDirectory.sourceExecutorName, "贾浩");
+  assert.equal(fromDirectory.sourceExecutorId, "tb-user-1");
+  // 目录里没有这个 ID（或本批目录不可用）时保持 null，不猜名字。
+  assert.equal(normalizeTeambitionTask("project-1", { id: "t2", content: "Need", executor_id: "tb-user-9" }, {}, members).sourceExecutorName, null);
+  assert.equal(normalizeTeambitionTask("project-1", { id: "t3", content: "Need" }, {}, members).sourceExecutorName, null);
+  // 显式字段映射优先于成员目录。
+  const mapped = normalizeTeambitionTask("project-1", {
+    id: "t4", content: "Need", executor_id: "tb-user-1",
+    custom_fields: [{ _customfieldid: "exec", type: "text", value: "映射名" }],
+  }, { executorName: "exec" }, members);
+  assert.equal(mapped.sourceExecutorName, "映射名");
+});

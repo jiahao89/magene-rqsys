@@ -29,7 +29,8 @@ export function createPostgresSyncPersistence(
         // 0031：集团池映射「关联产品的具体信息」；产品池没有该映射时保持 null。
         productModel: typeof input.mappedFields.productModel === "string" ? input.mappedFields.productModel : null,
         executorUserId: input.sourceExecutorId,
-        executorName: typeof input.mappedFields.executorName === "string" ? input.mappedFields.executorName : null,
+        // 没有 field_map.executorName 时用组织成员目录补出的姓名；两者都没有才写 null。
+        executorName: typeof input.mappedFields.executorName === "string" ? input.mappedFields.executorName : input.sourceExecutorName,
         statusId: input.sourceStatusId,
         createdAt: input.sourceCreatedAt,
         updatedAt: input.sourceUpdatedAt,

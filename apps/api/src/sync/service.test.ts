@@ -286,3 +286,15 @@ test("the empty-allowlist skip is a non-retryable terminal code", () => {
   assert.equal(NON_RETRYABLE_SYNC_ITEM_CODES.has("sync.filtered_empty_allowlist"), true);
   assert.equal(NON_RETRYABLE_SYNC_ITEM_CODES.has("source_item_invalid"), true);
 });
+
+test("executor names from the member directory reach the upsert without changing the source hash payload", async () => {
+  const h = harness([task("one", "One", { executor_id: "tb-user-1" })]);
+  const seen: Array<Parameters<typeof h.persistence.upsertRequirement>[0]> = [];
+  const original = h.persistence.upsertRequirement.bind(h.persistence);
+  h.persistence.upsertRequirement = async (input) => { seen.push(input); return original(input); };
+  const result = await h.orchestrator.run({ batchId: "batch-1", sourceConfigId: config.id, config, executorNames: { "tb-user-1": "贾浩" } });
+  assert.equal(result.status, "succeeded");
+  assert.equal(seen[0]?.sourceExecutorName, "贾浩");
+  // 姓名是展示/筛选字段，不进入 source_payload —— 否则全量同步会让 500+ 条需求无意义升版并重推 Base。
+  assert.equal(JSON.stringify(seen[0]?.sourcePayload).includes("贾浩"), false);
+});
