@@ -2,7 +2,7 @@
 
 - 环境：`https://ecn8egz1lhkq.feishuapp.com/app/app_17fqkjwyx1u`
 - 线上版本：bundle 指向妙搭 `695bec6`（`index-doJau7i2.js`），即 release `7711550150745591061`；对应根仓行为版本 `6501ff9`，之后根仓只多了 CI/release 脚本、文档与 `.scratch` 清理（`b86da78`→`e7fd710`），未再上线
-- 方式：只读为主、不造数；**本轮 0 次模型调用、0 次写操作**
+- 方式：只读为主、不造数；**本轮 1 次模型调用（聊天粘贴 intake-draft）、0 次写操作**
 - 基线（开跑时）：产品 334 / 集团 191；产品 Base 334、集团 Base 191；评估 0、PRD 提示词 0；已压制 0
 - 结论：**A–L 十二块全部 PASS**，3 条观察、1 条一次性抖动、1 条未跑（需授权）
 
@@ -33,11 +33,12 @@
 - TB 需求重复处理：显示「未作判定 · 暂无重复候选」+ 仅「忽略」（精简态生效）
 - 各区块齐全：AI 评分与优先级、九项评分输入、AI 分析建议、补充上下文、需求评估、PRD 提示词、处理与推送
 
-## C. 新建（手工 + 校验）— PASS（未提交，未造数）
+## C. 新建（手工 + 聊天粘贴 + 校验）— PASS（未提交，未造数）
 
 - 「新建需求」表单 11 个输入项，必填：标题 / 来源渠道 / 需求描述
 - 空提交 → 校验拦截「请填写标题、需求描述，并选择来源渠道。」，未产生记录（总数仍 334）
-- 观察 C-1：聊天粘贴（intake-draft）路径需要模型调用，本轮未跑
+- 聊天粘贴（intake-draft，1 次模型调用）：粘贴 100 字售后反馈 → `POST …/requirements/intake-draft` **200**、9.15s，表单自动填充并标注「AI 填充」：标题「C706码表低温骑行时屏幕短暂花屏」、产品/型号「C706」、需求类型「质量修复」、描述整理成「需求方/问题/诉求」三段，其中原始姓名显示为 **「（姓名已掩码）」**（PII 掩码生效）；来源渠道保持「请选择」，需人工确认
+- 取消关闭面板后草稿不落库：产品仍 334、手工来源仍 1 条、评估/提示词仍 0
 
 ## D. AI 分析与评分 — PASS（只读）
 
@@ -105,12 +106,11 @@
 
 | 步骤 | 调用 | 说明 |
 |---|---|---|
-| 重新分析 | 1 次 | 会新增分析版本并触发 Base 推送，需快照还原 |
-| 生成需求评估 | 1 次 | 落 1 行评估，需 SQL 清理 |
-| 生成 PRD 提示词 | 1 次 | 落 1 行提示词，需 SQL 清理 |
-| 聊天粘贴 intake-draft | 1 次 | 会产生草稿数据 |
-| Kano 报告 | 1 次 | 线上暂无已批准访谈资料，前置不满足 |
+| 重新分析 | 1 次 | 11-23 已有线上证据，本轮不重复（会触发 Base 推送） |
+| 生成需求评估 | 1 次 | 11-23 已有线上证据，本轮不重复（会落 1 行评估） |
+| 生成 PRD 提示词 | 1 次 | 11-23 已有线上证据，本轮不重复（会落 1 行提示词） |
+| Kano 报告 | 1 次 | 线上暂无已批准访谈资料，前置不满足，未跑 |
 
 ## 证据
 
-`.scratch/e2e-20261124/evidence/`（11 张）：`b-01-tb-detail.png`、`b-02-manual-detail.png`、`c-01-new-form-validation.png`、`d-01-analysis-scoring.png`、`f-01-data-source.png`、`g-01-sync-batches.png`、`g-02-group-batches.png`、`h-01-group-deeplink.png`（抖动现场）、`h-02-group-detail-ok.png`、`j-01-ops.png`、`j-02-ops-group.png`
+`.scratch/e2e-20261124/evidence/`（12 张）：`b-01-tb-detail.png`、`b-02-manual-detail.png`、`c-01-new-form-validation.png`、`d-01-analysis-scoring.png`、`f-01-data-source.png`、`g-01-sync-batches.png`、`g-02-group-batches.png`、`h-01-group-deeplink.png`（抖动现场）、`h-02-group-detail-ok.png`、`j-01-ops.png`、`j-02-ops-group.png`、`c-02-intake-draft.png`
