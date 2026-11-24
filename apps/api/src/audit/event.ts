@@ -116,6 +116,8 @@ const ALLOWED_DETAIL_KEYS: readonly string[] = [
   // PRD-26 兜底与 AI 填充统计：同样只记计数/布尔，不含聊天正文
   "fallback",
   "aiFilledCount",
+  // 人工重试是否强制重跑（布尔）：会消耗一次模型调用，必须留在审计里
+  "force",
   // PRD-26 审计串联与可追溯：一次抽取的请求号、提示词版本、供应商状态码（都不含正文）
   "requestId",
   "promptVersion",

@@ -20,6 +20,14 @@ test("PRD-26 聊天抽取审计保留字符数、兜底标记与 AI 填充数", 
   );
 });
 
+test("人工重试的 force 标记不会被白名单清空", () => {
+  // force 决定这次重试是否真的调用模型；被清掉就无法从审计判断钱花在了哪次重试上。
+  assert.deepEqual(
+    redactSafeDetails({ sourceVersion: 3, priorAnalysisVersion: 2, analysisStatus: "queued_new_job", force: true }),
+    { sourceVersion: 3, priorAnalysisVersion: 2, analysisStatus: "queued_new_job", force: true },
+  );
+});
+
 test("不变量5：审计事件捕获 actor/entity/result/timestamp（DDL 对齐形状）", () => {
   const event = createAuditEvent({
     actor: "worker:abc",
