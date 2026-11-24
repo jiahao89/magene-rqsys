@@ -918,8 +918,11 @@ test("owner recheck enqueues a group-pool candidate without touching the product
     });
     const product = await ctx.repos.requirements.upsertRequirement(productSource.id, "recheck-product", requirementWrite(productSource.id, productBatch.id));
     const group = await ctx.repos.requirements.upsertRequirement(groupSource.id, "recheck-group", requirementWrite(groupSource.id, groupBatch.id, { teambitionRequirementId: "recheck-group", executorUserId: "tb-group-user", executorName: "贾浩" }));
-    await ctx.repos.requirements.updateAnalysisState(group.id, "running");
-    await ctx.repos.requirements.updateAnalysisState(group.id, "analyzed");
+    // 两个需求都要推进到 analyzed 才进入负责人重查候选集；产品池这条没有执行人，应走 skipped 分支。
+    for (const requirement of [product, group]) {
+      await ctx.repos.requirements.updateAnalysisState(requirement.id, "running");
+      await ctx.repos.requirements.updateAnalysisState(requirement.id, "analyzed");
+    }
 
     const report = await recheckOwnerMappings({
       requirements: ctx.repos.requirements, people: ctx.repos.people, analyses: ctx.repos.analyses,
