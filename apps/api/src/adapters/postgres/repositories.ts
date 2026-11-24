@@ -1058,7 +1058,7 @@ async getOpsMetrics(p:{days:number;now:string;pool?:SourcePool}){
     (SELECT count(*) FROM last_push WHERE status='failed')::int AS push_failed,
     (SELECT avg(EXTRACT(EPOCH FROM (completed_at-started_at))) FROM last_push WHERE completed_at IS NOT NULL)::float AS push_avg_seconds,
     (SELECT count(*) FROM requirement_resolutions rr WHERE rr.review_state='confirmed' AND rr.decision IN ('duplicate','ignored') AND rr.source_config_id IN (SELECT id FROM scoped_source))::int AS duplicate_confirmed,
-    (SELECT count(*) FROM requirement_resolutions rr WHERE rr.review_state='suspected' AND rr.source_config_id IN (SELECT id FROM scoped_source))::int AS duplicate_suspected,
+    (SELECT count(*) FROM requirements r WHERE r.processing_state='active' AND r.duplicate_of_requirement_id IS NOT NULL AND r.id IN (SELECT id FROM scoped_req))::int AS duplicate_suspected,
     (SELECT count(*) FROM requirement_score_versions v, w WHERE v.created_at>=w.since AND v.origin='ai' AND v.requirement_id IN (SELECT id FROM scoped_req))::int AS score_ai,
     (SELECT count(*) FROM requirement_score_versions v, w WHERE v.created_at>=w.since AND v.origin='manual' AND v.requirement_id IN (SELECT id FROM scoped_req))::int AS score_manual,
     (SELECT count(*) FROM requirement_score_versions v, w WHERE v.created_at>=w.since AND v.origin='ai_applied' AND v.requirement_id IN (SELECT id FROM scoped_req))::int AS score_ai_applied`,[since,pool]);

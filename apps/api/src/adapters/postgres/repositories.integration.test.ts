@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { PostgresRepositories } from "./repositories.js";
 import { createBasePushService } from "../../base/push-service.js";
 import { buildPriorityRule } from "../../analysis/priority-rule.js";
+import { createPostgresSyncPersistence } from "./sync-persistence.js";
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),"../../../../../");
 async function getDatabaseUrl(){if(process.env.DATABASE_URL)return process.env.DATABASE_URL;const env=await readFile(resolve(root,".env"),"utf8").catch(()=>"");const value=env.match(/^DATABASE_URL=(.+)$/m)?.[1]?.trim();if(!value)throw new Error("PostgreSQL integration tests require DATABASE_URL in environment or repo .env");return value;}
@@ -801,5 +802,51 @@ test("V02-T26 priority override and analysis context persist and drive overview 
       await ctx.repos.requirements.setPriorityOverride(randomUUID(), { priority: "P1", reason: "x", actorId: "pm-1", at: "2026-11-03T00:00:00Z" }),
       { outcome: "not_found" },
     );
+  } finally { await cleanup(ctx); }
+});
+
+// 2026-11-24：执行人姓名此前只写 ID，列表按姓名筛选永远查不到。
+test("sync persistence writes the executor name from the member directory and keeps an explicit mapping first", async () => {
+  const ctx = await setup();
+  try {
+    const source = await ctx.repos.sources.create(config);
+    const batch = await ctx.repos.batches.create({ sourceConfigId: source.id, triggerType: "manual", actorId: null, idempotencyKey: "executor-name-0001", startedAt: "2026-11-24T00:00:00Z" });
+    const persistence = createPostgresSyncPersistence(ctx.repos, source.id);
+    const base = {
+      sourceProjectId: config.projectId, sourceRequirementId: "executor-1", title: "执行人姓名", sourceUniqueId: null,
+      sourceCreatedAt: null, sourceUpdatedAt: null, sourceCreatorId: null, sourceExecutorId: "tb-user-1", sourceExecutorName: "贾浩",
+      sourceStatusId: null, sourceTypeId: null, mappedFields: {}, sourcePayload: {}, sourceHash: "e".repeat(64),
+      substantiveHash: "f".repeat(64), sourceVersion: 1, latestBatchId: batch.id, analysisRequired: false,
+      snapshot: { payload: {}, isSubstantiveChange: false, capturedAt: "2026-11-24T00:00:00Z" },
+    };
+    const created = await persistence.upsertRequirement(base);
+    assert.equal((await ctx.repos.requirements.get(created.id))?.executorName, "贾浩");
+    assert.equal((await ctx.repos.requirements.get(created.id))?.executorUserId, "tb-user-1");
+    const mapped = await persistence.upsertRequirement({
+      ...base, sourceRequirementId: "executor-2", sourceExecutorId: "tb-user-2", sourceExecutorName: "目录名",
+      mappedFields: { executorName: "映射名" },
+    });
+    assert.equal((await ctx.repos.requirements.get(mapped.id))?.executorName, "映射名");
+  } finally { await cleanup(ctx); }
+});
+
+// 2026-11-24：运维「疑似」此前数 requirement_resolutions.review_state='suspected'，但没有任何代码写这个状态。
+test("ops duplicate.suspected counts active requirements linked to a canonical requirement", async () => {
+  const ctx = await setup();
+  try {
+    const source = await ctx.repos.sources.create(config);
+    const batch = await ctx.repos.batches.create({ sourceConfigId: source.id, triggerType: "manual", actorId: null, idempotencyKey: "duplicate-metric-0001", startedAt: "2026-11-24T00:00:00Z" });
+    const canonical = await ctx.repos.requirements.upsertRequirement(source.id, "dup-canonical", requirementWrite(source.id, batch.id, { teambitionRequirementId: "dup-canonical", title: "同标题" }));
+    const pending = await ctx.repos.requirements.upsertRequirement(source.id, "dup-pending", requirementWrite(source.id, batch.id, { teambitionRequirementId: "dup-pending", title: "同标题 B" }));
+    await ctx.repos.requirements.setDuplicateOf(pending.id, canonical.id);
+    const confirmed = await ctx.repos.requirements.upsertRequirement(source.id, "dup-confirmed", requirementWrite(source.id, batch.id, { teambitionRequirementId: "dup-confirmed", title: "同标题 C" }));
+    await ctx.repos.requirements.setDuplicateOf(confirmed.id, canonical.id);
+    const decided = await ctx.repos.requirements.decideResolution({ requirementId: confirmed.id, decision: "duplicate", canonicalRequirementId: canonical.id, reason: "confirmed", actorId: "pm", expectedVersion: 0, now: "2026-11-24T01:00:00Z" });
+    assert.equal(decided.outcome, "saved");
+    const product = await ctx.repos.ops.getOpsMetrics({ days: 7, now: "2026-11-24T12:00:00.000Z", pool: "product" });
+    assert.equal(product.duplicate.suspected, 1, "只有仍 active 的同标题链接算疑似；已确认压制的不算");
+    assert.equal(product.duplicate.confirmedSuppressed, 1);
+    const group = await ctx.repos.ops.getOpsMetrics({ days: 7, now: "2026-11-24T12:00:00.000Z", pool: "group" });
+    assert.equal(group.duplicate.suspected, 0, "集团池不能被产品池数字污染");
   } finally { await cleanup(ctx); }
 });
