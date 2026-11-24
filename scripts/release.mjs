@@ -28,7 +28,9 @@ function step(title) {
 }
 
 function run(cmd, cmdArgs, opts = {}) {
-  return execFileSync(cmd, cmdArgs, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], ...opts }).trim();
+  const result = execFileSync(cmd, cmdArgs, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], ...opts });
+  // stdio: "inherit" 时 execFileSync 返回 null，不能直接 trim。
+  return typeof result === "string" ? result.trim() : "";
 }
 
 function runJson(cmd, cmdArgs) {
