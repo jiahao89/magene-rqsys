@@ -10,6 +10,7 @@ import { createBasePushService } from "../../base/push-service.js";
 import { buildPriorityRule } from "../../analysis/priority-rule.js";
 import { createPostgresSyncPersistence } from "./sync-persistence.js";
 import { recoverAnalysisPipeline } from "../../scheduler/analysis-recovery.js";
+import { recheckOwnerMappings } from "../../scheduler/owner-recheck.js";
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),"../../../../../");
 async function getDatabaseUrl(){if(process.env.DATABASE_URL)return process.env.DATABASE_URL;const env=await readFile(resolve(root,".env"),"utf8").catch(()=>"");const value=env.match(/^DATABASE_URL=(.+)$/m)?.[1]?.trim();if(!value)throw new Error("PostgreSQL integration tests require DATABASE_URL in environment or repo .env");return value;}
@@ -900,5 +901,36 @@ test("closeSupersededRunning retires an older running row once a later version i
     // 需求状态不受收尾影响。
     assert.equal((await ctx.repos.requirements.get(requirement.id))?.pipeline.analysis, "pending");
     assert.ok(v1.id);
+  } finally { await cleanup(ctx); }
+});
+
+// 2026-11-24：负责人重查此前也只看产品池，集团池的待补推需求永远不会被补推。
+test("owner recheck enqueues a group-pool candidate without touching the product pool", async () => {
+  const ctx = await setup();
+  try {
+    const productSource = await ctx.repos.sources.create(config);
+    const groupSource = await ctx.repos.sources.create({ ...config, pool: "group", projectId: "group-project" });
+    const productBatch = await ctx.repos.batches.create({ sourceConfigId: productSource.id, triggerType: "manual", actorId: null, idempotencyKey: "recheck-product-0001", startedAt: "2026-11-24T00:00:00Z" });
+    const groupBatch = await ctx.repos.batches.create({ sourceConfigId: groupSource.id, triggerType: "manual", actorId: null, idempotencyKey: "recheck-group-0001", startedAt: "2026-11-24T00:00:00Z" });
+    await ctx.repos.people.upsertManual({
+      sourceConfigId: groupSource.id, teambitionUserId: "tb-group-user", teambitionDisplayName: "贾浩",
+      feishuUserId: "ou-group-user", feishuIdType: "open_id", createdBy: "pm", now: "2026-11-24T00:00:00Z",
+    });
+    const product = await ctx.repos.requirements.upsertRequirement(productSource.id, "recheck-product", requirementWrite(productSource.id, productBatch.id));
+    const group = await ctx.repos.requirements.upsertRequirement(groupSource.id, "recheck-group", requirementWrite(groupSource.id, groupBatch.id, { teambitionRequirementId: "recheck-group", executorUserId: "tb-group-user", executorName: "贾浩" }));
+    await ctx.repos.requirements.updateAnalysisState(group.id, "running");
+    await ctx.repos.requirements.updateAnalysisState(group.id, "analyzed");
+
+    const report = await recheckOwnerMappings({
+      requirements: ctx.repos.requirements, people: ctx.repos.people, analyses: ctx.repos.analyses,
+      jobs: ctx.repos.jobs, audit: ctx.repos.audit, now: new Date("2026-11-24T12:00:00.000Z"),
+    });
+
+    assert.equal(report.errors.length, 0);
+    assert.equal(report.enqueued, 1, "集团池命中映射后应补推一条");
+    assert.equal(report.skipped, 1, "无执行人的产品池需求仍按原规则跳过");
+    assert.equal((await ctx.repos.jobs.findByDedupeKey(`base-push:${group.id}:sv1:av0`))?.status, "queued");
+    assert.equal((await ctx.repos.requirements.get(product.id))?.pipeline.push, "pending", "产品池需求不被误推");
+    assert.equal((await ctx.repos.requirements.get(group.id))?.pipeline.owner, "manually_mapped");
   } finally { await cleanup(ctx); }
 });

@@ -47,6 +47,7 @@ function mapping(overrides: Partial<PersonMappingRecord> = {}): PersonMappingRec
 
 function harness(input: {
   candidates?: RequirementRecord[];
+  groupCandidates?: RequirementRecord[];
   /** 以 tbUserId 或 normalizedName 为键；缺失表示没有活跃映射。 */
   mappings?: Record<string, PersonMappingRecord | null>;
   latestAnalysisVersion?: Record<string, number>;
@@ -56,6 +57,7 @@ function harness(input: {
   dedupe?: boolean;
 }) {
   const candidates = input.candidates ?? [];
+  const groupCandidates = input.groupCandidates ?? [];
   const enqueuedKeys = new Set<string>();
   const state = {
     searchQueries: [] as SearchQuery[],
@@ -71,7 +73,9 @@ function harness(input: {
         state.searchQueries.push(query);
         if (input.searchError) throw input.searchError;
         // 未提供的条件不过滤：补映射候选只按 pull/push/owner 查询，没有 analysis 条件。
-        const items = candidates.filter((item) =>
+        // 池条件按仓储语义分成两组；缺省（不传）按产品池。
+        const scoped = query.pool === "group" ? groupCandidates : candidates;
+        const items = scoped.filter((item) =>
           (query.pullState === undefined || item.pipeline.pull === query.pullState) &&
           (query.analysisState === undefined || item.pipeline.analysis === query.analysisState) &&
           (query.pushState === undefined || item.pipeline.push === query.pushState) &&
@@ -122,7 +126,7 @@ function harness(input: {
     return recheckOwnerMappings({ ...deps, now: NOW, ...overrides } as never);
   }
 
-  return { state, deps: deps as never, run };
+  return { state, deps: deps as unknown as Record<string, unknown>, run };
 }
 
 test("解析到映射的需求会入队 base_push 并写 recheck 审计", async () => {
@@ -140,7 +144,7 @@ test("解析到映射的需求会入队 base_push 并写 recheck 审计", async 
   assert.deepEqual(report.errors, []);
   // 候选查询：三个状态过滤 + 本轮上限
   assert.deepEqual(h.state.searchQueries[0], {
-    pullState: "synced", analysisState: "analyzed", pushState: "pending", limit: OWNER_RECHECK_SCAN_LIMIT,
+    pullState: "synced", analysisState: "analyzed", pushState: "pending", pool: "product", limit: OWNER_RECHECK_SCAN_LIMIT,
   });
   // 先按状态机允许的迁移落 owner，再按正常链路同款 key/payload 入队
   assert.deepEqual(h.state.setOwnerCalls, [{ id: "req-1", feishuUserId: "ou-1", state: "auto_mapped" }]);
@@ -252,10 +256,11 @@ test("limit 默认 100 且可覆盖，单轮不会全量入队", async () => {
   assert.equal(defaultRun.scanned, 30);
   assert.equal(defaultRun.enqueued, 30);
 
+  // 每池 3 个候选查询：analyzed / failed_retryable / 已推送待补映射；两池共用本轮 limit。
+  assert.deepEqual(h.state.searchQueries.map((query) => query.limit), [100, 100, 100, 100, 100, 100]);
+  const afterDefault = h.state.searchQueries.length;
   const limitedRun = await h.run({ limit: 5 });
-  // 每轮 3 个候选查询：analyzed / failed_retryable / 已推送待补映射
-  assert.deepEqual(h.state.searchQueries.slice(0, 3).map((query) => query.limit), [100, 100, 100]);
-  assert.deepEqual(h.state.searchQueries.slice(3, 6).map((query) => query.limit), [5, 5, 5]);
+  assert.deepEqual(h.state.searchQueries.slice(afterDefault).map((query) => query.limit), [5, 5, 5, 5, 5, 5]);
   assert.equal(limitedRun.scanned, 5);
   assert.equal(limitedRun.enqueued, 5);
 });
@@ -332,7 +337,11 @@ test("候选查询失败不抛出，只记录 errors", async () => {
 
   assert.equal(report.scanned, 0);
   assert.equal(report.enqueued, 0);
-  assert.deepEqual(report.errors, ["search candidates: Error: database unavailable"]);
+  // 两池各记一条查询错误；单池失败不阻断另一个池。
+  assert.deepEqual(report.errors, [
+    "search candidates (product): Error: database unavailable",
+    "search candidates (group): Error: database unavailable",
+  ]);
   assert.equal(h.state.enqueueCalls.length, 0);
 });
 
@@ -361,4 +370,33 @@ test("补映射重推使用稳定的 intent 键：同一映射重复扫描不会
   // 作业已入队时同键查询返回 queued，第二轮跳过
   await h.run();
   assert.equal(h.state.enqueueCalls.length, 1);
+});
+
+test("集团池的待补推候选会被补推，产品池既有行为不受影响", async () => {
+  const h = harness({
+    candidates: [requirement({ id: "req-p" })],
+    groupCandidates: [requirement({ id: "req-g", sourceConfigId: "src-g", teambitionRequirementId: "tb-req-g", platformRequirementId: "RQ-000900" })],
+    mappings: { "tb-user-1": mapping({ sourceConfigId: "src-g" }) },
+    latestAnalysisVersion: { "req-p": 1, "req-g": 1 },
+  });
+
+  const report = await recheckOwnerMappings({ ...h.deps, now: NOW } as never);
+
+  assert.equal(report.scanned, 2);
+  assert.deepEqual(report.errors, []);
+  // 两个池各入队一条，幂等键按各自需求计算。
+  assert.deepEqual(h.state.enqueueCalls.map((call) => call.payload["requirementId"]).sort(), ["req-g", "req-p"]);
+  assert.deepEqual(h.state.enqueueCalls.map((call) => call.dedupeKey).sort(), [
+    "base-push:req-g:sv3:av1",
+    "base-push:req-p:sv3:av1",
+  ]);
+  // 集团候选必须用自己的来源解析负责人，不能串到产品池。
+  assert.ok(h.state.resolveCalls.some((call) => call.sourceConfigId === "src-g"));
+  // 三个阶段都对集团池发起过查询。
+  for (const analysisState of ["analyzed", "failed_retryable", undefined]) {
+    assert.ok(
+      h.state.searchQueries.some((query) => query.pool === "group" && query.analysisState === analysisState),
+      `集团池缺少 analysisState=${analysisState ?? "remap"} 的查询`,
+    );
+  }
 });

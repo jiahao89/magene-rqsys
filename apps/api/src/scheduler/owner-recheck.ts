@@ -28,7 +28,7 @@ import type {
   AnalysisRunRepository, AuditEventRepository, PersonMappingRepository,
   PipelineJobRepository, RequirementQueryRepository,
 } from "../application/repositories.js";
-import type { PersonMappingRecord, RequirementRecord } from "../domain/persistence.js";
+import type { PersonMappingRecord, RequirementRecord, SourcePool } from "../domain/persistence.js";
 import type { OwnerState } from "../domain/workflow.js";
 import { canTransition } from "../domain/transitions.js";
 import { normalizeOwnerName } from "../owner/mapping.js";
@@ -86,19 +86,23 @@ export async function recheckOwnerMappings(
   const nowIso = params.now.toISOString();
   const report: OwnerRecheckReport = { scanned: 0, enqueued: 0, skipped: 0, errors: [] };
 
-  let candidates: RequirementRecord[];
-  try {
-    // analyzed 与 failed_retryable 都可推送：AI 首次失败/可重试失败不得阻断负责人处理与推送。
-    const analyzed = await params.requirements.search({ pullState: "synced", analysisState: "analyzed", pushState: "pending", limit });
-    const retryable = await params.requirements.search({ pullState: "synced", analysisState: "failed_retryable", pushState: "pending", limit });
-    // Q1：已按空负责人推送、但 TB 执行人仍未映射的需求；映射补齐后需要重推一次补上负责人。
-    const remap = await params.requirements.search({ pullState: "synced", pushState: "pushed", ownerState: "pending_mapping", limit });
-    const seen = new Set<string>();
-    candidates = [...analyzed.items, ...retryable.items, ...remap.items].filter((row) => (seen.has(row.id) ? false : (seen.add(row.id), true))).slice(0, limit);
-  } catch (error) {
-    // 查询失败（数据库不可用等）只记录，后续轮次再试；不阻断同轮其它调度阶段。
-    report.errors.push(`search candidates: ${safeErrorMessage(error)}`);
-    return report;
+  // 2026-11-24：三个阶段按 product/group 各跑一遍。此前 search 缺省只看产品池，
+  // 集团池停在 push=pending / owner=pending_mapping 的需求永远等不到补推。
+  // 每池各自受 limit 约束（与产品池原有扫描量一致），单个池查询失败只记错误、不阻断另一个池。
+  const candidates: RequirementRecord[] = [];
+  for (const pool of ["product", "group"] as const satisfies readonly SourcePool[]) {
+    try {
+      // analyzed 与 failed_retryable 都可推送：AI 首次失败/可重试失败不得阻断负责人处理与推送。
+      const analyzed = await params.requirements.search({ pullState: "synced", analysisState: "analyzed", pushState: "pending", pool, limit });
+      const retryable = await params.requirements.search({ pullState: "synced", analysisState: "failed_retryable", pushState: "pending", pool, limit });
+      // Q1：已按空负责人推送、但 TB 执行人仍未映射的需求；映射补齐后需要重推一次补上负责人。
+      const remap = await params.requirements.search({ pullState: "synced", pushState: "pushed", ownerState: "pending_mapping", pool, limit });
+      const seen = new Set<string>();
+      candidates.push(...[...analyzed.items, ...retryable.items, ...remap.items].filter((row) => (seen.has(row.id) ? false : (seen.add(row.id), true))).slice(0, limit));
+    } catch (error) {
+      // 查询失败（数据库不可用等）只记录，后续轮次再试；不阻断同轮其它调度阶段或另一个池。
+      report.errors.push(`search candidates (${pool}): ${safeErrorMessage(error)}`);
+    }
   }
   report.scanned = candidates.length;
 
