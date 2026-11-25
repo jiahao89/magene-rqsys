@@ -1513,10 +1513,20 @@ test("0034 mine list and counts resolve the platform actor to a Feishu user_id",
   assert.equal(counts.status, 200);
   assert.deepEqual(await counts.json(), { identityResolved: true, product: 3, group: 2, total: 5, suppressed: 1 });
 
-  // 未解析到飞书身份：返回可解释的空态，而不是把平台 id 当飞书 id 去比。
-  const anonymous = makeDependencies();
-  anonymous.repositories!.requirements!.search = async () => { throw new Error("search must not run without identity"); };
-  const empty = await handleApiRequest(new Request("http://localhost/api/requirements/mine"), anonymous);
+  // M4：身份服务缺失/调用失败是可重试故障，必须 503，不能伪装成「未绑定」空态。
+  const unavailable = makeDependencies();
+  unavailable.repositories!.requirements!.search = async () => { throw new Error("search must not run without identity"); };
+  const failed = await handleApiRequest(new Request("http://localhost/api/requirements/mine"), unavailable);
+  assert.equal(failed.status, 503);
+  assert.equal((await failed.json() as { error: { code: string } }).error.code, "DEPENDENCY_UNAVAILABLE");
+  const countsFailed = await handleApiRequest(new Request("http://localhost/api/requirements/mine/counts"), unavailable);
+  assert.equal(countsFailed.status, 503);
+
+  // 未绑定飞书才是 200 空态（identityResolved=false），前端显示可解释的空页。
+  const unlinked = makeDependencies();
+  unlinked.feishuUserSelections = { resolve: async () => null };
+  unlinked.repositories!.requirements!.search = async () => ({ items: [], nextCursor: null });
+  const empty = await handleApiRequest(new Request("http://localhost/api/requirements/mine"), unlinked);
   assert.equal(empty.status, 200);
   assert.deepEqual(await empty.json(), { items: [], nextCursor: null, identityResolved: false });
 });
@@ -1532,12 +1542,23 @@ test("0034 delete and restore go through the Feishu identity and map lifecycle o
   const deleted = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`, { method: "DELETE" }), d);
   assert.equal(deleted.status, 200);
   assert.deepEqual(await deleted.json(), { requirementId: requirement.id, deletedAt: nowIso, deletedBy: "feishu-1", replayed: false });
-  assert.deepEqual(calls[0], { requirementId: requirement.id, ownerFeishuUserId: "feishu-1", at: nowIso });
+  const deleteCall = calls[0] as { requirementId: string; ownerFeishuUserId: string; at: string; audit: { id: string; actorId: string; occurredAt: string } };
+  assert.equal(deleteCall.requirementId, requirement.id);
+  assert.equal(deleteCall.ownerFeishuUserId, "feishu-1");
+  assert.equal(deleteCall.at, nowIso);
+  // M7：审计随删除一起传给仓储，在同一事务里写；HTTP 层不再另写一条。
+  assert.equal(deleteCall.audit.actorId, "actor-1");
+  assert.equal(deleteCall.audit.occurredAt, nowIso);
+  assert.match(deleteCall.audit.id, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
 
   const restored = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/restore`, { method: "POST" }), d);
   assert.equal(restored.status, 200);
   assert.deepEqual(await restored.json(), { requirementId: requirement.id, deletedAt: null, deletedBy: null, replayed: false });
-  assert.deepEqual(calls[1], { requirementId: requirement.id, deleterFeishuUserId: "feishu-1" });
+  const restoreCall = calls[1] as { requirementId: string; deleterFeishuUserId: string; audit: { actorId: string; occurredAt: string } };
+  assert.equal(restoreCall.requirementId, requirement.id);
+  assert.equal(restoreCall.deleterFeishuUserId, "feishu-1");
+  assert.equal(restoreCall.audit.actorId, "actor-1");
+  assert.equal(restoreCall.audit.occurredAt, nowIso);
 
   // 不是当前负责人 → 403；身份无法解析 → 403/503（不拿平台 id 猜归属）。
   const forbidden = makeDependencies();
@@ -1586,9 +1607,56 @@ test("0034 recycle bin and mine alias resolve identity before filtering by Feish
   assert.equal(mine.status, 200);
   assert.deepEqual(searches[1], { pool: "product", limit: 25, deleted: false, ownerFeishuUserId: "feishu-1" });
 
-  // 身份解析不可用：回收站返回空页并标记，不拿平台 id 猜。
+  // M4：身份服务不可用 → 503（可重试）；只有未绑定飞书才回 200 空页 + identityResolved=false。
   const anonymous = makeDependencies();
   anonymous.repositories!.requirements!.search = async () => { throw new Error("search must not run"); };
-  const empty = await handleApiRequest(new Request("http://localhost/api/requirements?deleted=true"), anonymous);
+  const failedBin = await handleApiRequest(new Request("http://localhost/api/requirements?deleted=true"), anonymous);
+  assert.equal(failedBin.status, 503);
+  const unlinked = makeDependencies();
+  unlinked.feishuUserSelections = { resolve: async () => null };
+  unlinked.repositories!.requirements!.search = async () => { throw new Error("search must not run without identity"); };
+  const empty = await handleApiRequest(new Request("http://localhost/api/requirements?deleted=true"), unlinked);
   assert.deepEqual(await empty.json(), { items: [], nextCursor: null, identityResolved: false });
+});
+
+test("0034 M14 every requirement-scoped write rejects a deleted requirement with 409", async () => {
+  const deletedRecord = { ...requirement, deletedAt: "2026-10-08T00:00:00.000Z", deletedBy: "feishu-1" } as unknown as RequirementRecord;
+  const d = makeDependencies();
+  d.feishuUserSelections = { resolve: async () => ({ feishuUserId: "feishu-1", feishuIdType: "user_id", name: "我" }) };
+  d.repositories!.requirements!.get = async (id: string) => id === requirement.id ? deletedRecord : null;
+
+  // 统一守卫在分发前拦截：这些路由都没有各自加 deleted 判断，仍然全部 409。
+  const writes: Array<[string, string]> = [
+    ["PATCH", `/api/requirements/${requirement.id}`],
+    ["PUT", `/api/requirements/${requirement.id}/owner`],
+    ["PUT", `/api/requirements/${requirement.id}/audience`],
+    ["PUT", `/api/requirements/${requirement.id}/scoring`],
+    ["PUT", `/api/requirements/${requirement.id}/priority-override`],
+    ["PUT", `/api/requirements/${requirement.id}/analysis-context`],
+    ["POST", `/api/requirements/${requirement.id}/assessments`],
+    ["POST", `/api/requirements/${requirement.id}/prd-prompts`],
+    ["POST", `/api/requirements/${requirement.id}/push`],
+    ["POST", `/api/requirements/${requirement.id}/kano-runs`],
+    ["POST", `/api/analysis/${requirement.id}/retry`],
+  ];
+  for (const [method, path] of writes) {
+    const response = await handleApiRequest(new Request(`http://localhost${path}`, { method }), d);
+    assert.equal(response.status, 409, `${method} ${path}`);
+    assert.equal((await response.json() as { error: { code: string } }).error.code, "REQUIREMENT_DELETED", `${method} ${path}`);
+  }
+
+  // 已删除详情按 UUID 仍可只读打开；评估历史这类 GET 不能被写闸口误伤。
+  assert.equal((await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`), d)).status, 200);
+  assert.notEqual((await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/assessments`), d)).status, 409);
+
+  // DELETE 幂等重放与还原必须放行，否则回收站按钮会被自己的闸口挡住。
+  (d.repositories!.requirements as unknown as { markDeleted: () => Promise<unknown> }).markDeleted = async () => ({ outcome: "replayed", requirement: deletedRecord });
+  const replay = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`, { method: "DELETE" }), d);
+  assert.equal(replay.status, 200);
+  assert.equal((await replay.json() as { replayed: boolean }).replayed, true);
+
+  (d.repositories!.requirements as unknown as { restoreDeleted: () => Promise<unknown> }).restoreDeleted = async () => ({ outcome: "restored", requirement });
+  const restored = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/restore`, { method: "POST" }), d);
+  assert.equal(restored.status, 200);
+  assert.equal((await restored.json() as { replayed: boolean }).replayed, false);
 });

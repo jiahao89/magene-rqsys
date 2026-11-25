@@ -281,7 +281,7 @@ paths:
         '400': { $ref: '#/components/responses/Validation' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { description: Evidence not approved/PII-flagged, or an active run already exists. }
+        '409': { description: Evidence not approved/PII-flagged, or an active run already exists. REQUIREMENT_DELETED when the requirement is logically deleted; restore it first (0034). }
         '503': { $ref: '#/components/responses/DependencyUnavailable' }
     get:
       summary: List Kano runs with staleness flags (V02-T14)
@@ -448,8 +448,9 @@ paths:
           in: query
           description: >-
             0034 recycle-bin view. deleted=true returns only requirements deleted by the current user
-            (viewer identity is resolved to a Feishu user_id server-side); every other list excludes
-            deleted rows by default.
+            (viewer identity is resolved to a Feishu user_id server-side; an unresolvable viewer gets
+            200 with identityResolved=false, while an unavailable identity service gets 503); every
+            other list excludes deleted rows by default.
           schema: { type: string, enum: [true, false], default: false }
         - name: mine
           in: query
@@ -727,7 +728,7 @@ paths:
         '400': { $ref: '#/components/responses/Validation' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { description: Stale expectedVersion; the message carries the current version. }
+        '409': { description: Stale expectedVersion; the message carries the current version. REQUIREMENT_DELETED when the requirement is logically deleted; restore it first (0034). }
         '503': { $ref: '#/components/responses/DependencyUnavailable' }
   /api/requirements/{id}/duplicate-decision:
     put:
@@ -755,7 +756,7 @@ paths:
         '400': { $ref: '#/components/responses/Validation' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { description: Stale expectedVersion; the message carries the current decision version. }
+        '409': { description: Stale expectedVersion; the message carries the current decision version. REQUIREMENT_DELETED when the requirement is logically deleted; restore it first (0034). }
         '503': { $ref: '#/components/responses/DependencyUnavailable' }
     delete:
       summary: Revoke a duplicate/ignore resolution (P1)
@@ -776,7 +777,7 @@ paths:
         '400': { $ref: '#/components/responses/Validation' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { description: Stale expectedVersion. }
+        '409': { description: Stale expectedVersion. REQUIREMENT_DELETED when the requirement is logically deleted; restore it first (0034). }
         '503': { $ref: '#/components/responses/DependencyUnavailable' }
   /api/requirements/{id}/scoring:
     put:
@@ -809,7 +810,7 @@ paths:
         '400': { $ref: '#/components/responses/Validation' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { description: Stale expectedVersion; the message carries the current version. }
+        '409': { description: Stale expectedVersion; the message carries the current version. REQUIREMENT_DELETED when the requirement is logically deleted; restore it first (0034). }
         '503': { $ref: '#/components/responses/DependencyUnavailable' }
   /api/requirements/{id}/scoring/apply-ai:
     post:
@@ -837,7 +838,7 @@ paths:
         '400': { $ref: '#/components/responses/Validation' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { description: Stale expectedVersion; the message carries the current version. }
+        '409': { description: Stale expectedVersion; the message carries the current version. REQUIREMENT_DELETED when the requirement is logically deleted; restore it first (0034). }
         '503': { $ref: '#/components/responses/DependencyUnavailable' }
   /api/requirements/{id}/rice-draft:
     get:
@@ -881,7 +882,7 @@ paths:
         '400': { $ref: '#/components/responses/Validation' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { description: Stale expectedEditVersion (message carries the current edit version) or the requirement source advanced past the draft's baseline source version (message carries the current source version). }
+        '409': { description: Stale expectedEditVersion (message carries the current edit version) or the requirement source advanced past the draft's baseline source version (message carries the current source version). REQUIREMENT_DELETED when the requirement is logically deleted; restore it first (0034). }
         '503': { $ref: '#/components/responses/DependencyUnavailable' }
   /api/requirements/mine:
     get:
@@ -890,8 +891,9 @@ paths:
         Current effective owner only: a manual owner wins; without one, the requirement is mine when
         its TB executor maps to exactly one active Feishu user_id equal to mine. Suppressed rows are
         included; deleted rows are excluded. The viewer's Miaoda user id is resolved to a Feishu
-        user_id server-side; when that resolution fails the response is an empty page with
-        identityResolved=false.
+        user_id server-side. When the viewer has no Feishu user_id the response is an empty page
+        with identityResolved=false; when the identity service itself is missing or failing the
+        endpoint returns 503 (retryable), never a misleading empty page.
       parameters:
         - $ref: '#/components/parameters/Pool'
         - { name: q, in: query, schema: { type: string, maxLength: 200 } }
@@ -920,7 +922,8 @@ paths:
       summary: My requirement counts (0034)
       description: >-
         Counts include suppressed rows and exclude deleted ones, split by pool. identityResolved=false
-        means the viewer identity could not be resolved to a Feishu user_id; all counts are then 0.
+        means the viewer has no Feishu user_id (all counts are then 0); if the identity service is
+        missing or failing the endpoint returns 503 instead, so the client can retry.
       responses:
         '200':
           description: My requirement counts
@@ -1057,7 +1060,7 @@ paths:
         '409':
           description: >-
             This requirement already has a non-stale running assessment. No model call is made and
-            no version is created; the error code is ASSESSMENT_IN_PROGRESS.
+            no version is created; the error code is ASSESSMENT_IN_PROGRESS. A logically deleted requirement returns REQUIREMENT_DELETED; restore it first (0034).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -1147,7 +1150,7 @@ paths:
           description: >-
             ASSESSMENT_REQUIRED when the requirement has no succeeded assessment (no version is
             created); PRD_PROMPT_IN_PROGRESS when a non-stale running version exists (no model call,
-            no version created).
+            no version created). REQUIREMENT_DELETED when the requirement is logically deleted; restore it first (0034).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -1211,7 +1214,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { description: Requirement is suppressed; revoke the duplicate decision first }
+        '409': { description: Requirement is suppressed; revoke the duplicate decision first. REQUIREMENT_DELETED when the requirement is logically deleted; restore it first (0034). }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /api/requirements/{id}/analysis-context:
     put:
@@ -1254,7 +1257,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { description: Requirement is suppressed; revoke the duplicate decision first }
+        '409': { description: Requirement is suppressed; revoke the duplicate decision first. REQUIREMENT_DELETED when the requirement is logically deleted; restore it first (0034). }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /api/requirements/{id}/owner:
     put:
@@ -1287,7 +1290,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '409':
-          description: The requirement is not synced, or its owner state does not allow a manual owner
+          description: The requirement is not synced, or its owner state does not allow a manual owner REQUIREMENT_DELETED when the requirement is logically deleted; restore it first (0034).
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
     delete:
       summary: Clear the per-requirement manual owner and restore the TB default owner
@@ -1302,7 +1305,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { description: The requirement has no manual owner, or is not synced }
+        '409': { description: The requirement has no manual owner, or is not synced. REQUIREMENT_DELETED when the requirement is logically deleted; restore it first (0034). }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /api/requirements/{id}/push:
     post:
@@ -1328,7 +1331,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { description: Requirement is not eligible for push }
+        '409': { description: Requirement is not eligible for push. REQUIREMENT_DELETED when the requirement is logically deleted; restore it first (0034). }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /api/analysis/{id}/retry:
     post:
@@ -1356,7 +1359,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '400': { $ref: '#/components/responses/BadRequest' }
-        '409': { description: Requirement is suppressed, already analyzed/running, or its pending state conflicts with a completed job }
+        '409': { description: Requirement is suppressed, already analyzed/running, or its pending state conflicts with a completed job. REQUIREMENT_DELETED when the requirement is logically deleted; restore it first (0034). }
   /api/audit:
     get:
       summary: Search workflow audit events

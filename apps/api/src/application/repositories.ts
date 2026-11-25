@@ -452,6 +452,13 @@ export type RequirementLifecycleOutcome =
   | { outcome: "deleted" | "replayed" | "restored" | "not_deleted"; requirement: RequirementRecord }
   | { outcome: "not_found" }
   | { outcome: "forbidden" };
+// M7/M8：删除/还原的审计与状态变更必须同一事务；仓储按结果自行补 eventType 与 safeDetails，
+// 重放（没有实际状态变更）不写审计。
+export interface RequirementLifecycleAudit {
+  id: string;
+  actorId: string;
+  occurredAt: string;
+}
 
 export interface RequirementQueryRepository {
   // 重复/忽略决策（决策表与需求行生命周期解耦；确认后压制处理链路）。
@@ -605,9 +612,10 @@ export interface RequirementQueryRepository {
   // 0034：我的需求计数（含已压制、不含已删除），按池拆分；owner 口径=人工负责人或唯一活跃的 TB 执行人映射。
   mineCounts?(ownerFeishuUserId: string): Promise<{ product: number; group: number; total: number; suppressed: number }>;
   // 0034：逻辑删除（只允许当前有效负责人）；ownerFeishuUserId 是经平台身份转换后的飞书 user_id。
-  markDeleted?(input: { requirementId: string; ownerFeishuUserId: string; at: string }): Promise<RequirementLifecycleOutcome>;
+  // M7/M8：传入 audit 时在同一事务内写审计，重放不写。
+  markDeleted?(input: { requirementId: string; ownerFeishuUserId: string; at: string; audit?: RequirementLifecycleAudit }): Promise<RequirementLifecycleOutcome>;
   // 0034：还原（只有删除人能还原）；deleterFeishuUserId 同上，deleted_by 存飞书 user_id。
-  restoreDeleted?(input: { requirementId: string; deleterFeishuUserId: string }): Promise<RequirementLifecycleOutcome>;
+  restoreDeleted?(input: { requirementId: string; deleterFeishuUserId: string; audit?: RequirementLifecycleAudit }): Promise<RequirementLifecycleOutcome>;
   // 同步幂等查找：返回流水线推进所需的最小字段；deleted 用于在 upsert 前整条跳过已删除需求。
   findForSync(sourceConfigId: string, teambitionRequirementId: string): Promise<{
     id: string;

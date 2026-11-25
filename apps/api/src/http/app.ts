@@ -469,6 +469,13 @@ async function resolveFeishuIdentity(dependencies: ApiDependencies, actorId: str
   } catch { return { ok: false, reason: "unavailable" }; }
 }
 
+// M4：身份服务不可用是可重试故障，必须 503；只有「未绑定飞书」才降级为空态 200。
+function identityUnavailable(identity: FeishuIdentityResolution): Response | null {
+  return !identity.ok && identity.reason === "unavailable"
+    ? jsonError("DEPENDENCY_UNAVAILABLE", "身份解析服务暂不可用，请稍后重试。")
+    : null;
+}
+
 // 审计与业务写入保持一致：审计写失败时不返回虚假成功（工单 12 验收）。
 async function appendAudit(repositories: ApiRepositories, event: Parameters<ApiRepositories["audit"]["append"]>[0]): Promise<Response | null> {
   try { await repositories.audit.append(event); return null; }
@@ -625,6 +632,34 @@ async function requirementPoolGuard(request: Request, url: URL, dependencies: Ap
   return (await requirementPoolOf(repositories, requirement)) === explicit ? null : jsonError("NOT_FOUND");
 }
 
+/**
+ * 0034 M14：已删除需求只读。
+ * 除「还原」与需求本身的 DELETE（幂等重放）外，需求级写路由统一在这里返回 409，
+ * 避免逐个写接口加闸口时漏掉新接口。未认证请求先 401（与各路由一致），
+ * 不靠 409/404 把「这条需求是否存在」泄露给匿名调用方。
+ */
+const REQUIREMENT_WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+async function deletedRequirementWriteGate(request: Request, url: URL, dependencies: ApiDependencies): Promise<Response | null> {
+  if (!REQUIREMENT_WRITE_METHODS.has(request.method.toUpperCase())) return null;
+  const match = url.pathname.match(/^\/api\/requirements\/([^/]+)(\/.*)?$/);
+  if (!match) return null;
+  const segment = match[1]!;
+  const tail = match[2] ?? "";
+  // 集合/创建接口不是需求级写；还原与 DELETE 幂等重放必须放行。
+  if (REQUIREMENT_COLLECTION_SEGMENTS.has(segment) || tail === "/restore") return null;
+  if (request.method.toUpperCase() === "DELETE" && tail === "") return null;
+  const repositories = dependencies.repositories;
+  if (!repositories?.requirements) return null;
+  const requirementId = pathUuid(segment, dependencies);
+  if (!requirementId) return null;
+  const auth = await actorFor(request, dependencies);
+  if ("response" in auth) return auth.response;
+  let requirement: RequirementRecord | null;
+  try { requirement = await repositories.requirements.get(requirementId); } catch { return null; }
+  if (!requirement?.deletedAt) return null;
+  return jsonError("REQUIREMENT_DELETED", "该需求已删除，请先在回收站还原后再操作。");
+}
+
 export async function handleApiRequest(request: Request, dependencies: ApiDependencies): Promise<Response> {
   try { return await routeApiRequest(request, dependencies); }
   catch (error) {
@@ -638,6 +673,9 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
   // 详情/写接口的显式 pool 与归属不符 → 404；不带 pool 的请求不受影响（零额外查询）。
   const poolGuardFailure = await requirementPoolGuard(request, url, dependencies);
   if (poolGuardFailure) return poolGuardFailure;
+  // 0034 M14：已删除需求只读。所有需求级写路由在这里统一拦截，新增写接口不会漏加闸口。
+  const deletedGateFailure = await deletedRequirementWriteGate(request, url, dependencies);
+  if (deletedGateFailure) return deletedGateFailure;
   if (method === "GET" && url.pathname === "/api/health") return json({ status: "ok", service: "rq-sys-api" });
   if (method === "GET" && url.pathname === "/api/health/ready") {
     if (!(await isDatabaseReady(dependencies.database))) return json({ status: "not_ready", reason: "database_unavailable_or_not_configured" }, 503);
@@ -1118,6 +1156,7 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     // 0034：回收站/我的需求按飞书 user_id 过滤；平台 userId 不能直接比较。
     const identityRequired = parsed.data.deleted === true || parsed.data.mine === true;
     const identity = identityRequired ? await resolveFeishuIdentity(dependencies, auth.actor.id) : null;
+    if (identity) { const unavailable = identityUnavailable(identity); if (unavailable) return unavailable; }
     if (identity && !identity.ok) return json({ items: [], nextCursor: null, identityResolved: false });
     const page = await repositories.requirements.search({ ...(parsed.data.q === undefined ? {} : { q: parsed.data.q }), ...(parsed.data.executorName === undefined ? {} : { executorName: parsed.data.executorName }), ...(parsed.data.pullState === undefined ? {} : { pullState: parsed.data.pullState }), ...(parsed.data.analysisState === undefined ? {} : { analysisState: parsed.data.analysisState }), ...(parsed.data.ownerState === undefined ? {} : { ownerState: parsed.data.ownerState }), ...(parsed.data.pushState === undefined ? {} : { pushState: parsed.data.pushState }),
       ...(parsed.data.processingState === undefined ? {} : { processingState: parsed.data.processingState }), ...(parsed.data.priority === undefined ? {} : { priority: parsed.data.priority }), ...(parsed.data.source === undefined ? {} : { source: parsed.data.source }),
@@ -1178,6 +1217,7 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     if (parsed.data.deleted === true) return jsonError("VALIDATION_FAILED", "回收站请使用 /api/requirements?deleted=true。");
     // 负责人列存飞书 user_id，平台 userId 不能直接比较；解析不到时返回空列表并标记，前端显示可解释的空态。
     const identity = await resolveFeishuIdentity(dependencies, auth.actor.id);
+    const mineUnavailable = identityUnavailable(identity); if (mineUnavailable) return mineUnavailable;
     if (!identity.ok) return json({ items: [], nextCursor: null, identityResolved: false });
     const cursor = parsed.data.sort === "priority_asc" ? undefined : decodeRequirementCursor(parsed.data.cursor);
     if (parsed.data.sort !== "priority_asc" && parsed.data.cursor !== undefined && cursor === undefined) return jsonError("VALIDATION_FAILED", "Invalid cursor.");
@@ -1197,6 +1237,7 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.requirements?.mineCounts) return jsonError("DEPENDENCY_UNAVAILABLE");
     const identity = await resolveFeishuIdentity(dependencies, auth.actor.id);
+    const countsUnavailable = identityUnavailable(identity); if (countsUnavailable) return countsUnavailable;
     if (!identity.ok) return json({ identityResolved: false, product: 0, group: 0, total: 0, suppressed: 0 });
     try { return json({ identityResolved: true, ...(await repositories.requirements.mineCounts(identity.feishuUserId!)) }); }
     catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
@@ -1586,13 +1627,11 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
       ? jsonError("DEPENDENCY_UNAVAILABLE", "身份解析服务暂不可用，请稍后重试。")
       : jsonError("FORBIDDEN", "无法解析你的飞书身份，暂不能删除需求。");
     let result: import("../application/repositories.js").RequirementLifecycleOutcome;
-    try { result = await repositories.requirements.markDeleted({ requirementId, ownerFeishuUserId: identity.feishuUserId!, at: nowIso }); }
+    // M7/M8：审计在仓储的同一事务内写入；重放（已删除同人）不追加审计。审计失败整体回滚并返回 503。
+    try { result = await repositories.requirements.markDeleted({ requirementId, ownerFeishuUserId: identity.feishuUserId!, at: nowIso, audit: { id: randomUUID(), actorId: auth.actor.id, occurredAt: nowIso } }); }
     catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
     if (result.outcome === "not_found") return jsonError("NOT_FOUND");
     if (result.outcome === "forbidden") return jsonError("FORBIDDEN", "只有当前负责人可以删除这条需求。");
-    const pool = await requirementPoolOf(repositories, result.requirement);
-    const auditFailure = await appendAudit(repositories, { id: randomUUID(), actorId: auth.actor.id, eventType: "requirement.deleted", entityType: "requirement", entityId: requirementId, result: "succeeded", safeDetails: { sourceVersion: result.requirement.sourceVersion, pool }, occurredAt: nowIso });
-    if (auditFailure) return auditFailure;
     return json({ requirementId, deletedAt: result.requirement.deletedAt ?? nowIso, deletedBy: identity.feishuUserId, replayed: result.outcome === "replayed" });
   }
   const restoreMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/restore$/);
@@ -1606,15 +1645,10 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
       : jsonError("FORBIDDEN", "无法解析你的飞书身份，暂不能还原需求。");
     const nowIso = (dependencies.now ?? (() => new Date()))().toISOString();
     let result: import("../application/repositories.js").RequirementLifecycleOutcome;
-    try { result = await repositories.requirements.restoreDeleted({ requirementId, deleterFeishuUserId: identity.feishuUserId! }); }
+    try { result = await repositories.requirements.restoreDeleted({ requirementId, deleterFeishuUserId: identity.feishuUserId!, audit: { id: randomUUID(), actorId: auth.actor.id, occurredAt: nowIso } }); }
     catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
     if (result.outcome === "not_found") return jsonError("NOT_FOUND");
     if (result.outcome === "forbidden") return jsonError("FORBIDDEN", "只有删除人本人可以还原这条需求。");
-    if (result.outcome === "restored") {
-      const pool = await requirementPoolOf(repositories, result.requirement);
-      const auditFailure = await appendAudit(repositories, { id: randomUUID(), actorId: auth.actor.id, eventType: "requirement.restored", entityType: "requirement", entityId: requirementId, result: "succeeded", safeDetails: { sourceVersion: result.requirement.sourceVersion, pool }, occurredAt: nowIso });
-      if (auditFailure) return auditFailure;
-    }
     return json({ requirementId, deletedAt: null, deletedBy: null, replayed: result.outcome === "not_deleted" });
   }
   const itemRetryMatch = url.pathname.match(/^\/api\/items\/([^/]+)\/retry$/);
@@ -1668,6 +1702,8 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     if (!repositories?.requirements || !repositories.jobs || !repositories.audit) return jsonError("DEPENDENCY_UNAVAILABLE");
     const analysisRequirementId = pathUuid(analysisRetryMatch[1]!, dependencies); if (!analysisRequirementId) return jsonError("NOT_FOUND");
     const req = await repositories.requirements.get(analysisRequirementId); if (!req) return jsonError("NOT_FOUND");
+    // 0034 M14：已删除需求只读；重新分析也是写（会改分析版本、推 Base）。
+    if (req.deletedAt) return jsonError("REQUIREMENT_DELETED", "该需求已删除，请先在回收站还原后再操作。");
     const latestAnalysis = await repositories.analyses?.latest(req.id) ?? null;
     const priorAnalysisVersion = latestAnalysis?.analysisVersion ?? 0;
     let retryAllowed = ["pending", "failed_retryable", "analyzed"].includes(req.pipeline.analysis);

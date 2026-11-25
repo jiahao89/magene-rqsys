@@ -969,8 +969,17 @@ test("logical delete scopes my-requirements, survives a later upsert and restore
     assert.equal(mine.product, 1);
     assert.equal((await ctx.repos.requirements.mineCounts!("feishu-other")).product, 0);
 
-    assert.equal((await ctx.repos.requirements.markDeleted!({ requirementId: created.id, ownerFeishuUserId: "feishu-other", at: "2026-10-08T00:00:30Z" })).outcome, "forbidden");
-    assert.equal((await ctx.repos.requirements.markDeleted!({ requirementId: created.id, ownerFeishuUserId: "feishu-owner", at: "2026-10-08T00:01:00Z" })).outcome, "deleted");
+    const lifecycleAudit = async () => (await ctx.repos.audit.search({ entityId: created.id, limit: 20 })).filter((e) => e.eventType.startsWith("requirement."));
+    // M7：审计与状态变更同一事务；有人无权限时不写审计。
+    assert.equal((await ctx.repos.requirements.markDeleted!({ requirementId: created.id, ownerFeishuUserId: "feishu-other", at: "2026-10-08T00:00:30Z", audit: { id: "audit-lifecycle-forbidden", actorId: "actor-1", occurredAt: "2026-10-08T00:00:30Z" } })).outcome, "forbidden");
+    assert.equal((await lifecycleAudit()).length, 0);
+    assert.equal((await ctx.repos.requirements.markDeleted!({ requirementId: created.id, ownerFeishuUserId: "feishu-owner", at: "2026-10-08T00:01:00Z", audit: { id: "audit-lifecycle-delete", actorId: "actor-1", occurredAt: "2026-10-08T00:01:00Z" } })).outcome, "deleted");
+    const afterDelete = await lifecycleAudit();
+    assert.deepEqual(afterDelete.map((e) => e.eventType), ["requirement.deleted"]);
+    assert.deepEqual(afterDelete[0]!.safeDetails, { sourceVersion: 1, pool: "product" });
+    // M8：重放不追加审计。
+    assert.equal((await ctx.repos.requirements.markDeleted!({ requirementId: created.id, ownerFeishuUserId: "feishu-owner", at: "2026-10-08T00:02:00Z", audit: { id: "audit-lifecycle-replay", actorId: "actor-1", occurredAt: "2026-10-08T00:02:00Z" } })).outcome, "replayed");
+    assert.equal((await lifecycleAudit()).length, 1);
     assert.equal((await ctx.repos.requirements.mineCounts!("feishu-owner")).product, 0);
     assert.equal((await ctx.repos.requirements.search({ limit: 10 })).items.length, 0, "默认列表排除已删除");
     assert.equal((await ctx.repos.requirements.search({ deleted: true, deletedBy: "feishu-owner", limit: 10 })).items.length, 1);
@@ -982,8 +991,12 @@ test("logical delete scopes my-requirements, survives a later upsert and restore
     assert.equal(row?.title, "Requirement");
     assert.ok(row?.deletedAt && row?.deletedBy === "feishu-owner");
 
-    assert.equal((await ctx.repos.requirements.restoreDeleted!({ requirementId: created.id, deleterFeishuUserId: "feishu-other" })).outcome, "forbidden");
-    assert.equal((await ctx.repos.requirements.restoreDeleted!({ requirementId: created.id, deleterFeishuUserId: "feishu-owner" })).outcome, "restored");
+    assert.equal((await ctx.repos.requirements.restoreDeleted!({ requirementId: created.id, deleterFeishuUserId: "feishu-other", audit: { id: "audit-lifecycle-restore-forbidden", actorId: "actor-1", occurredAt: "2026-10-08T00:03:00Z" } })).outcome, "forbidden");
+    assert.equal((await ctx.repos.requirements.restoreDeleted!({ requirementId: created.id, deleterFeishuUserId: "feishu-owner", audit: { id: "audit-lifecycle-restore", actorId: "actor-1", occurredAt: "2026-10-08T00:04:00Z" } })).outcome, "restored");
+    assert.deepEqual((await lifecycleAudit()).map((e) => e.eventType).sort(), ["requirement.deleted", "requirement.restored"]);
+    // 本来就没删的还原同样不写审计。
+    assert.equal((await ctx.repos.requirements.restoreDeleted!({ requirementId: created.id, deleterFeishuUserId: "feishu-owner", audit: { id: "audit-lifecycle-restore-replay", actorId: "actor-1", occurredAt: "2026-10-08T00:05:00Z" } })).outcome, "not_deleted");
+    assert.equal((await lifecycleAudit()).length, 2);
     assert.equal((await ctx.repos.requirements.mineCounts!("feishu-owner")).product, 1);
   } finally { await cleanup(ctx); }
 });

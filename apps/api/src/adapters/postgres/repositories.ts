@@ -81,6 +81,12 @@ const priorityRule=(r:any):PriorityRuleVersionRecord=>({id:r.id,version:r.versio
 async function appendAuditInTransaction(client:PoolClient,event:AuditEventInput,entityId:string){
 	await client.query("INSERT INTO audit_events(id,actor_id,event_type,entity_type,entity_id,result,safe_details,occurred_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)",[event.id,event.actorId,event.eventType,event.entityType,entityId,event.result,redactSafeDetails(event.safeDetails),event.occurredAt]);
 }
+// 0034/M7：审计 safeDetails 的 pool 与 HTTP 层同口径（无来源=产品池）。
+async function sourcePoolInTransaction(client:PoolClient,sourceConfigId:string|null):Promise<"product"|"group">{
+	if(!sourceConfigId)return "product";
+	const{rows}=await client.query("SELECT pool FROM source_configs WHERE id=$1",[sourceConfigId]);
+	return rows[0]?.pool==="group"?"group":"product";
+}
 export class ActiveBatchConflict extends Error{constructor(){super("An active batch already exists for this source");this.name="ActiveBatchConflict";}}
 export class PostgresSourceConfigRepository implements SourceConfigRepository{
   constructor(private readonly pool:Pool){}
@@ -461,26 +467,47 @@ async mineCounts(ownerFeishuUserId:string){
   const product=Number(rows[0]?.product??0),group=Number(rows[0]?.group_pool??0);
   return{product,group,total:product+group,suppressed:Number(rows[0]?.suppressed??0)};
 }
-// 0034：逻辑删除（只允许当前有效负责人）；已删除同人重放返回 replayed。
-async markDeleted(p:{requirementId:string;ownerFeishuUserId:string;at:string}){
+// 0034/M7：删除与审计必须在同一事务；审计写失败整体回滚，不留半套状态。
+// M8：重放（同一个人重复删除/还原本来就没删）不产生新审计。
+async markDeleted(p:{requirementId:string;ownerFeishuUserId:string;at:string;audit?:{id:string;actorId:string;occurredAt:string}}){
   const owner=`CASE WHEN r.manual_owner_feishu_user_id IS NOT NULL THEN (r.manual_owner_feishu_user_id=$3 AND r.manual_owner_feishu_id_type='user_id') ELSE (EXISTS (SELECT 1 FROM person_mappings pmx WHERE pmx.source_config_id=r.source_config_id AND pmx.teambition_user_id=r.executor_user_id AND pmx.active AND pmx.feishu_user_id=$3 AND pmx.feishu_id_type='user_id') AND (SELECT count(DISTINCT pmo.feishu_user_id||'|'||pmo.feishu_id_type) FROM person_mappings pmo WHERE pmo.source_config_id=r.source_config_id AND pmo.teambition_user_id=r.executor_user_id AND pmo.active)=1) END`;
-  const{rows}=await this.pool.query(`UPDATE requirements r SET deleted_at=$2,deleted_by=$3,updated_at=now() WHERE r.id=$1 AND r.deleted_at IS NULL AND (${owner}) RETURNING r.*`,[p.requirementId,p.at,p.ownerFeishuUserId]);
-  if(rows[0])return{outcome:"deleted" as const,requirement:requirement(rows[0])};
-  const{rows:existing}=await this.pool.query("SELECT * FROM requirements WHERE id=$1",[p.requirementId]);
-  if(!existing[0])return{outcome:"not_found" as const};
-  if(existing[0].deleted_at!==null&&existing[0].deleted_at!==undefined){
-    return String(existing[0].deleted_by)===p.ownerFeishuUserId?{outcome:"replayed" as const,requirement:requirement(existing[0])}:{outcome:"forbidden" as const};
-  }
-  return{outcome:"forbidden" as const};
+  const c=await this.pool.connect();
+  try{
+    await c.query("BEGIN");
+    const{rows}=await c.query(`UPDATE requirements r SET deleted_at=$2,deleted_by=$3,updated_at=now() WHERE r.id=$1 AND r.deleted_at IS NULL AND (${owner}) RETURNING r.*`,[p.requirementId,p.at,p.ownerFeishuUserId]);
+    if(rows[0]){
+      const rec=requirement(rows[0]);
+      if(p.audit)await appendAuditInTransaction(c,{...p.audit,eventType:"requirement.deleted",entityType:"requirement",result:"succeeded",safeDetails:{sourceVersion:rec.sourceVersion,pool:await sourcePoolInTransaction(c,rec.sourceConfigId)}},p.requirementId);
+      await c.query("COMMIT");
+      return{outcome:"deleted" as const,requirement:rec};
+    }
+    const{rows:existing}=await c.query("SELECT * FROM requirements WHERE id=$1",[p.requirementId]);
+    await c.query("COMMIT");
+    if(!existing[0])return{outcome:"not_found" as const};
+    if(existing[0].deleted_at!==null&&existing[0].deleted_at!==undefined){
+      return String(existing[0].deleted_by)===p.ownerFeishuUserId?{outcome:"replayed" as const,requirement:requirement(existing[0])}:{outcome:"forbidden" as const};
+    }
+    return{outcome:"forbidden" as const};
+  }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}
 }
-// 0034：还原（只有删除人能还原）。
-async restoreDeleted(p:{requirementId:string;deleterFeishuUserId:string}){
-  const{rows}=await this.pool.query("UPDATE requirements SET deleted_at=NULL,deleted_by=NULL,updated_at=now() WHERE id=$1 AND deleted_at IS NOT NULL AND deleted_by=$2 RETURNING *",[p.requirementId,p.deleterFeishuUserId]);
-  if(rows[0])return{outcome:"restored" as const,requirement:requirement(rows[0])};
-  const{rows:existing}=await this.pool.query("SELECT * FROM requirements WHERE id=$1",[p.requirementId]);
-  if(!existing[0])return{outcome:"not_found" as const};
-  if(existing[0].deleted_at===null||existing[0].deleted_at===undefined)return{outcome:"not_deleted" as const,requirement:requirement(existing[0])};
-  return{outcome:"forbidden" as const};
+// 0034：还原（只有删除人能还原）；事务与审计口径同 markDeleted。
+async restoreDeleted(p:{requirementId:string;deleterFeishuUserId:string;audit?:{id:string;actorId:string;occurredAt:string}}){
+  const c=await this.pool.connect();
+  try{
+    await c.query("BEGIN");
+    const{rows}=await c.query("UPDATE requirements SET deleted_at=NULL,deleted_by=NULL,updated_at=now() WHERE id=$1 AND deleted_at IS NOT NULL AND deleted_by=$2 RETURNING *",[p.requirementId,p.deleterFeishuUserId]);
+    if(rows[0]){
+      const rec=requirement(rows[0]);
+      if(p.audit)await appendAuditInTransaction(c,{...p.audit,eventType:"requirement.restored",entityType:"requirement",result:"succeeded",safeDetails:{sourceVersion:rec.sourceVersion,pool:await sourcePoolInTransaction(c,rec.sourceConfigId)}},p.requirementId);
+      await c.query("COMMIT");
+      return{outcome:"restored" as const,requirement:rec};
+    }
+    const{rows:existing}=await c.query("SELECT * FROM requirements WHERE id=$1",[p.requirementId]);
+    await c.query("COMMIT");
+    if(!existing[0])return{outcome:"not_found" as const};
+    if(existing[0].deleted_at===null||existing[0].deleted_at===undefined)return{outcome:"not_deleted" as const,requirement:requirement(existing[0])};
+    return{outcome:"forbidden" as const};
+  }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}
 }
 async sourceCounts(pool?:SourcePool){const{rows}=await this.pool.query("SELECT COUNT(*) FILTER (WHERE r.source_type='teambition')::int AS teambition, COUNT(*) FILTER (WHERE r.source_type='web_manual' AND COALESCE(r.source_payload->>'intakeOrigin','')<>'chat_paste')::int AS web_manual, COUNT(*) FILTER (WHERE r.source_type='base_form')::int AS base_form, COUNT(*) FILTER (WHERE r.source_type='web_manual' AND r.source_payload->>'intakeOrigin'='chat_paste')::int AS chat_paste, COUNT(*)::int AS total FROM requirements r LEFT JOIN source_configs sc ON sc.id=r.source_config_id WHERE r.processing_state='active' AND r.deleted_at IS NULL AND (($1::text='product' AND (r.source_config_id IS NULL OR sc.pool='product')) OR ($1::text='group' AND sc.pool='group'))",[pool??"product"]);const row=rows[0]??{};return{teambition:Number(row.teambition??0),web_manual:Number(row.web_manual??0),base_form:Number(row.base_form??0),chat_paste:Number(row.chat_paste??0),all:Number(row.total??0)};}
 async updateAnalysisState(requirementId:string,to:AnalysisState){
