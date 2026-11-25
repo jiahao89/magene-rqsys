@@ -24,6 +24,9 @@ export const AuditActionSchema = z.enum([
   "owner.manually_mapped",
   // 0033：评估修复层触发（只记修复类型与版本，不含模型输出内容）
   "assessment.output_repaired",
+  // 0034：我的需求/回收站的逻辑删除与还原
+  "requirement.deleted",
+  "requirement.restored",
 ]);
 
 // result 与 DDL CHECK (result IN ('succeeded', 'failed', 'denied')) 对齐；

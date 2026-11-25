@@ -191,5 +191,5 @@ test("requirements API forwards exact TB-owner filtering to the server repositor
   const f = fixture();
   const response = await handleApiRequest(new Request("http://localhost/api/requirements?executorName=%E6%AF%95%E6%A2%93%E6%B5%A9"), f.dependencies);
   assert.equal(response.status, 200);
-  assert.deepEqual(f.getRequirementQuery(), { executorName: "毕梓浩", pool: "product", limit: 25 });
+  assert.deepEqual(f.getRequirementQuery(), { executorName: "毕梓浩", pool: "product", limit: 25, deleted: false });
 });

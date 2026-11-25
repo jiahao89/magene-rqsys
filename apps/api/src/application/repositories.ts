@@ -447,6 +447,12 @@ export interface RequirementSearchCursor {
 
 import type { RequirementResolutionRecord } from "../domain/requirement-resolution.js";
 
+// 0034：需求逻辑删除/还原的仓储结果；not_deleted 表示还原时本来就没删（幂等提示用）。
+export type RequirementLifecycleOutcome =
+  | { outcome: "deleted" | "replayed" | "restored" | "not_deleted"; requirement: RequirementRecord }
+  | { outcome: "not_found" }
+  | { outcome: "forbidden" };
+
 export interface RequirementQueryRepository {
   // 重复/忽略决策（决策表与需求行生命周期解耦；确认后压制处理链路）。
   getResolution?(requirementId: string): Promise<RequirementResolutionRecord | null>;
@@ -577,6 +583,12 @@ export interface RequirementQueryRepository {
     priority?: PriorityLevel;
     /** 5c-1 来源筛选：chat_paste 由 web_manual + source_payload.intakeOrigin 判定。 */
     source?: "teambition" | "web_manual" | "base_form" | "chat_paste";
+    /** 0034：我的需求范围；匹配人工负责人，或 TB 执行人经活跃人员映射指向该飞书 user_id。 */
+    ownerFeishuUserId?: string;
+    /** 0034：true=只看回收站；缺省 false=只看未删除（所有列表/导出/调度查询默认排除已删除）。 */
+    deleted?: boolean;
+    /** 回收站只看某个删除人的记录（本期=本人）。 */
+    deletedBy?: string;
     /** 池作用域：缺省 product（集团池数据不进入产品池视图）。 */
     pool?: SourcePool;
     /** created_desc（默认，游标分页）/ priority_asc（分诊视图，单页最多 100 条，不分页）。 */
@@ -590,13 +602,20 @@ export interface RequirementQueryRepository {
   /** 5c-2：来源 Tab 计数。范围与列表默认一致（processing_state='active'），四种来源互斥。 */
   sourceCounts?(pool?: SourcePool): Promise<{ teambition: number; web_manual: number; base_form: number; chat_paste: number; all: number }>;
   get(id: string): Promise<RequirementRecord | null>;
-  // 同步幂等查找：返回流水线推进所需的最小字段
+  // 0034：我的需求计数（含已压制、不含已删除），按池拆分；owner 口径=人工负责人或唯一活跃的 TB 执行人映射。
+  mineCounts?(ownerFeishuUserId: string): Promise<{ product: number; group: number; total: number; suppressed: number }>;
+  // 0034：逻辑删除（只允许当前有效负责人）；ownerFeishuUserId 是经平台身份转换后的飞书 user_id。
+  markDeleted?(input: { requirementId: string; ownerFeishuUserId: string; at: string }): Promise<RequirementLifecycleOutcome>;
+  // 0034：还原（只有删除人能还原）；deleterFeishuUserId 同上，deleted_by 存飞书 user_id。
+  restoreDeleted?(input: { requirementId: string; deleterFeishuUserId: string }): Promise<RequirementLifecycleOutcome>;
+  // 同步幂等查找：返回流水线推进所需的最小字段；deleted 用于在 upsert 前整条跳过已删除需求。
   findForSync(sourceConfigId: string, teambitionRequirementId: string): Promise<{
     id: string;
     sourceVersion: number;
     sourceHash: string;
     substantiveHash: string;
     analysisState: AnalysisState;
+    deleted: boolean;
   } | null>;
   // 5b：收集表行按 Base record_id 查已建需求；同一行重复读取只建一次。
   findBaseFormRequirement?(sourceExternalId: string): Promise<{ id: string; platformRequirementId: string } | null>;

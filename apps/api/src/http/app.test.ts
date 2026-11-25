@@ -476,7 +476,7 @@ test("batch and requirement list routes pass time, batch and stable cursor filte
  assert.deepEqual(batchQuery, { limit: 25, pool: "product", since: "2026-01-01T00:00:00Z", until: "2026-01-02T00:00:00Z", cursor: batchCursor });
  const requirementResponse = await handleApiRequest(new Request(`http://localhost/api/requirements?batchId=${batch.id}&pullState=synced&since=2026-01-01T00%3A00%3A00Z&until=2026-01-02T00%3A00%3A00Z`), d);
  assert.equal(requirementResponse.status, 200);
- assert.deepEqual(requirementQuery, { batchId: batch.id, pool: "product", pullState: "synced", since: "2026-01-01T00:00:00Z", until: "2026-01-02T00:00:00Z", limit: 25 });
+ assert.deepEqual(requirementQuery, { batchId: batch.id, pool: "product", pullState: "synced", since: "2026-01-01T00:00:00Z", until: "2026-01-02T00:00:00Z", limit: 25, deleted: false });
 });
 test("requirement list and export forward the source filter to repositories", async () => {
  const d = makeDependencies(); const queries: unknown[] = [];
@@ -485,10 +485,10 @@ test("requirement list and export forward the source filter to repositories", as
  assert.equal(listResponse.status, 200);
  const exportResponse = await handleApiRequest(new Request("http://localhost/api/requirements/export?source=web_manual"), d);
  assert.equal(exportResponse.status, 200);
- assert.deepEqual(queries, [{ source: "chat_paste", pool: "product", limit: 25 }, { source: "web_manual", pool: "product", limit: 5001 }]);
+ assert.deepEqual(queries, [{ source: "chat_paste", pool: "product", limit: 25, deleted: false }, { source: "web_manual", pool: "product", limit: 5001 }]);
  const invalid = await handleApiRequest(new Request("http://localhost/api/requirements?source=base_form"), d);
  assert.equal(invalid.status, 200);
- assert.deepEqual(queries[2], { source: "base_form", pool: "product", limit: 25 });
+ assert.deepEqual(queries[2], { source: "base_form", pool: "product", limit: 25, deleted: false });
  const rejected = await handleApiRequest(new Request("http://localhost/api/requirements?source=unknown"), d);
  assert.equal(rejected.status, 400);
 });
@@ -1491,4 +1491,104 @@ test("重新分析已分析过的需求缺省强制重跑，显式 force:false �
   assert.equal(light.status, 202);
   assert.equal(queued[1]?.dedupeKey, `analysis:${requirement.id}:sv1:after2`);
   assert.equal((queued[1]?.payload as Record<string, unknown>).force, undefined);
+});
+
+// 0034：「我的需求」/回收站：平台身份先换成飞书 user_id，再按负责人口径过滤。
+test("0034 mine list and counts resolve the platform actor to a Feishu user_id", async () => {
+  const d = makeDependencies();
+  const searches: unknown[] = [];
+  d.feishuUserSelections = { resolve: async (platformUserId: string) => platformUserId === "actor-1" ? { feishuUserId: "feishu-1", feishuIdType: "user_id", name: "我" } : null };
+  d.repositories!.requirements!.search = async (query) => { searches.push(query); return { items: [], nextCursor: null }; };
+  (d.repositories!.requirements as unknown as { mineCounts: (owner: string) => Promise<unknown> }).mineCounts = async (owner: string) => {
+    assert.equal(owner, "feishu-1");
+    return { product: 3, group: 2, total: 5, suppressed: 1 };
+  };
+
+  const mine = await handleApiRequest(new Request("http://localhost/api/requirements/mine?pool=group"), d);
+  assert.equal(mine.status, 200);
+  assert.deepEqual(await mine.json(), { items: [], nextCursor: null, identityResolved: true });
+  assert.deepEqual(searches[0], { pool: "group", ownerFeishuUserId: "feishu-1", deleted: false, limit: 25 });
+
+  const counts = await handleApiRequest(new Request("http://localhost/api/requirements/mine/counts"), d);
+  assert.equal(counts.status, 200);
+  assert.deepEqual(await counts.json(), { identityResolved: true, product: 3, group: 2, total: 5, suppressed: 1 });
+
+  // 未解析到飞书身份：返回可解释的空态，而不是把平台 id 当飞书 id 去比。
+  const anonymous = makeDependencies();
+  anonymous.repositories!.requirements!.search = async () => { throw new Error("search must not run without identity"); };
+  const empty = await handleApiRequest(new Request("http://localhost/api/requirements/mine"), anonymous);
+  assert.equal(empty.status, 200);
+  assert.deepEqual(await empty.json(), { items: [], nextCursor: null, identityResolved: false });
+});
+
+test("0034 delete and restore go through the Feishu identity and map lifecycle outcomes", async () => {
+  const d = makeDependencies();
+  const calls: unknown[] = [];
+  const nowIso = "2026-10-08T00:00:00.000Z";
+  d.feishuUserSelections = { resolve: async () => ({ feishuUserId: "feishu-1", feishuIdType: "user_id", name: "我" }) };
+  (d.repositories!.requirements as unknown as { markDeleted: (input: unknown) => Promise<unknown> }).markDeleted = async (input) => { calls.push(input); return { outcome: "deleted", requirement: { ...requirement, deletedAt: nowIso, deletedBy: "feishu-1" } }; };
+  (d.repositories!.requirements as unknown as { restoreDeleted: (input: unknown) => Promise<unknown> }).restoreDeleted = async (input) => { calls.push(input); return { outcome: "restored", requirement: { ...requirement, deletedAt: null, deletedBy: null } }; };
+
+  const deleted = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`, { method: "DELETE" }), d);
+  assert.equal(deleted.status, 200);
+  assert.deepEqual(await deleted.json(), { requirementId: requirement.id, deletedAt: nowIso, deletedBy: "feishu-1", replayed: false });
+  assert.deepEqual(calls[0], { requirementId: requirement.id, ownerFeishuUserId: "feishu-1", at: nowIso });
+
+  const restored = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/restore`, { method: "POST" }), d);
+  assert.equal(restored.status, 200);
+  assert.deepEqual(await restored.json(), { requirementId: requirement.id, deletedAt: null, deletedBy: null, replayed: false });
+  assert.deepEqual(calls[1], { requirementId: requirement.id, deleterFeishuUserId: "feishu-1" });
+
+  // 不是当前负责人 → 403；身份无法解析 → 403/503（不拿平台 id 猜归属）。
+  const forbidden = makeDependencies();
+  forbidden.feishuUserSelections = { resolve: async () => ({ feishuUserId: "feishu-1", feishuIdType: "user_id", name: "我" }) };
+  (forbidden.repositories!.requirements as unknown as { markDeleted: () => Promise<unknown> }).markDeleted = async () => ({ outcome: "forbidden" });
+  assert.equal((await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`, { method: "DELETE" }), forbidden)).status, 403);
+
+  const unresolved = makeDependencies();
+  unresolved.feishuUserSelections = { resolve: async () => null };
+  (unresolved.repositories!.requirements as unknown as { markDeleted: () => Promise<unknown> }).markDeleted = async () => ({ outcome: "deleted", requirement });
+  assert.equal((await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`, { method: "DELETE" }), unresolved)).status, 403);
+
+  const noService = makeDependencies();
+  (noService.repositories!.requirements as unknown as { markDeleted: () => Promise<unknown> }).markDeleted = async () => ({ outcome: "deleted", requirement });
+  assert.equal((await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`, { method: "DELETE" }), noService)).status, 503);
+});
+
+test("0034 a deleted requirement's detail only reveals deletedBy to the deleter", async () => {
+  const deletedRecord = { ...requirement, deletedAt: "2026-10-08T00:00:00.000Z", deletedBy: "feishu-1" } as unknown as RequirementRecord;
+  const mine = makeDependencies();
+  mine.repositories!.requirements!.get = async (id: string) => id === requirement.id ? deletedRecord : null;
+  mine.feishuUserSelections = { resolve: async () => ({ feishuUserId: "feishu-1", feishuIdType: "user_id", name: "我" }) };
+  const self = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`), mine);
+  assert.equal(self.status, 200);
+  assert.equal((await self.json() as { deletedBy: string | null }).deletedBy, "feishu-1");
+
+  const other = makeDependencies();
+  other.repositories!.requirements!.get = async (id: string) => id === requirement.id ? deletedRecord : null;
+  other.feishuUserSelections = { resolve: async () => ({ feishuUserId: "feishu-2", feishuIdType: "user_id", name: "别人" }) };
+  const stranger = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`), other);
+  assert.equal(stranger.status, 200);
+  assert.equal((await stranger.json() as { deletedBy: string | null }).deletedBy, null);
+});
+
+test("0034 recycle bin and mine alias resolve identity before filtering by Feishu user_id", async () => {
+  const d = makeDependencies();
+  const searches: unknown[] = [];
+  d.feishuUserSelections = { resolve: async () => ({ feishuUserId: "feishu-1", feishuIdType: "user_id", name: "我" }) };
+  d.repositories!.requirements!.search = async (query) => { searches.push(query); return { items: [], nextCursor: null }; };
+  const bin = await handleApiRequest(new Request("http://localhost/api/requirements?deleted=true"), d);
+  assert.equal(bin.status, 200);
+  assert.deepEqual(await bin.json(), { items: [], nextCursor: null, identityResolved: true });
+  assert.deepEqual(searches[0], { pool: "product", limit: 25, deleted: true, deletedBy: "feishu-1" });
+
+  const mine = await handleApiRequest(new Request("http://localhost/api/requirements?mine=true"), d);
+  assert.equal(mine.status, 200);
+  assert.deepEqual(searches[1], { pool: "product", limit: 25, deleted: false, ownerFeishuUserId: "feishu-1" });
+
+  // 身份解析不可用：回收站返回空页并标记，不拿平台 id 猜。
+  const anonymous = makeDependencies();
+  anonymous.repositories!.requirements!.search = async () => { throw new Error("search must not run"); };
+  const empty = await handleApiRequest(new Request("http://localhost/api/requirements?deleted=true"), anonymous);
+  assert.deepEqual(await empty.json(), { items: [], nextCursor: null, identityResolved: false });
 });

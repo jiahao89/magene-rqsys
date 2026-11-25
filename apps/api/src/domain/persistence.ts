@@ -172,6 +172,12 @@ export interface RequirementRecord {
   duplicateOfRequirementId?: string | null;
   /** 重复/忽略决策派生出的处理状态；缺省视为 active（决策表为空时行为与旧版一致）。 */
   processingState?: "active" | "suppressed_duplicate" | "suppressed_ignored";
+  /**
+   * 0034：逻辑删除时间/删除人；null/缺省=未删除。
+   * 独立于 processing_state（那个由重复决策触发器重算）；同步 upsert 不写这两列，删除不会被复活。
+   */
+  deletedAt?: string | null;
+  deletedBy?: string | null;
   /** V02-T26：人工优先级覆盖；缺省/为空表示未覆盖（effectivePriority 回退到当前评分版本 priority）。 */
   priorityOverride?: RequirementPriorityOverride | null;
   /** 列表查询投影：当前评分版本（requirements.current_score_version_id）的 priority；非持久化字段。 */

@@ -195,6 +195,8 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
       for (const touched of input.touched) {
         const current = await deps.repositories.requirements.get(touched.id);
         if (!current) continue;
+        // 0034：已逻辑删除的需求不再入队分析（同步仍会在 upsert 前跳过，这里是第二道闸）。
+        if (current.deletedAt) continue;
         if (touched.analysisRequired) {
           if (paused) continue;
           if (cap > 0 && queued >= cap) continue;
@@ -218,6 +220,8 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
       if (!requirement) throw new Error("Analysis requirement was not found");
       // 重复/忽略已确认：不进入 AI 分析（作业可能早于决策入队，这里再拦一次）。
       if ((requirement.processingState ?? "active") !== "active") return;
+      // 0034：已逻辑删除的需求不再分析。
+      if (requirement.deletedAt) return;
       const expectedSubstantiveHash = job.payload.substantiveHash;
       if (typeof expectedSubstantiveHash === "string" && expectedSubstantiveHash !== requirement.substantiveHash) return;
       // 手工来源没有 TB 来源配置：不依赖它加载（V02-T04 起花名册改由团队目录提供）。
@@ -351,6 +355,8 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
       if (!requirement) throw new Error("Base push requirement was not found");
       // 重复/忽略已确认：不推送 Base、不生成通知。
       if ((requirement.processingState ?? "active") !== "active") return;
+      // 0034：已逻辑删除的需求不再推送 Base、不生成通知。
+      if (requirement.deletedAt) return;
       // TB 行推送使用来源项目 ID 作为 Base 项目字段；手工行无来源配置，
       // 平台键切换前的过渡空值由 V02-T03 以需求平台 ID 替代。
       const source = requirement.sourceConfigId ? await deps.repositories.sources.get(requirement.sourceConfigId) : null;

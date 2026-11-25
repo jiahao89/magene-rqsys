@@ -26,6 +26,8 @@ export function createAnalysisAdvancer(deps: AdvanceDeps) {
     const req = await deps.requirements.get(requirementId);
     if (!req || !isIntakeComplete(req.pipeline.pull)) return "not_eligible";
     if ((req.processingState ?? "active") !== "active") return "not_eligible";
+    // 0034：已逻辑删除的需求不再推进分析/推送。
+    if (req.deletedAt) return "not_eligible";
     if (req.pipeline.push === "running" || (req.pipeline.push === "pushed" && analysisStatus !== "analyzed")) return "not_eligible";
 
     const hasTbOwner = Boolean(req.executorUserId || req.executorName);
@@ -75,6 +77,8 @@ export function createSourceMetadataAdvancer(deps: AdvanceDeps, options: { now?:
     const req = await deps.requirements.get(requirementId);
     if (!req || !isIntakeComplete(req.pipeline.pull)) return "not_eligible";
     if ((req.processingState ?? "active") !== "active") return "not_eligible";
+    // 0034：已逻辑删除的需求不再推进分析/推送。
+    if (req.deletedAt) return "not_eligible";
 
     let ownerState = req.pipeline.owner;
     const ownerLookup = req.executorUserId

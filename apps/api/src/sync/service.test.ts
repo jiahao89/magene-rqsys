@@ -170,13 +170,13 @@ test("does not expose unmapped provider custom fields in normalized payload", as
 test("source-only metadata updates remain recoverable by a later full sync", async () => {
   const writes: boolean[] = [];
   let current = task("one", "Stable requirement", { executor_id: "owner-a", taskflow_status_id: "open" });
-  let previous: { id: string; sourceVersion: number; sourceHash: string; substantiveHash: string; analysisState: AnalysisState } | null = null;
+  let previous: { id: string; sourceVersion: number; sourceHash: string; substantiveHash: string; analysisState: AnalysisState; deleted: boolean } | null = null;
   const source: SyncSourceReader = { async listRequirements() { return { items: [current], hasMore: false, nextCursor: null }; } };
   const persistence: SyncPersistence = {
     async findRequirement() { return previous; },
     async upsertRequirement(input) {
       writes.push(input.analysisRequired);
-      previous = { id: "db-one", sourceVersion: input.sourceVersion, sourceHash: input.sourceHash, substantiveHash: input.substantiveHash, analysisState: input.analysisRequired ? "pending" : "analyzed" };
+      previous = { id: "db-one", sourceVersion: input.sourceVersion, sourceHash: input.sourceHash, substantiveHash: input.substantiveHash, analysisState: input.analysisRequired ? "pending" : "analyzed", deleted: false };
       return { id: "db-one", created: input.sourceVersion === 1 };
     },
     async appendSourceSnapshot() {},
@@ -297,4 +297,21 @@ test("executor names from the member directory reach the upsert without changing
   assert.equal(seen[0]?.sourceExecutorName, "贾浩");
   // 姓名是展示/筛选字段，不进入 source_payload —— 否则全量同步会让 500+ 条需求无意义升版并重推 Base。
   assert.equal(JSON.stringify(seen[0]?.sourcePayload).includes("贾浩"), false);
+});
+
+test("0034：已逻辑删除的需求在同步时整条跳过，不 upsert、不写快照", async () => {
+  const calls: string[] = [];
+  const source: SyncSourceReader = { async listRequirements() { return { items: [task("deleted-1", "Deleted")], hasMore: false, nextCursor: null }; } };
+  const persistence: SyncPersistence = {
+    async findRequirement() { return { id: "db-deleted", sourceVersion: 3, sourceHash: "old-hash", substantiveHash: "old-sub", analysisState: "analyzed", deleted: true }; },
+    async upsertRequirement() { calls.push("upsert"); return { id: "db-deleted", created: false }; },
+    async appendSourceSnapshot() { calls.push("snapshot"); },
+    async writeSyncItem(input) { calls.push(`item:${input.action}:${input.status}`); },
+    async completeBatch() {},
+    async listTitleCandidates() { return []; },
+    async setDuplicateOf() {},
+  };
+  const orchestrator = new SyncOrchestrator(source, persistence, { now: () => new Date("2026-10-08T00:00:00.000Z"), id: () => "batch-1" });
+  await orchestrator.run({ batchId: "batch-1", sourceConfigId: config.id, config });
+  assert.deepEqual(calls, ["item:unchanged:succeeded"]);
 });

@@ -8,7 +8,7 @@ import type { AnalysisState, BatchState } from "../domain/workflow.js";
 export interface SourcePage { items: TeambitionTaskRecord[]; hasMore: boolean; nextCursor: string | null; }
 export interface SyncSourceReader { listRequirements(config: SourceProjectConfig, cursor?: string | null): Promise<SourcePage>; }
 export interface SyncPersistence {
-  findRequirement(sourceConfigId: string, sourceRequirementId: string): Promise<{id:string;sourceVersion:number;sourceHash:string;substantiveHash:string;analysisState:AnalysisState}|null>;
+  findRequirement(sourceConfigId: string, sourceRequirementId: string): Promise<{id:string;sourceVersion:number;sourceHash:string;substantiveHash:string;analysisState:AnalysisState;deleted:boolean}|null>;
   upsertRequirement(input: NormalizedTeambitionRequirement & { sourceHash: string; substantiveHash: string; sourceVersion: number; latestBatchId: string; analysisRequired: boolean; snapshot: { payload: Record<string, unknown>; isSubstantiveChange: boolean; capturedAt: string } }): Promise<{id:string;created:boolean}>;
   appendSourceSnapshot(input:{requirementId:string;sourceVersion:number;sourceHash:string;substantiveHash:string;payload:Record<string,unknown>;isSubstantiveChange:boolean;capturedAt:string}):Promise<void>;
   writeSyncItem(input:{batchId:string;requirementId:string|null;teambitionRequirementId:string;action:"created"|"updated"|"unchanged";status:"succeeded"|"failed";errorCode:string|null;errorDetail:string|null;startedAt:string;completedAt:string}):Promise<void>;
@@ -157,10 +157,11 @@ export class SyncOrchestrator {
       let requirementId:string|null=null;let action:"created"|"updated"|"unchanged"="created";let status:"succeeded"|"failed"="succeeded";let errorCode:string|null=null,errorDetail:string|null=null;let failureCode="source_item_invalid";
       try{
         const normalized=normalizeTeambitionTask(input.config.projectId,record,input.config.fieldMap,executorNames);const payload=persistedPayload(normalized);const hash=sourcePayloadHash(payload);const sub = substantiveHash(substantivePayload(normalized) as { title:string; description:string|null; scope:string|null; acceptanceCriteria:string|null; attachmentRefs:readonly string[] });failureCode="source_item_read_failed";const previous=await this.persistence.findRequirement(input.sourceConfigId,normalized.sourceRequirementId);const version=previous?previous.sourceVersion+(previous.sourceHash===hash?0:1):1;const changed=previous!==null&&previous.sourceHash!==hash;const substantive=isSubstantiveChange(previous?.substantiveHash??null,sub);
-        const analysisRequired=!previous||substantive||previous.analysisState==="pending";
+        const deleted=previous?.deleted===true;const analysisRequired=!previous||substantive||previous.analysisState==="pending";
         // Source-only leaves all downstream states untouched. A later full run
         // must re-touch even unchanged source rows so pending owner/push work can resume.
-        if(previous&&previous.sourceHash===hash&&!analysisRequired&&input.mode==="source_only"){requirementId=previous.id;action="unchanged";}
+        // 0034：已逻辑删除的需求整条跳过——不 upsert、不写源快照、不重置分析/推送（防同步复活）。
+        if(deleted){requirementId=previous!.id;action="unchanged";}else if(previous&&previous.sourceHash===hash&&!analysisRequired&&input.mode==="source_only"){requirementId=previous.id;action="unchanged";}
         else {const capturedAt=clock().toISOString();failureCode="source_item_write_failed";const upserted=await this.persistence.upsertRequirement({...normalized,sourceHash:hash,substantiveHash:sub,sourceVersion:version,latestBatchId:input.batchId,analysisRequired,snapshot:{payload,isSubstantiveChange:substantive,capturedAt}});requirementId=upserted.id;action=previous?(changed?"updated":"unchanged"):"created";if(!previous||changed){failureCode="source_snapshot_failed";await this.persistence.appendSourceSnapshot({requirementId,sourceVersion:version,sourceHash:hash,substantiveHash:sub,payload,isSubstantiveChange:substantive,capturedAt});}}
       }catch{status="failed";errorCode=failureCode;errorDetail=failureCode==="source_snapshot_failed"?"Requirement updated, but its source snapshot could not be saved":"Requirement could not be synchronized";}
       const completedAt=clock().toISOString();

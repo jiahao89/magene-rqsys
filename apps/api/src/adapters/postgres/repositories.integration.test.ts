@@ -958,3 +958,32 @@ test("assessment failure detail round-trips and is cleared by a later success (0
     assert.equal(succeeded[0]!.errorDetail, null, "成功版本不残留上一版的失败子类型");
   } finally { await cleanup(ctx); }
 });
+test("logical delete scopes my-requirements, survives a later upsert and restores only for the deleter (0034)", async () => {
+  const ctx = await setup();
+  try {
+    const source = await ctx.repos.sources.create(config);
+    const batch = await ctx.repos.batches.create({ sourceConfigId: source.id, triggerType: "manual", actorId: null, idempotencyKey: "lifecycle-batch-0001", startedAt: "2026-10-08T00:00:00Z" });
+    const created = await ctx.repos.requirements.upsertRequirement(source.id, "task-lifecycle", requirementWrite(source.id, batch.id, { teambitionRequirementId: "task-lifecycle", executorUserId: "tb-owner" }));
+    await ctx.repos.requirements.assignManualOwner(created.id, { feishuUserId: "feishu-owner", feishuIdType: "user_id", name: "Owner", assignedBy: "actor-1", assignedAt: "2026-10-08T00:00:00Z" });
+    const mine = await ctx.repos.requirements.mineCounts!("feishu-owner");
+    assert.equal(mine.product, 1);
+    assert.equal((await ctx.repos.requirements.mineCounts!("feishu-other")).product, 0);
+
+    assert.equal((await ctx.repos.requirements.markDeleted!({ requirementId: created.id, ownerFeishuUserId: "feishu-other", at: "2026-10-08T00:00:30Z" })).outcome, "forbidden");
+    assert.equal((await ctx.repos.requirements.markDeleted!({ requirementId: created.id, ownerFeishuUserId: "feishu-owner", at: "2026-10-08T00:01:00Z" })).outcome, "deleted");
+    assert.equal((await ctx.repos.requirements.mineCounts!("feishu-owner")).product, 0);
+    assert.equal((await ctx.repos.requirements.search({ limit: 10 })).items.length, 0, "默认列表排除已删除");
+    assert.equal((await ctx.repos.requirements.search({ deleted: true, deletedBy: "feishu-owner", limit: 10 })).items.length, 1);
+
+    // 同步 upsert 整条跳过：不升版、不改源字段、不清删除标记。
+    const again = await ctx.repos.requirements.upsertRequirement(source.id, "task-lifecycle", requirementWrite(source.id, batch.id, { teambitionRequirementId: "task-lifecycle", title: "Changed", sourceHash: "c".repeat(64) }));
+    assert.equal(again.sourceVersion, 1);
+    const row = await ctx.repos.requirements.get(created.id);
+    assert.equal(row?.title, "Requirement");
+    assert.ok(row?.deletedAt && row?.deletedBy === "feishu-owner");
+
+    assert.equal((await ctx.repos.requirements.restoreDeleted!({ requirementId: created.id, deleterFeishuUserId: "feishu-other" })).outcome, "forbidden");
+    assert.equal((await ctx.repos.requirements.restoreDeleted!({ requirementId: created.id, deleterFeishuUserId: "feishu-owner" })).outcome, "restored");
+    assert.equal((await ctx.repos.requirements.mineCounts!("feishu-owner")).product, 1);
+  } finally { await cleanup(ctx); }
+});

@@ -46,6 +46,10 @@ export const RequirementListQuerySchema = z.object({
   processingState: z.enum(["active", "suppressed"]).optional(),
   // 优先级分诊视图（2026-11-06）：按生效优先级筛选；sort=priority_asc 时按 P0→P3 排序且不分页。
   priority: z.enum(["P0", "P1", "P2", "P3"]).optional(),
+  // 0034：回收站视图（默认 false 排除已删除；true 时只返回本人删除的记录）。
+  deleted: z.enum(["true", "false"]).transform((value) => value === "true").optional(),
+  // 0034：「我的需求」别名（等价于 /api/requirements/mine，便于列表组件复用）。
+  mine: z.enum(["true", "false"]).transform((value) => value === "true").optional(),
   // 5c-1 来源筛选：chat_paste = source_type='web_manual' 且 source_payload.intakeOrigin='chat_paste'；
   // base_form 为 5b 预留（当前无数据，筛选结果为空是正确行为）。
   source: z.enum(["teambition", "web_manual", "base_form", "chat_paste"]).optional(),
