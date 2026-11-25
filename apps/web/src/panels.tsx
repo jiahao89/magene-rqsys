@@ -160,15 +160,23 @@ function ConnectionSelfCheck({ existing, draft, pool = "product" }: { existing?:
     { label: "周计划配置", ok: scheduleHealth.active, detail: scheduleHealth.active ? scheduleLabel(schedule) : scheduleHealth.reason ?? "未配置" },
     { label: "同步开关", ok: Boolean(existing?.enabled), detail: existing?.enabled ? "允许手动同步" : "未启用，手动同步会被拒绝" },
   ];
-  return <div className="self-check" role="group" aria-label={isGroup ? "集团池连接自检" : "连接自检"}>
-    <div className="self-check-head"><strong>连接自检</strong><span>只反映已保存配置；服务端凭据与外部连通性不在此处断言</span></div>
-    <ul className="self-check-list">{checks.map((check) => <li key={check.label}>
-      <span className={`self-check-dot ${check.ok ? "ok" : "pending"}`} />
-      <span className="self-check-label">{check.label}</span>
-      <span className="self-check-detail">{check.detail}</span>
-    </li>)}</ul>
-    <p className="self-check-note">服务端凭据（Teambition 网关、AI 服务、飞书 Base）保存在服务端环境，不写入浏览器也不回显；其有效性以实际同步批次与推送结果为准。</p>
-  </div>;
+  const okCount = checks.filter((check) => check.ok).length;
+  // 折叠成一行摘要：摘要区已有项目名/周计划/开关，明细按需展开，避免整页像调试面板。
+  return <details className="self-check">
+    <summary className="self-check-summary">
+      <strong>连接自检</strong>
+      <span className="self-check-score">{okCount}/{checks.length} 项已就绪</span>
+      <span className="self-check-hint">只反映已保存配置</span>
+    </summary>
+    <div className="self-check-body" role="group" aria-label={isGroup ? "集团池连接自检" : "连接自检"}>
+      <ul className="self-check-list">{checks.map((check) => <li key={check.label}>
+        <span className={`self-check-dot ${check.ok ? "ok" : "pending"}`} />
+        <span className="self-check-label">{check.label}</span>
+        <span className="self-check-detail">{check.detail}</span>
+      </li>)}</ul>
+      <p className="self-check-note">服务端凭据（Teambition 网关、AI 服务、飞书 Base）保存在服务端环境，不写入浏览器也不回显；其有效性以实际同步批次与推送结果为准。</p>
+    </div>
+  </details>;
 }
 
 function defaultSourceUpdate(pool: RequirementPool): SourceConfigUpdate {
@@ -230,7 +238,7 @@ export function SourcesPanel({ sources, loadState, onRefresh }: { sources: Sourc
   const product = sources.find((item) => (item.pool ?? "product") === "product");
   const group = sources.find((item) => item.pool === "group");
   return <div className="sources-page">
-    <ArcoGrid.Row gutter={[16, 16]} align="stretch">
+    <ArcoGrid.Row gutter={[16, 16]} align="start">
       <ArcoGrid.Col xs={24} xl={12}><SourceConfigCard pool="product" existing={product} loadState={loadState} onRefresh={onRefresh} /></ArcoGrid.Col>
       <ArcoGrid.Col xs={24} xl={12}><SourceConfigCard pool="group" existing={group} loadState={loadState} onRefresh={onRefresh} /></ArcoGrid.Col>
     </ArcoGrid.Row>
@@ -336,7 +344,7 @@ function SourceConfigCard({ pool, existing, loadState, onRefresh }: { pool: Requ
       {/* 摘要即表单：每个字段只出现一次，卡片标题上的 Tag 表示已保存状态，勾选框表示保存后的状态。 */}
       <ArcoDescriptions column={1} size="small" className="source-summary" labelStyle={{ width: 132 }} data={[
         { label: "项目名称", value: <ArcoInput aria-label={`${prefix}项目名称`} value={draft.projectName} onChange={(value: string) => set("projectName", value)} /> },
-        { label: "同步状态", value: <ArcoSpace size={8} wrap>
+        { label: "同步开关", value: <ArcoSpace size={8} wrap>
           <ArcoCheckbox checked={draft.enabled} disabled={emptyAllowlist} onChange={(checked: boolean) => set("enabled", checked)}>{isGroup ? "启用集团池同步" : "启用同步"}</ArcoCheckbox>
           <span className="subtle-text">保存后启用</span>
         </ArcoSpace> },
@@ -467,9 +475,9 @@ function BaseLinksPanel() {
       window.setTimeout(() => setCopied((current) => (current === key ? null : current)), 2000);
     } catch { setCopyError("复制失败，请手动选中链接复制。"); }
   };
-  const rows: Array<{ key: string; label: string; url: string | null }> = [
-    { key: "product", label: "需求池 Base", url: links?.product?.url?.trim() || null },
-    { key: "group", label: "集团需求池 Base", url: links?.group?.url?.trim() || null },
+  const rows: Array<{ key: string; label: string; copyLabel: string; url: string | null }> = [
+    { key: "product", label: "需求池 Base", copyLabel: "复制需求池 Base 地址", url: links?.product?.url?.trim() || null },
+    { key: "group", label: "集团需求池 Base", copyLabel: "复制集团需求池 Base 地址", url: links?.group?.url?.trim() || null },
   ];
   return <ArcoCard className="base-links-card" title={<ArcoTypography.Title heading={5} style={{ margin: 0 }}>飞书 Base 地址</ArcoTypography.Title>}>
     <ArcoTypography.Paragraph type="secondary">这两个 Base 承载需求推送与飞书消息通知，仅在应用内展示，不可编辑。</ArcoTypography.Paragraph>
@@ -479,7 +487,7 @@ function BaseLinksPanel() {
         {row.url
           ? <>
               <a className="base-link-url" href={row.url} target="_blank" rel="noreferrer">{row.url}</a>
-              <ArcoButton size="small" htmlType="button" aria-label={`复制${row.label} 链接`} onClick={() => void copy(row.key, row.url as string)}>{copied === row.key ? "已复制" : "复制"}</ArcoButton>
+              <ArcoButton size="small" htmlType="button" aria-label={row.copyLabel} onClick={() => void copy(row.key, row.url as string)}>{copied === row.key ? "已复制" : "复制"}</ArcoButton>
             </>
           : <span className="subtle-text">{links === null ? "读取中…" : unavailable ? "暂不可用" : "未配置"}</span>}
       </div>)}

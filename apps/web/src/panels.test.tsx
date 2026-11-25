@@ -256,8 +256,15 @@ describe("SourcesPanel (ticket 16)", () => {
 
   it("shows a configuration self-check that never claims to have validated credentials", async () => {
     render(<SourcesPanel sources={[source]} loadState="ready" onRefresh={() => undefined} />);
-    const selfCheck = screen.getByRole("group", { name: "连接自检" });
+    // 自检默认折叠成一行摘要，展开后才显示逐项明细。
+    const details = document.querySelector(".self-check") as HTMLDetailsElement;
+    expect(details).toBeTruthy();
+    expect(details.open).toBe(false);
+    expect(within(details).getByText(/项已就绪/)).toBeInTheDocument();
+    fireEvent.click(within(details).getByText("连接自检"));
+    expect(details.open).toBe(true);
 
+    const selfCheck = screen.getByRole("group", { name: "连接自检" });
     expect(within(selfCheck).getByText("Teambition 项目名称")).toBeInTheDocument();
     expect(within(selfCheck).getByText("周计划配置")).toBeInTheDocument();
     expect(within(selfCheck).getByText("同步开关")).toBeInTheDocument();
@@ -269,6 +276,8 @@ describe("SourcesPanel (ticket 16)", () => {
   it("summarises the saved schedule instead of the unsaved draft", () => {
     const scheduled = { ...source, enabled: true, schedule: { enabled: true, weekday: 1, time: "09:00", timezone: "Asia/Shanghai" } };
     render(<SourcesPanel sources={[scheduled]} loadState="ready" onRefresh={() => undefined} />);
+    const details = document.querySelector(".self-check") as HTMLDetailsElement;
+    fireEvent.click(within(details).getByText("连接自检"));
     const selfCheck = screen.getByRole("group", { name: "连接自检" });
 
     // 自检读取已保存配置：应显示计划摘要，而不是「周计划未启用」。
@@ -398,11 +407,14 @@ describe("SourcesPanel (ticket 16)", () => {
     expect(productLink).toHaveAttribute("href", productBase);
     expect(productLink).toHaveAttribute("target", "_blank");
     expect(screen.getByRole("link", { name: groupBase })).toHaveAttribute("href", groupBase);
-    // ≥1200px 两列（Arco xl=12），窄屏由 xs=24 回落单列。
+    // ≥1200px 两列（Arco xl=12），窄屏由 xs=24 回落单列；align="start" 避免两卡被强制等高。
     expect(document.querySelectorAll(".arco-col-xs-24.arco-col-xl-12")).toHaveLength(2);
-    fireEvent.click(screen.getByRole("button", { name: "复制需求池 Base 链接" }));
+    expect(document.querySelector(".sources-page .arco-row-align-start")).toBeTruthy();
+    expect(document.querySelector(".sources-page .arco-row-align-stretch")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "复制需求池 Base 地址" }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(productBase));
-    expect(await screen.findByRole("button", { name: "复制需求池 Base 链接" })).toHaveTextContent("已复制");
+    expect(await screen.findByRole("button", { name: "复制需求池 Base 地址" })).toHaveTextContent("已复制");
+    expect(screen.getByRole("button", { name: "复制集团需求池 Base 地址" })).toBeInTheDocument();
   });
 
   it("marks an unconfigured Base link without leaking record ids or env names", async () => {

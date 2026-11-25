@@ -342,11 +342,16 @@ html[data-theme="dark"] .field-error { color: var(--rq-danger); }
 .scheduler-next strong { color: var(--rq-foreground); font-size: var(--rq-font-body-lg); font-weight: 650; }
 .scheduler-countdown { display: inline-flex; align-items: center; gap: 5px; color: var(--rq-link); font-size: var(--rq-font-caption); }
 
-/* 连接自检：仅展示配置完整性，不显示凭据值，也不断言凭据有效。 */
-.self-check { margin: 0 14px 14px; padding: 12px 13px; border: 1px solid var(--rq-border); border-radius: var(--rq-radius-md); background: var(--rq-surface-subtle); }
-.self-check-head { display: flex; flex-direction: column; gap: 3px; margin-bottom: 9px; }
-.self-check-head strong { font-size: var(--rq-font-caption); font-weight: 650; }
-.self-check-head span { color: var(--rq-text-soft); font-size: var(--rq-font-caption); }
+/* 连接自检：折叠为一行摘要，展开才显示明细；不显示凭据值，也不断言凭据有效。 */
+.self-check { margin: 0 14px 14px; border: 1px solid var(--rq-border); border-radius: var(--rq-radius-md); background: var(--rq-surface-subtle); }
+.self-check-summary { display: flex; align-items: center; gap: 8px; padding: 9px 13px; color: var(--rq-text-soft); font-size: var(--rq-font-caption); cursor: pointer; list-style: none; }
+.self-check-summary::-webkit-details-marker { display: none; }
+.self-check-summary::before { content: "▸"; flex: none; color: var(--rq-text-faint); transition: transform .15s ease; }
+.self-check[open] .self-check-summary::before { transform: rotate(90deg); }
+.self-check-summary strong { color: var(--rq-text-strong); font-size: var(--rq-font-caption); font-weight: 650; }
+.self-check-score { color: var(--rq-text-soft); }
+.self-check-hint { margin-left: auto; color: var(--rq-text-faint); }
+.self-check-body { display: flex; flex-direction: column; gap: 9px; padding: 0 13px 12px; }
 .self-check-list { display: flex; flex-direction: column; gap: 7px; margin: 0; padding: 0; list-style: none; }
 .self-check-list li { display: flex; align-items: center; gap: 8px; font-size: var(--rq-font-caption); }
 .self-check-dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--rq-dot-idle); }
@@ -354,7 +359,7 @@ html[data-theme="dark"] .field-error { color: var(--rq-danger); }
 .self-check-dot.pending { background: var(--rq-warning); }
 .self-check-label { min-width: 116px; color: var(--rq-text-strong); }
 .self-check-detail { color: var(--rq-text-soft); }
-.self-check-note { margin: 10px 0 0; color: var(--rq-text-faint); font-size: var(--rq-font-caption); line-height: 1.6; }
+.self-check-note { margin: 0; color: var(--rq-text-faint); font-size: var(--rq-font-caption); line-height: 1.6; }
 
 /* Base 记录引用：只暴露 record ID，凭据不下发浏览器。 */
 .base-ref { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; padding: 9px 11px; border: 1px solid var(--rq-border); border-radius: var(--rq-radius-md); background: var(--rq-surface-subtle); }
