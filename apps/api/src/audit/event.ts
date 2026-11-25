@@ -22,6 +22,8 @@ export const AuditActionSchema = z.enum([
   "source.created",
   "source.config_updated",
   "owner.manually_mapped",
+  // 0033：评估修复层触发（只记修复类型与版本，不含模型输出内容）
+  "assessment.output_repaired",
 ]);
 
 // result 与 DDL CHECK (result IN ('succeeded', 'failed', 'denied')) 对齐；
@@ -131,6 +133,9 @@ const ALLOWED_DETAIL_KEYS: readonly string[] = [
   "phase",
   "kind",
   "apiCode",
+  // 0033：评估修复层触发记录（修复类型与模型名，不含模型输出内容）
+  "repairs",
+  "model",
 ];
 
 // 判断 safeDetails 键是否命中禁止模式。

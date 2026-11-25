@@ -112,7 +112,7 @@ const groupBaseFields = parseBaseFields(process.env.GROUP_BASE_FIELDS_JSON, { po
 // PRD-26：聊天抽取器进程内只建一次（限流器按它缓存）；未配置 AI_API_KEY 时调用会返回明确的不可用提示。
 const chatIntake = { extractor: createChatIntakeExtractor() };
 // 0030：按需需求评估；仓储在时注入，未配置 AI key 时 runner 会在调用时返回配置错误。
-const assessments = repositories?.assessments ? createAssessmentRunner({ assessments: repositories.assessments }) : undefined;
+const assessments = repositories?.assessments ? createAssessmentRunner({ assessments: repositories.assessments, audit: repositories.audit }) : undefined;
 const prdPrompt = repositories?.prdPrompts ? { runner: createPrdPromptRunner({ prdPrompts: repositories.prdPrompts }) } : undefined;
 const feishuUserDirectory = process.env.FEISHU_USER_ACCESS_TOKEN
   ? new FeishuUserDirectoryClient({ userAccessToken: async () => process.env.FEISHU_USER_ACCESS_TOKEN ?? "" })

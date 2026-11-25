@@ -3,12 +3,14 @@
 // 在 claim 时先转 failed/timeout 再放行（GET 侧由路由的 expireStaleRunning 兜底）。
 // 失败版本保留 error_code 供追溯；模型调用只带脱敏后的需求与补充内容，不写 Base、不改需求本体。
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
 import { maskPii } from "../analysis/contract.js";
 import { AiProviderError, assertAiBaseUrlConfigured, getAiProviderConfig, parseModelJson, type AiProviderConfig, type FetchLike } from "../analysis/provider.js";
-import type { RequirementAssessmentRepository } from "../application/repositories.js";
+import type { AuditEventRepository, RequirementAssessmentRepository } from "../application/repositories.js";
 import type { AnalysisRunRecord, RequirementAssessmentRecord, RequirementRecord } from "../domain/persistence.js";
 import type { RequirementAssessmentInput } from "../contracts/pipeline.js";
 import { ASSESSMENT_PROMPT_VERSION, buildAssessmentMessages } from "./prompt.js";
+import { repairAssessmentOutput } from "./repair.js";
 
 const ENDPOINT = "/chat/completions";
 
@@ -29,6 +31,21 @@ export class AssessmentContractError extends AiProviderError {
   constructor(public readonly fields: string[]) {
     super("analysis_failure", `AI provider returned an invalid assessment contract (${fields.join(", ") || "root"}).`);
     this.name = "AssessmentContractError";
+  }
+  /** 落库的失败子类型：`contract:<字段路径>`，便于线上直接定位是哪一版契约坏了。 */
+  get detail(): string {
+    return `contract:${this.fields.join(",") || "root"}`;
+  }
+}
+
+/**
+ * 其它输出类失败（空内容、供应商返回的不是标准响应包、非 JSON）：
+ * 都归 analysis_failure，但用 detail 记录子类型，避免线上只剩一个笼统错误码。
+ */
+export class AssessmentOutputError extends AiProviderError {
+  constructor(public readonly detail: string, message: string) {
+    super("analysis_failure", message);
+    this.name = "AssessmentOutputError";
   }
 }
 
@@ -88,6 +105,8 @@ function providerError(status: number): AiProviderError {
 
 export function createAssessmentRunner(options: {
   assessments: RequirementAssessmentRepository;
+  /** 修复层触发时写审计，保证「修过」这件事可观测、不是静默兜底；缺省不写。 */
+  audit?: Pick<AuditEventRepository, "append">;
   config?: Partial<AiProviderConfig>;
   fetch?: FetchLike;
   now?: () => Date;
@@ -162,25 +181,63 @@ export function createAssessmentRunner(options: {
           clearTimeout(timer);
         }
         if (!response.ok) throw providerError(response.status);
-        const content = EnvelopeSchema.parse(await response.json()).choices[0]?.message.content;
-        if (!content?.trim()) throw new AiProviderError("analysis_failure", "AI provider returned empty content.");
-        let raw: unknown;
+        // 供应商返回的非标准响应包单独归类：此前和真正的模型输出失败共用一个笼统错误。
+        let envelope: z.infer<typeof EnvelopeSchema>;
         try {
-          raw = parseModelJson(content);
+          envelope = EnvelopeSchema.parse(await response.json());
         } catch {
-          throw new AiProviderError("analysis_failure", "AI provider returned non-JSON content.");
+          throw new AssessmentOutputError("envelope", "AI provider returned an invalid response.");
         }
-        const parsed = AssessmentOutputSchema.safeParse(raw);
-        if (!parsed.success) throw new AssessmentContractError(contractFieldPaths(parsed.error));
+        const content = envelope.choices[0]?.message.content;
+        if (!content?.trim()) throw new AssessmentOutputError("empty_content", "AI provider returned empty content.");
+        // 0033：deepseek-flash 偶发尾随逗号/提前闭合/中文键名；只做确定性修复，且必须通过完整契约。
+        const repaired = repairAssessmentOutput(content, {
+          parse: parseModelJson,
+          validate: (value) => {
+            const parsed = AssessmentOutputSchema.safeParse(value);
+            return parsed.success
+              ? { ok: true, value: parsed.data }
+              : { ok: false, fields: contractFieldPaths(parsed.error) };
+          },
+        });
+        if (!repaired.ok) {
+          if (repaired.kind === "non_json") throw new AssessmentOutputError("non_json", "AI provider returned non-JSON content.");
+          throw new AssessmentContractError(repaired.fields ?? []);
+        }
         // 落库前归一化假设前缀，保证历史版本都满足契约；其余字段保持模型输出。
-        const output = { ...parsed.data, assumptions: parsed.data.assumptions.map(normalizeAssumption) };
+        const parsedOutput = repaired.output as z.infer<typeof AssessmentOutputSchema>;
+        const output = { ...parsedOutput, assumptions: parsedOutput.assumptions.map(normalizeAssumption) };
         const completed = await options.assessments.complete(record.id, output as Record<string, unknown>, now().toISOString());
         // 版本在本次调用期间被判超时（已被标 failed）：不把迟到结果写回成功。
         if (!completed) throw new AiProviderError("timeout", "Assessment version is no longer running.");
+        // 修复层触发要留痕：只记修复类型与版本，不含模型输出内容；审计失败不影响评估结果。
+        const repairs = repaired.repairs ?? [];
+        if (repairs.length > 0) {
+          try {
+            await options.audit?.append({
+              id: randomUUID(),
+              actorId,
+              eventType: "assessment.output_repaired",
+              entityType: "requirement",
+              entityId: requirement.id,
+              result: "succeeded",
+              safeDetails: { version: record.version, promptVersion: ASSESSMENT_PROMPT_VERSION, repairs: repairs.join(","), model: config.model },
+              occurredAt: now().toISOString(),
+            });
+          } catch { /* 审计是旁路，不能改变评估结果 */ }
+        }
         return completed;
       } catch (error) {
         const code = error instanceof AiProviderError ? error.code : "analysis_failure";
-        await options.assessments.fail(record.id, code, now().toISOString()).catch(() => null);
+        // 失败子类型：契约失败带字段路径；输出类失败带分类；其它异常标 unexpected，便于线上定位。
+        const detail = error instanceof AssessmentContractError
+          ? error.detail
+          : error instanceof AssessmentOutputError
+            ? error.detail
+            : error instanceof AiProviderError
+              ? null
+              : "unexpected";
+        await options.assessments.fail(record.id, code, now().toISOString(), detail).catch(() => null);
         throw error instanceof AiProviderError ? error : new AiProviderError("analysis_failure", "AI assessment failed.");
       }
     },

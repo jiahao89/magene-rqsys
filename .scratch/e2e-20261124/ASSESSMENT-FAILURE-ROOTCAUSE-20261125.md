@@ -78,3 +78,13 @@
 - `.scratch/repro-assessment.mts`（18 次调用，真实 service）
 - `.scratch/repro-repair.mts`（3 个坏样本的修复验证）
 - 两个都是未跟踪的临时脚本，不提交；结论以本文件为准。
+
+## 实施结果（2026-11-25，P0）
+
+- **修复层**：新增 `apps/api/src/assessment/repair.ts`（两仓镜像）——字符串外尾随逗号、提前闭合根对象合并、契约键名白名单（`feasibility` 的 technical/cost/dependency/risk，顶层同义键，scope in/out）；每个候选都必须通过完整 Zod 契约才接受，只改语法与键名、不改内容；修不好按 `non_json` / `contract:<字段路径>` 分类。
+- **失败可观测**：迁移 `0033_requirement_assessment_error_detail.sql` 给 `requirement_assessments` 加 `error_detail`；`fail()` 带 detail，DTO / openapi 增加 `errorDetail`。类型：`non_json` / `empty_content` / `envelope` / `contract:<fields>` / `unexpected`。
+- **修复留痕**：修复成功写审计 `assessment.output_repaired`，`safeDetails` 只含 `version / promptVersion / repairs / model`（`repairs` 已加入审计白名单；不含模型输出、不含正文）。
+- **提示词**：评估 user 消息追加输出硬约束（逐字英文键名、禁止尾随逗号），skill 正文不改（保持同源断言）。
+- **PII**：`sanitizeChatDraft` 的 proposer 拒绝掩码占位（`（姓名已掩码）`/`***`/`某某`）、纯角色词、`姓名（客服）` 这类转述标注；prompt 补「提出人被掩码时返回 null」。
+- **测试**：修复层 6 条单测（三种坏法 + 修不好分类 + 键名不覆盖）；service 新增 4 条（尾随逗号修复并写审计、中文键名修复、提前闭合并回、失败子类型落库）；chat-extract 新增 1 条（客服转述/掩码/角色词）；审计白名单与 schema 各 1 条；PG 集成 1 条（error_detail 落库并在成功版本清空，CI 真库）。
+- **门禁**：root typecheck / build / alignment 35/35 / migrations / arco-styles 通过；API **766 用例、696 通过、70 失败全是 ENOENT**（新增 13 条，其中 PG 1 条交 CI）；妙搭 typecheck + route **139/139**。

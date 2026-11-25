@@ -1992,7 +1992,7 @@ components:
         completedAt: { type: [string, 'null'], format: date-time }
     RequirementAssessment:
       type: object
-      required: [id, requirementId, version, status, promptVersion, model, inputs, output, errorCode, createdAt, completedAt]
+      required: [id, requirementId, version, status, promptVersion, model, inputs, output, errorCode, errorDetail, createdAt, completedAt]
       properties:
         id: { type: string, format: uuid }
         requirementId: { type: string, format: uuid }
@@ -2009,6 +2009,11 @@ components:
             verdict(advance|hold|investigate), verdictReason, confidence(high|medium|low),
             assumptions[], openQuestions[], investigationPrompt.
         errorCode: { type: [string, 'null'] }
+        errorDetail:
+          type: [string, 'null']
+          description: >-
+            Failure subtype (0033): non_json / empty_content / envelope / contract:<field paths> /
+            unexpected. Classification only — never contains model output or request content.
         createdAt: { type: string, format: date-time }
         completedAt: { type: [string, 'null'], format: date-time }
     Requirement:

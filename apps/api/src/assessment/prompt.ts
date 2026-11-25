@@ -88,6 +88,8 @@ export function buildAssessmentMessages(input: AssessmentPromptInput): { system:
       supplements || "（三项均未提供）",
       "",
       "请按系统提示中的 skill 规则评估，只输出一个 JSON 对象。",
+      // 0033：deepseek-flash 偶发把键名翻成中文、写尾随逗号；在用户消息里补硬约束（skill 正文不改）。
+      "输出硬约束：键名必须逐字使用系统提示 §6 的英文字段名——background / goal / scope / value / feasibility / verdict / verdictReason / confidence / assumptions / openQuestions / investigationPrompt，其中 scope 内为 in / out，feasibility 内为 technical / cost / dependency / risk；禁止翻译或改写键名；禁止尾随逗号、注释和 JSON 以外的任何文字。",
     ].join("\n"),
   };
 }

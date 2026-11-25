@@ -162,7 +162,8 @@ export interface RequirementAssessmentRepository {
     staleAfterMs: number;
   }): Promise<RequirementAssessmentCreateResult>;
   complete(id: string, output: Record<string, unknown>, at: string): Promise<RequirementAssessmentRecord | null>;
-  fail(id: string, errorCode: string, at: string): Promise<RequirementAssessmentRecord | null>;
+  /** detail：失败子类型（non_json / contract:<fields> / empty_content / envelope / unexpected），可为空。 */
+  fail(id: string, errorCode: string, at: string, detail?: string | null): Promise<RequirementAssessmentRecord | null>;
   list(requirementId: string): Promise<RequirementAssessmentRecord[]>;
   /** GET 兜底：把开始时间早于 before 的 running 版本标为 failed/timeout，返回处理条数。 */
   expireStaleRunning(requirementId: string, before: string, at: string): Promise<number>;

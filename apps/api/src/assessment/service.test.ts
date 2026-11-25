@@ -3,7 +3,7 @@ import test from "node:test";
 import { AiProviderError } from "../analysis/provider.js";
 import { ASSESSMENT_PROMPT_VERSION } from "./prompt.js";
 import { AssessmentContractError, createAssessmentRunner } from "./service.js";
-import type { RequirementAssessmentRecord, RequirementRecord } from "../domain/persistence.js";
+import type { AuditEventRecord, RequirementAssessmentRecord, RequirementRecord } from "../domain/persistence.js";
 
 const requirement = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -43,6 +43,7 @@ function assessment(overrides: Partial<RequirementAssessmentRecord> = {}): Requi
     inputs: {},
     output: null,
     errorCode: null,
+    errorDetail: null,
     createdBy: "actor-1",
     createdAt: "2026-11-20T00:00:00.000Z",
     completedAt: null,
@@ -51,7 +52,8 @@ function assessment(overrides: Partial<RequirementAssessmentRecord> = {}): Requi
 }
 
 function harness(respond: () => Response) {
-  const calls: { created: unknown[]; completed: unknown[]; failed: string[] } = { created: [], completed: [], failed: [] };
+  const calls: { created: unknown[]; completed: unknown[]; failed: string[]; failedDetails: (string | null)[] } = { created: [], completed: [], failed: [], failedDetails: [] };
+  const audits: AuditEventRecord[] = [];
   let current = assessment();
   const assessments: import("../application/repositories.js").RequirementAssessmentRepository = {
     async create(input: unknown) {
@@ -64,9 +66,10 @@ function harness(respond: () => Response) {
       current = assessment({ status: "succeeded", output: result, completedAt: at });
       return current;
     },
-    async fail(_id: string, code: string, at: string) {
+    async fail(_id: string, code: string, at: string, detail?: string | null) {
       calls.failed.push(code);
-      current = assessment({ status: "failed", errorCode: code, completedAt: at });
+      calls.failedDetails.push(detail ?? null);
+      current = assessment({ status: "failed", errorCode: code, errorDetail: detail ?? null, completedAt: at });
       return current;
     },
     async list() { return [current]; },
@@ -75,11 +78,12 @@ function harness(respond: () => Response) {
   const bodies: Record<string, unknown>[] = [];
   const runner = createAssessmentRunner({
     assessments,
+    audit: { append: async (event) => { audits.push(event); } },
     config: { apiKey: "sk-test", baseUrl: "https://ai.example", model: "m", timeoutMs: 1_000, temperature: 0, promptVersion: "p" },
     fetch: async (_input, init) => { bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>); return respond(); },
     now: () => new Date("2026-11-20T00:00:10.000Z"),
   });
-  return { runner, calls, bodies, assessments };
+  return { runner, calls, bodies, assessments, audits };
 }
 
 function envelope(content: unknown): Response {
@@ -220,4 +224,57 @@ test("评估路径把花名册姓名并入掩码，名单不再为空", async ()
   await legacy.runner.run({ requirement, inputs: { background: "刘媛媛反馈冬天掉电快" }, actorId: "actor-1" });
   const legacyUser = (legacy.bodies[0]!.messages as { role: string; content: string }[]).find((message) => message.role === "user")!.content;
   assert.equal(legacyUser.includes("刘媛媛"), true);
+});
+
+// 0033：模型偶发坏 JSON 的确定性修复与失败子类型落库。
+test("评估输出带尾随逗号时由修复层救回，并写修复审计", async () => {
+  const withTrailingComma = JSON.stringify(output).replace(/}$/, ",}");
+  const h = harness(() => envelope(withTrailingComma));
+  const result = await h.runner.run({ requirement, inputs: {}, actorId: "actor-1" });
+  assert.equal(result.status, "succeeded");
+  const completed = h.calls.completed[0] as Record<string, unknown>;
+  assert.deepEqual(completed, { ...output, assumptions: ["假设：电量百分比在当前平台可读"] });
+  assert.equal(h.audits.length, 1);
+  assert.equal(h.audits[0]!.eventType, "assessment.output_repaired");
+  assert.equal(h.audits[0]!.entityId, requirement.id);
+  assert.deepEqual(h.audits[0]!.safeDetails, { version: 1, promptVersion: ASSESSMENT_PROMPT_VERSION, repairs: "trailing_comma", model: "m" });
+  assert.deepEqual(h.calls.failed, []);
+});
+
+test("评估输出把 feasibility 键写成中文时按白名单改回英文键", async () => {
+  const localized = JSON.stringify({ ...output, feasibility: { 技术: "可读电量", 成本: "低", 依赖: "无", 风险: "低温估算偏差" } });
+  const h = harness(() => envelope(localized));
+  const result = await h.runner.run({ requirement, inputs: {}, actorId: "actor-1" });
+  assert.equal(result.status, "succeeded");
+  const completed = h.calls.completed[0] as { feasibility: Record<string, unknown> };
+  assert.deepEqual(Object.keys(completed.feasibility).sort(), ["cost", "dependency", "risk", "technical"]);
+  assert.equal(h.audits[0]!.safeDetails.repairs, "keys");
+  assert.deepEqual(h.calls.failed, []);
+});
+
+test("评估输出提前闭合根对象后继续输出键，合并后按成功落库", async () => {
+  const text = JSON.stringify(output);
+  const splitAt = text.indexOf(',"openQuestions"');
+  assert.ok(splitAt > 0);
+  const malformed = `${text.slice(0, splitAt)}}${text.slice(splitAt)}`;
+  const h = harness(() => envelope(malformed));
+  const result = await h.runner.run({ requirement, inputs: {}, actorId: "actor-1" });
+  assert.equal(result.status, "succeeded");
+  assert.equal(h.audits[0]!.safeDetails.repairs, "early_close");
+});
+
+test("修复层救不回来时落 failed，并把失败子类型写进 error_detail", async () => {
+  const notJson = harness(() => envelope("这不是 JSON"));
+  await assert.rejects(() => notJson.runner.run({ requirement, inputs: {}, actorId: "actor-1" }), (error: unknown) => error instanceof AiProviderError && error.code === "analysis_failure");
+  assert.deepEqual(notJson.calls.failed, ["analysis_failure"]);
+  assert.deepEqual(notJson.calls.failedDetails, ["non_json"]);
+  assert.deepEqual(notJson.audits, []);
+
+  const contract = harness(() => envelope({ ...output, feasibility: { ...output.feasibility, cost: "" } }));
+  await assert.rejects(() => contract.runner.run({ requirement, inputs: {}, actorId: "actor-1" }), (error: unknown) => error instanceof AssessmentContractError);
+  assert.deepEqual(contract.calls.failedDetails, ["contract:feasibility.cost"]);
+
+  const envelopeShape = harness(() => Response.json({ unexpected: true }));
+  await assert.rejects(() => envelopeShape.runner.run({ requirement, inputs: {}, actorId: "actor-1" }), (error: unknown) => error instanceof AiProviderError);
+  assert.deepEqual(envelopeShape.calls.failedDetails, ["envelope"]);
 });

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { InMemoryAuditStorage } from "./storage.js";
-import { AuditEventSchema, createAuditEvent, redactSafeDetails } from "./event.js";
+import { AuditEventSchema, createAuditEvent, parseAuditEvent, redactSafeDetails } from "./event.js";
 
 test("评分与人群审计的细节键不会被白名单清空", () => {
   // 此前 fromVersion/score/priority/aiVersion/version 不在白名单，评分变更的审计只剩空对象。
@@ -17,6 +17,13 @@ test("PRD-26 聊天抽取审计保留字符数、兜底标记与 AI 填充数", 
   assert.deepEqual(
     redactSafeDetails({ textLength: 120, fallback: true, aiFilledCount: 3, email: "a@b.c" }),
     { textLength: 120, fallback: true, aiFilledCount: 3 },
+  );
+});
+
+test("评估修复层的 repairs/model 不会被白名单清空（不含模型输出）", () => {
+  assert.deepEqual(
+    redactSafeDetails({ version: 3, promptVersion: "rq-assessment-v1", repairs: "trailing_comma,keys", model: "deepseek-flash", content: "模型正文" }),
+    { version: 3, promptVersion: "rq-assessment-v1", repairs: "trailing_comma,keys", model: "deepseek-flash" },
   );
 });
 
@@ -225,4 +232,18 @@ test("不变量5：非法事件被 schema 拒绝", () => {
       occurredAt: "2026-01-01T00:00:00.000Z",
     }),
   );
+});
+
+test("评估修复事件在审计 action 白名单内且能通过 schema 校验", () => {
+  const event = createAuditEvent({
+    actor: "actor-1",
+    action: "assessment.output_repaired",
+    entityType: "requirement",
+    entityId: "11111111-1111-4111-8111-111111111111",
+    result: "succeeded",
+    occurredAt: "2026-11-25T00:00:00.000Z",
+    safeDetails: { version: 2, promptVersion: "rq-assessment-v1", repairs: "keys", model: "deepseek-flash" },
+  });
+  assert.equal(event.eventType, "assessment.output_repaired");
+  assert.deepEqual(parseAuditEvent(event).safeDetails, { version: 2, promptVersion: "rq-assessment-v1", repairs: "keys", model: "deepseek-flash" });
 });

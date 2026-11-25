@@ -937,3 +937,24 @@ test("owner recheck enqueues a group-pool candidate without touching the product
     assert.equal((await ctx.repos.requirements.get(group.id))?.pipeline.owner, "manually_mapped");
   } finally { await cleanup(ctx); }
 });
+test("assessment failure detail round-trips and is cleared by a later success (0033)", async () => {
+  const ctx = await setup();
+  try {
+    const source = await ctx.repos.sources.create(config);
+    const batch = await ctx.repos.batches.create({ sourceConfigId: source.id, triggerType: "manual", actorId: null, idempotencyKey: "assessment-detail-batch-0001", startedAt: "2026-10-08T00:00:00Z" });
+    const created = await ctx.repos.requirements.upsertRequirement(source.id, "task-assessment", requirementWrite(source.id, batch.id, { teambitionRequirementId: "task-assessment" }));
+    const claim = await ctx.repos.assessments.create({ requirementId: created.id, promptVersion: "rq-assessment-v1", model: "deepseek-flash", inputs: { background: "" }, createdBy: "actor-1", at: "2026-10-08T00:00:00Z", staleAfterMs: 120_000 });
+    if (claim.outcome !== "created") throw new Error("expected a new assessment version");
+    await ctx.repos.assessments.fail(claim.record.id, "analysis_failure", "2026-10-08T00:00:10Z", "contract:feasibility.cost");
+    const failed = await ctx.repos.assessments.list(created.id);
+    assert.equal(failed[0]!.errorCode, "analysis_failure");
+    assert.equal(failed[0]!.errorDetail, "contract:feasibility.cost");
+
+    const next = await ctx.repos.assessments.create({ requirementId: created.id, promptVersion: "rq-assessment-v1", model: "deepseek-flash", inputs: { background: "" }, createdBy: "actor-1", at: "2026-10-08T00:01:00Z", staleAfterMs: 120_000 });
+    if (next.outcome !== "created") throw new Error("expected a second assessment version");
+    await ctx.repos.assessments.complete(next.record.id, { verdict: "advance" }, "2026-10-08T00:01:20Z");
+    const succeeded = await ctx.repos.assessments.list(created.id);
+    assert.equal(succeeded[0]!.status, "succeeded");
+    assert.equal(succeeded[0]!.errorDetail, null, "成功版本不残留上一版的失败子类型");
+  } finally { await cleanup(ctx); }
+});

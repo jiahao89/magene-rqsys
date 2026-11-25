@@ -77,6 +77,21 @@ function oneOf<T extends string>(value: unknown, allowed: readonly T[]): T | nul
   return typeof value === "string" && (allowed as readonly string[]).includes(value.trim()) ? (value.trim() as T) : null;
 }
 
+// PRD-26（2026-11-25）：提出人只接受真实姓名。掩码占位（「（姓名已掩码）」「***」「某某」）、
+// 纯角色词（客服/客户/用户…）、以及「姓名（客服）」这类转述标注一律视为无法确定 → null。
+const PROPOSER_ROLE_WORDS = ["客服", "客户", "用户", "终端用户", "同事", "朋友", "我", "测试", "测试人员", "售后", "销售", "运营", "产品", "产品经理", "研发", "开发", "工程师", "经销商", "门店", "代理商"] as const;
+const PROPOSER_MASKED_PATTERN = /(姓名已掩码|已脱敏|已掩码|脱敏|\*{2,}|＊{2,}|某某|某先生|某女士|X{2,}|Ｘ{2,})/;
+const PROPOSER_RELAYER_SUFFIX = new RegExp(`[（(]\\s*(?:${PROPOSER_ROLE_WORDS.join("|")})\\s*[)）]\\s*$`);
+
+function proposerName(value: unknown): string | null {
+  const raw = text(value, 100);
+  if (raw === null) return null;
+  if (PROPOSER_MASKED_PATTERN.test(raw)) return null;
+  if ((PROPOSER_ROLE_WORDS as readonly string[]).includes(raw)) return null;
+  if (PROPOSER_RELAYER_SUFFIX.test(raw)) return null;
+  return raw;
+}
+
 function firstLine(source: string): string {
   const line = source.split("\n").map((item) => item.trim()).find(Boolean) ?? "";
   return Array.from(line).slice(0, 80).join("");
@@ -97,7 +112,7 @@ export function sanitizeChatDraft(raw: unknown, modules: readonly string[], mask
     constraintNotes: text(value.constraintNotes, 2_000),
     // 模块只接受已发布词典里的名称；「无法识别」不是有效模块。
     intakeModule: oneOf(value.module, modules),
-    proposer: text(value.proposer, 100),
+    proposer: proposerName(value.proposer),
     aiFilled: [],
   };
   draft.aiFilled = CHAT_DRAFT_FIELDS.filter((field) => {
@@ -119,6 +134,7 @@ function prompt(maskedText: string, modules: readonly string[]): string {
     '   - A colleague relays someone else\'s need (sales / support / e-commerce / research / "a friend forwarded this"): use the named end requester if present, otherwise null. Never the relayer\'s name.',
     "   - The named person is the requester (for example an internal tester or engineer asking for it): use that person.",
     '   - Role words and anonymous references are null: "终端用户", "客户", "用户", "朋友", "同事", "我".',
+    '   - Masked or redacted requester names ("（姓名已掩码）", "***", "某某"): return null. Never return the mask or a placeholder as proposer.',
     '   - Keep only the name: drop department/role prefixes ("测试-小赵" -> "小赵").',
     '   - Examples: "销售-老周：客户说……" -> null; "售后-小陈：客户王先生反馈……" -> "王先生"; "测试-小赵：强光下看不清" -> "小赵"; "朋友发我的：他码表老断连" -> null.',
     "2. sourceChannel = the channel the feedback came through. Forwarded or unclear origin -> null; never guess.",

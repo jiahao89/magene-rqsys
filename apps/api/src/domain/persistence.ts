@@ -276,6 +276,8 @@ export interface RequirementAssessmentRecord {
   inputs: Record<string, unknown>;
   output: Record<string, unknown> | null;
   errorCode: string | null;
+  /** 失败子类型（0033）：只记分类与契约字段路径，不含模型内容。 */
+  errorDetail: string | null;
   createdBy: string;
   createdAt: string;
   completedAt: string | null;

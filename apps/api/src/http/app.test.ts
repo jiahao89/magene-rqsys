@@ -511,7 +511,7 @@ test("requirement assessments list history, create on demand and map provider fa
   const d = makeDependencies();
   const record = {
     id: "assessment-1", requirementId: requirement.id, version: 1, status: "succeeded" as const,
-    promptVersion: "rq-assessment-v1", model: "m", inputs: { background: "补充" }, output: { verdict: "advance" }, errorCode: null,
+    promptVersion: "rq-assessment-v1", model: "m", inputs: { background: "补充" }, output: { verdict: "advance" }, errorCode: null, errorDetail: null,
     createdBy: "actor-1", createdAt: "2026-11-20T00:00:00.000Z", completedAt: "2026-11-20T00:00:10.000Z",
   };
   const runs: unknown[] = [];
@@ -1381,7 +1381,7 @@ test("列表行的 Base 记录链接按请求的池取模板，集团池未配�
 test("PRD 提示词：无成功评估 409、生成 201、GET 列版本、单飞与超时映射", async () => {
   const d = makeDependencies();
   const repositories = d.repositories as unknown as Record<string, unknown>;
-  const assessments = [{ id: "assessment-1", requirementId: requirement.id, version: 3, status: "succeeded", promptVersion: "rq-assessment-v1", model: "m", inputs: {}, output: {}, errorCode: null, createdAt: "2026-10-07T00:00:00.000Z", completedAt: "2026-10-07T00:00:01.000Z" }];
+  const assessments = [{ id: "assessment-1", requirementId: requirement.id, version: 3, status: "succeeded", promptVersion: "rq-assessment-v1", model: "m", inputs: {}, output: {}, errorCode: null, errorDetail: null, createdAt: "2026-10-07T00:00:00.000Z", completedAt: "2026-10-07T00:00:01.000Z" }];
   let expired: Array<[string, string, string]> = [];
   repositories.assessments = {
     list: async () => assessments,

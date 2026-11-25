@@ -73,6 +73,20 @@ test("sanitize falls back to the masked chat text when the model omits title or 
   assert.equal(descriptionOnly.draft.description, "第一行\n第二行");
 });
 
+test("提出人被掩码或只是转述标注时一律为 null（PRD-26 2026-11-25）", () => {
+  // 客服转述：模型把转述人写进 proposer，必须丢弃，不能当成需求当事人。
+  const relayer = sanitizeChatDraft({ title: "t", description: "d", proposer: "李娜（客服）" }, MODULES, "原文");
+  assert.equal(relayer.draft.proposer, null);
+  assert.equal(relayer.draft.aiFilled.includes("proposer"), false);
+  // 真实提出人被掩码：占位串不能进提出人字段。
+  assert.equal(sanitizeChatDraft({ title: "t", description: "d", proposer: "（姓名已掩码）" }, MODULES, "原文").draft.proposer, null);
+  // 纯角色词与掩码符号同样丢弃。
+  assert.equal(sanitizeChatDraft({ title: "t", description: "d", proposer: "客服" }, MODULES, "原文").draft.proposer, null);
+  assert.equal(sanitizeChatDraft({ title: "t", description: "d", proposer: "***" }, MODULES, "原文").draft.proposer, null);
+  // 真实姓名保留。
+  assert.equal(sanitizeChatDraft({ title: "t", description: "d", proposer: "王先生" }, MODULES, "原文").draft.proposer, "王先生");
+});
+
 test("sanitize enforces field length limits", () => {
   const { draft } = sanitizeChatDraft({ title: "题".repeat(500), description: "d", productModel: "m".repeat(300), constraintNotes: "c".repeat(5_000) }, MODULES, "x");
   assert.equal(Array.from(draft.title).length, 200);
@@ -88,6 +102,7 @@ test("prompt v2 encodes the relayer, type, module, constraint and PII rules", as
   const user = messages.find((message) => message.role === "user")!.content;
   // 提出人是需求当事人、不是转述人；类型有明确诉求就要归类；模块必须原样复制；约束只收真约束；PII 不进输出。
   assert.match(user, /never the relayer/);
+  assert.match(user, /Masked or redacted requester names/);
   assert.match(user, /choose exactly one type/);
   assert.match(user, /copy exactly one value from the provided list/);
   assert.match(user, /Reproduction steps/);

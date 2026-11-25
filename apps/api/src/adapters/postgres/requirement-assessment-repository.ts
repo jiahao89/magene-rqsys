@@ -14,6 +14,7 @@ const from = (r: any): RequirementAssessmentRecord => ({
   inputs: (r.inputs ?? {}) as Record<string, unknown>,
   output: (r.output ?? null) as Record<string, unknown> | null,
   errorCode: r.error_code ?? null,
+  errorDetail: r.error_detail ?? null,
   createdBy: String(r.created_by),
   createdAt: asDate(r.created_at)!,
   completedAt: asDate(r.completed_at),
@@ -71,16 +72,16 @@ export class PostgresRequirementAssessmentRepository implements RequirementAsses
   // 只更新仍在 running 的版本：调用期间已被判超时的版本，迟到结果不写回成功。
   async complete(id: string, output: Record<string, unknown>, at: string) {
     const { rows } = await this.pool.query(
-      "UPDATE requirement_assessments SET status='succeeded', output=$2, error_code=NULL, completed_at=$3 WHERE id=$1 AND status='running' RETURNING *",
+      "UPDATE requirement_assessments SET status='succeeded', output=$2, error_code=NULL, error_detail=NULL, completed_at=$3 WHERE id=$1 AND status='running' RETURNING *",
       [id, JSON.stringify(output), at],
     );
     return rows[0] ? from(rows[0]) : null;
   }
 
-  async fail(id: string, errorCode: string, at: string) {
+  async fail(id: string, errorCode: string, at: string, detail?: string | null) {
     const { rows } = await this.pool.query(
-      "UPDATE requirement_assessments SET status='failed', error_code=$2, completed_at=$3 WHERE id=$1 AND status='running' RETURNING *",
-      [id, errorCode, at],
+      "UPDATE requirement_assessments SET status='failed', error_code=$2, error_detail=$4, completed_at=$3 WHERE id=$1 AND status='running' RETURNING *",
+      [id, errorCode, at, detail ?? null],
     );
     return rows[0] ? from(rows[0]) : null;
   }

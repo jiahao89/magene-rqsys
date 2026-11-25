@@ -411,7 +411,8 @@ function personDto(person: TeamPersonRecord) {
   return { name: person.name, feishuUserId: person.binding?.feishuUserId ?? null, feishuIdType: person.binding?.feishuIdType ?? null, boundAt: person.binding?.boundAt ?? null, bindingConflict: person.bindingConflict };
 }
 function assessmentDto(r: RequirementAssessmentRecord) {
-  return { id: r.id, requirementId: r.requirementId, version: r.version, status: r.status, promptVersion: r.promptVersion, model: r.model, inputs: r.inputs, output: r.output, errorCode: r.errorCode, createdAt: r.createdAt, completedAt: r.completedAt };
+  // errorDetail（0033）：失败子类型，便于界面与排查区分 non_json / contract:<fields> 等，不含模型内容。
+  return { id: r.id, requirementId: r.requirementId, version: r.version, status: r.status, promptVersion: r.promptVersion, model: r.model, inputs: r.inputs, output: r.output, errorCode: r.errorCode, errorDetail: r.errorDetail, createdAt: r.createdAt, completedAt: r.completedAt };
 }
 function prdPromptDto(r: RequirementPrdPromptRecord) {
   return {
