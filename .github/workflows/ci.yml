@@ -59,6 +59,12 @@ jobs:
       - name: Migration filename check
         run: npm run check:migrations
 
+      # 假绿守卫（2026-11-25）：一个测试文件被覆盖成实现代码后，node --test 会把它当成
+      # 一个"通过"的文件级用例，CI 依然绿。这里要求每个测试文件真的注册用例；
+      # API 用例总数下限在 npm test 的 runner（scripts/run-api-tests.mjs）里守。
+      - name: Test file registration check
+        run: npm run check:test-guards
+
       # 注意：GitHub Actions 不允许在 `if:` 条件里引用 secrets（会直接判为无效 workflow，
       # run 以 0 job 失败）。这里把 secrets 映射成 step 级 env，在脚本里判断是否可用；
       # 未配置时打印 warning 并跳过，后续 alignment 步骤会显式标记"未运行"。

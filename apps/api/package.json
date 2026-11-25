@@ -9,7 +9,7 @@
     "start": "node dist/server.js",
     "db:migrate": "node --env-file=../../.env --import=tsx src/db/migrate.ts",
     "db:migrate:ci": "node --import=tsx src/db/migrate.ts",
-    "test": "node --import=tsx --test 'src/**/*.test.ts'"
+    "test": "node ../../scripts/run-api-tests.mjs"
   },
   "dependencies": {
     "pg": "8.23.0",
