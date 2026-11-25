@@ -145,3 +145,19 @@
 说明：4 条集团 v1 `running`（RQ-000487 / 490 / 512 / 513）由调度 tick 收尾，无需手工 SQL；「分析失败 +4」与「分析成功率不变」是同一批数据从 running 迁移到 failed 的两面，不是新失败。
 
 证据：`evidence/j-03-ops-group-interrupted.png`
+
+## 追加三：切回 DeepSeek 官方后的真实链路（2026-11-25 09:56，release `7711921180497104174`）
+
+- 配置：`AI_BASE_URL=https://api.deepseek.com`、`AI_MODEL=deepseek-flash`；线上 bundle 仍是 `a6ce6e6`（本次只改环境变量，前端产物不变）
+- 操作：RQ-000316 详情点「重新分析」（force，按钮旁有「会消耗一次模型调用」）
+
+| 项 | 实测 | 判定 |
+|---|---|---|
+| 新版分析 | v8，`status=analyzed`，`provider=**deepseek**`，`model=**deepseek-flash**`，`promptVersion=rq-analysis-v4` | PASS |
+| 耗时 | `startedAt 01:56:44.680` → `completedAt 01:56:51.274` = **6.6 秒**（模型调用）；点击到 `base.push` 完成 ≈ **18.6 秒** | PASS（远小于 120 秒超时） |
+| 结果 | 模块建议「无法识别」、置信度「高」、优先级 P3、`safeErrorSummary=null`；评分 `scoring.suggested` score 2 / scoreVersion 8 | PASS |
+| 审计 | `analysis.retry_requested(force)` → `scoring.suggested` → `analysis.terminal succeeded` → `base.push succeeded`，无失败事件 | PASS |
+| 失败码 | 产品池 7 天窗口仍是 `provider_error×4`（11-20 旧记录），无新增 | PASS |
+| Base | 仅 `AI分析版本` 7→8、`最后推送时间` 变化；已按快照 PUT 还原，复核 **0 差异** | PASS |
+
+证据：`evidence/k-01-deepseek-analysis.png`；快照/还原记录 `base-deepseek-{before,after,restored}.json`。
