@@ -2034,6 +2034,14 @@ function AssessmentResult({ assessment }: { assessment: RequirementAssessment })
  * 需求评估区：补充背景/目标/场景后按需生成；
  * 历史版本来自独立表，不修改需求本体，也不回写 Base。
  */
+/**
+ * 评估是同步模型调用，服务端单次上限取 AI_TIMEOUT_MS（线上 120s）；客户端留 5s 余量。
+ * 即便超时也不直接判失败：服务端可能仍在重试并最终落库成功，超时后按版本号核对。
+ */
+const ASSESSMENT_CLIENT_TIMEOUT_MS = 125_000;
+/** 超时后核对最新评估版本的窗口：覆盖服务端失败重试的剩余时间。 */
+const ASSESSMENT_RECONCILE_WINDOW_MS = 90_000;
+
 function RequirementAssessmentSection({ requirementId, onSaved }: { requirementId: string; onSaved?: () => void }) {
   const [history, setHistory] = useState<RequirementAssessment[]>([]);
   const [loadState, setLoadState] = useState<LoadState>("loading");
@@ -2051,6 +2059,12 @@ function RequirementAssessmentSection({ requirementId, onSaved }: { requirementI
   // 首次打开详情时默认载入最新版本的输入；静默轮询/用户已开始输入时不覆盖。
   const pendingInitialInputs = useRef(true);
   const inputsEdited = useRef(false);
+  // 超时后待核对的一轮生成：记录发起前的最大版本号，只有更新的成功版本才算本轮成功。
+  const pendingRecovery = useRef<{ baselineVersion: number } | null>(null);
+  const [reconciling, setReconciling] = useState(false);
+  // 父组件每次渲染都会传新的内联回调，用 ref 保存以免重建 load 触发挂载 effect 循环。
+  const onSavedRef = useRef(onSaved);
+  useEffect(() => { onSavedRef.current = onSaved; }, [onSaved]);
   const applyInputs = useCallback((assessment: RequirementAssessment) => {
     const inputs = assessment.inputs ?? { background: "", goal: "", scenario: "" };
     setBackground(inputs.background ?? "");
@@ -2065,6 +2079,26 @@ function RequirementAssessmentSection({ requirementId, onSaved }: { requirementI
       // 防御：历史接口若返回错形状（如被通用列表路由兜底），不把无 version 的条目当成评估版本。
       const items = (await listRequirementAssessments(requirementId)).filter((item) => item && typeof item.version === "number");
       const latest = items.reduce((max, item) => Math.max(max, item.version), 0) || null;
+      // 超时核对：只有比发起时更新的成功版本才算本轮成功，避免把旧版本误当成新结果。
+      const pending = pendingRecovery.current;
+      if (pending) {
+        const newer = items.filter((item) => item.version > pending.baselineVersion);
+        const succeeded = newer.filter((item) => item.status === "succeeded").sort((left, right) => right.version - left.version)[0];
+        if (succeeded) {
+          pendingRecovery.current = null;
+          setReconciling(false);
+          setError(null);
+          setNotice(`评估 v${succeeded.version} 已生成。`);
+          onSavedRef.current?.();
+        } else if (newer.length > 0 && !newer.some((item) => item.status === "running")) {
+          // 本轮已结束但没有成功版本：按失败展示最新版，错误码来自历史记录。
+          const newest = newer.reduce((left, right) => (right.version > left.version ? right : left));
+          pendingRecovery.current = null;
+          setReconciling(false);
+          setNotice(null);
+          setError(`评估 v${newest.version} 生成失败（${newest.errorCode ?? "未知原因"}）。`);
+        }
+      }
       setHistory(items);
       setSelectedVersion((current) => preferLatest || current === null || !items.some((item) => item.version === current)
         ? latest
@@ -2082,13 +2116,26 @@ function RequirementAssessmentSection({ requirementId, onSaved }: { requirementI
 
   useEffect(() => { void load(); }, [load]);
 
-  // 有 running 版本时每 5 秒静默刷新一次：生成完成后自动换成结论，期间保持按钮禁用。
+  // 有 running 版本或超时核对中时每 5 秒静默刷新一次：生成完成后自动换成结论，期间保持按钮禁用。
   const hasRunning = history.some((item) => item.status === "running");
   useEffect(() => {
-    if (!hasRunning) return;
+    if (!hasRunning && !reconciling) return;
     const timer = window.setInterval(() => { void load(true); }, 5000);
     return () => window.clearInterval(timer);
-  }, [hasRunning, load]);
+  }, [hasRunning, reconciling, load]);
+
+  // 超时核对的兜底窗口：过了这段时间仍没有更新的版本，才按超时提示，并允许重新生成。
+  useEffect(() => {
+    if (!reconciling) return;
+    const timer = window.setTimeout(() => {
+      if (!pendingRecovery.current) return;
+      pendingRecovery.current = null;
+      setReconciling(false);
+      setNotice(null);
+      setError("评估生成超时，请稍后重试。");
+    }, ASSESSMENT_RECONCILE_WINDOW_MS);
+    return () => window.clearTimeout(timer);
+  }, [reconciling]);
 
   // 409 单飞提示保留一小段时间：避免服务端 running 行还没被历史接口返回时按钮立刻可点。
   useEffect(() => {
@@ -2132,29 +2179,47 @@ function RequirementAssessmentSection({ requirementId, onSaved }: { requirementI
     setBusy(true); setError(null); setNotice(null); setLoadedVersion(null);
     // 用户已经主动填写/生成，之后不再用历史版本覆盖输入框。
     pendingInitialInputs.current = false;
+    // 记录发起前的最大版本号：超时后只有更新的成功版本才算本轮结果。
+    const baselineVersion = versions.reduce((max, item) => Math.max(max, item.version), 0);
+    pendingRecovery.current = { baselineVersion };
+    setReconciling(false);
     const controller = new AbortController();
-    // 服务端排队上限 60s：客户端留 5s 余量，避免在服务端刚好完成时抢跑。PRD 4.10 A5。
-    const timer = window.setTimeout(() => controller.abort(), 65000);
+    // 服务端模型超时取 AI_TIMEOUT_MS（线上 120s），客户端留 5s 余量；超时后仍会核对落库结果。
+    const timer = window.setTimeout(() => controller.abort(), ASSESSMENT_CLIENT_TIMEOUT_MS);
     try {
       const created = await createRequirementAssessment(requirementId, inputs, undefined, controller.signal);
+      // 请求正常返回：本轮已有明确结果，不再走超时核对。
+      pendingRecovery.current = null;
+      setReconciling(false);
       setHistory((previous) => [created, ...previous.filter((item) => item.version !== created.version)]);
       setSelectedVersion(created.version);
       setNotice(created.status === "succeeded"
         ? `评估 v${created.version} 已生成。`
         : `评估 v${created.version} 生成失败（${created.errorCode ?? "未知原因"}）。`);
       // 同页的 PRD 提示词块按「是否有成功评估」解锁；生成完立刻通知它重新拉取，不必刷新页面。
-      onSaved?.();
+      onSavedRef.current?.();
     } catch (cause) {
       // 同一需求已有未超时的 running 版本（409 单飞）：提示等待并禁用按钮，不重复烧 token。
       if (cause instanceof ApiError && cause.status === 409) {
+        pendingRecovery.current = null;
+        setReconciling(false);
         setConflict(true);
         setNotice("正在生成，请稍候。");
         setError(null);
         void load(true);
+      } else if (controller.signal.aborted) {
+        // 客户端先超时不等于服务端失败：服务端可能仍在重试并已落库成功。
+        // 先不报失败，按版本号核对；确认成功就补 onSaved 解锁提示词块，窗口内没有结果才提示超时。
+        setError(null);
+        setNotice("评估生成较慢，正在核对最新结果…");
+        setReconciling(true);
+        void load(true, true);
       } else {
-        setError(controller.signal.aborted ? "评估生成超时，请稍后重试。" : assessmentErrorMessage(cause));
-        // 429/503/500/超时也由服务端保留 failed 版本（可能稍后才可见）：静默刷新历史并选中最新版本，
+        // 429/503/500 由服务端保留 failed 版本：静默刷新历史并选中最新版本，
         // 避免用户只看到报错、却在版本列表里找不到这次失败记录。
+        pendingRecovery.current = null;
+        setReconciling(false);
+        setError(assessmentErrorMessage(cause));
         void load(true, true);
       }
     } finally {

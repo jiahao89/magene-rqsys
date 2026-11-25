@@ -1070,7 +1070,7 @@ describe("RequirementsPanel (ticket 17)", () => {
     expect(historyCalls).toBeGreaterThanOrEqual(2);
   });
 
-  it("times out an assessment generation after 65 seconds, not before", async () => {
+  it("times out an assessment generation after 125 seconds, not before", async () => {
     fetchMock.mockImplementation(async (input, init) => {
       const path = typeof input === "string" ? input : new Request(input).url;
       if (path === "/api/people") return jsonOk({ items: [] });
@@ -1089,17 +1089,61 @@ describe("RequirementsPanel (ticket 17)", () => {
     vi.useFakeTimers();
     try {
       fireEvent.click(screen.getByRole("button", { name: "生成评估" }));
-      // PRD 4.10 A5：服务端 60s，客户端 65s；64.999s 时不能抢跑。
-      await act(async () => { await vi.advanceTimersByTimeAsync(64_999); });
+      // 服务端模型超时取 AI_TIMEOUT_MS（120s），客户端 125s；124.999s 时不能抢跑。
+      await act(async () => { await vi.advanceTimersByTimeAsync(124_999); });
       expect(screen.queryByText("评估生成超时，请稍后重试。")).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: "生成中…（约 30 秒）" })).toBeDisabled();
 
+      // 客户端超时后先核对落库结果，不立刻报失败。
       await act(async () => { await vi.advanceTimersByTimeAsync(1); });
-      expect(screen.getByText("评估生成超时，请稍后重试。")).toBeInTheDocument();
+      expect(screen.getByText("评估生成较慢，正在核对最新结果…")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "生成评估" })).toBeEnabled();
+
+      // 核对窗口内仍没有更新的版本，才提示超时。
+      await act(async () => { await vi.advanceTimersByTimeAsync(90_000); });
+      expect(screen.getByText("评估生成超时，请稍后重试。")).toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("reconciles a timed-out assessment and unlocks PRD prompts when the later result succeeded", async () => {
+    let postStarted = false;
+    const recovered = assessmentVersion(2, { background: "超时后落库的背景", verdict: "hold" });
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/people") return jsonOk({ items: [] });
+      if (path === "/api/requirements/req-1/prd-prompts") return jsonOk({ items: [] });
+      if (path === "/api/requirements/req-1/assessments" && init?.method === "POST") {
+        postStarted = true;
+        return new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () => reject(new DOMException("The operation was aborted.", "AbortError")));
+        });
+      }
+      if (path === "/api/requirements/req-1/assessments") {
+        return jsonOk({ items: postStarted ? [recovered] : [] });
+      }
+      if (path.startsWith("/api/requirements/")) return jsonOk(detail());
+      return jsonOk({ items: [row], nextCursor: null });
+    });
+    render(<RequirementsPanel onRefresh={() => undefined} />);
+    await openFirstRow();
+
+    expect(await screen.findByText(/还没有评估结果/)).toBeInTheDocument();
+    expect(screen.getByText(/先生成一条成功的需求评估/)).toBeInTheDocument();
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "生成评估" }));
+      await act(async () => { await vi.advanceTimersByTimeAsync(125_000); });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    // 超时后服务端其实已成功落库：界面按成功处理，并解锁同页 PRD 提示词块。
+    expect(await screen.findByText("评估 v2 已生成。")).toBeInTheDocument();
+    expect(screen.queryByText("评估生成超时，请稍后重试。")).not.toBeInTheDocument();
+    expect(await screen.findByText(/评估 v2 · 建议暂缓/)).toBeInTheDocument();
   });
 
   it("keeps the detail usable when the assessment history cannot load", async () => {
