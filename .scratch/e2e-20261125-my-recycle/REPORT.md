@@ -114,3 +114,17 @@
 - `base-product-before.json` / `base-product-after-sync.json` / `base-product-final.json`（产品 Base 335 行）
 - `base-group-before.json` / `base-group-final.json`（集团 Base 191 行）
 - `base_full.py` 全量导出与比对脚本（复用 `full-acceptance-20261121/base_tool.py` 凭据）
+
+## 补丁复验（release `7712054509455559930`，妙搭 `84fed37`）
+
+只复验问题 B，其余五项不重跑。
+
+| 项 | 结果 |
+|---|---|
+| `GET /api/requirements/mine?pool=group&limit=100` | 16 条，**16/16 带 `pool` 且等于 `group`**，缺失 0、错值 0 |
+| `GET /api/requirements/mine?pool=product&limit=100` | 首页 100 条，**100/100 带 `pool` 且等于 `product`**，缺失 0、错值 0 |
+| 集团 Tab UI | 已加载 16 条，徽标「集团池」16/16 |
+| 产品 Tab UI | 已加载 25 条（首屏），徽标「产品池」25/25；Tab 计数仍 124 / 16 |
+| 按行 Base 深链 | 集团行 → 集团 Base `HZ6NbvXKJa0o5Qs4hgQcSoirnde` / `tblNVlrwYOPU5kuz`；产品行 → 产品 Base `GRnEboCIga7Omas8RwgcDmmgnib` / `tbl6Gfi0KJ2a1llK`；详情接口同样按行取模板 |
+
+结论：问题 B 已修复，无回归迹象。证据：`evidence/m-09-group-tab-fixed.png`、`evidence/m-10-product-tab-fixed.png`。
