@@ -986,14 +986,14 @@ test("logical delete scopes my-requirements, survives a later upsert and restore
     assert.equal((await lifecycleAudit()).length, 1);
     assert.equal((await ctx.repos.requirements.mineCounts!("feishu-owner")).product, 0);
     assert.equal((await ctx.repos.requirements.search({ limit: 10 })).items.length, 0, "默认列表排除已删除");
-    assert.equal((await ctx.repos.requirements.search({ deleted: true, deletedBy: "feishu-owner", limit: 10 })).items.length, 1);
+    assert.equal((await ctx.repos.requirements.search({ deleted: true, deletedBy: "actor-1", limit: 10 })).items.length, 1, "回收站按妙搭 actor id 过滤");
 
     // 同步 upsert 整条跳过：不升版、不改源字段、不清删除标记。
     const again = await ctx.repos.requirements.upsertRequirement(source.id, "task-lifecycle", requirementWrite(source.id, batch.id, { teambitionRequirementId: "task-lifecycle", title: "Changed", sourceHash: "c".repeat(64) }));
     assert.equal(again.sourceVersion, 1);
     const row = await ctx.repos.requirements.get(created.id);
     assert.equal(row?.title, "Requirement");
-    assert.ok(row?.deletedAt && row?.deletedBy === "feishu-owner");
+    assert.ok(row?.deletedAt && row?.deletedBy === "actor-1", "deleted_by 存登录身份（妙搭 userId）");
 
     assert.equal((await ctx.repos.requirements.restoreDeleted!({ requirementId: created.id, deleterUserId: "actor-2", audit: { actorId: "actor-2", occurredAt: "2026-10-08T00:03:00Z" } })).outcome, "forbidden");
     assert.equal((await ctx.repos.requirements.restoreDeleted!({ requirementId: created.id, deleterUserId: "actor-1", audit: { actorId: "actor-1", occurredAt: "2026-10-08T00:04:00Z" } })).outcome, "restored");
