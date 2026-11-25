@@ -1,1933 +1,1696 @@
-import type { Pool } from "pg";
-import { normalizeOwnerName } from "../owner/mapping.js";
-import { analysisForceDedupeKey, analysisRetryDedupeKey, analysisRunningJobKeys } from "../scheduler/analysis-recovery.js";
-import { SourceProjectResolutionError, type FeishuUserDirectory, type FeishuUserSelectionResolver, type IdentityProvider, type TeambitionMemberDirectory, type TeambitionSourceProjectResolver } from "../application/ports.js";
-import { isIntakeComplete, normalizeScheduleTime } from "../domain/workflow.js";
-import { stableJson } from "../sync/hashes.js";
-import { RICE_CONFIG_VERSION, RICE_EFFORT_UNIT, RICE_IMPACT_LEVELS, RICE_REACH_UNIT, computeRiceScore } from "../beta/rice.js";
-import type { AuditEventRepository, AnalysisRunRepository, PipelineJobRepository, SourceConfigRepository, SyncBatchRepository, SyncItemRepository, PersonMappingRepository, RequirementQueryRepository, BasePushRunRepository, ModuleDictionaryRepository, PriorityRuleRepository, SourceSnapshotRepository, TeamDirectoryRepository, RequirementScoringRepository, RequirementAssessmentRepository, RequirementPrdPromptRepository } from "../application/repositories.js";
-import type { PersonMappingRecord, AnalysisRunRecord, ModuleDictionaryVersionRecord, PriorityRuleVersionRecord, RequirementRecord, RequirementAssessmentRecord, RequirementPrdPromptRecord, SourceConfigRecord, SourceExecutorBinding, SourcePool, SyncBatchRecord, PipelineJobRecord } from "../domain/persistence.js";
-import type { TeamPersonRecord } from "../domain/team-directory.js";
-import { AnalysisContextUpdateSchema, AuditListQuerySchema, GateConfirmSchema, OpsJobsQuerySchema, OpsMetricsQuerySchema, RequirementExportQuerySchema, ClearDuplicateDecisionSchema, DuplicateDecisionSchema, PriorityOverrideUpdateSchema, RetryAnalysisRequestSchema, KanoEvidenceImportSchema, KanoRunRequestSchema, AudienceUpdateSchema, BatchListQuerySchema, RiceDraftUpdateSchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementIntakeEditSchema, RequirementIntakeSchema, RequirementListQuerySchema, RequirementAssessmentInputSchema, PrdPromptRequestSchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
-import { createHash, randomUUID } from "node:crypto";
-import { ApplyAiScoringSchema, ManualScoringUpdateSchema, SCORING_FORMULA_TEXT, SCORING_THRESHOLDS, computeUmcScore } from "../analysis/scoring.js";
-import { maskPii } from "../analysis/contract.js";
-import { confirmGate, evaluateGates } from "../ops/gates.js";
-import { priorityRuleThresholds } from "../analysis/priority-rule.js";
-import { toCsv } from "../application/csv.js";
-import { SourceConfigUpdateSchema, normalizeSourceSchedule, normalizeExecutorAllowlistNames, MAX_EXECUTOR_ALLOWLIST_SIZE, type ResolvedSourceConfigUpdate } from "../contracts/source.js";
-import { DictionaryCreateSchema, PriorityRuleCreateSchema, TeamModulesSaveSchema, TeamPersonCreateSchema, TeamPersonFeishuBindSchema, TeamPersonRenameSchema } from "../contracts/rules.js";
-import { DEFAULT_TEAM_MEMBERS } from "../domain/team-directory.js";
-import { BASE_FORM_SYNC_STATE_FLAG } from "../base/form-sync.js";
-import { isDatabaseReady } from "../adapters/postgres/health.js";
+import assert from "node:assert/strict";
+import { createHash as createHashForTest } from "node:crypto";
+import test from "node:test";
+import type { AuditEventRecord, RequirementRecord, SourceConfigRecord, SyncBatchRecord, SyncItemRecord } from "../domain/persistence.js";
+import type { ApiDependencies, ApiRepositories } from "./app.js";
+import { handleApiRequest, MAX_JSON_BODY_BYTES } from "./app.js";
+import { AiProviderError } from "../analysis/provider.js";
+import { AssessmentContractError } from "../assessment/service.js";
+import { CHAT_PROMPT_VERSION } from "../intake/chat-extract.js";
+// AI 状态区读 process.env.AI_API_KEY；测试里显式设置并还原，避免依赖跑测试机器的环境。
+async function withAiKey<T>(value: string | undefined, run: () => Promise<T>): Promise<T> {
+  const previous = process.env.AI_API_KEY;
+  if (value === undefined) delete process.env.AI_API_KEY; else process.env.AI_API_KEY = value;
+  try { return await run(); }
+  finally { if (previous === undefined) delete process.env.AI_API_KEY; else process.env.AI_API_KEY = previous; }
+}
+const emptyCounts = { total: 0, pullSynced: 0, analysisAnalyzed: 0, ownerResolved: 0, pushPushed: 0, failed: 0, pushFailed: 0, pushPending: 0, suppressed: 0, priority: { P0: 0, P1: 0, P2: 0, P3: 0, scored: 0, legacy: 0, unscored: 0 } };
+function overviewDependencies() {
+  const d = makeDependencies();
+  (d.repositories!.requirements as unknown as { getPipelineCounts: () => Promise<unknown> }).getPipelineCounts = async () => emptyCounts;
+  return d;
+}
+import { encodeBatchCursor } from "../application/batch-cursor.js";
 import { EXPECTED_LATEST_MIGRATION } from "../db/expected-migration.js";
-import { jsonError, redactSecrets } from "./errors.js";
-import { CHAT_PROMPT_VERSION, ChatDraftRequestSchema, createDraftRateLimiter, type ChatIntakeExtractor, type DraftRateLimit } from "../intake/chat-extract.js";
-import { ASSESSMENT_RUNNING_STALE_MS, AssessmentContractError, type AssessmentRunner } from "../assessment/service.js";
-import { PRD_PROMPT_RUNNING_STALE_MS, PrdPromptFailure, type PrdPromptRunner } from "../prd-prompt/service.js";
-import { createPrdPromptRateLimiter, type PrdPromptRateLimit } from "../prd-prompt/rate-limit.js";
-import { analysisPiiMarkers, loadDirectoryRosterNames } from "../requirements/processing.js";
-import { requirementTitleKey } from "../sync/service.js";
-import { readAiPause } from "../ops/ai-pause.js";
-import { decodeDeletedRequirementCursor, decodeRequirementCursor } from "../application/requirement-cursor.js";
-import { decodeBatchCursor } from "../application/batch-cursor.js";
-import { basePushIdempotencyKey } from "../application/idempotency-keys.js";
 
-export interface ApiRepositories {
-  sources: SourceConfigRepository;
-  batches: SyncBatchRepository;
-  items: SyncItemRepository;
-  audit: AuditEventRepository;
-  jobs: PipelineJobRepository;
-  people?: PersonMappingRepository;
-  requirements?: RequirementQueryRepository;
-  basePushes?: BasePushRunRepository;
-  analyses?: AnalysisRunRepository;
-  assessments?: RequirementAssessmentRepository;
-  prdPrompts?: RequirementPrdPromptRepository;
-  sourceSnapshots?: SourceSnapshotRepository;
-  dictionaries?: ModuleDictionaryRepository;
-  priorityRules?: PriorityRuleRepository;
-  directory?: TeamDirectoryRepository;
-  scoring?: RequirementScoringRepository;
-  ops?: import("../application/repositories.js").OpsMetricsRepository;
-  flags?: import("../application/repositories.js").SystemFlagRepository;
+const source: SourceConfigRecord = { id: "11111111-1111-4111-8111-111111111111", provider: "teambition", externalProjectId: "p1", externalProjectName: "Project", requirementTypeId: "type1", enabled: true, scheduleEnabled: false, scheduleWeekday: null, scheduleLocalTime: null, scheduleTimezone: null, ownerNames: ["Lee"], fieldMap: { title: "name" }, createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z" };
+const batch: SyncBatchRecord = { id: "22222222-2222-4222-8222-222222222222", sourceConfigId: source.id, triggerType: "manual", actorId: "actor-1", idempotencyKey: "request-key-0001", status: "running", startedAt: "2026-10-08T00:00:00.000Z", completedAt: null, totalCount: 0, succeededCount: 0, failedCount: 0, errorSummary: null, createdAt: "2026-10-08T00:00:00.000Z" };
+const item: SyncItemRecord = { id: "33333333-3333-4333-8333-333333333333", batchId: batch.id, requirementId: null, teambitionRequirementId: "tb-1", action: "created", status: "succeeded", errorCode: null, errorDetail: null, startedAt: "2026-10-08T00:00:00.000Z", completedAt: "2026-10-08T00:00:00.000Z" };
+const auditEvent: AuditEventRecord = { id: "44444444-4444-4444-8444-444444444444", actorId: "actor-1", eventType: "sync.requested", entityType: "sync_batch", entityId: batch.id, result: "succeeded", safeDetails: {}, occurredAt: "2026-10-08T00:00:00.000Z" };
+const requirement = { id: "66666666-6666-4666-8666-666666666666", platformRequirementId: "RQ-000001", sourceType: "teambition", sourceChannel: null, productModel: null, requirementType: null, constraintNotes: null, supplementUrl: null, intakeModule: null, audienceTags: [], audienceConfirmed: false, audienceVersion: 0, sourceConfigId: source.id, teambitionRequirementId: "tb-1", teambitionUniqueId: null, title: "Need", description: null, scope: null, acceptanceCriteria: null, proposerUserId: null, proposerName: null, executorUserId: null, executorName: null, sourceStatusId: null, sourceCreatedAt: null, sourceUpdatedAt: null, sourceUrl: null, attachmentRefs: [], sourceCustomFields: [], sourcePayload: {}, sourceHash: "h", substantiveHash: "s", sourceVersion: 1, latestBatchId: batch.id, baseRecordId: null, lastPushedAt: null, pipeline: { pull: "synced", analysis: "analyzed", owner: "not_required", push: "pending" }, firstSeenAt: "2026-10-08T00:00:00.000Z", lastSeenAt: "2026-10-08T00:00:00.000Z", createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z" };
+const analysisRun = { id: "run-1", requirementId: source.id, sourceVersion: 1, analysisVersion: 2, status: "analyzed", moduleSuggestion: "报表分析", confidence: "medium", confidenceReason: "理由", priority: "P1", structuredResult: null, provider: "deepseek", model: "m", promptVersion: "p", moduleDictionaryVersion: 1, priorityRuleVersionId: null, safeErrorCode: null, safeErrorSummary: null, startedAt: "2026-10-08T00:00:00.000Z", completedAt: "2026-10-08T00:00:01.000Z" };
+function makeDependencies(actor: { id: string } = { id: "actor-1" }): ApiDependencies {
+ const batches: SyncBatchRecord[] = [];
+ const repositories: ApiRepositories = {
+  sources: { list: async () => [source], get: async (id) => id === source.id ? source : null, update: async (id, u) => id === source.id ? { ...source, externalProjectId: u.projectId, externalProjectName: u.projectName, requirementTypeId: u.requirementTypeId, enabled: u.enabled, scheduleEnabled: u.schedule.enabled, scheduleWeekday: u.schedule.weekday, scheduleWeekdays: u.schedule.weekdays ?? (u.schedule.weekday === null ? null : [u.schedule.weekday]), scheduleLocalTime: u.schedule.time, scheduleTimezone: u.schedule.timezone, ownerNames: u.ownerNames, fieldMap: u.fieldMap } : null, create: async () => source },
+  batches: { create: async (p) => { const b = { ...batch, ...p, id: `batch-${batches.length + 1}` }; batches.push(b); return b; }, get: async (id) => batches.find((b) => b.id === id) ?? (id === batch.id ? batch : null), findByIdempotencyKey: async (sid, key) => batches.find((b) => b.sourceConfigId === sid && b.idempotencyKey === key) ?? null, list: async ({ status, limit, cursor }) => { const rows = batches.filter((b) => !status || b.status === status); const start = cursor ? rows.findIndex((b) => b.id === cursor.id) + 1 : 0; const items = rows.slice(start, start + limit); return { items, nextCursor: start + limit < rows.length ? items.at(-1)?.id ?? null : null }; }, complete: async () => null },
+  items: { upsert: async () => item, get: async () => item, listByBatch: async (id) => id === batch.id ? [item] : [] },
+  audit: { append: async () => undefined, search: async () => [auditEvent] },
+  jobs: { enqueue: async (p) => ({ ...p, id: "job-1", status: "queued", attemptCount: 0, maxAttempts: p.maxAttempts ?? 3, lockedUntil: null, lastErrorCode: null, lastErrorSummary: null, createdAt: p.availableAt, updatedAt: p.availableAt }), claimNext: async () => null, reschedule: async () => null, complete: async () => null },
+ analyses: { append: async () => analysisRun as never, complete: async () => analysisRun as never, latest: async () => analysisRun as never, listByRequirement: async () => [analysisRun as never] },
+ requirements: { get: async (id: string) => id === requirement.id ? requirement : null, search: async () => ({ items: [], nextCursor: null }), findForSync: async () => null, upsertRequirement: async () => { throw new Error("unused"); }, updateAnalysisState: async () => undefined, setOwner: async () => undefined, setBaseRecord: async () => undefined, setPushState: async () => undefined, updateOwnerState: async () => undefined, updatePushState: async () => undefined, listDuplicates: async () => [], listTitleCandidates: async () => [], setDuplicateOf: async () => undefined, markLastPushedOwner: async () => undefined, assignManualOwner: async () => undefined, clearManualOwner: async () => undefined, markManualOwnerPushed: async () => undefined } as never,
+ };
+ return { database: null, repositories, identity: { requireActor: async () => actor }, now: () => new Date("2026-10-08T00:00:00.000Z") };
 }
-export interface ApiDependencies {
-  database: Pool | null;
-  identity: IdentityProvider | undefined;
-  repositories: ApiRepositories | undefined;
-  teambitionSourceProjects?: TeambitionSourceProjectResolver;
-  /** 集团池执行人名单解析：展示名 → TB user_id。未注入时保存集团池名单返回 503。 */
-  teambitionMembers?: TeambitionMemberDirectory;
-  feishuUsers?: FeishuUserDirectory;
-  feishuUserSelections?: FeishuUserSelectionResolver;
-  now: (() => Date) | undefined;
-  /** Q2：Base 重复行标记；组合根未注入时判定不触达 Base。 */
-  duplicateMarker?: (input: import("../base/duplicate-marker.js").DuplicateMarkInput) => Promise<import("../base/duplicate-marker.js").DuplicateMarkResult>;
-  /** PRD-26：聊天一键复制的草稿抽取；未注入时接口返回 503，用户仍可手工填写。 */
-  chatIntake?: { extractor: ChatIntakeExtractor; limit?: DraftRateLimit };
-  /** 0030：按需需求评估；未注入时接口返回 503，详情页不可用。 */
-  assessments?: AssessmentRunner;
-  /** 2026-11-21：按需 PRD 提示词生成；未注入时接口返回 503。 */
-  prdPrompt?: { runner: PrdPromptRunner; limit?: PrdPromptRateLimit };
-  /** 目标环境的脱敏诊断通道；未注入时诊断落 stderr。只写错误类、SQLSTATE、状态码、字符数与请求号，不写 SQL、参数或聊天正文。 */
-  diagnostics?: {
-    error(event: "intake_draft_failed" | "overview_ai_stats_failed" | "assessment_failed", details: {
-      errorClass?: string; textLength?: number; httpStatus?: number; requestId?: string;
-      phase?: string; stat?: "analysis" | "intake"; errorType?: string; databaseCode?: string; causeType?: string;
-      /** 评估输出契约不匹配时的字段路径（只含字段名，不含模型内容）。 */
-      fields?: string;
-    }): void;
-  };
-}
-// 限流器随 chatIntake 对象缓存：妙搭每次请求展开新的依赖对象，但 chatIntake 引用稳定。
-const draftRateLimiters = new WeakMap<object, ReturnType<typeof createDraftRateLimiter>>();
-function draftRateLimiterFor(chatIntake: NonNullable<ApiDependencies["chatIntake"]>) {
-  let limiter = draftRateLimiters.get(chatIntake);
-  if (!limiter) { limiter = createDraftRateLimiter(chatIntake.limit); draftRateLimiters.set(chatIntake, limiter); }
-  return limiter;
-}
-// 2026-11-21：PRD 提示词限流器同样随依赖对象缓存（妙搭每次请求展开新对象，runner 引用稳定）。
-const prdPromptRateLimiters = new WeakMap<object, ReturnType<typeof createPrdPromptRateLimiter>>();
-function prdPromptRateLimiterFor(dep: NonNullable<ApiDependencies["prdPrompt"]>) {
-  let limiter = prdPromptRateLimiters.get(dep);
-  if (!limiter) { limiter = createPrdPromptRateLimiter(dep.limit); prdPromptRateLimiters.set(dep, limiter); }
-  return limiter;
-}
-function json(body: unknown, status = 200): Response { return Response.json(body, { status }); }
-// 供应商限流时没有下发可用的 Retry-After 就按 60 秒提示；宁可多等，也不要让用户连点消耗额度。
-const PROVIDER_RATE_LIMIT_RETRY_AFTER_SECONDS = 60;
-function rateLimited(waitSeconds: number, message: string): Response {
-  const limited = jsonError("RATE_LIMITED", message);
-  limited.headers.set("Retry-After", String(waitSeconds));
-  return limited;
-}
-/** PRD-26：AI 配置类错误要进日志（只写错误类、状态码、字符数与请求号），否则密钥缺失这类事故永远表现为「暂时不可用」。 */
-function reportIntakeFailure(dependencies: ApiDependencies, details: { errorClass: string; textLength: number; httpStatus?: number; requestId?: string }): void {
-  if (dependencies.diagnostics) {
-    try { dependencies.diagnostics.error("intake_draft_failed", details); } catch { /* 诊断失败不影响响应 */ }
-    return;
+const unauthenticated: ApiDependencies = { database: null, repositories: undefined, identity: undefined, now: undefined };
+test("rejects non-UUID path IDs with 404 before touching uuid repositories", async () => {
+  const d = { ...makeDependencies(), database: {} as never };
+  const cases: Array<[string, string]> = [
+    ["GET", "/api/requirements/not-a-uuid"],
+    ["PATCH", "/api/requirements/not-a-uuid"],
+    ["GET", "/api/batches/not-a-uuid"],
+    ["POST", "/api/items/not-a-uuid/retry"],
+    ["POST", "/api/analysis/not-a-uuid/retry"],
+    ["POST", "/api/requirements/not-a-uuid/push"],
+  ];
+  for (const [method, path] of cases) {
+    const response = await handleApiRequest(new Request(`http://localhost${path}`, { method }), d);
+    assert.equal(response.status, 404, `${method} ${path}`);
   }
-  process.stderr.write(`intake draft failed ${JSON.stringify(details)}\n`);
-}
-/** 评估输出契约失败：只落字段路径（字段名），不落模型返回内容。 */
-function reportAssessmentFailure(dependencies: ApiDependencies, details: { errorClass: string; fields: string }): void {
-  if (dependencies.diagnostics) {
-    try { dependencies.diagnostics.error("assessment_failed", details); } catch { /* 诊断失败不影响响应 */ }
-    return;
+});
+test("malformed percent-encoding in a path segment returns 4xx instead of throwing", async () => {
+  // %E0%A4%A 是无效 UTF-8 序列：decodeURIComponent 会抛 URIError。
+  // 路径解码必须把它收敛成客户端错误，不能落到 server.ts 的 500 兜底。
+  const d = { ...makeDependencies(), database: {} as never };
+  const cases: Array<[string, string]> = [
+    ["GET", "/api/requirements/%E0%A4%A"],
+    ["GET", "/api/batches/%E0%A4%A"],
+    ["POST", "/api/items/%E0%A4%A/retry"],
+  ];
+  for (const [method, path] of cases) {
+    const response = await handleApiRequest(new Request(`http://localhost${path}`, { method }), d);
+    assert.equal(response.status, 404, `${method} ${path}`);
   }
-  process.stderr.write(`assessment failed ${JSON.stringify(details)}\n`);
-}
-/** 统计失败诊断只取错误类型与 SQLSTATE（沿 cause 链）；SQL 文本、参数和正文一律不落日志——它们可能含需求正文或 ID。 */
-function safeErrorType(error: unknown): string {
-  if (typeof error !== "object" || error === null || !("constructor" in error)) return "unknown";
-  const name = (error as { constructor?: { name?: unknown } }).constructor?.name;
-  return typeof name === "string" && /^[A-Za-z][A-Za-z0-9_$]{0,63}$/.test(name) ? name : "unknown";
-}
-function safeDatabaseCode(error: unknown): string {
-  let current = error;
-  const seen = new Set<object>();
-  for (let depth = 0; depth < 6 && typeof current === "object" && current !== null && !seen.has(current); depth += 1) {
-    seen.add(current);
-    const candidate = current as { code?: unknown; cause?: unknown; originalError?: unknown };
-    if (typeof candidate.code === "string" && /^[A-Z0-9]{5}$/.test(candidate.code)) return candidate.code;
-    current = candidate.cause ?? candidate.originalError;
-  }
-  return "unknown";
-}
-function safeCauseType(error: unknown): string {
-  let current = error;
-  const seen = new Set<object>();
-  let causeType = "unknown";
-  for (let depth = 0; depth < 6 && typeof current === "object" && current !== null && !seen.has(current); depth += 1) {
-    seen.add(current);
-    const candidate = current as { cause?: unknown; originalError?: unknown };
-    const cause = candidate.cause ?? candidate.originalError;
-    if (cause === undefined) break;
-    causeType = safeErrorType(cause);
-    current = cause;
-  }
-  return causeType;
-}
-/** 运维展示的 lastError 只保留类别摘要：复用通用脱敏，并把 Base record/table ID 掩码。 */
-function redactBaseError(text: string): string {
-  return redactSecrets(text)
-    .replace(/\brec[A-Za-z0-9]{6,}\b/g, "rec…")
-    .replace(/\btbl[A-Za-z0-9]{6,}\b/g, "tbl…")
-    .slice(0, 200);
-}
-/** 数据源页展示收集表分享地址：只读环境变量；未配置/非法 URL 不返回，也不回传表 ID/record ID。 */
-function baseFormShareUrl(): string | null {
-  const raw = process.env.BASE_FORM_SHARE_URL?.trim();
-  if (!raw) return null;
-  try {
-    const url = new URL(raw);
-    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-    if (url.username || url.password) return null;
-    return url.toString();
-  } catch { return null; }
-}
-/** 5b：收集表同步的运维状态只读 system_flags；字段做类型收敛，读不到时 baseForm 为 null 不影响其它指标。 */
-function baseFormOpsState(value: Record<string, unknown>) {
-  const num = (candidate: unknown) => typeof candidate === "number" && Number.isFinite(candidate) ? candidate : 0;
-  const shareUrl = baseFormShareUrl();
-  return {
-    ...(shareUrl === null ? {} : { shareUrl }),
-    lastRunAt: typeof value.lastRunAt === "string" ? value.lastRunAt : null,
-    pages: num(value.pages),
-    scanned: num(value.scanned),
-    skipped: num(value.skipped),
-    created: num(value.created),
-    recorded: num(value.recorded),
-    rejected: num(value.rejected),
-    writeBackFailed: num(value.writeBackFailed),
-    readFailed: value.readFailed === true,
-    lastError: typeof value.lastError === "string" ? redactBaseError(value.lastError) : null,
-  };
-}
-function reportAiStatsFailure(dependencies: ApiDependencies, stat: "analysis" | "intake", error: unknown): void {
-  const details = { phase: "overview_ai_stats", stat, errorType: safeErrorType(error), databaseCode: safeDatabaseCode(error), causeType: safeCauseType(error) };
-  if (dependencies.diagnostics) {
-    try { dependencies.diagnostics.error("overview_ai_stats_failed", details); } catch { /* 诊断失败不影响响应 */ }
-    return;
-  }
-  process.stderr.write(`overview ai stats failed ${JSON.stringify(details)}\n`);
-}
-// 总览 AI 区：今日按 Asia/Shanghai 自然日切分（UTC+8，无夏令时）。计数口径是「调用次数」，不含 token。
-const SHANGHAI_OFFSET_MS = 8 * 3_600_000;
-function shanghaiDayStart(now: Date): Date {
-  const shifted = new Date(now.getTime() + SHANGHAI_OFFSET_MS);
-  return new Date(Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate()) - SHANGHAI_OFFSET_MS);
-}
-const AI_ANALYSIS_RESULTS: Record<string, "succeeded" | "failed"> = { analyzed: "succeeded", failed_retryable: "failed" };
-const AI_INTAKE_RESULTS: Record<string, "succeeded" | "failed"> = { "intake.draft_extracted": "succeeded", "intake.draft_failed": "failed" };
-const EMPTY_AI_ANALYSIS = { total: 0, today: 0, lastAt: null as string | null, lastStatus: null as string | null };
-const EMPTY_AI_INTAKE = { total: 0, today: 0, lastAt: null as string | null, lastEventType: null as string | null };
-/** 总览 AI 状态：未配置优先于暂停，暂停优先于正常；最近一次调用取分析与聊天抽取里更新的那条。 */
-async function aiOverview(dependencies: ApiDependencies, repositories: ApiRepositories, now: Date) {
-  const since = shanghaiDayStart(now).toISOString();
-  const configured = Boolean(process.env.AI_API_KEY);
-  let analysis = EMPTY_AI_ANALYSIS;
-  let intake = EMPTY_AI_INTAKE;
-  let statsAvailable = true;
-  try {
-    // 总览固定产品池：AI 调用统计也只看产品池，避免集团池数字混入。
-    analysis = (await repositories.analyses?.aiCallStats?.(since, "product")) ?? EMPTY_AI_ANALYSIS;
-  } catch (error) {
-    // 统计失败只降级 AI 卡片：接口仍回 200 和 counts，不让整页总览跟着挂；错误类型与 SQLSTATE 进诊断日志。
-    statsAvailable = false;
-    reportAiStatsFailure(dependencies, "analysis", error);
-  }
-  if (statsAvailable) {
-    try {
-      intake = (await repositories.audit?.countByEntityType?.({ entityType: "intake", eventTypes: ["intake.draft_extracted", "intake.draft_failed"], since })) ?? EMPTY_AI_INTAKE;
-    } catch (error) {
-      statsAvailable = false;
-      reportAiStatsFailure(dependencies, "intake", error);
+});
+test("liveness reports the API service", async () => { const r = await handleApiRequest(new Request("http://localhost/api/health"), unauthenticated); assert.equal(r.status, 200); assert.deepEqual(await r.json(), { status: "ok", service: "rq-sys-api" }); });
+
+test("readiness reports the applied migration without failing when it lags", async () => {
+ const makeReady = (rows: Array<{ filename?: string }> | Error) => {
+  const d = makeDependencies();
+  d.database = {
+   query: async (sql: string) => {
+    if (sql.includes("schema_migrations")) {
+     if (rows instanceof Error) throw rows;
+     return { rows, rowCount: rows.length };
     }
-  }
-  if (!statsAvailable) {
-    return {
-      status: "unavailable" as const,
+    return { rows: [{}], rowCount: 1 };
+   },
+  } as never;
+  return d;
+ };
+ const current = await handleApiRequest(new Request("http://localhost/api/health/ready"), makeReady([{ filename: EXPECTED_LATEST_MIGRATION }]));
+ assert.equal(current.status, 200);
+ assert.deepEqual((await current.json() as Record<string, unknown>).migrations, { latest: EXPECTED_LATEST_MIGRATION, expected: EXPECTED_LATEST_MIGRATION, upToDate: true });
+
+ const lagging = await handleApiRequest(new Request("http://localhost/api/health/ready"), makeReady([{ filename: "0019_scoring_v2.sql" }]));
+ assert.equal(lagging.status, 200);
+ assert.deepEqual((await lagging.json() as Record<string, unknown>).migrations, { latest: "0019_scoring_v2.sql", expected: EXPECTED_LATEST_MIGRATION, upToDate: false });
+
+ const unknown = await handleApiRequest(new Request("http://localhost/api/health/ready"), makeReady(new Error("no schema_migrations")));
+ assert.equal(unknown.status, 200);
+ const unknownMigrations = (await unknown.json() as { migrations: Record<string, unknown> }).migrations;
+ assert.equal(unknownMigrations["error"], "migration_state_unavailable");
+ // 未知 ≠ 落后：upToDate 必须为 null，避免目标环境误报“请先应用迁移”。
+ assert.equal(unknownMigrations["upToDate"], null);
+});
+
+test("readiness reports unavailable when no database is configured", async () => { const r = await handleApiRequest(new Request("http://localhost/api/health/ready"), unauthenticated); assert.equal(r.status, 503); assert.deepEqual(await r.json(), { status: "not_ready", reason: "database_unavailable_or_not_configured" }); });
+test("overview metrics return full pipeline counts and require an authenticated actor", async () => {
+ const protectedResponse = await handleApiRequest(new Request("http://localhost/api/overview/metrics"), unauthenticated);
+ assert.equal(protectedResponse.status, 401);
+
+ const d = makeDependencies();
+ (d.repositories!.requirements as unknown as { getPipelineCounts: () => Promise<unknown> }).getPipelineCounts = async () => ({ total: 311, pullSynced: 311, analysisAnalyzed: 0, ownerResolved: 0, pushPushed: 0, failed: 0, pushFailed: 0, pushPending: 0, suppressed: 5, priority: { P0: 0, P1: 0, P2: 0, P3: 0, scored: 0, legacy: 0, unscored: 0 } });
+ await withAiKey(undefined, async () => {
+   const response = await handleApiRequest(new Request("http://localhost/api/overview/metrics"), d);
+   assert.equal(response.status, 200);
+   const body = await response.json() as { counts: unknown; ai: { status: string } };
+   assert.deepEqual(body.counts, { total: 311, pullSynced: 311, analysisAnalyzed: 0, ownerResolved: 0, pushPushed: 0, failed: 0, pushFailed: 0, pushPending: 0, suppressed: 5, priority: { P0: 0, P1: 0, P2: 0, P3: 0, scored: 0, legacy: 0, unscored: 0 }, priorityRule: null });
+   // 没有密钥时状态是未配置，计数区块不受影响。
+   assert.equal(body.ai.status, "unconfigured");
+ });
+});
+
+test("overview AI block reports ok status, call counts and the latest call", async () => {
+  const d = overviewDependencies();
+  let analysisSince: string | null = null;
+  let auditSince: string | null = null;
+  (d.repositories!.analyses as unknown as Record<string, unknown>).aiCallStats = async (since: string) => { analysisSince = since; return { total: 12, today: 3, lastAt: "2026-10-08T00:00:00.000Z", lastStatus: "analyzed" }; };
+  d.repositories!.audit.countByEntityType = async (query) => {
+    auditSince = query.since;
+    assert.equal(query.entityType, "intake");
+    assert.deepEqual([...query.eventTypes], ["intake.draft_extracted", "intake.draft_failed"]);
+    return { total: 5, today: 2, lastAt: "2026-10-07T23:00:00.000Z", lastEventType: "intake.draft_failed" };
+  };
+  await withAiKey("sk-test", async () => {
+    const body = await (await handleApiRequest(new Request("http://localhost/api/overview/metrics"), d)).json() as { ai: unknown };
+    assert.deepEqual(body.ai, {
+      status: "ok",
+      statsAvailable: true,
+      pausedUntil: null,
+      pauseReason: null,
+      analysis: { total: 12, today: 3 },
+      chatIntake: { total: 5, today: 2 },
+      lastCall: { at: "2026-10-08T00:00:00.000Z", kind: "analysis", result: "succeeded" },
+    });
+  });
+  // 今日按 Asia/Shanghai 自然日：UTC 2026-10-08T00:00Z 是当地 08:00，日界是 UTC 2026-10-07T16:00Z。
+  assert.equal(analysisSince, "2026-10-07T16:00:00.000Z");
+  assert.equal(auditSince, "2026-10-07T16:00:00.000Z");
+
+  // 当地 23:59 仍然算前一天：UTC 2026-10-07T15:59:59Z → 日界 UTC 2026-10-06T16:00Z。
+  d.now = () => new Date("2026-10-07T15:59:59.000Z");
+  await withAiKey("sk-test", async () => { await handleApiRequest(new Request("http://localhost/api/overview/metrics"), d); });
+  assert.equal(analysisSince, "2026-10-06T16:00:00.000Z");
+});
+
+test("overview AI block degrades to unavailable when the statistics aggregation fails while counts still render", async () => {
+  const d = overviewDependencies();
+  (d.repositories!.requirements as unknown as { getPipelineCounts: () => Promise<unknown> }).getPipelineCounts = async () => ({ total: 7 });
+  (d.repositories!.analyses as unknown as Record<string, unknown>).aiCallStats = async () => { throw new Error("db down"); };
+  await withAiKey("sk-test", async () => {
+    const response = await handleApiRequest(new Request("http://localhost/api/overview/metrics"), d);
+    assert.equal(response.status, 200);
+    const body = await response.json() as { counts: { total: number }; ai: unknown };
+    assert.equal(body.counts.total, 7);
+    assert.deepEqual(body.ai, {
+      status: "unavailable",
       statsAvailable: false,
       pausedUntil: null,
       pauseReason: null,
       analysis: { total: 0, today: 0 },
       chatIntake: { total: 0, today: 0 },
       lastCall: { at: null, kind: null, result: null },
-    };
-  }
-  const pause = await readAiPause(repositories.flags, now);
-  const latest: { at: string; kind: "analysis" | "chat_intake"; result: "succeeded" | "failed" | null }[] = [];
-  if (analysis.lastAt) latest.push({ at: analysis.lastAt, kind: "analysis", result: analysis.lastStatus ? AI_ANALYSIS_RESULTS[analysis.lastStatus] ?? null : null });
-  if (intake.lastAt) latest.push({ at: intake.lastAt, kind: "chat_intake", result: intake.lastEventType ? AI_INTAKE_RESULTS[intake.lastEventType] ?? null : null });
-  latest.sort((a, b) => b.at.localeCompare(a.at));
-  const last = latest[0] ?? null;
-  const status = !configured ? "unconfigured" : pause.paused ? "paused" : "ok";
-  return {
-    status,
-    statsAvailable: true,
-    pausedUntil: status === "paused" ? pause.until : null,
-    pauseReason: status === "paused" ? pause.reason : null,
-    analysis: { total: analysis.total, today: analysis.today },
-    chatIntake: { total: intake.total, today: intake.today },
-    lastCall: { at: last?.at ?? null, kind: last?.kind ?? null, result: last?.result ?? null },
-  };
-}
-async function readMigrationStatus(database: Pool | null): Promise<{ latest: string | null; expected: string; upToDate: boolean | null; error?: string }> {
-  try {
-    const { rows } = await database!.query("SELECT filename FROM schema_migrations ORDER BY filename DESC LIMIT 1");
-    const latest = typeof rows[0]?.filename === "string" ? rows[0].filename : null;
-    return { latest, expected: EXPECTED_LATEST_MIGRATION, upToDate: latest === EXPECTED_LATEST_MIGRATION };
-  } catch {
-    // 空库、或目标平台不暴露应用迁移记录（Miaoda 迁移由平台回放，不写 schema_migrations）时不能判定。
-    // upToDate=null 表示「未知」，不是「落后」；调用方不得据此提示用户去执行迁移。
-    return { latest: null, expected: EXPECTED_LATEST_MIGRATION, upToDate: null, error: "migration_state_unavailable" };
-  }
-}
-// PostgreSQL 的 uuid 列不接受任意字符串；路径里的非法 ID 必须在进入仓储层前收敛成 404，
-// 否则查询会抛 22P02 并被兜底成 500（PRD 8.5 EQ-02）。只有真实数据库组合根强制 UUID；
-// HTTP 单测使用短 ID 夹具，仓储替身不做 uuid 转换。
-const UUID_PATH_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-// 路径里的畸形百分号编码（如 %E0%A4%A）会让 decodeURIComponent 抛 URIError；
-// 这是客户端输入错误，必须收敛为 4xx，不能落进 server.ts 的 500 兜底。
-function safeDecodePath(raw: string): string | null {
-  try { return decodeURIComponent(raw); } catch { return null; }
-}
-function pathUuid(raw: string, dependencies: ApiDependencies): string | null {
-  const value = safeDecodePath(raw);
-  if (value === null) return null;
-  if (dependencies.database && !UUID_PATH_RE.test(value)) return null;
-  return value;
-}
-function sourceDto(source: SourceConfigRecord) {
-  const pool: SourcePool = source.pool ?? "product";
-  return {
-    id: source.id,
-    pool,
-    projectName: source.externalProjectName,
-    enabled: source.enabled,
-    // 名单只回传展示名：TB user_id 是服务端解析细节，不下发浏览器。
-    executorAllowlist: (source.executorAllowlist ?? []).map((binding) => binding.name),
-    schedule: { enabled: source.scheduleEnabled, weekday: source.scheduleWeekday, weekdays: source.scheduleWeekdays ?? (source.scheduleWeekday === null ? null : [source.scheduleWeekday]), time: normalizeScheduleTime(source.scheduleLocalTime), timezone: source.scheduleTimezone },
-  };
-}
-function batchDto(batch: SyncBatchRecord, pool: SourcePool = "product") {
-  return { id: batch.id, pool, status: batch.status, triggerType: batch.triggerType, actorId: batch.actorId, totalCount: batch.totalCount, succeededCount: batch.succeededCount, failedCount: batch.failedCount, filteredCount: batch.filteredCount ?? 0, startedAt: batch.startedAt, completedAt: batch.completedAt, errorSummary: batch.errorSummary };
-}
-// Teambition 自建站的任务地址规则（由一条真实地址确认：/task/<任务ID>）。
-const TEAMBITION_TASK_BASE_URL = process.env.RQSYS_TEAMBITION_TASK_BASE_URL ?? "https://teambition.magene.cn/task";
-// Base 记录直达链接：飞书租户域名与 Base app/table 只有部署方知道，代码里不猜。
-// 由 RQSYS_BASE_RECORD_URL_TEMPLATE 配置，必须是 https 且包含 {recordId}，例如
-// https://<租户>.feishu.cn/base/<app>?table=<table>&record={recordId}。未配置或不合法时返回 null，
-// 详情页只提供复制记录 ID。
-// 集团池有自己的 Base，模板必须按池取；配错模板只会让人点开空表，所以缺配置时宁可返回 null。
-function baseRecordUrl(recordId: string | null, pool: SourcePool = "product"): string | null {
-  const envKey = pool === "group" ? "RQSYS_GROUP_BASE_RECORD_URL_TEMPLATE" : "RQSYS_BASE_RECORD_URL_TEMPLATE";
-  const template = process.env[envKey]?.trim();
-  if (!recordId || !template || !template.startsWith("https://") || !template.includes("{recordId}")) return null;
-  return template.replaceAll("{recordId}", encodeURIComponent(recordId));
-}
-// 数据源页底部展示的 Base 入口：复用同一份记录模板，去掉 record 参数，只留 Base/表地址。
-// 只读展示用；未配置或不是 https 时返回 null，前端显示「未配置」而不是给出坏链接。
-const BASE_LINK_PLACEHOLDER = "__rqsys_record_placeholder__";
-function baseLinkFromTemplate(envKey: "RQSYS_BASE_RECORD_URL_TEMPLATE" | "RQSYS_GROUP_BASE_RECORD_URL_TEMPLATE"): { url: string | null } {
-  const template = process.env[envKey]?.trim();
-  if (!template) return { url: null };
-  let parsed: URL;
-  try { parsed = new URL(template.replaceAll("{recordId}", BASE_LINK_PLACEHOLDER)); } catch { return { url: null }; }
-  if (parsed.protocol !== "https:") return { url: null };
-  // record 参数与任何承载记录 ID 占位符的参数都不属于 Base 地址本身。
-  for (const [key, value] of [...parsed.searchParams.entries()]) {
-    if (key === "record" || value.includes(BASE_LINK_PLACEHOLDER)) parsed.searchParams.delete(key);
-  }
-  return { url: parsed.toString().replace(/[?#]$/, "") };
-}
-// 运维视图只回传作业元数据与安全错误摘要；payload 可能含 actorId/hash 等运行细节，
-// dedupeKey 也可能内嵌 owner open_id 等人员标识，两者都不下发。
-function opsJobDto(job: PipelineJobRecord) {
-  return {
-    id: job.id, jobType: job.jobType, status: job.status,
-    attemptCount: job.attemptCount, maxAttempts: job.maxAttempts,
-    availableAt: job.availableAt, lockedUntil: job.lockedUntil,
-    lastErrorCode: job.lastErrorCode, lastErrorSummary: job.lastErrorSummary,
-    createdAt: job.createdAt, updatedAt: job.updatedAt,
-    requirementId: typeof job.payload.requirementId === "string" ? job.payload.requirementId : null,
-  };
-}
-function requirementResolutionDto(req: RequirementRecord) {
-  const state = req.processingState ?? "active";
-  if (state === "active") return null;
-  return {
-    decision: state === "suppressed_duplicate" ? "duplicate" as const : "ignored" as const,
-    reviewState: "confirmed" as const,
-    canonicalRequirementId: req.duplicateOfRequirementId ?? null,
-    canonicalPlatformRequirementId: null,
-    reason: null,
-  };
-}
+    });
+  });
+});
 
-function requirementDto(req: RequirementRecord, analysis: Record<string, unknown> | null = null, analyses: unknown[] = [], ownerName: string | null = null, currentScorePriority: RequirementRecord["currentScorePriority"] = null, pool: SourcePool | null = null) {
-  // 展示字段：详情页 L1 需要标题/描述/负责人/更新时间；只加不改，避免破坏既有调用方。
-  // ownerName 仅在详情接口注入（列表逐行查映射会 N+1），解析不到时为 null。
-  return {
-    id: req.id,
-    // 重复决策派生的处理状态；active 时链路行为与旧版完全一致。
-    processingState: req.processingState ?? "active",
-    // 0034：逻辑删除的生命周期（独立于 processing_state，同步不会复活）。
-    deletedAt: req.deletedAt ?? null,
-    deletedBy: req.deletedBy ?? null,
-    resolution: requirementResolutionDto(req),
-    // V02-T26：人工优先级覆盖优先于当前评分版本；effectivePriority 供列表/详情直接展示（无覆盖/无评分时为 null）。
-    priorityOverride: req.priorityOverride ? { priority: req.priorityOverride.priority, reason: req.priorityOverride.reason, actorId: req.priorityOverride.actorId, at: req.priorityOverride.at } : null,
-    effectivePriority: req.priorityOverride?.priority ?? currentScorePriority ?? req.currentScorePriority ?? null,
-    // V02-T26：人工补充上下文（详情/列表同构返回；不写 Base）。
-    analysisContext: req.analysisContext ? { note: req.analysisContext.note, updatedAt: req.analysisContext.updatedAt, updatedBy: req.analysisContext.updatedBy } : null,
-    // Q4：全量同步未再出现该需求的时间；只做提示，不影响处理/推送状态。
-    sourceMissingSince: req.sourceMissingSince ?? null,
-    sourceRequirementId: req.teambitionRequirementId,
-    // V02-T02 加法：来源类型（teambition/web_manual）与业务渠道；TB 显示不变，手工预留已收录语义。
-    sourceType: req.sourceType,
-    // 0031：只读的池归属（详情接口注入；列表不带，页面按自己的 pool 参数区分）。
-    ...(pool === null ? {} : { pool }),
-    sourceChannel: req.sourceChannel,
-    productModel: req.productModel,
-    requirementType: req.requirementType,
-    constraintNotes: req.constraintNotes,
-    supplementUrl: req.supplementUrl,
-    intakeModule: req.intakeModule,
-    audience: { tags: req.audienceTags, confirmed: req.audienceConfirmed, version: req.audienceVersion },
-    platformRequirementId: req.platformRequirementId ?? null,
-    title: req.title,
-    description: req.description,
-    // PR-05：TB 执行人原始姓名（未映射时用于“待匹配负责人”分组；不替代映射后的 ownerName）。
-    executorName: req.executorName ?? null,
-    sourceVersion: req.sourceVersion,
-    // 0030/F1：详情页「创建时间」读服务端字段；四种来源统一返回（加法，不替代 updatedAt）。
-    createdAt: req.createdAt,
-    updatedAt: req.updatedAt,
-    sourceUrl: req.sourceType === "teambition" ? req.sourceUrl ?? `${TEAMBITION_TASK_BASE_URL}/${req.teambitionRequirementId}` : req.sourceUrl,
-    lastPushedAt: req.lastPushedAt,
-    ownerName,
-    pipeline: { pull: req.pipeline.pull, analysis: req.pipeline.analysis, owner: req.pipeline.owner, push: req.pipeline.push },
-    source: req.sourcePayload,
-    analysis,
-    baseRecordId: req.baseRecordId,
-    baseRecordUrl: baseRecordUrl(req.baseRecordId, pool ?? "product"),
-    manualOwner: req.manualOwner ? { feishuUserId: req.manualOwner.feishuUserId, feishuIdType: req.manualOwner.feishuIdType, name: req.manualOwner.name, assignedAt: req.manualOwner.assignedAt, assignmentVersion: req.manualOwner.assignmentVersion } : null,
-    duplicateOf: req.duplicateOfRequirementId ?? null,
-    analyses,
-  };
-}
-// 历史分析版本摘要（Spec 02「prior versions as permitted」）：不含 structuredResult 正文，只留可追溯元数据；
-// confidence 从存储枚举（high/medium/low，DDL CHECK）转回展示层中文，与详情 structuredResult 口径一致
-function analysisVersionDto(r: AnalysisRunRecord) {
-  return { analysisVersion: r.analysisVersion, status: r.status, moduleSuggestion: r.moduleSuggestion, confidence: r.confidence === "high" ? "高" : r.confidence === "medium" ? "中" : r.confidence === "low" ? "低" : null, priority: r.priority, provider: r.provider, model: r.model, promptVersion: r.promptVersion, moduleDictionaryVersion: r.moduleDictionaryVersion, priorityRuleVersionId: r.priorityRuleVersionId, startedAt: r.startedAt, completedAt: r.completedAt, safeErrorSummary: r.safeErrorSummary };
-}
-// 负责人映射展示：只含映射关系与匹配方式，不含个人联系方式
-function mappingDto(m: PersonMappingRecord) {
-  return { id: m.id, teambitionUserId: m.teambitionUserId, teambitionDisplayName: m.teambitionDisplayName, feishuUserId: m.feishuUserId, feishuIdType: m.feishuIdType, matchMethod: m.matchMethod, createdBy: m.createdBy, updatedAt: m.updatedAt };
-}
-// 人员页展示：名单 + 飞书账号绑定关系；bindingConflict 表示同名映射指向多个账号，需人工核对。
-function personDto(person: TeamPersonRecord) {
-  return { name: person.name, feishuUserId: person.binding?.feishuUserId ?? null, feishuIdType: person.binding?.feishuIdType ?? null, boundAt: person.binding?.boundAt ?? null, bindingConflict: person.bindingConflict };
-}
-function assessmentDto(r: RequirementAssessmentRecord) {
-  // errorDetail（0033）：失败子类型，便于界面与排查区分 non_json / contract:<fields> 等，不含模型内容。
-  return { id: r.id, requirementId: r.requirementId, version: r.version, status: r.status, promptVersion: r.promptVersion, model: r.model, inputs: r.inputs, output: r.output, errorCode: r.errorCode, errorDetail: r.errorDetail, createdAt: r.createdAt, completedAt: r.completedAt };
-}
-function prdPromptDto(r: RequirementPrdPromptRecord) {
-  return {
-    id: r.id, requirementId: r.requirementId, version: r.version, status: r.status,
-    promptVersion: r.promptVersion, model: r.model, output: r.output, errorCode: r.errorCode,
-    // 版本回填要还原当时的调研结论与评估版本；其它 inputs（需求快照、分析摘要）不回传。
-    investigationNotes: typeof r.inputs.investigationNotes === "string" ? r.inputs.investigationNotes : "",
-    assessmentVersion: typeof r.inputs.assessmentVersion === "number" ? r.inputs.assessmentVersion : null,
-    createdAt: r.createdAt, completedAt: r.completedAt,
-  };
-}
-function requirementSearchDto(req: RequirementRecord) { return requirementDto(req); }
-/** 0034：列表/我的需求的响应组装；按页内来源批量解析负责人姓名、池标签与 Base 深链。 */
-async function requirementListPayload(repositories: ApiRepositories, page: { items: RequirementRecord[]; nextCursor: string | null }, pool: SourcePool | "all") {
-  const pageSourceIds = [...new Set(page.items.map((item) => item.sourceConfigId).filter((id): id is string => Boolean(id)))];
-  const mappings = repositories.people ? (await Promise.all(pageSourceIds.map((id) => repositories.people!.listActive(id)))).flat() : [];
-  const nameByTbUser = new Map(mappings.filter((m) => m.teambitionUserId && m.teambitionDisplayName).map((m) => [`${m.sourceConfigId}:${m.teambitionUserId}`, m.teambitionDisplayName as string]));
-  // 回收站聚合两池后每行要能显示池标签；按来源一次性取，解析失败只影响标签不失败整个列表。
-  // 只有回收站聚合（pool="all"）需要逐行池标签：按来源一次性取池，解析失败只影响标签不失败整个列表。
-  // 非聚合列表保持原契约：不新增 pool 字段，Base 深链按请求的池取模板。
-  const aggregate = pool === "all";
-  const poolBySource = new Map<string, SourcePool>();
-  if (aggregate) { try { for (const source of await repositories.sources.list()) poolBySource.set(source.id, source.pool ?? "product"); } catch { /* 标签是展示增强 */ } }
-  return {
-    items: page.items.map((item) => {
-      const itemPool: SourcePool = aggregate ? ((item.sourceConfigId ? poolBySource.get(item.sourceConfigId) : undefined) ?? "product") : pool;
-      return {
-        ...requirementSearchDto(item),
-        baseRecordUrl: baseRecordUrl(item.baseRecordId, itemPool),
-        ownerName: manualOwnerName(item) ?? (item.executorUserId && item.sourceConfigId ? nameByTbUser.get(`${item.sourceConfigId}:${item.executorUserId}`) ?? null : null),
-        ...(aggregate ? { pool: itemPool } : {}),
-      };
-    }),
-    nextCursor: page.nextCursor,
-  };
-}
-// 逐条人工负责人优先于 TB 执行人映射；两者都没有时为空。
-function manualOwnerName(req: RequirementRecord): string | null { return req.manualOwner?.name ?? null; }
-function dictionaryDto(d: ModuleDictionaryVersionRecord) { return { version: d.version, status: d.status, entries: d.entries, createdBy: d.createdBy, createdAt: d.createdAt, publishedAt: d.publishedAt }; }
-function priorityRuleDto(r: PriorityRuleVersionRecord) { return { id: r.id, version: r.version, status: r.status, rules: r.rules, validationEvidence: r.validationEvidence, createdBy: r.createdBy, createdAt: r.createdAt, publishedAt: r.publishedAt }; }
-async function actorFor(request: Request, dependencies: ApiDependencies) {
-  if (!dependencies.identity) return { response: jsonError("UNAUTHORIZED") } as const;
-  try { return { actor: await dependencies.identity.requireActor(request) } as const; }
-  catch { return { response: jsonError("UNAUTHORIZED") } as const; }
-}
-/**
- * 0034：妙搭平台 userId → 飞书 user_id。
- * 「我的需求」/删除/还原的负责人列都存飞书 user_id；平台 userId 不能直接比较。
- * unavailable=身份服务缺失或调用失败；unlinked=该用户没有可用的飞书 user_id。
- */
-interface FeishuIdentityResolution {
-  ok: boolean;
-  /** ok=true 时必有；ok=false 时为空。 */
-  feishuUserId?: string;
-  /** ok=false 时的原因：unavailable=身份服务缺失或失败；unlinked=没有可用的飞书 user_id。 */
-  reason?: "unavailable" | "unlinked";
-}
-// 不用可辨识联合：妙搭服务端 tsconfig 的 strict=false 下布尔判别不会收窄，两仓共用同一份实现。
-async function resolveFeishuIdentity(dependencies: ApiDependencies, actorId: string): Promise<FeishuIdentityResolution> {
-  if (!dependencies.feishuUserSelections) return { ok: false, reason: "unavailable" };
-  try {
-    const user = await dependencies.feishuUserSelections.resolve(actorId);
-    if (!user || user.feishuIdType !== "user_id") return { ok: false, reason: "unlinked" };
-    return { ok: true, feishuUserId: user.feishuUserId };
-  } catch { return { ok: false, reason: "unavailable" }; }
-}
+test("overview AI stats failure reports a sanitized error class instead of leaking the query", async () => {
+  const d = overviewDependencies();
+  const reports: Array<{ event: string; details: Record<string, unknown> }> = [];
+  d.diagnostics = { error: (event, details) => { reports.push({ event, details: details as Record<string, unknown> }); } };
+  const failure = Object.assign(new Error("SELECT title FROM requirements -- 需求正文"), { code: "42809" });
+  (d.repositories!.analyses as unknown as Record<string, unknown>).aiCallStats = async () => { throw failure; };
+  await withAiKey("sk-test", async () => {
+    const response = await handleApiRequest(new Request("http://localhost/api/overview/metrics"), d);
+    assert.equal(response.status, 200);
+    const body = await response.json() as { ai: { status: string; statsAvailable: boolean } };
+    assert.equal(body.ai.status, "unavailable");
+    assert.equal(body.ai.statsAvailable, false);
+  });
+  assert.deepEqual(reports, [{
+    event: "overview_ai_stats_failed",
+    details: { phase: "overview_ai_stats", stat: "analysis", errorType: "Error", databaseCode: "42809", causeType: "unknown" },
+  }]);
+  // 诊断只允许脱敏字段：原始异常消息（可能含 SQL 片段/正文）不得出现在日志里。
+  assert.equal(JSON.stringify(reports).includes("需求正文"), false);
+});
 
-// M4：身份服务不可用是可重试故障，必须 503；只有「未绑定飞书」才降级为空态 200。
-function identityUnavailable(identity: FeishuIdentityResolution): Response | null {
-  return !identity.ok && identity.reason === "unavailable"
-    ? jsonError("DEPENDENCY_UNAVAILABLE", "身份解析服务暂不可用，请稍后重试。")
+test("overview AI stats failure in the intake count is attributed to the intake stat", async () => {
+  const d = overviewDependencies();
+  const reports: string[] = [];
+  d.diagnostics = { error: (event, details) => { reports.push(`${event}:${String((details as { stat?: string }).stat)}`); } };
+  (d.repositories!.analyses as unknown as Record<string, unknown>).aiCallStats = async () => ({ total: 4, today: 1, lastAt: null, lastStatus: null });
+  d.repositories!.audit.countByEntityType = async () => { throw Object.assign(new Error("op ANY/ALL (array) requires array on right side"), { code: "42809" }); };
+  await withAiKey("sk-test", async () => {
+    const response = await handleApiRequest(new Request("http://localhost/api/overview/metrics"), d);
+    assert.equal(response.status, 200);
+    const body = await response.json() as { ai: { status: string; statsAvailable: boolean; analysis: { total: number; today: number } } };
+    assert.equal(body.ai.status, "unavailable");
+    assert.deepEqual(body.ai.analysis, { total: 0, today: 0 });
+  });
+  assert.deepEqual(reports, ["overview_ai_stats_failed:intake"]);
+});
+
+test("overview AI block reports paused state with the reason and recovery time", async () => {
+  const d = overviewDependencies();
+  d.repositories!.flags = { get: async () => ({ value: { until: "2026-10-08T01:00:00.000Z", reason: "ai_rate_limited" }, updatedAt: "2026-10-08T00:00:00.000Z" }), set: async () => undefined };
+  await withAiKey("sk-test", async () => {
+    const body = await (await handleApiRequest(new Request("http://localhost/api/overview/metrics"), d)).json() as { ai: { status: string; pausedUntil: string | null; pauseReason: string | null } };
+    assert.equal(body.ai.status, "paused");
+    assert.equal(body.ai.pausedUntil, "2026-10-08T01:00:00.000Z");
+    assert.equal(body.ai.pauseReason, "ai_rate_limited");
+  });
+});
+
+test("overview AI block prefers unconfigured over a paused flag", async () => {
+  const d = overviewDependencies();
+  d.repositories!.flags = { get: async () => ({ value: { until: "2026-10-08T01:00:00.000Z", reason: "ai_rate_limited" }, updatedAt: "2026-10-08T00:00:00.000Z" }), set: async () => undefined };
+  await withAiKey(undefined, async () => {
+    const body = await (await handleApiRequest(new Request("http://localhost/api/overview/metrics"), d)).json() as { ai: { status: string; pausedUntil: string | null; pauseReason: string | null } };
+    assert.equal(body.ai.status, "unconfigured");
+    assert.equal(body.ai.pausedUntil, null);
+    assert.equal(body.ai.pauseReason, null);
+  });
+});
+
+test("overview AI block takes the newer intake call and degrades to zeros when stats are unavailable", async () => {
+  const bare = overviewDependencies();
+  await withAiKey("sk-test", async () => {
+    const body = await (await handleApiRequest(new Request("http://localhost/api/overview/metrics"), bare)).json() as { ai: Record<string, unknown> };
+    assert.deepEqual(body.ai.analysis, { total: 0, today: 0 });
+    assert.deepEqual(body.ai.chatIntake, { total: 0, today: 0 });
+    assert.deepEqual(body.ai.lastCall, { at: null, kind: null, result: null });
+  });
+
+  const d = overviewDependencies();
+  (d.repositories!.analyses as unknown as Record<string, unknown>).aiCallStats = async () => ({ total: 1, today: 0, lastAt: "2026-10-07T10:00:00.000Z", lastStatus: "failed_retryable" });
+  d.repositories!.audit.countByEntityType = async () => ({ total: 2, today: 1, lastAt: "2026-10-08T00:30:00.000Z", lastEventType: "intake.draft_extracted" });
+  await withAiKey("sk-test", async () => {
+    const body = await (await handleApiRequest(new Request("http://localhost/api/overview/metrics"), d)).json() as { ai: { lastCall: unknown } };
+    assert.deepEqual(body.ai.lastCall, { at: "2026-10-08T00:30:00.000Z", kind: "chat_intake", result: "succeeded" });
+  });
+});
+
+test("overview AI block reports a running analysis with a null result at its start time", async () => {
+  const d = overviewDependencies();
+  (d.repositories!.analyses as unknown as Record<string, unknown>).aiCallStats = async () => ({ total: 3, today: 1, lastAt: "2026-10-08T02:00:00.000Z", lastStatus: "running" });
+  await withAiKey("sk-test", async () => {
+    const body = await (await handleApiRequest(new Request("http://localhost/api/overview/metrics"), d)).json() as { ai: { lastCall: unknown } };
+    // running 不在终态映射表里：at 取 started_at，result 必须是 null，不能猜成成功/失败。
+    assert.deepEqual(body.ai.lastCall, { at: "2026-10-08T02:00:00.000Z", kind: "analysis", result: null });
+  });
+});
+
+test("lists only user-maintained source settings after injected identity authentication", async () => { const r = await handleApiRequest(new Request("http://localhost/api/sources"), makeDependencies()); assert.equal(r.status, 200); assert.deepEqual(await r.json(), { items: [{ id: source.id, pool: "product", projectName: "Project", enabled: true, executorAllowlist: [], schedule: { enabled: false, weekday: null, weekdays: null, time: null, timezone: null } }] }); });
+test("rejects protected routes without an identity provider", async () => { const r = await handleApiRequest(new Request("http://localhost/api/sources"), unauthenticated); assert.equal(r.status, 401); });
+test("base links expose both pools without the record parameter and stay null when unconfigured", async () => {
+  const previous = {
+    product: process.env.RQSYS_BASE_RECORD_URL_TEMPLATE,
+    group: process.env.RQSYS_GROUP_BASE_RECORD_URL_TEMPLATE,
+  };
+  try {
+    process.env.RQSYS_BASE_RECORD_URL_TEMPLATE = "https://aimagene.feishu.cn/base/GRnEboCIga7Omas8RwgcDmmgnib?table=tbl6Gfi0KJ2a1llK&record={recordId}";
+    process.env.RQSYS_GROUP_BASE_RECORD_URL_TEMPLATE = "https://aimagene.feishu.cn/base/HZ6NbvXKJa0o5Qs4hgQcSoirnde?table=tblNVlrwYOPU5kuz&record={recordId}";
+    const configured = await handleApiRequest(new Request("http://localhost/api/base-links"), makeDependencies());
+    assert.equal(configured.status, 200);
+    assert.deepEqual(await configured.json(), {
+      product: { url: "https://aimagene.feishu.cn/base/GRnEboCIga7Omas8RwgcDmmgnib?table=tbl6Gfi0KJ2a1llK" },
+      group: { url: "https://aimagene.feishu.cn/base/HZ6NbvXKJa0o5Qs4hgQcSoirnde?table=tblNVlrwYOPU5kuz" },
+    });
+    delete process.env.RQSYS_BASE_RECORD_URL_TEMPLATE;
+    delete process.env.RQSYS_GROUP_BASE_RECORD_URL_TEMPLATE;
+    const unconfigured = await handleApiRequest(new Request("http://localhost/api/base-links"), makeDependencies());
+    assert.equal(unconfigured.status, 200);
+    assert.deepEqual(await unconfigured.json(), { product: { url: null }, group: { url: null } });
+  } finally {
+    if (previous.product === undefined) delete process.env.RQSYS_BASE_RECORD_URL_TEMPLATE;
+    else process.env.RQSYS_BASE_RECORD_URL_TEMPLATE = previous.product;
+    if (previous.group === undefined) delete process.env.RQSYS_GROUP_BASE_RECORD_URL_TEMPLATE;
+    else process.env.RQSYS_GROUP_BASE_RECORD_URL_TEMPLATE = previous.group;
+  }
+});
+
+test("updates source settings by project name while keeping server-owned IDs and metadata", async () => { const d = makeDependencies(); const r = await handleApiRequest(new Request(`http://localhost/api/sources/${source.id}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectName: "Project", enabled: false, schedule: { enabled: true, weekday: 1, time: "09:30", timezone: "Asia/Shanghai" } }) }), d); assert.equal(r.status, 200); const body = await r.json() as Record<string, unknown>; assert.deepEqual(body, { id: source.id, pool: "product", projectName: "Project", enabled: false, executorAllowlist: [], schedule: { enabled: true, weekday: 1, weekdays: [1], time: "09:30", timezone: "Asia/Shanghai" } }); assert.equal(source.externalProjectId, "p1"); assert.equal(source.requirementTypeId, "type1"); assert.deepEqual(source.fieldMap, { title: "name" }); });
+test("updates source schedule with a multi-weekday list", async () => {
+  const d = makeDependencies();
+  const r = await handleApiRequest(new Request(`http://localhost/api/sources/${source.id}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectName: "Project", enabled: false, schedule: { enabled: true, weekday: 1, weekdays: [1, 3, 5], time: "09:30", timezone: "Asia/Shanghai" } }) }), d);
+  assert.equal(r.status, 200);
+  const body = await r.json() as { schedule: { weekdays: number[]; weekday: number } };
+  assert.deepEqual(body.schedule.weekdays, [1, 3, 5]);
+  assert.equal(body.schedule.weekday, 1);
+});
+test("saves a manual score after server-side recomputation", async () => {
+  const d = makeDependencies();
+  let saved: Record<string, unknown> | null = null;
+  d.repositories!.priorityRules = { getPublished: async () => ({ id: "rule-v2", version: 2, status: "published", rules: { formulaType: "umsc_weighted_v2", thresholds: { p0: 45, p1: 25, p2: 10 } }, validationEvidence: [{}], createdBy: null, createdAt: "2026-01-01T00:00:00.000Z", publishedAt: "2026-01-01T00:00:00.000Z" }) } as never;
+  d.repositories!.scoring = {
+    current: async () => null,
+    saveManual: async (input: Record<string, unknown>) => { saved = input; return { outcome: "saved", version: { version: 1 } }; },
+    aiSuggestion: async () => null,
+    list: async () => [],
+    createAi: async () => { throw new Error("unused"); },
+    applyAi: async () => { throw new Error("unused"); },
+  } as never;
+  const response = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/scoring`, {
+    method: "PUT", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ expectedVersion: 0, reason: "人工复核", inputs: { user: { pain: 3, frequency: 4 }, market: { sellingPoint: 1, competitor: 1 }, strategy: { roadmap: 1, dependency: 1 }, cost: { workload: 3, technicalRisk: 2, resource: 2 } }, alpha: 0.8 }),
+  }), d);
+  assert.equal(response.status, 200);
+  assert.ok(saved);
+  assert.equal((saved as { score: number }).score, 6.4);
+  assert.equal((saved as { priority: string }).priority, "P3");
+  assert.equal((saved as { actorId: string }).actorId, "actor-1");
+  assert.equal((saved as { auditEvent: { eventType: string } }).auditEvent.eventType, "scoring.updated");
+});
+
+test("applies an AI score suggestion through a versioned confirmation", async () => {
+  const d = makeDependencies();
+  let applied: Record<string, unknown> | null = null;
+  d.repositories!.scoring = {
+    current: async () => ({ version: 1, status: "current" }),
+    saveManual: async () => ({ outcome: "version_conflict", currentVersion: 1 }),
+    aiSuggestion: async () => ({ version: 2 }),
+    list: async () => [],
+    createAi: async () => { throw new Error("unused"); },
+    applyAi: async (input: Record<string, unknown>) => { applied = input; return { outcome: "saved", version: { version: 2 } }; },
+  } as never;
+  const response = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/scoring/apply-ai`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ expectedVersion: 1, aiVersion: 2, reason: "采用AI" }),
+  }), d);
+  assert.equal(response.status, 200);
+  assert.ok(applied);
+  assert.equal((applied as { aiVersion: number }).aiVersion, 2);
+  assert.equal((applied as { actorId: string }).actorId, "actor-1");
+  assert.equal((applied as { auditEvent: { eventType: string } }).auditEvent.eventType, "scoring.ai_applied");
+});
+
+test("any authenticated Feishu actor can update source settings without an application role", async () => { const d = makeDependencies({ id: "logged-in-user" }); const r = await handleApiRequest(new Request(`http://localhost/api/sources/${source.id}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectName: "Project", enabled: false, schedule: { enabled: true, weekday: 1, time: "09:00", timezone: "Asia/Shanghai" } }) }), d); assert.equal(r.status, 200); });
+test("queues a sync once and returns the batch for an idempotent repeat", async () => { const d = makeDependencies(); const req = () => new Request("http://localhost/api/sync/run", { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": "request-key-0001" }, body: JSON.stringify({ sourceId: source.id }) }); const first = await handleApiRequest(req(), d); assert.equal(first.status, 202); assert.deepEqual(await first.json(), { batchId: "batch-1", status: "running" }); const dup = await handleApiRequest(req(), d); assert.equal(dup.status, 202); assert.deepEqual(await dup.json(), { batchId: "batch-1", status: "running" }); });
+test("queues a source-only sync mode separately and records the mode in the audit", async () => {
+ const d = makeDependencies();
+ let queued: Record<string, unknown> | null = null;
+ let createdKey: string | null = null;
+ let auditDetails: Record<string, unknown> | null = null;
+ d.repositories!.batches.create = async (input) => {
+  createdKey = input.idempotencyKey;
+  return { ...batch, ...input, id: "batch-source-only", status: "running" };
+ };
+ d.repositories!.jobs.enqueue = async (input) => {
+  queued = input as unknown as Record<string, unknown>;
+  return { ...input, id: "sync-job", status: "queued", attemptCount: 0, maxAttempts: 3, lockedUntil: null, lastErrorCode: null, lastErrorSummary: null, createdAt: input.availableAt, updatedAt: input.availableAt };
+ };
+ d.repositories!.audit.append = async (event) => { auditDetails = event.safeDetails as Record<string, unknown>; };
+ const response = await handleApiRequest(new Request("http://localhost/api/sync/run", {
+  method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": "source-only-0001" },
+  body: JSON.stringify({ sourceId: source.id, mode: "source_only" }),
+ }), d);
+ assert.equal(response.status, 202);
+ assert.match(createdKey ?? "", /^source_only:[a-f0-9]{64}$/);
+ assert.ok((createdKey ?? "").length <= 128);
+ assert.deepEqual((queued as Record<string, unknown> | null)?.payload, { batchId: "batch-source-only", sourceId: source.id, triggerType: "manual", actorId: "actor-1", mode: "source_only" });
+ assert.deepEqual(auditDetails, { trigger: "manual", mode: "source_only" });
+});
+test("scopes the same idempotency token to its sync mode", async () => {
+ const keys: string[] = [];
+ for (const mode of ["full_pipeline", "source_only"] as const) {
+  const d = makeDependencies();
+  d.repositories!.batches.create = async (input) => { keys.push(input.idempotencyKey); return { ...batch, ...input, id: `batch-${mode}`, status: "succeeded" }; };
+  d.repositories!.jobs.enqueue = async (input) => ({ ...input, id: `job-${mode}`, status: "queued", attemptCount: 0, maxAttempts: 3, lockedUntil: null, lastErrorCode: null, lastErrorSummary: null, createdAt: input.availableAt, updatedAt: input.availableAt });
+  d.repositories!.audit.append = async () => {};
+  const response = await handleApiRequest(new Request("http://localhost/api/sync/run", {
+   method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": "same-token-123" },
+   body: JSON.stringify({ sourceId: source.id, mode }),
+  }), d);
+  assert.equal(response.status, 202);
+ }
+ assert.equal(keys.length, 2);
+ assert.notEqual(keys[0], keys[1]);
+ assert.ok(keys.every((key) => /^(full_pipeline|source_only):[a-f0-9]{64}$/.test(key)));
+});
+test("queues a Base push retry without an undocumented project ID dependency", async () => {
+  const d = makeDependencies();
+  let queued: Record<string, unknown> | null = null;
+  let auditType: string | null = null;
+  d.repositories!.jobs.enqueue = async (input) => { queued = input as unknown as Record<string, unknown>; return { ...input, id: "push-job", status: "queued", attemptCount: 0, maxAttempts: 3, lockedUntil: null, lastErrorCode: null, lastErrorSummary: null, createdAt: input.availableAt, updatedAt: input.availableAt }; };
+  d.repositories!.audit.append = async (event) => { auditType = event.eventType; };
+  const response = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/push`, { method: "POST", headers: { "Idempotency-Key": "retry-key-123" } }), d);
+  assert.equal(response.status, 202);
+  assert.deepEqual(await response.json(), { requirementId: requirement.id, status: "queued" });
+  assert.equal((queued as Record<string, unknown> | null)?.jobType, "base_push");
+  assert.deepEqual((queued as Record<string, unknown> | null)?.payload, { requirementId: requirement.id, sourceVersion: 1, analysisVersion: 2, idempotencyKey: `base-push:${requirement.id}:sv1:av2:retry:retry-key-123`, actorId: "actor-1" });
+  assert.equal(auditType, "base.push.retry_requested");
+});
+test("queues a retry for a pending analysis when its current queue job is missing", async () => {
+  const d = makeDependencies();
+  const queued: Record<string, unknown>[] = [];
+  d.repositories!.requirements!.get = async (id: string) => id === requirement.id ? { ...requirement, pipeline: { ...requirement.pipeline, analysis: "pending" as const } } as RequirementRecord : null;
+  d.repositories!.jobs.enqueue = async (input) => {
+    queued.push(input as unknown as Record<string, unknown>);
+    return { ...input, id: "analysis-job", status: "queued", attemptCount: 0, maxAttempts: 3, lockedUntil: null, lastErrorCode: null, lastErrorSummary: null, createdAt: input.availableAt, updatedAt: input.availableAt };
+  };
+  const response = await handleApiRequest(new Request(`http://localhost/api/analysis/${requirement.id}/retry`, { method: "POST" }), d);
+  assert.equal(response.status, 202);
+  assert.deepEqual(await response.json(), { requirementId: requirement.id, status: "queued" });
+  assert.equal(queued.length, 1);
+  // 2026-11-23：人工重新分析缺省 force——真正的重跑必须带 force 键与 payload 标记。
+  assert.equal(queued[0]?.dedupeKey, `analysis:${requirement.id}:sv1:after2:force`);
+  assert.equal((queued[0]?.payload as Record<string, unknown>).force, true);
+});
+test("audits an analysis retry request when an existing queued job is reused", async () => {
+  const d = makeDependencies();
+  const auditEvents: Record<string, unknown>[] = [];
+  d.repositories!.requirements!.get = async (id: string) => id === requirement.id
+    ? { ...requirement, pipeline: { ...requirement.pipeline, analysis: "pending" as const } } as RequirementRecord
     : null;
-}
+  d.repositories!.jobs.findByDedupeKey = async (key) => key === `analysis:${requirement.id}:sv1:after2:force`
+    ? { id: "analysis-job", jobType: "analysis", dedupeKey: key, payload: {}, status: "queued", attemptCount: 0, maxAttempts: 3, availableAt: "2026-10-08T00:00:00.000Z", lockedUntil: null, lastErrorCode: null, lastErrorSummary: null, createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z" }
+    : null;
+  d.repositories!.audit.append = async (event) => { auditEvents.push(event as unknown as Record<string, unknown>); };
+  const response = await handleApiRequest(new Request(`http://localhost/api/analysis/${requirement.id}/retry`, { method: "POST" }), d);
+  assert.equal(response.status, 202);
+  assert.deepEqual(await response.json(), { requirementId: requirement.id, status: "queued" });
+  assert.equal(auditEvents.length, 1);
+  assert.equal(auditEvents[0]?.eventType, "analysis.retry_requested");
+  assert.equal(auditEvents[0]?.actorId, "actor-1");
+  assert.deepEqual(auditEvents[0]?.safeDetails, { sourceVersion: 1, priorAnalysisVersion: 2, analysisStatus: "reused_existing_job", force: true });
+});
+test("lists and retrieves batches with items", async () => { const d = makeDependencies(); assert.equal((await handleApiRequest(new Request("http://localhost/api/batches?limit=10"), d)).status, 200); const r = await handleApiRequest(new Request(`http://localhost/api/batches/${batch.id}`), d); assert.equal(r.status, 200); assert.deepEqual((await r.json() as { items: SyncItemRecord[] }).items, [item]); });
+test("failed item retry is idempotent across repeated requests", async () => {
+  const d = makeDependencies();
+  let created = 0, enqueued = 0, audits = 0;
+  let enqueuedPayload: Record<string, unknown> | null = null;
+  let createdRetryKey: string | null = null;
+  let retryBatch: SyncBatchRecord | null = null;
+  d.repositories!.items.get = async () => ({ ...item, status: "failed" });
+  d.repositories!.batches.create = async (params) => { created += 1; createdRetryKey = params.idempotencyKey; retryBatch = { ...batch, ...params, id: "retry-batch", status: "running" }; return retryBatch; };
+  const retryKey = `item-retry:source_only:${createHashForTest("sha256").update(`${item.id}:retry-key-123`).digest("hex")}`;
+  d.repositories!.batches.findByIdempotencyKey = async (_sourceId, key) => key === retryKey ? retryBatch : null;
+  d.repositories!.batches.get = async () => ({ ...batch, idempotencyKey: "source_only:" + "a".repeat(64) });
+  d.repositories!.jobs.enqueue = async (params) => { enqueued += 1; enqueuedPayload = params.payload; return { ...params, id: "retry-job", status: "queued", attemptCount: 0, maxAttempts: 3, lockedUntil: null, lastErrorCode: null, lastErrorSummary: null, createdAt: params.availableAt, updatedAt: params.availableAt }; };
+  d.repositories!.jobs.findByDedupeKey = async (key) => {
+    const queuedJob = { id: "retry-job", jobType: "sync" as const, dedupeKey: key, payload: { mode: "source_only" }, status: "queued" as const, attemptCount: 0, maxAttempts: 3, availableAt: "2026-10-08T00:00:00.000Z", lockedUntil: null, lastErrorCode: null, lastErrorSummary: null, createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z" };
+    if (key === `sync:${batch.sourceConfigId}:${batch.idempotencyKey}`) return queuedJob;
+    return enqueued ? { ...queuedJob, dedupeKey: "sync:retry-batch", payload: enqueuedPayload ?? {} } : null;
+  };
+  d.repositories!.audit.append = async () => { audits += 1; };
+  const request = () => new Request(`http://localhost/api/items/${item.id}/retry`, { method: "POST", headers: { "Idempotency-Key": "retry-key-123" } });
+  const first = await handleApiRequest(request(), d);
+  const second = await handleApiRequest(request(), d);
+  assert.equal(first.status, 202);
+  assert.equal(second.status, 202);
+  assert.equal(created, 1);
+  assert.equal(enqueued, 1);
+  assert.equal(audits, 1);
+  assert.equal((enqueuedPayload as unknown as Record<string, unknown> | null)?.mode, "source_only");
+  assert.equal(createdRetryKey, retryKey);
+});
+test("batch and requirement list routes pass time, batch and stable cursor filters to repositories", async () => {
+ const d = makeDependencies(); let batchQuery: unknown; let requirementQuery: unknown;
+ d.repositories!.batches.list = async (query) => { batchQuery = query; return { items: [], nextCursor: null }; };
+ d.repositories!.requirements!.search = async (query) => { requirementQuery = query; return { items: [], nextCursor: null }; };
+ const batchCursor = { startedAt: "2026-01-01T00:00:00.000Z", id: batch.id };
+ const batchResponse = await handleApiRequest(new Request(`http://localhost/api/batches?since=2026-01-01T00%3A00%3A00Z&until=2026-01-02T00%3A00%3A00Z&cursor=${encodeURIComponent(encodeBatchCursor(batchCursor))}`), d);
+ assert.equal(batchResponse.status, 200);
+ assert.deepEqual(batchQuery, { limit: 25, pool: "product", since: "2026-01-01T00:00:00Z", until: "2026-01-02T00:00:00Z", cursor: batchCursor });
+ const requirementResponse = await handleApiRequest(new Request(`http://localhost/api/requirements?batchId=${batch.id}&pullState=synced&since=2026-01-01T00%3A00%3A00Z&until=2026-01-02T00%3A00%3A00Z`), d);
+ assert.equal(requirementResponse.status, 200);
+ assert.deepEqual(requirementQuery, { batchId: batch.id, pool: "product", pullState: "synced", since: "2026-01-01T00:00:00Z", until: "2026-01-02T00:00:00Z", limit: 25, deleted: false });
+});
+test("requirement list and export forward the source filter to repositories", async () => {
+ const d = makeDependencies(); const queries: unknown[] = [];
+ d.repositories!.requirements!.search = async (query) => { queries.push(query); return { items: [], nextCursor: null }; };
+ const listResponse = await handleApiRequest(new Request("http://localhost/api/requirements?source=chat_paste"), d);
+ assert.equal(listResponse.status, 200);
+ const exportResponse = await handleApiRequest(new Request("http://localhost/api/requirements/export?source=web_manual"), d);
+ assert.equal(exportResponse.status, 200);
+ assert.deepEqual(queries, [{ source: "chat_paste", pool: "product", limit: 25, deleted: false }, { source: "web_manual", pool: "product", limit: 5001 }]);
+ const invalid = await handleApiRequest(new Request("http://localhost/api/requirements?source=base_form"), d);
+ assert.equal(invalid.status, 200);
+ assert.deepEqual(queries[2], { source: "base_form", pool: "product", limit: 25, deleted: false });
+ const rejected = await handleApiRequest(new Request("http://localhost/api/requirements?source=unknown"), d);
+ assert.equal(rejected.status, 400);
+});
 
-// 审计与业务写入保持一致：审计写失败时不返回虚假成功（工单 12 验收）。
-async function appendAudit(repositories: ApiRepositories, event: Parameters<ApiRepositories["audit"]["append"]>[0]): Promise<Response | null> {
-  try { await repositories.audit.append(event); return null; }
-  catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
-}
-// 请求体传输上限：比任何合法 schema 都宽（最重的 Kano 资料导入约 1.3 MB），又不让我们无限缓冲。
-// 超限在读取阶段就中断，不再把剩余字节拉进内存；schema 级上限（如 20,000 字）在校验阶段仍然生效。
-export const MAX_JSON_BODY_BYTES = 2 * 1024 * 1024;
-class PayloadTooLargeError extends Error {
-  constructor() { super("request body too large"); this.name = "PayloadTooLargeError"; }
-}
-async function readBodyText(request: Request): Promise<string> {
-  const declared = request.headers.get("content-length");
-  if (declared !== null && Number(declared) > MAX_JSON_BODY_BYTES) throw new PayloadTooLargeError();
-  if (!request.body) return "";
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
+test("requirement source counts return the five exclusive buckets and degrade when unavailable", async () => {
+  const d = makeDependencies();
+  const counts = { teambition: 10, web_manual: 2, base_form: 1, chat_paste: 3, all: 16 };
+  d.repositories!.requirements!.sourceCounts = async () => counts;
+  const response = await handleApiRequest(new Request("http://localhost/api/requirements/source-counts"), d);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { counts });
+  // 统计失败或仓储未实现时只让 Tab 计数降级，不能影响需求列表本身。
+  d.repositories!.requirements!.sourceCounts = async () => { throw new Error("db down"); };
+  assert.equal((await handleApiRequest(new Request("http://localhost/api/requirements/source-counts"), d)).status, 503);
+  delete d.repositories!.requirements!.sourceCounts;
+  assert.equal((await handleApiRequest(new Request("http://localhost/api/requirements/source-counts"), d)).status, 503);
+});
+
+test("requirement assessments list history, create on demand and map provider failures", async () => {
+  const d = makeDependencies();
+  const record = {
+    id: "assessment-1", requirementId: requirement.id, version: 1, status: "succeeded" as const,
+    promptVersion: "rq-assessment-v1", model: "m", inputs: { background: "补充" }, output: { verdict: "advance" }, errorCode: null, errorDetail: null,
+    createdBy: "actor-1", createdAt: "2026-11-20T00:00:00.000Z", completedAt: "2026-11-20T00:00:10.000Z",
+  };
+  const runs: unknown[] = [];
+  const expirations: string[][] = [];
+  d.repositories!.assessments = {
+    create: async () => ({ outcome: "created" as const, record }),
+    complete: async () => record,
+    fail: async () => null,
+    list: async () => [record],
+    expireStaleRunning: async (id: string, before: string, at: string) => { expirations.push([id, before, at]); return 0; },
+  };
+  d.assessments = { run: async (input) => { runs.push(input); return record; } };
+  const list = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/assessments`), d);
+  assert.equal(list.status, 200);
+  const { createdBy: _createdBy, ...dto } = record;
+  assert.deepEqual(await list.json(), { items: [dto] });
+  assert.deepEqual(expirations, [[requirement.id, "2026-10-07T23:58:00.000Z", "2026-10-08T00:00:00.000Z"]]);
+  const created = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/assessments`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ background: "补充", goal: "", extra: 1 }),
+  }), d);
+  assert.equal(created.status, 400, "strict schema rejects unknown keys");
+  const ok = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/assessments`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ background: "补充背景", scenario: "通勤" }),
+  }), d);
+  assert.equal(ok.status, 201);
+  assert.deepEqual(await ok.json(), dto);
+  // 评估与主分析同口径：来源花名册（source.ownerNames）并入 PII 掩码名单。
+  assert.deepEqual(runs, [{ requirement, inputs: { background: "补充背景", scenario: "通勤" }, actorId: "actor-1", analysis: analysisRun, piiMarkers: ["Lee"] }]);
+  const missing = await handleApiRequest(new Request("http://localhost/api/requirements/77777777-7777-4777-8777-777777777777/assessments"), d);
+  assert.equal(missing.status, 404);
+  const noRunner = makeDependencies();
+  const unavailable = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/assessments`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+  }), noRunner);
+  assert.equal(unavailable.status, 503);
+  const limited = { ...d, assessments: { run: async () => { throw Object.assign(new Error("busy"), { code: "rate_limited" }); } } };
+  const limitedResponse = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/assessments`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+  }), limited);
+  assert.equal(limitedResponse.status, 429);
+  assert.equal(limitedResponse.headers.get("retry-after"), "60");
+  const timeout = { ...d, assessments: { run: async () => { throw Object.assign(new Error("slow"), { code: "timeout" }); } } };
+  const timeoutResponse = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/assessments`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+  }), timeout);
+  assert.equal(timeoutResponse.status, 503);
+  // 同需求未超时的 running 版本：409 ASSESSMENT_IN_PROGRESS，不产生新版本。
+  const inProgress = { ...d, assessments: { run: async () => { throw Object.assign(new Error("running"), { code: "assessment_in_progress" }); } } };
+  const inProgressResponse = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/assessments`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+  }), inProgress);
+  assert.equal(inProgressResponse.status, 409);
+  assert.equal((await inProgressResponse.json() as { error: { code: string } }).error.code, "ASSESSMENT_IN_PROGRESS");
+  // 契约失败只落字段路径（字段名），不落模型内容。
+  const logged: Array<{ event: string; details: Record<string, unknown> }> = [];
+  const contract = {
+    ...d,
+    diagnostics: { error: (event: string, details: Record<string, unknown>) => { logged.push({ event, details }); } },
+    assessments: { run: async () => { throw new AssessmentContractError(["background", "feasibility.cost"]); } },
+  };
+  const contractResponse = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/assessments`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+  }), contract);
+  assert.equal(contractResponse.status, 503);
+  assert.deepEqual(logged, [{ event: "assessment_failed", details: { errorClass: "analysis_failure", fields: "background,feasibility.cost" } }]);
+  // PRD 输入上限：背景 2,000 / 目标 1,000 / 场景 2,000。
+  const tooLong = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/assessments`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ goal: "x".repeat(1001) }),
+  }), d);
+  assert.equal(tooLong.status, 400);
+});
+
+test("V02-T02 manual requirements read back with source fields and no TB link fallback", async () => {
+  const d = makeDependencies();
+  const manual = { ...requirement, sourceType: "web_manual", sourceChannel: "售后", sourceConfigId: null, teambitionRequirementId: null, pipeline: { ...requirement.pipeline, pull: "collected" as const }, sourceUrl: null } as unknown as RequirementRecord;
+  d.repositories!.requirements!.get = async () => manual;
+  const response = await handleApiRequest(new Request("http://localhost/api/requirements/66666666-6666-4666-8666-666666666666"), d);
+  assert.equal(response.status, 200);
+  const body = await response.json() as Record<string, unknown>;
+  assert.equal(body.sourceType, "web_manual");
+  assert.equal(body.sourceChannel, "售后");
+  assert.equal(body.sourceRequirementId, null);
+  // 手工需求不拼接 TB 地址兜底（AC05）
+  assert.equal(body.sourceUrl, null);
+  assert.equal((body.pipeline as Record<string, string>).pull, "collected");
+  // F1：详情 DTO 必须返回服务端创建时间（四种来源统一），前端不再退回 source.createdAt。
+  assert.equal(body.createdAt, requirement.createdAt);
+  assert.equal(body.updatedAt, requirement.updatedAt);
+});
+
+test("empty requirement search returns an empty page without querying mappings with an empty source id", async () => {
+ const d = makeDependencies();
+ let mappingQueries = 0;
+ d.repositories!.people = {
+  listActive: async (sourceConfigId: string) => { mappingQueries += 1; assert.notEqual(sourceConfigId, ""); return []; },
+ } as never;
+ const response = await handleApiRequest(new Request("http://localhost/api/requirements?q=no-such-requirement"), d);
+ assert.equal(response.status, 200);
+ assert.deepEqual(await response.json(), { items: [], nextCursor: null });
+ assert.equal(mappingQueries, 0);
+});
+test("audit list forwards an event-type filter and rejects malformed event types", async () => {
+ const d = makeDependencies();
+ const seen: Array<Record<string, unknown>> = [];
+ d.repositories!.audit.search = async (query) => { seen.push(query as unknown as Record<string, unknown>); return []; };
+ const ok = await handleApiRequest(new Request("http://localhost/api/audit?eventType=analysis.retry_requested&entityId=foo&limit=5"), d);
+ assert.equal(ok.status, 200);
+ assert.deepEqual(seen[0], { limit: 5, entityId: "foo", eventType: "analysis.retry_requested" });
+ const none = await handleApiRequest(new Request("http://localhost/api/audit"), d);
+ assert.equal(none.status, 200);
+ assert.equal("eventType" in seen[1]!, false);
+ for (const bad of ["Analysis.Retry", "analysis..retry", "drop table", "a".repeat(101)]) {
+  const r = await handleApiRequest(new Request(`http://localhost/api/audit?eventType=${encodeURIComponent(bad)}`), d);
+  assert.equal(r.status, 400, bad);
+ }
+ assert.equal(seen.length, 2);
+});
+test("exports the filtered requirement pool as CSV with escaping and a 5000-row cap", async () => {
+ const base = { platformRequirementId: "RQ-000001", teambitionRequirementId: "tb-1", title: '=HYPERLINK("x,y")', executorName: "张三", currentScorePriority: "P1", priorityOverride: null, processingState: "active", pipeline: { pull: "synced", analysis: "analyzed", owner: "auto_mapped", push: "pushed" }, sourceType: "teambition", sourceVersion: 2, baseRecordId: "rec-1", sourceMissingSince: null, createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-09T00:00:00.000Z" };
+ const seen: Array<Record<string, unknown>> = [];
+ const d = makeDependencies();
+ const requirementsRepo = d.repositories!.requirements!;
+ requirementsRepo.search = (async (query: Parameters<typeof requirementsRepo.search>[0]) => {
+  seen.push(query as unknown as Record<string, unknown>);
+  const rows = Array.from({ length: 2 }, () => ({ ...base }));
+  return { items: rows, nextCursor: null };
+ }) as unknown as typeof requirementsRepo.search;
+ const response = await handleApiRequest(new Request("http://localhost/api/requirements/export?q=报表&priority=P1"), d);
+ assert.equal(response.status, 200);
+ assert.match(response.headers.get("content-type") ?? "", /text\/csv/);
+ assert.match(response.headers.get("content-disposition") ?? "", /rq-sys-requirements-2026-10-08\.csv/);
+ // TextDecoder 默认会吞掉 BOM；用原始字节确认 Excel 兼容的 UTF-8 BOM。
+ const bytes = new Uint8Array(await response.arrayBuffer());
+ assert.deepEqual([...bytes.slice(0, 3)], [0xef, 0xbb, 0xbf]);
+ const text = new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
+ assert.match(text, /平台ID,TB需求ID,标题/);
+ assert.match(text, /'"'=HYPERLINK\(""x,y""\)"|"'=HYPERLINK/);
+ assert.equal(seen[0]?.q, "报表");
+ assert.equal(seen[0]?.priority, "P1");
+ assert.equal(response.headers.get("x-rq-truncated"), null);
+
+ const big = makeDependencies();
+ const bigRepo = big.repositories!.requirements!;
+ bigRepo.search = (async () => ({ items: Array.from({ length: 5001 }, () => ({ ...base })), nextCursor: null })) as unknown as typeof bigRepo.search;
+ const truncated = await handleApiRequest(new Request("http://localhost/api/requirements/export"), big);
+ assert.equal(truncated.status, 200);
+ assert.equal(truncated.headers.get("x-rq-truncated"), "true");
+ assert.equal((await truncated.text()).split("\r\n").length, 5001);
+
+ assert.equal((await handleApiRequest(new Request("http://localhost/api/requirements/export"), unauthenticated)).status, 401);
+});
+
+test("ops gate status evaluates automatic checks and records manual evidence", async () => {
+ const d = makeDependencies();
+ const stored = new Map<string, Record<string, unknown>>();
+ d.repositories!.flags = { get: async (name: string) => stored.has(name) ? { value: stored.get(name)!, updatedAt: "2026-10-08T00:00:00.000Z" } : null, set: async (name: string, value: Record<string, unknown>) => { stored.set(name, value); } } as never;
+ d.repositories!.priorityRules = { getPublished: async () => ({ version: 2, rules: { formulaType: "umsc_weighted_v2" } }) } as never;
+ const requirements = d.repositories!.requirements as unknown as { getPipelineCounts: () => Promise<unknown>; search: () => Promise<unknown> };
+ requirements.getPipelineCounts = async () => ({ pushPushed: 279, total: 284 });
+ requirements.search = async () => ({ items: [], nextCursor: null });
+ const previous = { ...process.env };
+ process.env.BASE_APP_TOKEN = "app"; process.env.BASE_TABLE_ID = "tbl"; process.env.RQSYS_ALERT_WEBHOOK_URL = "https://hook";
+ try {
+  const response = await handleApiRequest(new Request("http://localhost/api/ops/gates"), d);
+  assert.equal(response.status, 200);
+  const body = await response.json() as { ready: boolean; gates: Array<{ id: string; status: string; auto: { status: string } }> };
+  assert.equal(body.gates.length, 8);
+  assert.equal(body.gates.find((gate) => gate.id === "G1")?.auto.status, "pass");
+  assert.equal(body.gates.find((gate) => gate.id === "G2")?.status, "fail");
+
+  const confirmed = await handleApiRequest(new Request("http://localhost/api/ops/gates/G1", {
+   method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirmed: true, evidence: "通知截图 2026-11-12" }),
+  }), d);
+  assert.equal(confirmed.status, 200);
+  assert.equal((stored.get("gate:G1") as Record<string, unknown>)["confirmed"], true);
+
+  assert.equal((await handleApiRequest(new Request("http://localhost/api/ops/gates/G1", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirmed: true }) }), d)).status, 400);
+  assert.equal((await handleApiRequest(new Request("http://localhost/api/ops/gates/G3", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirmed: true, evidence: "x" }) }), d)).status, 404);
+  assert.equal((await handleApiRequest(new Request("http://localhost/api/ops/gates"), unauthenticated)).status, 401);
+ } finally {
+  for (const key of ["BASE_APP_TOKEN", "BASE_TABLE_ID", "RQSYS_ALERT_WEBHOOK_URL"]) {
+   if (previous[key] === undefined) delete process.env[key]; else process.env[key] = previous[key];
+  }
+ }
+});
+
+test("ops metrics default to a 7-day window and validate the range", async () => {
+ const d = makeDependencies();
+ const seen: Array<{ days: number; now: string }> = [];
+ d.repositories!.ops = { getOpsMetrics: async (input) => { seen.push(input); return { window: { days: input.days, since: input.now } } as never; } };
+ const ok = await handleApiRequest(new Request("http://localhost/api/ops/metrics"), d);
+ assert.equal(ok.status, 200);
+ assert.equal(seen[0]?.days, 7);
+ const custom = await handleApiRequest(new Request("http://localhost/api/ops/metrics?days=30"), d);
+ assert.equal(custom.status, 200);
+ assert.equal(seen[1]?.days, 30);
+ assert.equal((await handleApiRequest(new Request("http://localhost/api/ops/metrics?days=0"), d)).status, 400);
+ assert.equal((await handleApiRequest(new Request("http://localhost/api/ops/metrics?days=91"), d)).status, 400);
+ assert.equal((await handleApiRequest(new Request("http://localhost/api/ops/metrics"), unauthenticated)).status, 401);
+});
+
+test("ops metrics expose the base form sync state without leaking the table id", async () => {
+  const d = makeDependencies();
+  d.repositories!.ops = { getOpsMetrics: async (input) => ({ window: { days: input.days, since: input.now } } as never) };
+  d.repositories!.flags = {
+    get: async (name) => name === "base_form_sync_state"
+      ? { value: { tableId: "tbl_internal", lastRunAt: "2026-11-19T02:00:00.000Z", pages: 1, scanned: 3, skipped: 0, created: 2, recorded: 0, rejected: 1, writeBackFailed: 0, readFailed: false, lastError: null }, updatedAt: "2026-11-19T02:00:00.000Z" }
+      : null,
+    set: async () => undefined,
+  };
+  const response = await handleApiRequest(new Request("http://localhost/api/ops/metrics"), d);
+  assert.equal(response.status, 200);
+  const body = await response.json() as { metrics: { baseForm: Record<string, unknown> } };
+  assert.deepEqual(body.metrics.baseForm, { lastRunAt: "2026-11-19T02:00:00.000Z", pages: 1, scanned: 3, skipped: 0, created: 2, recorded: 0, rejected: 1, writeBackFailed: 0, readFailed: false, lastError: null });
+  // 表 ID 是内部标识，不回传；其它运营指标不受影响。
+  assert.equal(JSON.stringify(body.metrics.baseForm).includes("tbl_internal"), false);
+
+  const withoutFlags = makeDependencies();
+  withoutFlags.repositories!.ops = { getOpsMetrics: async (input) => ({ window: { days: input.days, since: input.now } } as never) };
+  const degraded = await (await handleApiRequest(new Request("http://localhost/api/ops/metrics"), withoutFlags)).json() as { metrics: { baseForm: unknown } };
+  assert.equal(degraded.metrics.baseForm, null);
+});
+
+test("ops metrics expose the configured base form share url read-only and reject invalid values", async () => {
+  const previous = process.env.BASE_FORM_SHARE_URL;
+  const d = makeDependencies();
+  d.repositories!.ops = { getOpsMetrics: async (input) => ({ window: { days: input.days, since: input.now } } as never) };
+  d.repositories!.flags = {
+    get: async () => ({ value: { tableId: "tbl_internal", lastRunAt: "2026-11-20T09:00:00.000Z", scanned: 0, created: 0, rejected: 0, readFailed: false, lastError: null }, updatedAt: "2026-11-20T09:00:00.000Z" }),
+    set: async () => undefined,
+  };
+  const read = async () => {
+    const response = await handleApiRequest(new Request("http://localhost/api/ops/metrics"), d);
+    return (await response.json() as { metrics: { baseForm: Record<string, unknown> } }).metrics.baseForm;
+  };
   try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > MAX_JSON_BODY_BYTES) throw new PayloadTooLargeError();
-      chunks.push(value);
-    }
-  } finally { try { await reader.cancel(); } catch { /* 已读完或已取消 */ } }
-  if (chunks.length === 0) return "";
-  return new TextDecoder().decode(Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))));
-}
-async function readJson(request: Request): Promise<unknown> {
-  try { const text = await readBodyText(request); return text ? JSON.parse(text) : undefined; }
-  catch (error) { if (error instanceof PayloadTooLargeError) throw error; return undefined; }
-}
-// 人员/模块目录的冲突语义统一：业务冲突 409，其余按依赖不可用处理（不伪装成功）。
-function directoryError(cause: unknown): Response {
-  return (cause as Error)?.name === "TeamDirectoryConflict" ? jsonError("CONFLICT", (cause as Error).message) : jsonError("DEPENDENCY_UNAVAILABLE");
-}
-// 人工映射冲突（账号已绑定其他人员）返回 409；其余保持依赖不可用，不伪装成功。
-async function mappingConflictResponse(action: () => Promise<PersonMappingRecord>): Promise<PersonMappingRecord | Response> {
-  try { return await action(); }
-  catch (cause) { return (cause as Error)?.name === "PersonMappingConflict" ? jsonError("CONFLICT", (cause as Error).message) : jsonError("DEPENDENCY_UNAVAILABLE"); }
-}
+    process.env.BASE_FORM_SHARE_URL = "https://aimagene.feishu.cn/share/base/shrcn-test";
+    const configured = await read();
+    assert.equal(configured.shareUrl, "https://aimagene.feishu.cn/share/base/shrcn-test");
+    assert.equal(JSON.stringify(configured).includes("tbl_internal"), false);
 
-/**
- * 集团池执行人姓名 → TB user_id。
- * 已解析过的名字直接复用当前来源的绑定（网关临时不可用时未改名单仍能保存）；
- * 其余名字走组织成员目录精确匹配；name 不区分大小写，同一名字多个账号按“未解析”处理。
- */
-async function resolveExecutorAllowlist(
-  names: string[],
-  dependencies: ApiDependencies,
-  existing: SourceExecutorBinding[] = [],
-): Promise<SourceExecutorBinding[] | Response> {
-  if (names.length === 0) return [];
-  const byName = new Map(existing.map((binding) => [binding.name.normalize("NFC").toLocaleLowerCase(), binding]));
-  const key = (value: string) => value.normalize("NFC").trim().toLocaleLowerCase();
-  const pending = names.filter((name) => !byName.has(key(name)));
-  if (pending.length > 0) {
-    if (!dependencies.teambitionMembers) return jsonError("DEPENDENCY_UNAVAILABLE", "Teambition 成员目录未配置，暂时无法解析执行人名单。");
-    let members: Array<{ userId: string; name: string }>;
-    try { members = await dependencies.teambitionMembers.listOrganizationMembers(); }
-    catch { return jsonError("DEPENDENCY_UNAVAILABLE", "无法读取 Teambition 组织成员，请稍后重试。"); }
-    for (const name of pending) {
-      const matches = members.filter((member) => key(member.name) === key(name));
-      if (matches.length === 1) byName.set(key(name), { userId: String(matches[0]!.userId), name: matches[0]!.name });
-    }
-  }
-  const unresolved = names.filter((name) => !byName.has(key(name)));
-  if (unresolved.length > 0) {
-    return jsonError("VALIDATION_FAILED", `以下执行人未在 Teambition 组织成员中唯一找到：${unresolved.join("、")}`, undefined, { unresolvedExecutorNames: unresolved });
-  }
-  return names.map((name) => byName.get(key(name))!);
-}
-
-async function resolveSourceConfig(
-  update: ReturnType<typeof SourceConfigUpdateSchema.parse>,
-  dependencies: ApiDependencies,
-  current?: SourceConfigRecord,
-): Promise<ResolvedSourceConfigUpdate | Response> {
-  // 0031：池在创建时确定，更新不可改池（同一来源的批次/需求归属不能中途漂移）。
-  const pool: SourcePool = current ? (current.pool ?? "product") : (update.pool ?? "product");
-  if (current && update.pool !== undefined && update.pool !== pool) return jsonError("VALIDATION_FAILED", "来源所属池不可修改。");
-  // 名单按“未传 = 保持现状”处理，避免旧客户端/局部更新把集团池名单清空。
-  const requestedNames = update.executorAllowlist === undefined && current
-    ? (current.executorAllowlist ?? []).map((binding) => binding.name)
-    : normalizeExecutorAllowlistNames(update.executorAllowlist ?? []);
-  if (pool === "product" && requestedNames.length > 0) return jsonError("VALIDATION_FAILED", "产品池不支持执行人名单。");
-  if (requestedNames.length > MAX_EXECUTOR_ALLOWLIST_SIZE) return jsonError("VALIDATION_FAILED", `执行人名单最多 ${MAX_EXECUTOR_ALLOWLIST_SIZE} 个。`);
-  if (pool === "group" && requestedNames.length === 0 && update.enabled) return jsonError("VALIDATION_FAILED", "请至少填写 1 个执行人后再启用同步。");
-  const allowlist = await resolveExecutorAllowlist(requestedNames, dependencies, current?.executorAllowlist ?? []);
-  if (allowlist instanceof Response) return allowlist;
-  if (current && update.projectName === current.externalProjectName) {
-    return { ...update, pool, executorAllowlist: allowlist, schedule: normalizeSourceSchedule(update.schedule), projectId: current.externalProjectId, requirementTypeId: current.requirementTypeId, ownerNames: current.ownerNames, fieldMap: current.fieldMap };
-  }
-  if (dependencies.teambitionSourceProjects) {
-    try {
-      // 集团池允许多候选里精确取「需求」，所以池要随解析请求一起传下去。
-      const resolved = await dependencies.teambitionSourceProjects.resolveProject(update.projectName, { pool });
-      return { ...update, pool, executorAllowlist: allowlist, schedule: normalizeSourceSchedule(update.schedule), projectId: resolved.projectId, requirementTypeId: resolved.requirementTypeId, ownerNames: [...DEFAULT_TEAM_MEMBERS], fieldMap: {} };
-    } catch (cause) {
-      if (cause instanceof SourceProjectResolutionError) return jsonError("VALIDATION_FAILED", cause.message);
-      return jsonError("DEPENDENCY_UNAVAILABLE", "无法连接 Teambition 项目配置，请稍后重试。");
-    }
-  }
-  return jsonError("DEPENDENCY_UNAVAILABLE", "Teambition 项目自动识别尚未配置。");
-}
-
-function sourcePool(source: SourceConfigRecord | null): SourcePool {
-  return (source?.pool ?? "product");
-}
-
-/** 需求归属池：手工/多维表格需求没有来源配置，恒属产品池。 */
-async function requirementPoolOf(repositories: ApiRepositories, requirement: RequirementRecord): Promise<SourcePool> {
-  if (!requirement.sourceConfigId) return "product";
-  return sourcePool(await repositories.sources.get(requirement.sourceConfigId));
-}
-
-/**
- * Q2 重复标记只对产品池生效：集团池 Base 是另一张表，产品池标记器写不过去，
- * 也不应该跨表写（跨池隔离优先于这个附加能力）。
- */
-async function duplicateMarkerFor(
-  dependencies: ApiDependencies,
-  repositories: ApiRepositories,
-  requirement: RequirementRecord,
-): Promise<ApiDependencies["duplicateMarker"] | null> {
-  if (!dependencies.duplicateMarker) return null;
-  return (await requirementPoolOf(repositories, requirement)) === "product" ? dependencies.duplicateMarker : null;
-}
-
-// 集合/导出接口的路径段不是需求 ID；详情与写接口才是 UUID 推导作用域的对象。
-const REQUIREMENT_COLLECTION_SEGMENTS = new Set(["export", "source-counts", "intake-draft"]);
-/**
- * 详情/写接口显式带 pool 时的跨池守卫：与 UUID 归属不符固定 404（不返回 200 空数据/对方数据），
- * 不带 pool 时不拦截——服务端按 UUID 推导，返回只读 pool 供页面守卫。
- */
-async function requirementPoolGuard(request: Request, url: URL, dependencies: ApiDependencies): Promise<Response | null> {
-  const explicit = url.searchParams.get("pool");
-  if (explicit === null) return null;
-  if (!url.pathname.startsWith("/api/requirements/")) return null;
-  const segment = url.pathname.slice("/api/requirements/".length).split("/")[0] ?? "";
-  if (!segment || REQUIREMENT_COLLECTION_SEGMENTS.has(segment)) return null;
-  const repositories = dependencies.repositories;
-  if (!repositories?.requirements) return null;
-  // 先认证再判池：未登录请求保持 401，不能靠守卫把“是否存在”泄露给匿名调用方。
-  const auth = await actorFor(request, dependencies);
-  if ("response" in auth) return auth.response;
-  if (explicit !== "product" && explicit !== "group") return jsonError("VALIDATION_FAILED");
-  let requirement: RequirementRecord | null;
-  try { requirement = await repositories.requirements.get(segment); } catch { return null; }
-  // 不存在时交给原处理器返回 404，避免守卫与业务路径给出不同错误体。
-  if (!requirement) return null;
-  return (await requirementPoolOf(repositories, requirement)) === explicit ? null : jsonError("NOT_FOUND");
-}
-
-/**
- * 0034 M14：已删除需求只读。
- * 除「还原」与需求本身的 DELETE（幂等重放）外，需求级写路由统一在这里返回 409，
- * 避免逐个写接口加闸口时漏掉新接口。未认证请求先 401（与各路由一致），
- * 不靠 409/404 把「这条需求是否存在」泄露给匿名调用方。
- */
-const REQUIREMENT_WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
-async function deletedRequirementWriteGate(request: Request, url: URL, dependencies: ApiDependencies): Promise<Response | null> {
-  if (!REQUIREMENT_WRITE_METHODS.has(request.method.toUpperCase())) return null;
-  const match = url.pathname.match(/^\/api\/requirements\/([^/]+)(\/.*)?$/);
-  if (!match) return null;
-  const segment = match[1]!;
-  const tail = match[2] ?? "";
-  // 集合/创建接口不是需求级写；还原与 DELETE 幂等重放必须放行。
-  if (REQUIREMENT_COLLECTION_SEGMENTS.has(segment) || tail === "/restore") return null;
-  if (request.method.toUpperCase() === "DELETE" && tail === "") return null;
-  const repositories = dependencies.repositories;
-  if (!repositories?.requirements) return null;
-  const requirementId = pathUuid(segment, dependencies);
-  if (!requirementId) return null;
-  const auth = await actorFor(request, dependencies);
-  if ("response" in auth) return auth.response;
-  let requirement: RequirementRecord | null;
-  try { requirement = await repositories.requirements.get(requirementId); } catch { return null; }
-  if (!requirement?.deletedAt) return null;
-  return jsonError("REQUIREMENT_DELETED", "该需求已删除，请先在回收站还原后再操作。");
-}
-
-export async function handleApiRequest(request: Request, dependencies: ApiDependencies): Promise<Response> {
-  try { return await routeApiRequest(request, dependencies); }
-  catch (error) {
-    // 请求体超限是客户端可控的输入问题，回 413，不要漏成 500。
-    if (error instanceof PayloadTooLargeError) return jsonError("PAYLOAD_TOO_LARGE", "请求体过大，请缩短后重试。");
-    throw error;
-  }
-}
-async function routeApiRequest(request: Request, dependencies: ApiDependencies): Promise<Response> {
-  const url = new URL(request.url), method = request.method.toUpperCase(), repositories = dependencies.repositories;
-  // 详情/写接口的显式 pool 与归属不符 → 404；不带 pool 的请求不受影响（零额外查询）。
-  const poolGuardFailure = await requirementPoolGuard(request, url, dependencies);
-  if (poolGuardFailure) return poolGuardFailure;
-  // 0034 M14：已删除需求只读。所有需求级写路由在这里统一拦截，新增写接口不会漏加闸口。
-  const deletedGateFailure = await deletedRequirementWriteGate(request, url, dependencies);
-  if (deletedGateFailure) return deletedGateFailure;
-  if (method === "GET" && url.pathname === "/api/health") return json({ status: "ok", service: "rq-sys-api" });
-  if (method === "GET" && url.pathname === "/api/health/ready") {
-    if (!(await isDatabaseReady(dependencies.database))) return json({ status: "not_ready", reason: "database_unavailable_or_not_configured" }, 503);
-    // 迁移滞后只提示，不把服务判死：数据库可用即 ready，运维页据此提醒先跑迁移。
-    return json({ status: "ready", database: "connected", migrations: await readMigrationStatus(dependencies.database) });
-  }
-  if (method === "GET" && url.pathname === "/api/overview/metrics") {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
-    // 总览固定产品池（Chief 决定 2026-11-21）：集团池数字只在其自身页头显示，不进入总览。
-    const counts = await repositories.requirements.getPipelineCounts("product");
-    const rule = await repositories.priorityRules?.getPublished();
-    const rulePayload = rule?.rules as { thresholds?: { p0?: number; p1?: number; p2?: number } } | null;
-    const ai = await aiOverview(dependencies, repositories, (dependencies.now ?? (() => new Date()))());
-    return json({
-      counts: {
-        ...counts,
-        priorityRule: rule ? {
-          version: rule.version,
-          thresholds: rulePayload?.thresholds ?? null,
-          formulaText: SCORING_FORMULA_TEXT,
-        } : null,
-      },
-      ai,
-    });
-  }
-  // 数据源页底部：两个池的飞书 Base 入口（只读，仅展示，不提供编辑）。
-  if (method === "GET" && url.pathname === "/api/base-links") {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    return json({
-      product: baseLinkFromTemplate("RQSYS_BASE_RECORD_URL_TEMPLATE"),
-      group: baseLinkFromTemplate("RQSYS_GROUP_BASE_RECORD_URL_TEMPLATE"),
-    });
-  }
-  if (method === "GET" && url.pathname === "/api/sources") {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories) return jsonError("DEPENDENCY_UNAVAILABLE");
-    return json({ items: (await repositories.sources.list()).map(sourceDto) });
-  }
-  if (method === "POST" && url.pathname === "/api/sources") {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const parsed = SourceConfigUpdateSchema.safeParse(await readJson(request)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
-    // 0031 起 D-09 的单来源约束改为“每个池最多一个来源”（(provider, pool) 唯一索引）。
-    const requestedPool: SourcePool = parsed.data.pool ?? "product";
-    const existing = await repositories.sources.list();
-    if (existing.some((source) => (source.pool ?? "product") === requestedPool)) return jsonError("CONFLICT");
-    const resolved = await resolveSourceConfig(parsed.data, dependencies); if (resolved instanceof Response) return resolved;
-    const now = (dependencies.now ?? (() => new Date()))().toISOString();
-    let created: SourceConfigRecord;
-    try { created = await repositories.sources.create({ ...resolved, auditEvent: { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "source.created", entityType: "source_config", result: "succeeded", safeDetails: { sourceProjectId: resolved.projectId }, occurredAt: now } }); }
-    catch (cause) { return cause && typeof cause === "object" && "code" in cause && cause.code === "23505" && "constraint" in cause && typeof cause.constraint === "string" && cause.constraint.startsWith("source_configs_") ? jsonError("CONFLICT") : jsonError("DEPENDENCY_UNAVAILABLE"); }
-    return json(sourceDto(created), 201);
-  }
-  const sourceMatch = url.pathname.match(/^\/api\/sources\/([^/]+)$/);
-  if (method === "PUT" && sourceMatch) {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const parsed = SourceConfigUpdateSchema.safeParse(await readJson(request)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
-    const sourceId = pathUuid(sourceMatch[1]!, dependencies);
-    if (!sourceId) return jsonError("NOT_FOUND");
-    const current = await repositories.sources.get(sourceId);
-    if (!current) return jsonError("NOT_FOUND");
-    const resolved = await resolveSourceConfig(parsed.data, dependencies, current);
-    if (resolved instanceof Response) return resolved;
-    const now = (dependencies.now ?? (() => new Date()))().toISOString();
-    let updated: SourceConfigRecord | null;
-    try { updated = await repositories.sources.update(sourceId, resolved, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "source.config_updated", entityType: "source_config", result: "succeeded", safeDetails: { sourceProjectId: resolved.projectId }, occurredAt: now }); }
-    catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
-    if (!updated) return jsonError("NOT_FOUND");
-    return json(sourceDto(updated));
-  }
-  if (method === "POST" && url.pathname === "/api/sync/run") {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const body = SyncRunRequestSchema.safeParse(await readJson(request)), key = SyncIdempotencyHeaderSchema.safeParse(request.headers.get("Idempotency-Key"));
-    if (!body.success || !key.success) return jsonError("VALIDATION_FAILED");
-    const idempotencyKey = `${body.data.mode}:${createHash("sha256").update(key.data).digest("hex")}`;
-    const source = await repositories.sources.get(body.data.sourceId); if (!source) return jsonError("NOT_FOUND");
-    const startedAt = (dependencies.now ?? (() => new Date()))().toISOString();
-    const previous = await repositories.batches.findByIdempotencyKey(source.id, idempotencyKey);
-    if (previous) {
-      // 已有活跃批次：幂等重放。已有终态批次（如入队失败被标 failed）：同一幂等键重新入队恢复，不制造孤儿/重复批次
-      if (previous.status === "running") return json({ batchId: previous.id, status: previous.status }, 202);
-      try { await repositories.jobs.enqueue({ jobType: "sync", dedupeKey: `sync:${source.id}:${idempotencyKey}`, payload: { batchId: previous.id, sourceId: source.id, triggerType: "manual", actorId: auth.actor.id, mode: body.data.mode }, availableAt: startedAt }); }
-      catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
-      const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "sync.retry_requested", entityType: "sync_batch", entityId: previous.id, result: "succeeded", safeDetails: { trigger: "manual", mode: body.data.mode }, occurredAt: startedAt });
-      if (auditFailure) return auditFailure;
-      return json({ batchId: previous.id, status: previous.status }, 202);
-    }
-    const active = await repositories.batches.list({ status: "running", limit: 100 });
-    if (active.items.some((batch) => batch.sourceConfigId === source.id)) return jsonError("CONFLICT");
-    let created: SyncBatchRecord;
-    try { created = await repositories.batches.create({ sourceConfigId: source.id, triggerType: "manual", actorId: auth.actor.id, idempotencyKey, startedAt }); }
-    catch {
-      const raced = await repositories.batches.findByIdempotencyKey(source.id, idempotencyKey);
-      return raced ? json({ batchId: raced.id, status: raced.status }, 202) : jsonError("CONFLICT");
-    }
-    try { await repositories.jobs.enqueue({ jobType: "sync", dedupeKey: `sync:${source.id}:${idempotencyKey}`, payload: { batchId: created.id, sourceId: source.id, triggerType: "manual", actorId: auth.actor.id, mode: body.data.mode }, availableAt: startedAt }); }
-    catch {
-      // 入队失败恢复（工单 15）：批次标记 failed，不留「running 且无 job」的孤儿；同幂等键重试可恢复
-      await repositories.batches.complete(created.id, { status: "failed", totalCount: 0, succeededCount: 0, failedCount: 0, errorSummary: "Job enqueue failed; repeat the same idempotent request to recover.", completedAt: startedAt });
-      return jsonError("DEPENDENCY_UNAVAILABLE");
-    }
-    const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "sync.requested", entityType: "sync_batch", entityId: created.id, result: "succeeded", safeDetails: { trigger: "manual", mode: body.data.mode }, occurredAt: startedAt });
-    if (auditFailure) return auditFailure;
-    return json({ batchId: created.id, status: "running" }, 202);
-  }
-  if (method === "GET" && url.pathname === "/api/batches") {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const query = Object.fromEntries(url.searchParams.entries()); if (query.limit !== undefined) query.limit = String(Number(query.limit));
-    const parsed = BatchListQuerySchema.safeParse(query); if (!parsed.success) return jsonError("VALIDATION_FAILED");
-    const batchCursor = decodeBatchCursor(parsed.data.cursor);
-    if (parsed.data.cursor !== undefined && batchCursor === undefined) return jsonError("VALIDATION_FAILED", "Invalid cursor.");
-    const page = await repositories.batches.list({ limit: parsed.data.limit, pool: parsed.data.pool, ...(parsed.data.status === undefined ? {} : { status: parsed.data.status }), ...(parsed.data.since === undefined ? {} : { since: parsed.data.since }), ...(parsed.data.until === undefined ? {} : { until: parsed.data.until }), ...(batchCursor === undefined ? {} : { cursor: batchCursor }) }); return json({ items: page.items.map((item) => batchDto(item, parsed.data.pool)), nextCursor: page.nextCursor });
-  }
-  const batchMatch = url.pathname.match(/^\/api\/batches\/([^/]+)$/);
-  if (method === "GET" && batchMatch) {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const batchId = pathUuid(batchMatch[1]!, dependencies); if (!batchId) return jsonError("NOT_FOUND");
-    const batch = await repositories.batches.get(batchId); if (!batch) return jsonError("NOT_FOUND");
-    const batchSource = batch.sourceConfigId ? await repositories.sources.get(batch.sourceConfigId) : null;
-    return json({ ...batchDto(batch, sourcePool(batchSource)), items: await repositories.items.listByBatch(batch.id) });
-  }
-  if (method === "GET" && url.pathname === "/api/audit") {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const query = Object.fromEntries(url.searchParams.entries()); if (query.limit !== undefined) query.limit = String(Number(query.limit));
-    const parsed = AuditListQuerySchema.safeParse(query); if (!parsed.success) return jsonError("VALIDATION_FAILED");
-    return json({ items: await repositories.audit.search({ limit: parsed.data.limit, ...(parsed.data.entityId === undefined ? {} : { entityId: parsed.data.entityId }), ...(parsed.data.eventType === undefined ? {} : { eventType: parsed.data.eventType }), ...(parsed.data.since === undefined ? {} : { since: parsed.data.since }), ...(parsed.data.until === undefined ? {} : { until: parsed.data.until }) }) });
-  }
-  // PR-15：上线 Gate 当前状态（自动检查 + 人工确认），供状态页与发布判断使用。
-  if (method === "GET" && url.pathname === "/api/ops/gates") {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    const now = (dependencies.now ?? (() => new Date()))();
-    return json(await evaluateGates({
-      flags: repositories?.flags, requirements: repositories?.requirements,
-      priorityRules: repositories?.priorityRules, env: process.env, now,
-    }));
-  }
-  const opsGateMatch = url.pathname.match(/^\/api\/ops\/gates\/([A-Za-z0-9]+)$/);
-  if (method === "PUT" && opsGateMatch) {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.flags || !repositories.audit) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const parsed = GateConfirmSchema.safeParse(await readJson(request).catch(() => null));
-    if (!parsed.success) return jsonError("VALIDATION_FAILED");
-    if (parsed.data.confirmed && !parsed.data.evidence) return jsonError("VALIDATION_FAILED", "确认通过时必须填写证据。");
-    const now = (dependencies.now ?? (() => new Date()))();
-    const result = await confirmGate({
-      flags: repositories.flags, audit: repositories.audit, id: opsGateMatch[1]!,
-      confirmed: parsed.data.confirmed, ...(parsed.data.evidence ? { evidence: parsed.data.evidence } : {}),
-      actorId: auth.actor.id, now,
-    });
-    if (result.outcome === "invalid") return jsonError("NOT_FOUND");
-    if (result.outcome === "unavailable") return jsonError("DEPENDENCY_UNAVAILABLE");
-    return json({ gateId: opsGateMatch[1], confirmed: parsed.data.confirmed });
-  }
-  // 只读运维视图：失败的作业 + 尝试次数用尽且租约过期的运行中作业。
-  // 不提供重试/清理动作，避免绕过状态机；修复由各自的恢复器/人工重试完成。
-  if (method === "GET" && url.pathname === "/api/ops/jobs") {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.jobs?.listFailed || !repositories.jobs.listExhaustedRunning) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const query = Object.fromEntries(url.searchParams.entries()); if (query.limit !== undefined) query.limit = String(Number(query.limit));
-    const parsed = OpsJobsQuerySchema.safeParse(query); if (!parsed.success) return jsonError("VALIDATION_FAILED");
-    const now = (dependencies.now ?? (() => new Date()))().toISOString();
-    const [failed, stuck] = await Promise.all([
-      repositories.jobs.listFailed(parsed.data.limit, parsed.data.pool),
-      repositories.jobs.listExhaustedRunning(now, parsed.data.limit, parsed.data.pool),
-    ]);
-    return json({ now, items: { failed: failed.map(opsJobDto), stuck: stuck.map(opsJobDto) } });
-  }
-  // 运营指标（PRD §10）：窗口内的同步/分析/推送成功率与耗时 + 当前快照；只读。
-  if (method === "GET" && url.pathname === "/api/ops/metrics") {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.ops) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const query = Object.fromEntries(url.searchParams.entries());
-    const parsed = OpsMetricsQuerySchema.safeParse(query); if (!parsed.success) return jsonError("VALIDATION_FAILED");
-    const now = (dependencies.now ?? (() => new Date()))().toISOString();
-    const metrics = await repositories.ops.getOpsMetrics({ days: parsed.data.days, now, pool: parsed.data.pool });
-    let baseForm = null;
-    if (repositories.flags) {
-      try {
-        const state = await repositories.flags.get(BASE_FORM_SYNC_STATE_FLAG);
-        if (state && state.value && typeof state.value === "object") baseForm = baseFormOpsState(state.value);
-      } catch { /* 同步状态不可用只让这一块为空，不影响其它运营指标 */ }
-    }
-    // 地址与统计解耦：配了 shareUrl 但同步状态缺失时仍返回 baseForm（统计按 0/null），两者都无才为 null。
-    if (!baseForm && baseFormShareUrl()) baseForm = baseFormOpsState({});
-    return json({ metrics: { ...metrics, baseForm } });
-  }
-  if (method === "GET" && url.pathname === "/api/rules/dictionary") {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.dictionaries) return jsonError("DEPENDENCY_UNAVAILABLE");
-    return json({ items: (await repositories.dictionaries.list()).map(dictionaryDto) });
-  }
-  if (method === "POST" && url.pathname === "/api/rules/dictionary") {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.dictionaries) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const body = DictionaryCreateSchema.safeParse(await readJson(request)); if (!body.success) return jsonError("VALIDATION_FAILED");
-    const now = (dependencies.now ?? (() => new Date()))().toISOString();
-    const created = await repositories.dictionaries.create({ entries: body.data.entries, createdBy: auth.actor.id, now, auditEvent: { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "dictionary.created", entityType: "module_dictionary", result: "succeeded", safeDetails: { entryCount: body.data.entries.length }, occurredAt: now } });
-    return json(dictionaryDto(created), 201);
-  }
-  if (method === "GET" && url.pathname === "/api/people") {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.directory) return jsonError("DEPENDENCY_UNAVAILABLE");
-    return json({ items: (await repositories.directory.listPeople()).map(personDto) });
-  }
-  if (method === "POST" && url.pathname === "/api/people") {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.directory) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const body = TeamPersonCreateSchema.safeParse(await readJson(request)); if (!body.success) return jsonError("VALIDATION_FAILED");
-    const now = (dependencies.now ?? (() => new Date()))().toISOString();
-    try {
-      const items = await repositories.directory.addPerson(body.data.name, { id: randomUUID(), actorId: auth.actor.id, eventType: "team_person.created", entityType: "team_person", result: "succeeded", safeDetails: {}, occurredAt: now });
-      return json({ items: items.map(personDto) }, 201);
-    } catch (cause) { return directoryError(cause); }
-  }
-  const personFeishuMatch = url.pathname.match(/^\/api\/people\/([^/]+)\/feishu$/);
-  if (method === "PUT" && personFeishuMatch) {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.directory) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const body = TeamPersonFeishuBindSchema.safeParse(await readJson(request)); if (!body.success) return jsonError("VALIDATION_FAILED");
-    const name = safeDecodePath(personFeishuMatch[1]!); if (name === null) return jsonError("VALIDATION_FAILED");
-    const now = (dependencies.now ?? (() => new Date()))().toISOString();
-    try {
-      const items = await repositories.directory.bindPersonFeishu(name, body.data, { id: randomUUID(), actorId: auth.actor.id, eventType: "team_person.feishu_bound", entityType: "team_person", result: "succeeded", safeDetails: {}, occurredAt: now });
-      return json({ items: items.map(personDto) });
-    } catch (cause) { return directoryError(cause); }
-  }
-  if (method === "DELETE" && personFeishuMatch) {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.directory) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const name = safeDecodePath(personFeishuMatch[1]!); if (name === null) return jsonError("VALIDATION_FAILED");
-    const now = (dependencies.now ?? (() => new Date()))().toISOString();
-    try {
-      const items = await repositories.directory.unbindPersonFeishu(name, { id: randomUUID(), actorId: auth.actor.id, eventType: "team_person.feishu_unbound", entityType: "team_person", result: "succeeded", safeDetails: {}, occurredAt: now });
-      return json({ items: items.map(personDto) });
-    } catch (cause) { return directoryError(cause); }
-  }
-  const personMatch = url.pathname.match(/^\/api\/people\/([^/]+)$/);
-  if (method === "PUT" && personMatch) {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.directory) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const body = TeamPersonRenameSchema.safeParse(await readJson(request)); if (!body.success) return jsonError("VALIDATION_FAILED");
-    const oldName = safeDecodePath(personMatch[1]!); if (oldName === null) return jsonError("VALIDATION_FAILED");
-    const now = (dependencies.now ?? (() => new Date()))().toISOString();
-    try {
-      const items = await repositories.directory.renamePerson(oldName, body.data.name, { id: randomUUID(), actorId: auth.actor.id, eventType: "team_person.renamed", entityType: "team_person", result: "succeeded", safeDetails: {}, occurredAt: now });
-      return json({ items: items.map(personDto) });
-    } catch (cause) { return directoryError(cause); }
-  }
-  if (method === "DELETE" && personMatch) {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.directory) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const name = safeDecodePath(personMatch[1]!); if (name === null) return jsonError("VALIDATION_FAILED");
-    const now = (dependencies.now ?? (() => new Date()))().toISOString();
-    try {
-      const items = await repositories.directory.deletePerson(name, { id: randomUUID(), actorId: auth.actor.id, eventType: "team_person.deleted", entityType: "team_person", result: "succeeded", safeDetails: {}, occurredAt: now });
-      return json({ items: items.map(personDto) });
-    } catch (cause) { return directoryError(cause); }
-  }
-  if (method === "GET" && url.pathname === "/api/modules") {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.directory) return jsonError("DEPENDENCY_UNAVAILABLE");
-    return json(await repositories.directory.listModules());
-  }
-  if (method === "PUT" && url.pathname === "/api/modules") {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.directory) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const body = TeamModulesSaveSchema.safeParse(await readJson(request)); if (!body.success) return jsonError("VALIDATION_FAILED");
-    const now = (dependencies.now ?? (() => new Date()))().toISOString();
-    try {
-      return json(await repositories.directory.saveModules(body.data.version, body.data.items.map((item) => ({ name: item.name, personName: item.personName ?? null })), auth.actor.id, now, { id: randomUUID(), actorId: auth.actor.id, eventType: "module_dictionary.updated", entityType: "module_dictionary", result: "succeeded", safeDetails: { entryCount: body.data.items.length }, occurredAt: now }));
-    } catch (cause) { return directoryError(cause); }
-  }
-  const dictionaryPublishMatch = url.pathname.match(/^\/api\/rules\/dictionary\/(\d+)\/publish$/);
-  if (method === "POST" && dictionaryPublishMatch) {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.dictionaries) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const version = Number(dictionaryPublishMatch[1]);
-    const existing = await repositories.dictionaries.get(version);
-    if (!existing) return jsonError("NOT_FOUND");
-    if (existing.status !== "draft") return jsonError("CONFLICT");
-    const now = (dependencies.now ?? (() => new Date()))().toISOString();
-    const published = await repositories.dictionaries.publish(version, now, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "dictionary.published", entityType: "module_dictionary", result: "succeeded", safeDetails: { entryCount: existing.entries.length }, occurredAt: now });
-    return json(dictionaryDto(published));
-  }
-  if (method === "GET" && url.pathname === "/api/rules/priority") {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.priorityRules) return jsonError("DEPENDENCY_UNAVAILABLE");
-    return json({ items: (await repositories.priorityRules.list()).map(priorityRuleDto) });
-  }
-  if (method === "POST" && url.pathname === "/api/rules/priority") {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.priorityRules) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const body = PriorityRuleCreateSchema.safeParse(await readJson(request)); if (!body.success) return jsonError("VALIDATION_FAILED");
-    const now = (dependencies.now ?? (() => new Date()))().toISOString();
-    const created = await repositories.priorityRules.create({ rules: body.data.rules, validationEvidence: body.data.validationEvidence ?? [], createdBy: auth.actor.id, now, auditEvent: { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "priority_rule.created", entityType: "priority_rule", result: "succeeded", safeDetails: {}, occurredAt: now } });
-    return json(priorityRuleDto(created), 201);
-  }
-  const rulePublishMatch = url.pathname.match(/^\/api\/rules\/priority\/([^/]+)\/publish$/);
-  if (method === "POST" && rulePublishMatch) {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.priorityRules) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const id = pathUuid(rulePublishMatch[1]!, dependencies);
-    if (!id) return jsonError("NOT_FOUND");
-    const existing = await repositories.priorityRules.get(id);
-    if (!existing) return jsonError("NOT_FOUND");
-    if (existing.status !== "draft") return jsonError("CONFLICT");
-    // V02-S06：v2 是用户已确认的固定公式（0019 迁移写入并退休旧规则），而本端点请求契约仍只接受 v1 形态。
-    // v2 生效期间发布 v1 规则会让优先级回退到未校准的四维求和，因此拒绝发布（沿用已有冲突码 409）。
-    const activeRule = await repositories.priorityRules.getPublished();
-    const activeFormula = (activeRule?.rules as { formulaType?: unknown } | null | undefined)?.formulaType;
-    const draftFormula = (existing.rules as { formulaType?: unknown } | null | undefined)?.formulaType;
-    if (activeFormula === "umsc_weighted_v2" && draftFormula !== "umsc_weighted_v2") {
-      return jsonError("CONFLICT", "A confirmed v2 scoring rule is published; legacy v1 rules cannot be published over it.");
-    }
-    const now = (dependencies.now ?? (() => new Date()))().toISOString();
-    const published = await repositories.priorityRules.publish(id, now, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "priority_rule.published", entityType: "priority_rule", result: "succeeded", safeDetails: {}, occurredAt: now });
-    return json(priorityRuleDto(published));
-  }
-  if (method === "GET" && url.pathname === "/api/mappings") {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.people || !repositories.sources) return jsonError("DEPENDENCY_UNAVAILABLE");
-    // 单一来源（D-09）：返回当前来源的活跃映射；来源未配置时为空列表
-    const source = (await repositories.sources.list())[0] ?? null;
-    const items = source ? await repositories.people.listActive(source.id) : [];
-    return json({ items: items.map(mappingDto) });
-  }
-  if (method === "GET" && url.pathname === "/api/feishu/users/resolve") {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    const platformUserId = url.searchParams.get("platformUserId") ?? "";
-    if (!/^\d{1,30}$/.test(platformUserId)) return jsonError("VALIDATION_FAILED");
-    if (!dependencies.feishuUserSelections) return jsonError("DEPENDENCY_UNAVAILABLE");
-    try {
-      const user = await dependencies.feishuUserSelections.resolve(platformUserId);
-      if (!user) return jsonError("NOT_FOUND", "所选成员尚未关联本企业飞书账号，请重新选择。");
-      return json({ feishuUserId: user.feishuUserId, feishuIdType: user.feishuIdType, name: user.name });
-    } catch { return jsonError("DEPENDENCY_UNAVAILABLE", "飞书人员身份转换暂不可用，请稍后重试。"); }
-  }
-  if (method === "GET" && url.pathname === "/api/feishu/users") {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!dependencies.feishuUsers) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const parsed = FeishuUserSearchQuerySchema.safeParse({ q: url.searchParams.get("q") ?? "" });
-    if (!parsed.success) return jsonError("VALIDATION_FAILED");
-    try { return json({ items: (await dependencies.feishuUsers.search(parsed.data.q)).slice(0, 20) }); }
-    catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
-  }
-  if (method === "POST" && url.pathname === "/api/requirements/intake-draft") {
-    // PRD-26 / 5a：聊天文本 → 需求草稿。草稿不入库，确认后仍由 POST /api/requirements 创建。
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.requirements || !repositories.audit || !repositories.dictionaries) return jsonError("DEPENDENCY_UNAVAILABLE");
-    if (!dependencies.chatIntake) return jsonError("DEPENDENCY_UNAVAILABLE", "聊天抽取暂不可用，请手工填写需求。");
-    const draftBody = ChatDraftRequestSchema.safeParse(await readJson(request)); if (!draftBody.success) return jsonError("VALIDATION_FAILED");
-    // 一次抽取一个请求号：成功与失败事件共用它，排障时能把两条审计串成一次操作。
-    const requestId = randomUUID();
-    const draftNow = (dependencies.now ?? (() => new Date()))();
-    if ((await readAiPause(repositories.flags, draftNow)).paused) return jsonError("DEPENDENCY_UNAVAILABLE", "AI 额度暂时受限，请手工填写需求。");
-    const wait = draftRateLimiterFor(dependencies.chatIntake).take(auth.actor.id, draftNow.getTime());
-    if (wait !== null) return rateLimited(wait, "操作太频繁，请稍后再试。");
-    // 词典是模型提示的一部分：读不到就回 503，不要把 DB 抖动漏成 500，也不要先花钱调一次模型。
-    let draftModules: string[];
-    try {
-      const publishedModules = (await repositories.dictionaries.list()).find((version) => version.status === "published");
-      draftModules = (publishedModules?.entries ?? []).map((entry) => typeof entry === "string" ? entry : String((entry as { name?: unknown }).name ?? entry));
-    } catch { return jsonError("DEPENDENCY_UNAVAILABLE", "功能模块词典暂时不可用，请稍后重试。"); }
-    // 审计只记发起动作、字符数与请求号，不记聊天内容；写失败不阻断草稿（草稿不改变业务状态）。
-    const auditDraft = async (result: "succeeded" | "failed", details: Record<string, unknown>) => {
-      try { await repositories.audit.append({ id: randomUUID(), actorId: auth.actor.id, eventType: result === "succeeded" ? "intake.draft_extracted" : "intake.draft_failed", entityType: "intake", entityId: requestId, result, safeDetails: { requestId, promptVersion: CHAT_PROMPT_VERSION, textLength: Array.from(draftBody.data.text).length, ...details }, occurredAt: draftNow.toISOString() }); }
-      catch { /* best effort */ }
+    // lastError 只保留类别摘要：rec/tbl ID 必须掩码。
+    const withError = makeDependencies();
+    withError.repositories!.ops = d.repositories!.ops;
+    withError.repositories!.flags = {
+      get: async () => ({ value: { lastRunAt: "2026-11-20T09:00:00.000Z", scanned: 0, created: 0, rejected: 0, readFailed: false, lastError: "record reczz28brz00SUAx missing in tbl6Gfi0KJ2a1llK" }, updatedAt: "2026-11-20T09:00:00.000Z" }),
+      set: async () => undefined,
     };
-    let extraction: Awaited<ReturnType<ChatIntakeExtractor["extract"]>>;
-    try { extraction = await dependencies.chatIntake.extractor.extract({ text: draftBody.data.text, modules: draftModules }); }
-    catch (cause) {
-      const errorClass = String((cause as { code?: unknown })?.code ?? "unknown");
-      const rawStatus = (cause as { httpStatus?: unknown })?.httpStatus;
-      const httpStatus = typeof rawStatus === "number" ? rawStatus : undefined;
-      await auditDraft("failed", { errorClass, ...(httpStatus === undefined ? {} : { httpStatus }) });
-      // 供应商限流可重试：给 429 + Retry-After，和「每用户限流」共用状态码但文案区分。
-      if (errorClass === "rate_limited") return rateLimited(PROVIDER_RATE_LIMIT_RETRY_AFTER_SECONDS, "AI 服务当前限流，请稍后重试或手工填写需求。");
-      // 密钥缺失/请求被拒是配置事故，不是临时故障：回 500 并落一条脱敏日志（错误类＋状态码，不含正文）。
-      if (errorClass === "auth_error" || errorClass === "request_error") {
-        reportIntakeFailure(dependencies, { errorClass, textLength: Array.from(draftBody.data.text).length, requestId, ...(httpStatus === undefined ? {} : { httpStatus }) });
-        return jsonError("INTERNAL", "AI 整理服务异常，请手工填写需求。");
-      }
-      // timeout / network_error / analysis_failure：依赖暂不可用，可稍后重试。
-      return jsonError("DEPENDENCY_UNAVAILABLE", "AI 暂时无法整理聊天内容，请手工填写需求。");
-    }
-    const { draft, fallback } = extraction;
-    // 兜底也要如实记录：否则模型返回垃圾时审计同样显示成功，AI 真实成功率统计不出来。
-    await auditDraft("succeeded", { fallback, aiFilledCount: draft.aiFilled.length });
-    // 相似需求提示：标题是子串匹配（不是语义相似），先用完整标题，无结果再用标题前 8 个字。
-    let similar: { id: string; platformRequirementId: string; title: string; sourceType: string }[] = [];
-    try {
-      const titleChars = Array.from(draft.title);
-      let found = (await repositories.requirements.search({ q: draft.title, limit: 5 })).items;
-      if (found.length === 0 && titleChars.length > 8) found = (await repositories.requirements.search({ q: titleChars.slice(0, 8).join(""), limit: 5 })).items;
-      similar = found.slice(0, 5).map((item) => ({ id: item.id, platformRequirementId: item.platformRequirementId, title: item.title, sourceType: item.sourceType }));
-    } catch { similar = []; }
-    return json({ draft, similar, fallback, aiFilledCount: draft.aiFilled.length });
+    const errored = await (await handleApiRequest(new Request("http://localhost/api/ops/metrics"), withError)).json() as { metrics: { baseForm: Record<string, unknown> } };
+    assert.match(String(errored.metrics.baseForm.lastError), /rec…/);
+    assert.match(String(errored.metrics.baseForm.lastError), /tbl…/);
+    assert.equal(String(errored.metrics.baseForm.lastError).includes("reczz28"), false);
+    assert.equal(String(errored.metrics.baseForm.lastError).includes("tbl6Gfi"), false);
+
+    // 只配了 shareUrl、没有同步状态：仍返回 baseForm，统计按 0/null。
+    const withoutState = makeDependencies();
+    withoutState.repositories!.ops = d.repositories!.ops;
+    const fallback = await (await handleApiRequest(new Request("http://localhost/api/ops/metrics"), withoutState)).json() as { metrics: { baseForm: Record<string, unknown> } };
+    assert.equal(fallback.metrics.baseForm.shareUrl, "https://aimagene.feishu.cn/share/base/shrcn-test");
+    assert.equal(fallback.metrics.baseForm.lastRunAt, null);
+    assert.equal(fallback.metrics.baseForm.scanned, 0);
+
+    process.env.BASE_FORM_SHARE_URL = "javascript:alert(1)";
+    assert.equal((await read()).shareUrl, undefined, "非 http(s) 地址不返回");
+
+    delete process.env.BASE_FORM_SHARE_URL;
+    assert.equal((await read()).shareUrl, undefined, "未配置不返回");
+  } finally {
+    if (previous === undefined) delete process.env.BASE_FORM_SHARE_URL;
+    else process.env.BASE_FORM_SHARE_URL = previous;
   }
-  if (method === "POST" && url.pathname === "/api/requirements") {
-    // V02-T04：Web 手工收录。actor、时间、来源类型与平台编号都由服务端生成；
-    // 同幂等键同内容返回原结果，同键不同内容明确冲突（AC02/AC03）。
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.requirements || !repositories.audit || !repositories.dictionaries) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const key = SyncIdempotencyHeaderSchema.safeParse(request.headers.get("Idempotency-Key")); if (!key.success) return jsonError("VALIDATION_FAILED");
-    const parsedBody = RequirementIntakeSchema.safeParse(await readJson(request)); if (!parsedBody.success) return jsonError("VALIDATION_FAILED");
-    // 录入模块必须来自已发布词典（G-MODULE：Web 录入模块与 AI 建议分开，但同源受控）。
-    if (parsedBody.data.intakeModule) {
-      let names: string[];
-      try {
-        const published = (await repositories.dictionaries.list()).find((version) => version.status === "published");
-        names = (published?.entries ?? []).map((entry) => typeof entry === "string" ? entry : String((entry as { name?: unknown }).name ?? entry));
-      } catch { return jsonError("DEPENDENCY_UNAVAILABLE", "功能模块词典暂时不可用，请稍后重试。"); }
-      if (!names.includes(parsedBody.data.intakeModule)) return jsonError("VALIDATION_FAILED", "功能模块不在已发布词典中。");
-    }
-    // POST 语义中可选字段 null 与省略等价（下方展开只保留真值）：哈希前归一化，
-// 客户端重试时序列化差异（null vs 缺省）不会被误判为“同键不同内容”（复查 #8）。
-    const canonicalBody = Object.fromEntries(Object.entries(parsedBody.data).filter(([, value]) => value !== null && value !== undefined));
-    const requestHash = createHash("sha256").update(stableJson(canonicalBody)).digest("hex");
-    let receipt: { requirementId: string; requestHash: string; actorId: string } | null;
-    try { receipt = await repositories.requirements.findIntakeReceipt(key.data); }
-    catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
-    if (receipt) {
-      if (receipt.requestHash !== requestHash) return jsonError("CONFLICT", "该幂等键已用于不同的提交内容。");
-      try {
-        const existing = await repositories.requirements.get(receipt.requirementId);
-        if (!existing) return jsonError("DEPENDENCY_UNAVAILABLE");
-        return json({ requirementId: existing.id, platformRequirementId: existing.platformRequirementId, sourceType: "web_manual", status: "collected" }, 200);
-      } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
-    }
-    try {
-      const created = await repositories.requirements.createManualRequirement({ idempotencyKey: key.data, actorId: auth.actor.id, requestHash, title: parsedBody.data.title, description: parsedBody.data.description, sourceChannel: parsedBody.data.sourceChannel, ...(parsedBody.data.productModel ? { productModel: parsedBody.data.productModel } : {}), ...(parsedBody.data.requirementType ? { requirementType: parsedBody.data.requirementType } : {}), ...(parsedBody.data.constraintNotes ? { constraintNotes: parsedBody.data.constraintNotes } : {}), ...(parsedBody.data.supplementUrl ? { supplementUrl: parsedBody.data.supplementUrl } : {}), ...(parsedBody.data.intakeModule ? { intakeModule: parsedBody.data.intakeModule } : {}), ...(parsedBody.data.intakeOrigin ? { intakeOrigin: parsedBody.data.intakeOrigin } : {}), ...(parsedBody.data.proposerName ? { proposerName: parsedBody.data.proposerName } : {}), ...(parsedBody.data.owner ? { owner: { feishuUserId: parsedBody.data.owner.feishuUserId, feishuIdType: parsedBody.data.owner.feishuIdType, ...(parsedBody.data.owner.tbDisplayName ? { name: parsedBody.data.owner.tbDisplayName } : {}) } } : {}) });
-      if ("outcome" in created) return jsonError("CONFLICT", "该幂等键已用于不同的提交内容。");
-      return json({ requirementId: created.requirementId, platformRequirementId: created.platformRequirementId, sourceType: "web_manual", status: "collected" }, created.replay ? 200 : 201);
-    } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
-  }
-  const intakeEditMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)$/);
-  if (method === "PATCH" && intakeEditMatch) {
-    // V02-T07/PRD-30：手工与多维表格编辑（base_form 只改平台侧，不回写收集表）。TB 事实只读；期望源版本 + 幂等键。
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const requirementId = pathUuid(intakeEditMatch[1]!, dependencies); if (!requirementId) return jsonError("NOT_FOUND");
-    const key = SyncIdempotencyHeaderSchema.safeParse(request.headers.get("Idempotency-Key")); if (!key.success) return jsonError("VALIDATION_FAILED");
-    const parsedBody = RequirementIntakeEditSchema.safeParse(await readJson(request)); if (!parsedBody.success) return jsonError("VALIDATION_FAILED");
-    const requestHash = createHash("sha256").update(stableJson(parsedBody.data)).digest("hex");
-    const body = parsedBody.data;
-    try {
-      const result = await repositories.requirements.updateManualRequirement({
-        requirementId, expectedSourceVersion: body.expectedSourceVersion, idempotencyKey: key.data, actorId: auth.actor.id, requestHash,
-        ...(body.title !== undefined ? { title: body.title } : {}),
-        ...(body.description !== undefined ? { description: body.description } : {}),
-        ...(body.sourceChannel !== undefined ? { sourceChannel: body.sourceChannel } : {}),
-        ...(body.productModel !== undefined ? { productModel: body.productModel } : {}),
-        ...(body.requirementType !== undefined ? { requirementType: body.requirementType } : {}),
-        ...(body.constraintNotes !== undefined ? { constraintNotes: body.constraintNotes } : {}),
-        ...(body.supplementUrl !== undefined ? { supplementUrl: body.supplementUrl } : {}),
-      });
-      if (result.outcome === "not_found") return jsonError("NOT_FOUND");
-      if (result.outcome === "not_manual") return jsonError("CONFLICT", "Teambition 来源的事实由 Teambition 维护，Web 仅编辑手工/多维表格需求。");
-      if (result.outcome === "key_conflict") return jsonError("CONFLICT", "该幂等键已用于不同的提交内容。");
-      if (result.outcome === "version_conflict") return jsonError("CONFLICT", `版本冲突：该需求已被更新到源版本 ${result.currentSourceVersion}，请刷新后重试。`);
-      return json({ requirementId, outcome: result.outcome, sourceVersion: result.sourceVersion, ...(result.outcome === "updated" || result.outcome === "replay" ? { substantiveChanged: result.substantiveChanged } : {}) }, 200);
-    } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
-  }
-  if (method === "GET" && url.pathname === "/api/requirements") {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const query = Object.fromEntries(url.searchParams.entries());
-    const parsed = RequirementListQuerySchema.safeParse(query); if (!parsed.success) return jsonError("VALIDATION_FAILED");
-    const recycle = parsed.data.deleted === true;
-    // 0034：回收站按 deleted_by=妙搭 userId 过滤，不依赖飞书身份解析（身份服务抖动不影响回收站）；
-    // 「我的需求」按负责人口径，仍要把平台 userId 换成飞书 user_id。
-    const identityRequired = parsed.data.mine === true;
-    const identity = identityRequired ? await resolveFeishuIdentity(dependencies, auth.actor.id) : null;
-    if (identity) { const unavailable = identityUnavailable(identity); if (unavailable) return unavailable; }
-    if (identity && !identity.ok) return json({ items: [], nextCursor: null, identityResolved: false });
-    // 优先级分诊视图（sort=priority_asc）按生效优先级排序且不分页：忽略游标，最多返回 100 条。
-    // 回收站固定按删除时间倒序，用 (deleted_at,id) 游标；显式传 pool 才按池过滤，否则聚合两池。
-    const poolExplicit = url.searchParams.has("pool");
-    const pool: SourcePool | "all" = recycle && !poolExplicit ? "all" : parsed.data.pool;
-    const cursor = parsed.data.sort === "priority_asc" || recycle ? undefined : decodeRequirementCursor(parsed.data.cursor);
-    const deletedCursor = recycle ? decodeDeletedRequirementCursor(parsed.data.cursor) : undefined;
-    if (parsed.data.sort !== "priority_asc" && parsed.data.cursor !== undefined && (recycle ? deletedCursor === undefined : cursor === undefined)) return jsonError("VALIDATION_FAILED", "Invalid cursor.");
-    const page = await repositories.requirements.search({ ...(parsed.data.q === undefined ? {} : { q: parsed.data.q }), ...(parsed.data.executorName === undefined ? {} : { executorName: parsed.data.executorName }), ...(parsed.data.pullState === undefined ? {} : { pullState: parsed.data.pullState }), ...(parsed.data.analysisState === undefined ? {} : { analysisState: parsed.data.analysisState }), ...(parsed.data.ownerState === undefined ? {} : { ownerState: parsed.data.ownerState }), ...(parsed.data.pushState === undefined ? {} : { pushState: parsed.data.pushState }),
-      ...(parsed.data.processingState === undefined ? {} : { processingState: parsed.data.processingState }), ...(parsed.data.priority === undefined ? {} : { priority: parsed.data.priority }), ...(parsed.data.source === undefined ? {} : { source: parsed.data.source }),
-      // 0034：回收站=本人删除的记录（deleted_by 存妙搭 userId）；mine=我的需求（负责人口径）。
-      ...(recycle ? { deleted: true as const, deletedBy: auth.actor.id } : { deleted: false as const }),
-      ...(parsed.data.mine === true ? { ownerFeishuUserId: identity!.feishuUserId! } : {}),
-      pool, ...(recycle ? {} : parsed.data.sort === undefined ? {} : { sort: parsed.data.sort }), ...(parsed.data.batchId === undefined ? {} : { batchId: parsed.data.batchId }), ...(parsed.data.since === undefined ? {} : { since: parsed.data.since }), ...(parsed.data.until === undefined ? {} : { until: parsed.data.until }), limit: parsed.data.limit,
-      ...(cursor === undefined ? {} : { cursor }), ...(deletedCursor === undefined ? {} : { deletedCursor }) });
-    const payload = await requirementListPayload(repositories, page, pool);
-    // 回收站恒为登录身份过滤（identityResolved=true）；我的需求在解析失败时已提前返回空页。
-    return json(recycle || identityRequired ? { ...payload, identityResolved: true } : payload);
-  }
-  // I3-2：需求池 CSV 导出。复用列表筛选（q/负责人/状态/优先级/批次/时间），忽略分页，上限 5000 条。
-  if (method === "GET" && url.pathname === "/api/requirements/export") {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const query = Object.fromEntries(url.searchParams.entries());
-    const parsed = RequirementExportQuerySchema.safeParse(query); if (!parsed.success) return jsonError("VALIDATION_FAILED");
-    const exportLimit = 5000;
-    const page = await repositories.requirements.search({
-      ...(parsed.data.q === undefined ? {} : { q: parsed.data.q }), ...(parsed.data.executorName === undefined ? {} : { executorName: parsed.data.executorName }), pool: parsed.data.pool,
-      ...(parsed.data.pullState === undefined ? {} : { pullState: parsed.data.pullState }), ...(parsed.data.analysisState === undefined ? {} : { analysisState: parsed.data.analysisState }),
-      ...(parsed.data.ownerState === undefined ? {} : { ownerState: parsed.data.ownerState }), ...(parsed.data.pushState === undefined ? {} : { pushState: parsed.data.pushState }),
-      ...(parsed.data.processingState === undefined ? {} : { processingState: parsed.data.processingState }), ...(parsed.data.priority === undefined ? {} : { priority: parsed.data.priority }),
-      ...(parsed.data.source === undefined ? {} : { source: parsed.data.source }),
-      ...(parsed.data.sort === undefined ? {} : { sort: parsed.data.sort }), ...(parsed.data.batchId === undefined ? {} : { batchId: parsed.data.batchId }),
-      ...(parsed.data.since === undefined ? {} : { since: parsed.data.since }), ...(parsed.data.until === undefined ? {} : { until: parsed.data.until }),
-      limit: exportLimit + 1,
-    });
-    const truncated = page.items.length > exportLimit;
-    const rows = page.items.slice(0, exportLimit);
-    const header = ["平台ID", "TB需求ID", "标题", "负责人", "生效优先级", "处理状态", "拉取", "分析", "负责人状态", "推送", "来源类型", "源版本", "Base记录ID", "来源已移除", "创建时间", "更新时间"];
-    const body = rows.map((item) => [
-      item.platformRequirementId, item.teambitionRequirementId ?? "", item.title,
-      item.executorName ?? item.manualOwner?.name ?? "",
-      item.priorityOverride?.priority ?? item.currentScorePriority ?? "",
-      item.processingState ?? "active",
-      item.pipeline.pull, item.pipeline.analysis, item.pipeline.owner, item.pipeline.push,
-      item.sourceType, item.sourceVersion, item.baseRecordId ?? "", item.sourceMissingSince ?? "",
-      item.createdAt, item.updatedAt,
-    ]);
-    const nowIso = (dependencies.now ?? (() => new Date()))().toISOString();
-    return new Response("\uFEFF" + toCsv([header, ...body]), {
-      status: 200,
-      headers: {
-        "content-type": "text/csv; charset=utf-8",
-        "content-disposition": `attachment; filename="rq-sys-requirements-${nowIso.slice(0, 10)}.csv"`,
-        ...(truncated ? { "x-rq-truncated": "true" } : {}),
-      },
-    });
-  }
-  // 0034：「我的需求」列表（负责人口径；人工负责人优先，其次唯一活跃的 TB 执行人映射）。
-  // 必须排在 /api/requirements/{id} 详情之前，否则 "mine" 会被当成需求 id。
-  if (method === "GET" && url.pathname === "/api/requirements/mine") {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const query = Object.fromEntries(url.searchParams.entries());
-    const parsed = RequirementListQuerySchema.safeParse(query); if (!parsed.success) return jsonError("VALIDATION_FAILED");
-    // 回收站只看本人删除的记录，统一走列表接口 deleted=true；这里拒绝混用，避免两种口径叠加。
-    if (parsed.data.deleted === true) return jsonError("VALIDATION_FAILED", "回收站请使用 /api/requirements?deleted=true。");
-    // 负责人列存飞书 user_id，平台 userId 不能直接比较；解析不到时返回空列表并标记，前端显示可解释的空态。
-    const identity = await resolveFeishuIdentity(dependencies, auth.actor.id);
-    const mineUnavailable = identityUnavailable(identity); if (mineUnavailable) return mineUnavailable;
-    if (!identity.ok) return json({ items: [], nextCursor: null, identityResolved: false });
-    const cursor = parsed.data.sort === "priority_asc" ? undefined : decodeRequirementCursor(parsed.data.cursor);
-    if (parsed.data.sort !== "priority_asc" && parsed.data.cursor !== undefined && cursor === undefined) return jsonError("VALIDATION_FAILED", "Invalid cursor.");
-    const page = await repositories.requirements.search({
-      ...(parsed.data.q === undefined ? {} : { q: parsed.data.q }), ...(parsed.data.executorName === undefined ? {} : { executorName: parsed.data.executorName }),
-      ...(parsed.data.pullState === undefined ? {} : { pullState: parsed.data.pullState }), ...(parsed.data.analysisState === undefined ? {} : { analysisState: parsed.data.analysisState }),
-      ...(parsed.data.ownerState === undefined ? {} : { ownerState: parsed.data.ownerState }), ...(parsed.data.pushState === undefined ? {} : { pushState: parsed.data.pushState }),
-      ...(parsed.data.processingState === undefined ? {} : { processingState: parsed.data.processingState }), ...(parsed.data.priority === undefined ? {} : { priority: parsed.data.priority }),
-      ...(parsed.data.source === undefined ? {} : { source: parsed.data.source }), ...(parsed.data.sort === undefined ? {} : { sort: parsed.data.sort }),
-      ownerFeishuUserId: identity.feishuUserId!, deleted: false,
-      pool: parsed.data.pool, limit: parsed.data.limit, ...(cursor === undefined ? {} : { cursor }),
-    });
-    return json({ ...(await requirementListPayload(repositories, page, parsed.data.pool)), identityResolved: true });
-  }
-  // 0034：「我的需求」计数（含已压制、不含已删除），产品池/集团池分开，供首页卡片与页头使用。
-  if (method === "GET" && url.pathname === "/api/requirements/mine/counts") {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.requirements?.mineCounts) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const identity = await resolveFeishuIdentity(dependencies, auth.actor.id);
-    const countsUnavailable = identityUnavailable(identity); if (countsUnavailable) return countsUnavailable;
-    if (!identity.ok) return json({ identityResolved: false, product: 0, group: 0, total: 0, suppressed: 0 });
-    try { return json({ identityResolved: true, ...(await repositories.requirements.mineCounts(identity.feishuUserId!)) }); }
-    catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
-  }
-  // 5c-2：来源 Tab 计数。与列表默认范围一致（只统计 active），四种来源互斥；失败时前端隐藏计数，不影响列表。
-  if (method === "GET" && url.pathname === "/api/requirements/source-counts") {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.requirements?.sourceCounts) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const poolParam = url.searchParams.get("pool");
-    if (poolParam !== null && poolParam !== "product" && poolParam !== "group") return jsonError("VALIDATION_FAILED");
-    try {
-      // 集团池页面只取 all 一个数字，不渲染五来源 Tab；接口仍按池统计。
-      const counts = await repositories.requirements.sourceCounts((poolParam ?? "product") as SourcePool);
-      return json({ counts });
-    } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
-  }
-  if (url.pathname === "/api/kano/evidence" && method === "GET") {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const versions = await repositories.requirements.listKanoEvidence?.() ?? [];
-    // 读取可见全部状态；只有 approved 且未标记 PII 的版本可被 T14 运行引用（模型输入门禁）。
-    return json({ items: versions.map((v) => ({ id: v.id, version: v.version, title: v.title, sourceUrl: v.sourceUrl, sourceSection: v.sourceSection, summary: v.piiFlagged ? maskPii(v.summary, []) : v.summary, evidenceFragments: v.piiFlagged ? v.evidenceFragments.map((fragment) => ({ ...fragment, text: maskPii(fragment.text, []) })) : v.evidenceFragments, coverageNotes: v.coverageNotes, knownAudiences: v.knownAudiences, knownScenes: v.knownScenes, interviewDate: v.interviewDate, status: v.status, piiFlagged: v.piiFlagged, createdAt: v.createdAt, approvedAt: v.approvedAt })) });
-  }
-  if (url.pathname === "/api/kano/evidence" && method === "POST") {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const parsed = KanoEvidenceImportSchema.safeParse(await readJson(request)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
-    try {
-      const created = await repositories.requirements.createKanoEvidence({ ...parsed.data, createdBy: auth.actor.id } as Parameters<NonNullable<typeof repositories.requirements.createKanoEvidence>>[0]);
-      return json({ id: created.id, version: created.version, status: created.status, piiFlagged: created.piiFlagged }, 201);
-    } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
-  }
-  const kanoApproveMatch = url.pathname.match(/^\/api\/kano\/evidence\/([^/]+)\/approve$/);
-  if (method === "POST" && kanoApproveMatch) {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
-    try {
-      const evidenceId = pathUuid(kanoApproveMatch[1]!, dependencies); if (!evidenceId) return jsonError("NOT_FOUND");
-      const result = await repositories.requirements.approveKanoEvidence?.(evidenceId, auth.actor.id);
-      if (!result) return jsonError("DEPENDENCY_UNAVAILABLE");
-      if (result.outcome === "not_found") return jsonError("NOT_FOUND");
-      if (result.outcome === "pii_flagged") return jsonError("CONFLICT", "资料包含疑似个人信息，去标识化后重新导入再批准。");
-      return json({ outcome: "approved" });
-    } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
-  }
-  const kanoRunsMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/kano-runs$/);
-  if ((method === "POST" || method === "GET") && kanoRunsMatch) {
-    // V02-T14：手动触发 Kano 假设报告。仅引用已批准且未标记 PII 的资料版本；同需求同时只允许一个
-    // 运行中的报告；运行独立入队（kano_run），失败不触碰主分析/推送/通知。
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const kanoRequirementId = pathUuid(kanoRunsMatch[1]!, dependencies); if (!kanoRequirementId) return jsonError("NOT_FOUND");
-    const requirement = await repositories.requirements.get(kanoRequirementId); if (!requirement) return jsonError("NOT_FOUND");
-    if (method === "GET") {
-      const runs = await repositories.requirements.listKanoRuns?.(requirement.id) ?? [];
-      // 旧报告标明过期依据（AC08）：输入源版本或资料版本落后于当前时提示复核。
-      const latestEvidence = ((await repositories.requirements.listKanoEvidence?.() ?? []).filter((v) => v.status === "approved").sort((a, b) => b.version - a.version)[0]?.version) ?? null;
-      return json({ items: runs.map((run) => ({ ...run, staleInputs: run.sourceVersion !== requirement.sourceVersion || (latestEvidence !== null && run.evidenceVersion !== latestEvidence) })) });
-    }
-    const parsed = KanoRunRequestSchema.safeParse(await readJson(request)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
-    const evidence = ((await repositories.requirements.listKanoEvidence?.() ?? []).find((version) => version.version === parsed.data.evidenceVersion)) ?? null;
-    if (!evidence || evidence.status !== "approved" || evidence.piiFlagged) return jsonError("CONFLICT", "资料版本未批准或包含未脱敏内容，不能作为 Kano 输入。");
-    try {
-      const result = await repositories.requirements.createKanoRun({
-        requirementId: requirement.id, sourceVersion: requirement.sourceVersion,
-        audienceSnapshot: { tags: requirement.audienceTags, confirmed: requirement.audienceConfirmed },
-        evidenceVersion: evidence.version, promptVersion: "rq-kano-v1", createdBy: auth.actor.id,
-      });
-      if (result.outcome === "active_run_exists") return jsonError("CONFLICT", "该需求已有运行中的 Kano 报告，请等待完成后再重跑。");
-      return json({ requirementId: requirement.id, runVersion: result.run.runVersion, status: "queued" }, 202);
-    } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
-  }
-  const riceMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/rice-draft$/);
-  if ((method === "GET" || method === "PUT") && riceMatch) {
-    // V02-T11：RICE Beta 草稿。保存只落草稿与历史：不入主队列、不触发 AI/推送/通知、
-    // 不改主分析/优先级/PM 状态。量纲未获批 → 一律显示“待配置”，不出分数或排名。
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const riceRequirementId = pathUuid(riceMatch[1]!, dependencies); if (!riceRequirementId) return jsonError("NOT_FOUND");
-    const requirement = await repositories.requirements.get(riceRequirementId); if (!requirement) return jsonError("NOT_FOUND");
-    if (method === "GET") {
-      const draft = await repositories.requirements.getRiceDraft?.(requirement.id) ?? null;
-      const inputs = draft ? { reach: draft.reachInput, impact: draft.impactInput, confidence: draft.confidenceInput, effort: draft.effortInput } : { reach: null, impact: null, confidence: null, effort: null };
-      // V02-T12：量纲已确认（rice-v1，2026-10-25）。完整且合法的输入给出可复算分数；
-      // 缺项/非法值一律待补充，不输出 NaN/Infinity/0 分兜底。
-      const scored = computeRiceScore(inputs);
-      return json({ requirementId: requirement.id, inputs, notes: draft?.notes ?? null, sourceVersion: draft?.sourceVersion ?? requirement.sourceVersion, editVersion: draft?.editVersion ?? 0, updatedBy: draft?.updatedBy ?? null, updatedAt: draft?.updatedAt ?? null, status: scored.status === "computed" ? "已计算" : "待补充", score: scored.score, configVersion: RICE_CONFIG_VERSION, units: { reach: RICE_REACH_UNIT, effort: RICE_EFFORT_UNIT }, impactLevels: RICE_IMPACT_LEVELS });
-    }
-    const parsed = RiceDraftUpdateSchema.safeParse(await readJson(request)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
-    try {
-      const result = await repositories.requirements.saveRiceDraft({
-        requirementId: requirement.id, expectedEditVersion: parsed.data.expectedEditVersion, actorId: auth.actor.id, sourceVersion: requirement.sourceVersion,
-        ...(parsed.data.reach !== undefined ? { reachInput: parsed.data.reach } : {}),
-        ...(parsed.data.impact !== undefined ? { impactInput: parsed.data.impact } : {}),
-        ...(parsed.data.confidence !== undefined ? { confidenceInput: parsed.data.confidence } : {}),
-        ...(parsed.data.effort !== undefined ? { effortInput: parsed.data.effort } : {}),
-        ...(parsed.data.notes !== undefined ? { notes: parsed.data.notes } : {}),
-      });
-      if (result.outcome === "version_conflict") return jsonError("CONFLICT", `草稿已被他人更新到版本 ${result.currentEditVersion}，请刷新后重试。`);
-      // 需求源内容在编辑期间前进：草稿基于过期基线，拒绝以免按旧输入出分；提示刷新后按当前源重填。
-      if (result.outcome === "source_version_conflict") return jsonError("CONFLICT", `需求内容已更新到源版本 ${result.currentSourceVersion}，请刷新后重试。`);
-      // 保存后按落库结果重算状态，避免响应写死“待配置”而紧接着的 GET 显示“已计算”。
-      const savedDraft = await repositories.requirements.getRiceDraft?.(requirement.id) ?? null;
-      const savedInputs = savedDraft ? { reach: savedDraft.reachInput, impact: savedDraft.impactInput, confidence: savedDraft.confidenceInput, effort: savedDraft.effortInput } : { reach: null, impact: null, confidence: null, effort: null };
-      const scored = computeRiceScore(savedInputs);
-      return json({ requirementId: requirement.id, editVersion: result.editVersion, status: scored.status === "computed" ? "已计算" : "待补充", score: scored.score, configVersion: RICE_CONFIG_VERSION });
-    } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
-  }
-  const audienceMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/audience$/);
-  if (method === "PUT" && audienceMatch) {
-    // V02-T09：人工人群标签。只落库与审计：不改优先级、不重置 Base PM 状态、不触发 AI/推送/通知。
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const parsed = AudienceUpdateSchema.safeParse(await readJson(request)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
-    try {
-      const audienceRequirementId = pathUuid(audienceMatch[1]!, dependencies); if (!audienceRequirementId) return jsonError("NOT_FOUND");
-      const result = await repositories.requirements.setAudienceTags(audienceRequirementId, { tags: parsed.data.tags, expectedVersion: parsed.data.expectedVersion, actorId: auth.actor.id });
-      if (result.outcome === "not_found") return jsonError("NOT_FOUND");
-      if (result.outcome === "version_conflict") return jsonError("CONFLICT", `人群标签已被他人更新到版本 ${result.currentVersion}，请刷新后重试。`);
-      return json({ requirementId: audienceRequirementId, audienceVersion: result.version, confirmed: true, tags: parsed.data.tags });
-    } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
-  }
-  const scoringMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/scoring$/);
-  if (scoringMatch && method === "PUT") {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.requirements || !repositories.scoring || !repositories.priorityRules) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const requirementId = pathUuid(scoringMatch[1]!, dependencies); if (!requirementId) return jsonError("NOT_FOUND");
-    const parsed = ManualScoringUpdateSchema.safeParse(await readJson(request)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
-    const requirement = await repositories.requirements.get(requirementId); if (!requirement) return jsonError("NOT_FOUND");
-    const rule = await repositories.priorityRules.getPublished();
-    if (!rule || (rule.rules as Record<string, unknown>).formulaType !== "umsc_weighted_v2") return jsonError("CONFLICT", "评分规则未发布");
-    const latest = await repositories.analyses?.latest(requirement.id) ?? null;
-    let computed: ReturnType<typeof computeUmcScore>;
-    try { computed = computeUmcScore(parsed.data.inputs, parsed.data.alpha); } catch { return jsonError("VALIDATION_FAILED"); }
-    const current = await repositories.scoring.current(requirement.id);
-    const aiSuggestion = await repositories.scoring.aiSuggestion(requirement.id);
-    const sourceScore = current ?? aiSuggestion;
-    const auditEvent = { id: randomUUID(), actorId: auth.actor.id, eventType: "scoring.updated", entityType: "requirement", result: "succeeded" as const, safeDetails: { fromVersion: current?.version ?? 0, score: computed.score, priority: computed.priority }, occurredAt: (dependencies.now?.() ?? new Date()).toISOString() };
-    const result = await repositories.scoring.saveManual({
-      requirementId: requirement.id,
-      expectedVersion: parsed.data.expectedVersion,
-      sourceVersion: requirement.sourceVersion,
-      analysisVersion: latest?.analysisVersion ?? null,
-      ruleVersionId: rule.id,
-      inputs: parsed.data.inputs as unknown as Record<string, unknown>,
-      alpha: parsed.data.alpha,
-      score: computed.score,
-      priority: computed.priority,
-      scoreConfidence: sourceScore?.scoreConfidence ?? null,
-      scoreConfidenceReason: sourceScore?.scoreConfidenceReason ?? null,
-      safetyFlag: parsed.data.safetyFlag ?? sourceScore?.safetyFlag ?? false,
-      basis: sourceScore?.basis ?? {},
-      rationale: parsed.data.reason,
-      actorId: auth.actor.id,
-      reason: parsed.data.reason,
-      auditEvent,
-    });
-    if (result.outcome === "version_conflict") return jsonError("CONFLICT", `评分版本冲突，当前版本 ${result.currentVersion}`);
-    return json({ scoring: result.version });
-  }
-  const applyAiMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/scoring\/apply-ai$/);
-  if (applyAiMatch && method === "POST") {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.requirements || !repositories.scoring) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const requirementId = pathUuid(applyAiMatch[1]!, dependencies); if (!requirementId) return jsonError("NOT_FOUND");
-    const parsed = ApplyAiScoringSchema.safeParse(await readJson(request)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
-    const requirement = await repositories.requirements.get(requirementId); if (!requirement) return jsonError("NOT_FOUND");
-    const current = await repositories.scoring.current(requirement.id);
-    const auditEvent = { id: randomUUID(), actorId: auth.actor.id, eventType: "scoring.ai_applied", entityType: "requirement", result: "succeeded" as const, safeDetails: { fromVersion: current?.version ?? 0, aiVersion: parsed.data.aiVersion }, occurredAt: (dependencies.now?.() ?? new Date()).toISOString() };
-    const result = await repositories.scoring.applyAi({ requirementId: requirement.id, expectedVersion: parsed.data.expectedVersion, aiVersion: parsed.data.aiVersion, actorId: auth.actor.id, reason: parsed.data.reason ?? null, auditEvent });
-    if (result.outcome === "version_conflict") return jsonError("CONFLICT", `评分版本冲突，当前版本 ${result.currentVersion}`);
-    if (result.outcome === "ai_not_found") return jsonError("NOT_FOUND");
-    return json({ scoring: result.version });
-  }
-  // V02-T26：人工优先级覆盖（只影响应用内列表/详情/总览，不回写 Base）。
-  const priorityOverrideMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/priority-override$/);
-  if (method === "PUT" && priorityOverrideMatch) {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.requirements || !repositories.audit) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const requirementId = pathUuid(priorityOverrideMatch[1]!, dependencies); if (!requirementId) return jsonError("NOT_FOUND");
-    const parsed = PriorityOverrideUpdateSchema.safeParse(await readJson(request)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
-    const req = await repositories.requirements.get(requirementId); if (!req) return jsonError("NOT_FOUND");
-    // 已压制需求不参与处理链路：人工优先级也不允许写入，避免“看起来已生效”。
-    if ((req.processingState ?? "active") !== "active") return jsonError("CONFLICT", "该需求已被压制，请先撤销判定再设置人工优先级。");
-    const now = (dependencies.now ?? (() => new Date()))().toISOString();
-    const cleared = parsed.data.priority === null;
-    const result = await repositories.requirements.setPriorityOverride(req.id, { priority: parsed.data.priority, reason: cleared ? null : parsed.data.reason, actorId: auth.actor.id, at: now });
-    if (result.outcome === "not_found") return jsonError("NOT_FOUND");
-    const auditFailure = await appendAudit(repositories, { id: randomUUID(), actorId: auth.actor.id, eventType: cleared ? "requirement.priority_override_cleared" : "requirement.priority_override_set", entityType: "requirement", entityId: req.id, result: "succeeded", safeDetails: { priority: parsed.data.priority, at: now }, occurredAt: now });
-    if (auditFailure) return auditFailure;
-    const currentScore = repositories.scoring ? await repositories.scoring.current(req.id) : null;
-    return json({ requirementId: req.id, priorityOverride: result.override, effectivePriority: result.override?.priority ?? currentScore?.priority ?? null });
-  }
-  // V02-T26：分析补充上下文（只进入下一次分析请求，不写 Base）。
-  const analysisContextMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/analysis-context$/);
-  if (method === "PUT" && analysisContextMatch) {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.requirements || !repositories.audit) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const requirementId = pathUuid(analysisContextMatch[1]!, dependencies); if (!requirementId) return jsonError("NOT_FOUND");
-    const parsed = AnalysisContextUpdateSchema.safeParse(await readJson(request)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
-    const req = await repositories.requirements.get(requirementId); if (!req) return jsonError("NOT_FOUND");
-    if ((req.processingState ?? "active") !== "active") return jsonError("CONFLICT", "该需求已被压制，请先撤销判定再补充上下文。");
-    const now = (dependencies.now ?? (() => new Date()))().toISOString();
-    const result = await repositories.requirements.setAnalysisContext(req.id, { context: parsed.data.context, actorId: auth.actor.id, at: now });
-    if (result.outcome === "not_found") return jsonError("NOT_FOUND");
-    const auditFailure = await appendAudit(repositories, { id: randomUUID(), actorId: auth.actor.id, eventType: "requirement.analysis_context_updated", entityType: "requirement", entityId: req.id, result: "succeeded", safeDetails: { cleared: parsed.data.context === null, at: now }, occurredAt: now });
-    if (auditFailure) return auditFailure;
-    return json({ requirementId: req.id, analysisContext: result.context });
-  }
-  // 0030：需求评估（按需生成）。GET 列历史版本；POST 生成一条新版本（同步调用模型，失败也保留 failed 版本）。
-  const assessmentMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/assessments$/);
-  if (assessmentMatch && (method === "GET" || method === "POST")) {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const assessmentRequirementId = pathUuid(assessmentMatch[1]!, dependencies); if (!assessmentRequirementId) return jsonError("NOT_FOUND");
-    let assessmentRequirement: RequirementRecord | null;
-    try { assessmentRequirement = await repositories.requirements.get(assessmentRequirementId); } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
-    if (!assessmentRequirement) return jsonError("NOT_FOUND");
-    if (method === "GET") {
-      if (!repositories.assessments) return jsonError("DEPENDENCY_UNAVAILABLE");
-      try {
-        // PRD §4.10.5：running 超过 2 分钟不允许永久停在「生成中」，读取时兜底转 failed/timeout。
-        const listNow = (dependencies.now ?? (() => new Date()))().toISOString();
-        await repositories.assessments.expireStaleRunning(assessmentRequirementId, new Date(Date.parse(listNow) - ASSESSMENT_RUNNING_STALE_MS).toISOString(), listNow);
-        return json({ items: (await repositories.assessments.list(assessmentRequirementId)).map(assessmentDto) });
-      } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
-    }
-    if (!dependencies.assessments) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const parsedAssessmentBody = RequirementAssessmentInputSchema.safeParse(await readJson(request)); if (!parsedAssessmentBody.success) return jsonError("VALIDATION_FAILED");
-    const inputs = {
-      ...(typeof parsedAssessmentBody.data.background === "string" && parsedAssessmentBody.data.background !== "" ? { background: parsedAssessmentBody.data.background } : {}),
-      ...(typeof parsedAssessmentBody.data.goal === "string" && parsedAssessmentBody.data.goal !== "" ? { goal: parsedAssessmentBody.data.goal } : {}),
-      ...(typeof parsedAssessmentBody.data.scenario === "string" && parsedAssessmentBody.data.scenario !== "" ? { scenario: parsedAssessmentBody.data.scenario } : {}),
-    };
-    try {
-      // 评估在现有 AI 分析之上做判断；分析读取失败不阻塞评估，按「未提供」处理。
-      const assessmentAnalysis = repositories.analyses
-        ? await repositories.analyses.latest(assessmentRequirementId).catch(() => null)
-        : null;
-      // 与主分析同口径的 PII 名单：来源花名册 + 目录花名册 + 提出人/执行人。
-      // 目录读取失败会写审计（loadDirectoryRosterNames），不再静默降级为空名单。
-      const assessmentRosterNames: string[] = [];
-      if (assessmentRequirement.sourceConfigId) {
-        try { assessmentRosterNames.push(...(await repositories.sources.get(assessmentRequirement.sourceConfigId))?.ownerNames ?? []); }
-        catch { /* 来源读取失败只降低掩码覆盖，不阻断评估 */ }
-      }
-      assessmentRosterNames.push(...await loadDirectoryRosterNames({ directory: repositories.directory, audit: repositories.audit }));
-      const assessmentMarkers = analysisPiiMarkers(assessmentRequirement, assessmentRosterNames);
-      return json(assessmentDto(await dependencies.assessments.run({ requirement: assessmentRequirement, inputs, actorId: auth.actor.id, analysis: assessmentAnalysis, piiMarkers: assessmentMarkers })), 201);
-    } catch (cause) {
-      // 与 intake 口径一致：单飞 409；限流 429 + Retry-After；密钥/请求配置事故 500；其余按依赖暂不可用。
-      const errorClass = String((cause as { code?: unknown })?.code ?? "unknown");
-      if (cause instanceof AssessmentContractError) reportAssessmentFailure(dependencies, { errorClass, fields: cause.fields.join(",") || "root" });
-      if (errorClass === "assessment_in_progress") return jsonError("ASSESSMENT_IN_PROGRESS");
-      if (errorClass === "rate_limited") return rateLimited(PROVIDER_RATE_LIMIT_RETRY_AFTER_SECONDS, "AI 评估请求太频繁，请稍后再试。");
-      if (errorClass === "auth_error" || errorClass === "request_error") return jsonError("INTERNAL", "AI 评估服务异常，请稍后重试。");
-      return jsonError("DEPENDENCY_UNAVAILABLE", "AI 评估暂时不可用，请稍后重试。");
-    }
-  }
-  // 2026-11-21：PRD 提示词（按需生成）。GET 列版本；POST 生成一条新版本（同步调模型，失败也保留 failed 版本）。
-  // 契约：requirement_prd_prompts / /prd-prompts / investigationNotes；不接收 pool，按需求 UUID 推导，两池都可用。
-  const prdPromptMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/prd-prompts$/);
-  if (prdPromptMatch && (method === "GET" || method === "POST")) {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const prdRequirementId = pathUuid(prdPromptMatch[1]!, dependencies); if (!prdRequirementId) return jsonError("NOT_FOUND");
-    let prdRequirement: RequirementRecord | null;
-    try { prdRequirement = await repositories.requirements.get(prdRequirementId); } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
-    if (!prdRequirement) return jsonError("NOT_FOUND");
-    if (!repositories.prdPrompts) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const prdNow = (dependencies.now ?? (() => new Date()))().toISOString();
-    if (method === "GET") {
-      try {
-        // 规格 §4：running 超过 2 分钟不允许永久停在「生成中」，读取时兜底转 failed/timeout。
-        await repositories.prdPrompts.expireStaleRunning(prdRequirementId, new Date(Date.parse(prdNow) - PRD_PROMPT_RUNNING_STALE_MS).toISOString(), prdNow);
-        return json({ items: (await repositories.prdPrompts.list(prdRequirementId)).map(prdPromptDto) });
-      } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
-    }
-    if (!dependencies.prdPrompt) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const parsedPrdBody = PrdPromptRequestSchema.safeParse(await readJson(request)); if (!parsedPrdBody.success) return jsonError("VALIDATION_FAILED");
-    if (!repositories.assessments) return jsonError("DEPENDENCY_UNAVAILABLE");
-    let prdAssessment: RequirementAssessmentRecord | null;
-    try {
-      await repositories.assessments.expireStaleRunning(prdRequirementId, new Date(Date.parse(prdNow) - ASSESSMENT_RUNNING_STALE_MS).toISOString(), prdNow);
-      const versions = await repositories.assessments.list(prdRequirementId);
-      prdAssessment = parsedPrdBody.data.assessmentId
-        ? versions.find((item) => item.id === parsedPrdBody.data.assessmentId) ?? null
-        : versions.find((item) => item.status === "succeeded") ?? null;
-    } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
-    // 显式指定评估：必须属于本需求且成功；不指定：用最新成功版本。
-    if (parsedPrdBody.data.assessmentId && prdAssessment?.status !== "succeeded") return jsonError("VALIDATION_FAILED", "所选评估不存在或不是成功版本。");
-    if (!prdAssessment) return jsonError("ASSESSMENT_REQUIRED");
-    // 限流先于创建版本：超限不落库、不调模型。
-    const prdLimit = prdPromptRateLimiterFor(dependencies.prdPrompt).check(auth.actor.id);
-    if (!prdLimit.ok) return rateLimited(prdLimit.retryAfterSeconds ?? 60, "PRD 提示词生成太频繁，请稍后再试。");
-    try {
-      const prdAnalysis = repositories.analyses
-        ? await repositories.analyses.latest(prdRequirementId).catch(() => null)
-        : null;
-      // 与评估同口径的 PII 名单：来源花名册 + 目录花名册 + 提出人/执行人。
-      const prdRosterNames: string[] = [];
-      if (prdRequirement.sourceConfigId) {
-        try { prdRosterNames.push(...(await repositories.sources.get(prdRequirement.sourceConfigId))?.ownerNames ?? []); }
-        catch { /* 来源读取失败只降低掩码覆盖，不阻断生成 */ }
-      }
-      prdRosterNames.push(...await loadDirectoryRosterNames({ directory: repositories.directory, audit: repositories.audit }));
-      const prdMarkers = analysisPiiMarkers(prdRequirement, prdRosterNames);
-      const record = await dependencies.prdPrompt.runner.run({
-        requirement: prdRequirement,
-        assessment: prdAssessment,
-        investigationNotes: parsedPrdBody.data.investigationNotes,
-        actorId: auth.actor.id,
-        analysis: prdAnalysis,
-        piiMarkers: prdMarkers,
-      });
-      return json(prdPromptDto(record), 201);
-    } catch (cause) {
-      const errorClass = String((cause as { code?: unknown })?.code ?? "unknown");
-      if (errorClass === "prd_prompt_in_progress") return jsonError("PRD_PROMPT_IN_PROGRESS");
-      if (cause instanceof PrdPromptFailure) {
-        // 失败版本已落库（timeout / provider_error / invalid_output）；这里只回稳定错误码，不回显模型输出。
-        if (errorClass === "timeout") return jsonError("DEPENDENCY_UNAVAILABLE", "PRD 提示词生成超时，请重试。");
-        if (errorClass === "invalid_output") return jsonError("DEPENDENCY_UNAVAILABLE", "AI 返回的提示词不合规，请重试。");
-        return jsonError("DEPENDENCY_UNAVAILABLE", "AI 暂时不可用，请稍后重试。");
-      }
-      return jsonError("DEPENDENCY_UNAVAILABLE", "PRD 提示词暂时不可用，请稍后重试。");
-    }
-  }
-  const requirementMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)$/);
-  if (method === "GET" && requirementMatch) {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const requirementId = pathUuid(requirementMatch[1]!, dependencies); if (!requirementId) return jsonError("NOT_FOUND");
-    const req = await repositories.requirements.get(requirementId); if (!req) return jsonError("NOT_FOUND");
-    // 0031：详情按 UUID 推导池归属并只读返回；客户端不传 pool（显式不符已在上方守卫返回 404）。
-    const detailPool = await requirementPoolOf(repositories, req);
-    const latest = await repositories.analyses?.latest(req.id) ?? null;
-    const history = await repositories.analyses?.listByRequirement(req.id) ?? [];
-    // 负责人姓名：详情单条解析一次，解析不到返回 null；前端会退回只显示映射状态。
-    let ownerName: string | null = manualOwnerName(req);
-    if (req.sourceConfigId && (req.executorUserId || req.executorName)) {
-      try {
-        const mapping = await repositories.people?.resolveActive(req.sourceConfigId, req.executorUserId ? { tbUserId: req.executorUserId } : { normalizedName: normalizeOwnerName(req.executorName!) });
-        ownerName = mapping?.teambitionDisplayName ?? null;
-      } catch { /* 姓名是展示增强，解析失败不影响详情返回 */ }
-    }
-    const duplicates = await repositories.requirements.listDuplicates(req.id);
-    // PRD §4.7.5：候选是「同标题的其他 active 需求」，与 duplicates（以本需求为主记录的子记录）是两件事。
-    // 仓储只做来源与压制过滤；标题按 markDuplicateTitles 同一套 requirementTitleKey 归一后比对。
-    const titleKey = requirementTitleKey(req.title);
-    const duplicateCandidates = titleKey
-      ? (await repositories.requirements.listDuplicateCandidates?.({ requirementId: req.id, sourceConfigId: req.sourceConfigId }) ?? [])
-          .filter((candidate) => requirementTitleKey(candidate.title) === titleKey)
-      : [];
-    const resolution = await repositories.requirements.getResolution?.(req.id) ?? null;
-    const currentScore = repositories.scoring ? await repositories.scoring.current(req.id) : null;
-    const aiScore = repositories.scoring ? await repositories.scoring.aiSuggestion(req.id) : null;
-    const scoreHistory = repositories.scoring ? await repositories.scoring.list(req.id) : [];
-    // M16：deleted_by 只对删除人返回；canRestore 直接告诉前端能不能点还原（不靠 deletedBy 推断）。
-    // deleted_by 存登录身份（妙搭 userId），与 auth.actor.id 同口径比较，不依赖飞书身份解析。
-    const detailDto = requirementDto(req, latest && latest.status === "analyzed" ? latest.structuredResult : null, history.map(analysisVersionDto), ownerName, currentScore?.priority ?? null, detailPool);
-    const canRestore = Boolean(req.deletedAt) && req.deletedBy === auth.actor.id;
-    if (req.deletedAt) detailDto.deletedBy = canRestore ? (req.deletedBy ?? null) : null;
-    return json({
-      ...detailDto,
-      canRestore,
-      duplicates,
-      duplicateCandidates,
-      resolution: resolution ?? requirementResolutionDto(req),
-      scoring: {
-        current: currentScore,
-        aiSuggestion: aiScore,
-        history: scoreHistory,
-        formula: { text: SCORING_FORMULA_TEXT, thresholds: priorityRuleThresholds(await repositories.priorityRules?.getPublished()) ?? SCORING_THRESHOLDS },
-      },
-    });
-  }
-  // 0034：逻辑删除（只允许当前有效负责人；幂等重放）与回收站还原（只有删除人本人）。
-  if (method === "DELETE" && requirementMatch) {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.requirements?.markDeleted) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const requirementId = pathUuid(requirementMatch[1]!, dependencies); if (!requirementId) return jsonError("NOT_FOUND");
-    const nowIso = (dependencies.now ?? (() => new Date()))().toISOString();
-    // 负责人列存飞书 user_id：先做平台身份转换，解析不到就不能判定归属。
-    // deleted_by 另存登录身份（妙搭 userId）：还原权限只认登录身份，不依赖身份解析服务。
-    const identity = await resolveFeishuIdentity(dependencies, auth.actor.id);
-    if (!identity.ok) return identity.reason === "unavailable"
-      ? jsonError("DEPENDENCY_UNAVAILABLE", "身份解析服务暂不可用，请稍后重试。")
-      : jsonError("FORBIDDEN", "无法解析你的飞书身份，暂不能删除需求。");
-    let result: import("../application/repositories.js").RequirementLifecycleOutcome;
-    // M7/M8：审计在仓储的同一事务内写入；重放（已删除同人）不追加审计。审计失败整体回滚并返回 503。
-    try { result = await repositories.requirements.markDeleted({ requirementId, ownerFeishuUserId: identity.feishuUserId!, deletedBy: auth.actor.id, at: nowIso, audit: { actorId: auth.actor.id, occurredAt: nowIso } }); }
-    catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
-    if (result.outcome === "not_found") return jsonError("NOT_FOUND");
-    if (result.outcome === "forbidden") return jsonError("FORBIDDEN", "只有当前负责人可以删除这条需求。");
-    return json({ requirementId, deletedAt: result.requirement.deletedAt ?? nowIso, deletedBy: auth.actor.id, replayed: result.outcome === "replayed" });
-  }
-  const restoreMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/restore$/);
-  if (method === "POST" && restoreMatch) {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.requirements?.restoreDeleted) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const requirementId = pathUuid(restoreMatch[1]!, dependencies); if (!requirementId) return jsonError("NOT_FOUND");
-    const nowIso = (dependencies.now ?? (() => new Date()))().toISOString();
-    // deleted_by 存的是登录身份（妙搭 userId）：还原直接比对，不经过飞书身份解析。
-    let result: import("../application/repositories.js").RequirementLifecycleOutcome;
-    try { result = await repositories.requirements.restoreDeleted({ requirementId, deleterUserId: auth.actor.id, audit: { actorId: auth.actor.id, occurredAt: nowIso } }); }
-    catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
-    if (result.outcome === "not_found") return jsonError("NOT_FOUND");
-    if (result.outcome === "forbidden") return jsonError("FORBIDDEN", "只有删除人本人可以还原这条需求。");
-    // M10：本来就不在回收站（已被别人还原/从未删除）不是幂等成功，回 409 让前端刷新列表。
-    if (result.outcome === "not_deleted") return jsonError("CONFLICT", "这条需求已不在回收站（可能已被还原），请刷新列表。");
-    return json({ requirementId, deletedAt: null, deletedBy: null, replayed: false });
-  }
-  const itemRetryMatch = url.pathname.match(/^\/api\/items\/([^/]+)\/retry$/);
-  if (method === "POST" && itemRetryMatch) {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.items || !repositories.batches || !repositories.jobs) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const itemId = pathUuid(itemRetryMatch[1]!, dependencies); if (!itemId) return jsonError("NOT_FOUND");
-    const item = await repositories.items.get(itemId); if (!item) return jsonError("NOT_FOUND");
-    if (item.status !== "failed") return jsonError("CONFLICT");
-    const batch = await repositories.batches.get(item.batchId); if (!batch) return jsonError("NOT_FOUND");
-    const key = SyncIdempotencyHeaderSchema.safeParse(request.headers.get("Idempotency-Key")); if (!key.success) return jsonError("VALIDATION_FAILED");
-    // A retry may arrive from a retry batch (`sync:<batchId>`) or the original
-    // batch (`sync:<sourceId>:<idempotencyKey>`). Carry its mode forward.
-    const originalJob = (await repositories.jobs.findByDedupeKey?.(`sync:${batch.id}`))
-      ?? (await repositories.jobs.findByDedupeKey?.(`sync:${batch.sourceConfigId}:${batch.idempotencyKey}`));
-    // The original job can be missing after retention/cleanup. The source batch
-    // key is mode-namespaced, so use it as a durable fallback for safe retries.
-    const mode = originalJob?.payload.mode === "source_only"
-      || batch.idempotencyKey.startsWith("source_only:")
-      || batch.idempotencyKey.startsWith("item-retry:source_only:")
-      ? "source_only"
-      : "full_pipeline";
-    const startedAt = (dependencies.now ?? (() => new Date()))().toISOString();
-    // 键命名空间与 /api/sync/run 分开，并把条目 ID 纳入哈希：否则与同步键撞车会把重试
-    // 挂到原批次上覆盖其计数，用同一键重试另一条也会静默复用旧批次。
-    const retryIdempotencyKey = `item-retry:${mode}:${createHash("sha256").update(`${item.id}:${key.data}`).digest("hex")}`;
-    let retryBatch = await repositories.batches.findByIdempotencyKey(batch.sourceConfigId, retryIdempotencyKey);
-    if (!retryBatch) {
-      try { retryBatch = await repositories.batches.create({ sourceConfigId: batch.sourceConfigId, triggerType: "manual", actorId: auth.actor.id, idempotencyKey: retryIdempotencyKey, startedAt }); }
-      catch {
-        retryBatch = await repositories.batches.findByIdempotencyKey(batch.sourceConfigId, retryIdempotencyKey);
-        if (!retryBatch) return jsonError("CONFLICT");
-      }
-    }
-    const retryDedupeKey = `sync:${retryBatch.id}`;
-    const priorJob = await repositories.jobs.findByDedupeKey?.(retryDedupeKey);
-    if (priorJob && ["queued", "running"].includes(priorJob.status)) return json({ batchId: retryBatch.id, status: "queued" }, 202);
-    if (priorJob?.status === "succeeded") return json({ batchId: retryBatch.id, status: retryBatch.status }, 202);
-    try { await repositories.jobs.enqueue({ jobType: "sync", dedupeKey: `sync:${retryBatch.id}`, payload: { batchId: retryBatch.id, sourceId: batch.sourceConfigId, triggerType: "manual", actorId: auth.actor.id, onlyIds: [item.teambitionRequirementId], mode }, availableAt: startedAt }); }
-    catch {
-      await repositories.batches.complete(retryBatch.id, { status: "failed", totalCount: 1, succeededCount: 0, failedCount: 1, errorSummary: "Job enqueue failed; repeat the retry to recover.", completedAt: startedAt });
-      return jsonError("DEPENDENCY_UNAVAILABLE");
-    }
-    const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "sync.item.retry_requested", entityType: "sync_item", entityId: item.id, result: "succeeded", safeDetails: { sourceRequirementId: item.teambitionRequirementId, trigger: "manual", mode }, occurredAt: startedAt });
-    if (auditFailure) return auditFailure;
-    return json({ batchId: retryBatch.id, status: "queued" }, 202);
-  }
-  const analysisRetryMatch = url.pathname.match(/^\/api\/analysis\/([^/]+)\/retry$/);
-  if (method === "POST" && analysisRetryMatch) {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.requirements || !repositories.jobs || !repositories.audit) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const analysisRequirementId = pathUuid(analysisRetryMatch[1]!, dependencies); if (!analysisRequirementId) return jsonError("NOT_FOUND");
-    const req = await repositories.requirements.get(analysisRequirementId); if (!req) return jsonError("NOT_FOUND");
-    // 0034 M14：已删除需求只读；重新分析也是写（会改分析版本、推 Base）。
-    if (req.deletedAt) return jsonError("REQUIREMENT_DELETED", "该需求已删除，请先在回收站还原后再操作。");
-    const latestAnalysis = await repositories.analyses?.latest(req.id) ?? null;
-    const priorAnalysisVersion = latestAnalysis?.analysisVersion ?? 0;
-    let retryAllowed = ["pending", "failed_retryable", "analyzed"].includes(req.pipeline.analysis);
-    if (!retryAllowed && req.pipeline.analysis === "running") {
-      // 崩溃残留：handler 已把状态置为 running，但作业已终态或从未入队。
-      // 放行重试（配合状态机的 running→running 自迁移），否则该需求只能手工改库。
-      // running 的作业可能挂在三种键的任意一种上（首轮 v 键 / after prior / after prior-1），
-      // 只查一种会把活着的分析误判成崩溃残留，造成双份 AI 调用与分析版本。
-      const keys = analysisRunningJobKeys(req, priorAnalysisVersion);
-      const jobs = await Promise.all(keys.map((key) => repositories.jobs.findByDedupeKey?.(key)));
-      retryAllowed = !jobs.some((job) => job && ["queued", "running"].includes(job.status));
-    }
-    if (!isIntakeComplete(req.pipeline.pull) || !retryAllowed) return jsonError("CONFLICT");
-    // 2026-11-23：人工「重新分析」默认 force。此前缺省 force=false，已分析过的需求命中
-    // handler 的同源版本幂等守卫：只入队、不调模型，UI 却提示「已入队」，看起来成功实则什么都没跑。
-    // 现在缺省强制重跑一版新分析（唯一 dedupe key + payload.force）；只有显式 { force: false }
-    // 才保留旧的轻量重试语义。显式读 body 以区分「无 body」和「非法 JSON」：非法 JSON 返回 400。
-    const retryText = await request.text().catch(() => "");
-    let force = true;
-    if (retryText.trim().length > 0) {
-      let retryBody: unknown;
-      try { retryBody = JSON.parse(retryText); } catch { return jsonError("VALIDATION_FAILED"); }
-      const retryParsed = RetryAnalysisRequestSchema.safeParse(retryBody);
-      if (!retryParsed.success) return jsonError("VALIDATION_FAILED");
-      force = retryParsed.data.force !== false;
-    }
-    const now = (dependencies.now ?? (() => new Date()))().toISOString();
-    // force 键是确定性的（同一 sourceVersion/prior 只有一个）：重复点击、并发请求命中同一键而复用活作业，
-    // 不会各自入队一份 AI 调用；作业 failed/cancelled 后同键入队由仓储重置。
-    const dedupeKey = force ? analysisForceDedupeKey(req, priorAnalysisVersion) : analysisRetryDedupeKey(req, priorAnalysisVersion);
-    const currentJob = await repositories.jobs.findByDedupeKey?.(dedupeKey);
-    const auditRetry = (result: "succeeded" | "failed" | "denied", analysisStatus: string) => appendAudit(repositories, {
-      id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "analysis.retry_requested", entityType: "requirement", entityId: req.id,
-      result, safeDetails: { sourceVersion: req.sourceVersion, priorAnalysisVersion, analysisStatus, ...(force ? { force: true } : {}) }, occurredAt: now,
-    });
-    // force 不叠加第二条活跃分析：任一可能的分析作业（首轮/重试/force）仍 queued/running 时沿用它。
-    if (force) {
-      const liveJobs = await Promise.all(analysisRunningJobKeys(req, priorAnalysisVersion).map((key) => repositories.jobs.findByDedupeKey?.(key)));
-      if (liveJobs.some((live) => live && ["queued", "running"].includes(live.status))) {
-        const auditFailure = await auditRetry("succeeded", "reused_existing_job");
-        if (auditFailure) return auditFailure;
-        return json({ requirementId: req.id, status: "queued" }, 202);
-      }
-    }
-    if (currentJob?.status === "queued" || currentJob?.status === "running") {
-      const auditFailure = await auditRetry("succeeded", "reused_existing_job");
-      if (auditFailure) return auditFailure;
-      return json({ requirementId: req.id, status: "queued" }, 202);
-    }
-    if (currentJob?.status === "succeeded") {
-      const auditFailure = await auditRetry("denied", "conflict_succeeded_job_pending_state");
-      if (auditFailure) return auditFailure;
-      return jsonError("CONFLICT");
-    }
-    try { await repositories.jobs.enqueue({ jobType: "analysis", dedupeKey, payload: { requirementId: req.id, sourceVersion: req.sourceVersion, actorId: auth.actor.id, ...(force ? { force: true } : {}) }, availableAt: now }); }
-    catch {
-      const auditFailure = await auditRetry("failed", "enqueue_failed");
-      if (auditFailure) return auditFailure;
-      return jsonError("DEPENDENCY_UNAVAILABLE");
-    }
-    const auditFailure = await auditRetry("succeeded", "queued_new_job");
-    if (auditFailure) return auditFailure;
-    return json({ requirementId: req.id, status: "queued" }, 202);
-  }
-  const ownerMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/owner$/);
-  if ((method === "PUT" || method === "DELETE") && ownerMatch) {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.people || !repositories.requirements || !repositories.jobs || !repositories.audit) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const ownerRequirementId = pathUuid(ownerMatch[1]!, dependencies); if (!ownerRequirementId) return jsonError("NOT_FOUND");
-    const req = await repositories.requirements.get(ownerRequirementId); if (!req) return jsonError("NOT_FOUND");
-    if (!isIntakeComplete(req.pipeline.pull)) return jsonError("CONFLICT");
-    const now = (dependencies.now ?? (() => new Date()))().toISOString();
-    const latestAnalysis = await repositories.analyses?.latest(req.id) ?? null;
-    const analysisVersion = latestAnalysis?.analysisVersion ?? 0;
-    if (method === "DELETE") {
-      // 恢复默认负责人：清除本条需求的人工指定，再按 TB 执行人映射重新解析。
-      // 历史上两步写入（先清除、后迁状态）中途失败会留下 manually_mapped 却没有人工负责人的行，
-      // 这里不能再用 409 把它永远挡住：状态仍是 manually_mapped 时允许继续，借此自愈。
-      if (!req.manualOwner && req.pipeline.owner !== "manually_mapped") return jsonError("CONFLICT", "该需求没有单独指定的负责人。");
-      const hasTbOwner = Boolean(req.executorUserId || req.executorName);
-      const mapping = req.sourceConfigId && req.executorUserId
-        ? await repositories.people.resolveActive(req.sourceConfigId, { tbUserId: req.executorUserId })
-        : req.sourceConfigId && req.executorName ? await repositories.people.resolveActive(req.sourceConfigId, { normalizedName: normalizeOwnerName(req.executorName) }) : null;
-      const targetState = mapping ? "auto_mapped" : hasTbOwner ? "pending_mapping" : "not_required";
-      try {
-        await repositories.requirements.releaseManualOwner(req.id, targetState);
-      } catch (cause) {
-        return (cause as Error)?.name === "InvalidTransitionError" ? jsonError("CONFLICT") : jsonError("DEPENDENCY_UNAVAILABLE");
-      }
-      // Q1：即使 TB 执行人暂无映射也照常入队（空负责人推送），状态保持 pending_mapping；
-      // 映射补齐后由 owner-recheck 用独立 intent 键重推并补负责人。
-      const idempotencyKey = basePushIdempotencyKey(req.id, req.sourceVersion, analysisVersion, `owner-reset:v${req.manualOwner?.assignmentVersion ?? 0}:${targetState}`);
-      try {
-        // clearOwner：撤销人工负责人后 Base「执行人」必须清空，不能继续挂着旧负责人和旧收件人。
-        await repositories.jobs.enqueue({ jobType: "base_push", dedupeKey: idempotencyKey, payload: { requirementId: req.id, sourceVersion: req.sourceVersion, analysisVersion, idempotencyKey, actorId: auth.actor.id, clearOwner: true }, availableAt: now });
-      } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
-      const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "owner.manual_cleared", entityType: "requirement", entityId: req.id, result: "succeeded", safeDetails: { sourceVersion: req.sourceVersion }, occurredAt: now });
-      if (auditFailure) return auditFailure;
-      return json({ requirementId: req.id, ownerState: targetState, status: "queued" });
-    }
-    const body = OwnerMappingUpdateSchema.safeParse(await readJson(request)); if (!body.success) return jsonError("VALIDATION_FAILED");
-    // 逐条负责人：只写需求本身，绝不改写 person_mappings（否则会改掉同 TB 执行人名下全部需求）。
-    try {
-      await repositories.requirements.assignManualOwner(req.id, { feishuUserId: body.data.feishuUserId, feishuIdType: body.data.feishuIdType, name: body.data.tbDisplayName ?? null, assignedBy: auth.actor.id, assignedAt: now });
-    } catch (cause) {
-      return (cause as Error)?.name === "InvalidTransitionError" ? jsonError("CONFLICT") : jsonError("DEPENDENCY_UNAVAILABLE");
-    }
-    // 分配成功后再取新的 assignmentVersion：同一分配请求的 HTTP 重试命中同一 dedupe key，不会多入队。
-    const assigned = await repositories.requirements.get(req.id);
-    const idempotencyKey = basePushIdempotencyKey(req.id, req.sourceVersion, analysisVersion, `owner:av${assigned?.manualOwner?.assignmentVersion ?? 0}:${body.data.feishuUserId}:${body.data.feishuIdType}`);
-    try {
-      await repositories.jobs.enqueue({ jobType: "base_push", dedupeKey: idempotencyKey, payload: { requirementId: req.id, sourceVersion: req.sourceVersion, analysisVersion, idempotencyKey, actorId: auth.actor.id }, availableAt: now });
-    } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
-    const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "owner.manually_mapped", entityType: "requirement", entityId: req.id, result: "succeeded", safeDetails: { reason: "per_requirement", sourceVersion: req.sourceVersion }, occurredAt: now });
-    if (auditFailure) return auditFailure;
-    return json({ requirementId: req.id, ownerState: "manually_mapped", status: "queued" });
-  }
-  const pushMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/push$/);
-  if (method === "POST" && pushMatch) {
-    const auth = await actorFor(request,dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.requirements || !repositories.jobs || !repositories.audit) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const pushRequirementId = pathUuid(pushMatch[1]!, dependencies); if (!pushRequirementId) return jsonError("NOT_FOUND");
-    const key = SyncIdempotencyHeaderSchema.safeParse(request.headers.get("Idempotency-Key")); if (!key.success) return jsonError("VALIDATION_FAILED");
-    const req = await repositories.requirements.get(pushRequirementId); if (!req) return jsonError("NOT_FOUND");
-    if (!isIntakeComplete(req.pipeline.pull) || req.pipeline.owner === "pending_mapping" || !["pending", "failed"].includes(req.pipeline.push)) return jsonError("CONFLICT");
-    const latestAnalysis = await repositories.analyses?.latest(req.id) ?? null;
-    const analysisVersion = latestAnalysis?.analysisVersion ?? 0;
-    const now = (dependencies.now ?? (() => new Date()))().toISOString();
-    const idempotencyKey = basePushIdempotencyKey(req.id, req.sourceVersion, analysisVersion, `retry:${key.data}`);
-    try { await repositories.jobs.enqueue({ jobType: "base_push", dedupeKey: idempotencyKey, payload: { requirementId: req.id, sourceVersion: req.sourceVersion, analysisVersion, idempotencyKey, actorId: auth.actor.id }, availableAt: now }); }
-    catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
-    const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "base.push.retry_requested", entityType: "requirement", entityId: req.id, result: "succeeded", safeDetails: { sourceVersion: req.sourceVersion, analysisVersion }, occurredAt: now });
-    if (auditFailure) return auditFailure;
-    return json({ requirementId: req.id, status: "queued" }, 202);
-  }
-  // V02-T25：重复/忽略决策（人工确认）。PUT=确认；DELETE=撤销。
-  const duplicateDecisionMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/duplicate-decision$/);
-  if (duplicateDecisionMatch && (method === "PUT" || method === "DELETE")) {
-    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
-    if (!repositories?.requirements?.decideResolution || !repositories.requirements.clearResolution) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const requirementId = pathUuid(duplicateDecisionMatch[1]!, dependencies); if (!requirementId) return jsonError("NOT_FOUND");
-    const req = await repositories.requirements.get(requirementId); if (!req) return jsonError("NOT_FOUND");
-    const nowIso = (dependencies.now?.() ?? new Date()).toISOString();
-    if (method === "DELETE") {
-      const parsed = ClearDuplicateDecisionSchema.safeParse(await readJson(request).catch(() => null));
-      if (!parsed.success) return jsonError("VALIDATION_FAILED");
-      const result = await repositories.requirements.clearResolution({ requirementId: req.id, expectedVersion: parsed.data.expectedVersion });
-      if (result.outcome === "version_conflict") return jsonError("CONFLICT", `决策版本冲突，当前版本 ${result.version}`);
-      if (result.outcome === "not_found") return jsonError("NOT_FOUND");
-      const auditFailure = await appendAudit(repositories, { id: randomUUID(), actorId: auth.actor.id, eventType: "duplicate.revoked", entityType: "requirement", result: "succeeded", entityId: req.id, safeDetails: { previous: req.processingState ?? "active" }, occurredAt: nowIso });
-      if (auditFailure) return auditFailure;
-      const updated = await repositories.requirements.get(req.id);
-      // Q2：撤销判定后清除 Base 标记；失败只留审计，不影响撤销结果。
-      const clearMarker = await duplicateMarkerFor(dependencies, repositories, req);
-      if (clearMarker) {
-        try {
-          const marked = await clearMarker({ recordId: updated?.baseRecordId ?? req.baseRecordId, decision: null });
-          if (marked.outcome === "failed" || marked.outcome === "field_missing") {
-            await appendAudit(repositories, { id: randomUUID(), actorId: auth.actor.id, eventType: "requirement.duplicate_mark_failed", entityType: "requirement", entityId: req.id, result: "failed", safeDetails: { reason: marked.outcome, ...(marked.outcome === "failed" ? { errorClass: marked.errorCode } : {}) }, occurredAt: nowIso });
-          }
-        } catch { /* 标记是附加能力，不能回滚已成功的撤销 */ }
-      }
-      return json({ requirementId: req.id, processingState: updated?.processingState ?? "active", decision: null, version: 0 });
-    }
-    const parsed = DuplicateDecisionSchema.safeParse(await readJson(request));
-    if (!parsed.success) return jsonError("VALIDATION_FAILED");
-    if (parsed.data.decision === "duplicate" && !parsed.data.canonicalRequirementId) return jsonError("VALIDATION_FAILED");
-    if (parsed.data.canonicalRequirementId === req.id) return jsonError("VALIDATION_FAILED");
-    let canonicalRecord: RequirementRecord | null = null;
-    if (parsed.data.canonicalRequirementId) {
-      canonicalRecord = await repositories.requirements.get(parsed.data.canonicalRequirementId);
-      if (!canonicalRecord || canonicalRecord.id === req.id) return jsonError("NOT_FOUND");
-    }
-    const result = await repositories.requirements.decideResolution({
-      requirementId: req.id, decision: parsed.data.decision,
-      canonicalRequirementId: parsed.data.canonicalRequirementId ?? null,
-      reason: parsed.data.reason, actorId: auth.actor.id,
-      expectedVersion: parsed.data.expectedVersion, now: nowIso,
-    });
-    if (result.outcome === "version_conflict") return jsonError("CONFLICT", `决策版本冲突，当前版本 ${result.version}`);
-    if (result.outcome === "not_found") return jsonError("NOT_FOUND");
-    const auditFailure = await appendAudit(repositories, { id: randomUUID(), actorId: auth.actor.id, eventType: parsed.data.decision === "duplicate" ? "duplicate.confirmed" : "duplicate.reviewed", entityType: "requirement", result: "succeeded", entityId: req.id, safeDetails: { decision: parsed.data.decision, version: result.version }, occurredAt: nowIso });
-    if (auditFailure) return auditFailure;
-    // Q2：把判定写进 Base 的专用标记字段（不通知）；失败只留审计，不影响判定结果。
-    const setMarker = await duplicateMarkerFor(dependencies, repositories, req);
-    if (setMarker) {
-      try {
-        const marked = await setMarker({
-          recordId: req.baseRecordId,
-          // confirmed_unique = 确认非重复：清除既有标记，而不是写「重复」
-          decision: parsed.data.decision === "confirmed_unique" ? null : parsed.data.decision,
-          canonicalRequirementId: canonicalRecord?.id ?? null,
-          canonicalPlatformRequirementId: canonicalRecord?.platformRequirementId ?? null,
-        });
-        if (marked.outcome === "failed" || marked.outcome === "field_missing") {
-          await appendAudit(repositories, { id: randomUUID(), actorId: auth.actor.id, eventType: "requirement.duplicate_mark_failed", entityType: "requirement", entityId: req.id, result: "failed", safeDetails: { reason: marked.outcome, ...(marked.outcome === "failed" ? { errorClass: marked.errorCode } : {}) }, occurredAt: nowIso });
-        }
-      } catch { /* 标记是附加能力，不能回滚已成功的判定 */ }
-    }
-    const updated = await repositories.requirements.get(req.id);
-    return json({ requirementId: req.id, processingState: updated?.processingState ?? "active", decision: parsed.data.decision, reviewState: "confirmed", version: result.version });
-  }
-  // 未注册路径返回 404；ROUTE_NOT_IMPLEMENTED 保留给“契约有、实现未接”的端点（当前无）。
-  return jsonError("NOT_FOUND");
+});
+
+test("ops job view lists failed and stuck jobs without leaking payload", async () => {
+ const base = { jobType: "base_push", dedupeKey: "base-push:req-1", payload: { requirementId: "req-1", actorId: "actor-1", substantiveHash: "secret-ish" }, attemptCount: 5, maxAttempts: 5, availableAt: "2026-10-08T00:00:00.000Z", lockedUntil: null, lastErrorCode: "BASE_TIMEOUT", lastErrorSummary: "upstream timed out", createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T01:00:00.000Z" };
+ const d = makeDependencies();
+ d.repositories!.jobs.listFailed = async () => [{ ...base, id: "job-failed", status: "failed" } as never];
+ d.repositories!.jobs.listExhaustedRunning = async () => [{ ...base, id: "job-stuck", status: "running" } as never];
+ const response = await handleApiRequest(new Request("http://localhost/api/ops/jobs?limit=20"), d);
+ assert.equal(response.status, 200);
+ const body = await response.json() as { now: string; items: { failed: Array<Record<string, unknown>>; stuck: Array<Record<string, unknown>> } };
+ assert.equal(body.items.failed[0]?.id, "job-failed");
+ assert.equal(body.items.failed[0]?.requirementId, "req-1");
+ assert.equal(body.items.stuck[0]?.id, "job-stuck");
+ assert.equal("payload" in body.items.failed[0]!, false);
+ assert.equal("dedupeKey" in body.items.failed[0]!, false);
+ assert.equal(body.now, "2026-10-08T00:00:00.000Z");
+ assert.equal((await handleApiRequest(new Request("http://localhost/api/ops/jobs?limit=0"), d)).status, 400);
+ assert.equal((await handleApiRequest(new Request("http://localhost/api/ops/jobs"), unauthenticated)).status, 401);
+});
+
+test("lists audit events", async () => { const r = await handleApiRequest(new Request("http://localhost/api/audit?entityId=foo&limit=10"), makeDependencies()); assert.equal(r.status, 200); assert.deepEqual(await r.json(), { items: [auditEvent] }); });
+test("requirement detail returns the full analysis version history (spec 02 prior versions)", async () => {
+  const r = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`), makeDependencies());
+  assert.equal(r.status, 200);
+  const body = await r.json() as { analyses: { analysisVersion: number; status: string; moduleSuggestion: string | null; priority: string | null; confidence: string | null; provider: string }[] };
+  assert.equal(body.analyses.length, 1);
+  // 存储枚举 high/medium/low 转回展示层中文；provenance 字段随版本暴露（spec 02 L44）
+  assert.deepEqual(body.analyses[0], { analysisVersion: 2, status: "analyzed", moduleSuggestion: "报表分析", confidence: "中", priority: "P1", provider: "deepseek", model: "m", promptVersion: "p", moduleDictionaryVersion: 1, priorityRuleVersionId: null, startedAt: "2026-10-08T00:00:00.000Z", completedAt: "2026-10-08T00:00:01.000Z", safeErrorSummary: null });
+});
+
+test("retries a requirement stranded in running by a crashed analysis handler", async () => {
+  // 回归：handler 先置 analysis=running 再调模型，进程死在这两步之间时状态停在 running，
+  // 且作业已终态。此前端点只接受 pending/failed_retryable → 该需求只能手工改库。
+  const d = makeDependencies();
+  const queued: Record<string, unknown>[] = [];
+  d.repositories!.requirements!.get = async (id: string) => id === requirement.id
+    ? { ...requirement, pipeline: { ...requirement.pipeline, analysis: "running" as const } } as RequirementRecord
+    : null;
+  d.repositories!.jobs.findByDedupeKey = async (key) => key === `analysis:${requirement.id}:sv1:after2`
+    ? { id: "crashed-job", jobType: "analysis", dedupeKey: key, payload: {}, status: "failed", attemptCount: 3, maxAttempts: 3, availableAt: "2026-10-08T00:00:00.000Z", lockedUntil: null, lastErrorCode: "max_attempts_reached", lastErrorSummary: null, createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z" }
+    : null;
+  d.repositories!.jobs.enqueue = async (input) => {
+    queued.push(input as unknown as Record<string, unknown>);
+    return { ...input, id: "analysis-job-2", status: "queued", attemptCount: 0, maxAttempts: 3, lockedUntil: null, lastErrorCode: null, lastErrorSummary: null, createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z" };
+  };
+  const response = await handleApiRequest(new Request(`http://localhost/api/analysis/${requirement.id}/retry`, { method: "POST" }), d);
+  assert.equal(response.status, 202);
+  assert.equal(queued.length, 1);
+});
+
+test("still rejects a retry while the analysis job is genuinely running", async () => {
+  const d = makeDependencies();
+  d.repositories!.requirements!.get = async (id: string) => id === requirement.id
+    ? { ...requirement, pipeline: { ...requirement.pipeline, analysis: "running" as const } } as RequirementRecord
+    : null;
+  d.repositories!.jobs.findByDedupeKey = async (key) => key === `analysis:${requirement.id}:sv1:after2`
+    ? { id: "live-job", jobType: "analysis", dedupeKey: key, payload: {}, status: "running", attemptCount: 1, maxAttempts: 3, availableAt: "2026-10-08T00:00:00.000Z", lockedUntil: "2026-10-08T00:05:00.000Z", lastErrorCode: null, lastErrorSummary: null, createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z" }
+    : null;
+  const response = await handleApiRequest(new Request(`http://localhost/api/analysis/${requirement.id}/retry`, { method: "POST" }), d);
+  assert.equal(response.status, 409);
+});
+
+test("V02-T04 web manual intake: server-side actor, idempotent replay, payload-bound key", async () => {
+  const d = makeDependencies();
+  const receipts = new Map<string, { requestHash: string; requirementId: string; actorId: string }>();
+  const createdInputs: Array<{ actorId: string; requestHash: string; title: string }> = [];
+  const requirements = d.repositories!.requirements as unknown as Record<string, unknown>;
+  requirements.findIntakeReceipt = async (key: string) => receipts.get(key) ?? null;
+  (d.repositories as unknown as Record<string, unknown>).dictionaries = { list: async () => [{ version: 3, status: "published", entries: [{ name: "报表分析", personName: "贾浩" }] }] };
+  requirements.createManualRequirement = async (input: { idempotencyKey: string; requestHash: string; actorId: string; title: string }) => {
+    createdInputs.push(input);
+    receipts.set(input.idempotencyKey, { requestHash: input.requestHash, requirementId: requirement.id, actorId: input.actorId });
+    return { requirementId: requirement.id, platformRequirementId: "RQ-000001", replay: false };
+  };
+  const body = JSON.stringify({ title: "售后反馈", description: "用户希望导出报表", sourceChannel: "售后", productModel: "码表 C606", requirementType: "体验优化", constraintNotes: "需兼容旧表带", supplementUrl: "https://example.com/ticket/1", intakeModule: "报表分析", owner: { feishuUserId: "u-assignee", feishuIdType: "user_id", tbDisplayName: "贾浩" } });
+  const post = (payload: string, key = "intake-key-123") => new Request("http://localhost/api/requirements", { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": key }, body: payload });
+  const first = await handleApiRequest(post(body), d);
+  assert.equal(first.status, 201);
+  const firstBody = await first.json() as Record<string, unknown>;
+  assert.equal(firstBody.requirementId, requirement.id);
+  assert.equal(firstBody.platformRequirementId, "RQ-000001");
+  assert.equal(firstBody.status, "collected");
+  // actor、来源类型、编号都由服务端生成（AC02）
+  assert.equal(createdInputs[0]!.actorId, "actor-1");
+  // V02-T05：可选上下文原样传递，未知留空
+  assert.equal((createdInputs[0] as unknown as { productModel?: string }).productModel, "码表 C606");
+  assert.equal((createdInputs[0] as unknown as { requirementType?: string }).requirementType, "体验优化");
+  // V02-T06：受控词典模块与需求级负责人原样传递（不写 TB 人员映射）
+  assert.equal((createdInputs[0] as unknown as { intakeModule?: string }).intakeModule, "报表分析");
+  assert.deepEqual((createdInputs[0] as unknown as { owner?: unknown }).owner, { feishuUserId: "u-assignee", feishuIdType: "user_id", name: "贾浩" });
+  // 同键同内容重放：200 同一需求，不再创建（AC03/AC07）
+  const replay = await handleApiRequest(post(body), d);
+  assert.equal(replay.status, 200);
+  assert.equal(createdInputs.length, 1);
+  // 同键不同内容：明确冲突
+  const conflict = await handleApiRequest(post(JSON.stringify({ title: "另一个诉求", description: "不同内容", sourceChannel: "售后" })), d);
+  assert.equal(conflict.status, 409);
+});
+
+test("PRD-26 chat-paste origin and proposer name reach the manual create path without new source types", async () => {
+  const d = makeDependencies();
+  const createdInputs: Array<Record<string, unknown>> = [];
+  const requirements = d.repositories!.requirements as unknown as Record<string, unknown>;
+  requirements.findIntakeReceipt = async () => null;
+  requirements.createManualRequirement = async (input: Record<string, unknown>) => { createdInputs.push(input); return { requirementId: requirement.id, platformRequirementId: "RQ-000001", replay: false }; };
+  (d.repositories as unknown as Record<string, unknown>).dictionaries = { list: async () => [{ version: 3, status: "published", entries: [] }] };
+  const post = (body: Record<string, unknown>, key: string) => new Request("http://localhost/api/requirements", { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": key }, body: JSON.stringify(body) });
+  const response = await handleApiRequest(post({ title: "t", description: "d", sourceChannel: "售后", intakeOrigin: "chat_paste", proposerName: "小王" }, "intake-key-701"), d);
+  assert.equal(response.status, 201);
+  assert.equal(createdInputs[0]!.intakeOrigin, "chat_paste");
+  assert.equal(createdInputs[0]!.proposerName, "小王");
+  // 来源类型仍是 web_manual（由服务端写死），请求体不接受别的取值。
+  assert.equal("sourceType" in createdInputs[0]!, false);
+  const badOrigin = await handleApiRequest(post({ title: "t", description: "d", sourceChannel: "售后", intakeOrigin: "teambition" }, "intake-key-702"), d);
+  assert.equal(badOrigin.status, 400);
+  const longName = await handleApiRequest(post({ title: "t", description: "d", sourceChannel: "售后", proposerName: "名".repeat(101) }, "intake-key-703"), d);
+  assert.equal(longName.status, 400);
+  assert.equal(createdInputs.length, 1);
+});
+
+test("web manual intake returns 503 instead of 500 when the dictionary or the receipt read fails", async () => {
+  const body = JSON.stringify({ title: "t", description: "d", sourceChannel: "售后", intakeModule: "报表分析" });
+  const post = (d: ReturnType<typeof makeDependencies>) => handleApiRequest(new Request("http://localhost/api/requirements", { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": "intake-key-811" }, body }), d);
+
+  const dictionaryDown = makeDependencies();
+  (dictionaryDown.repositories as unknown as Record<string, unknown>).dictionaries = { list: async () => { throw new Error("db down"); } };
+  assert.equal((await post(dictionaryDown)).status, 503);
+
+  const receiptDown = makeDependencies();
+  (receiptDown.repositories as unknown as Record<string, unknown>).dictionaries = { list: async () => [{ version: 3, status: "published", entries: [{ name: "报表分析" }] }] };
+  (receiptDown.repositories!.requirements as unknown as Record<string, unknown>).findIntakeReceipt = async () => { throw new Error("db down"); };
+  assert.equal((await post(receiptDown)).status, 503);
+});
+
+test("oversized request bodies are rejected with 413 before any route logic runs", async () => {
+  const d = makeDependencies();
+  (d.repositories as unknown as Record<string, unknown>).dictionaries = { list: async () => [{ version: 3, status: "published", entries: [] }] };
+  (d.repositories!.requirements as unknown as Record<string, unknown>).findIntakeReceipt = async () => { throw new Error("must not reach the receipt lookup"); };
+  const oversized = JSON.stringify({ title: "t", description: "x".repeat(MAX_JSON_BODY_BYTES), sourceChannel: "售后" });
+  const streamed = await handleApiRequest(new Request("http://localhost/api/requirements", { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": "intake-key-801" }, body: oversized }), d);
+  assert.equal(streamed.status, 413);
+  // Content-Length 预检：声明就超限时连 body 都不读。
+  const declared = await handleApiRequest(new Request("http://localhost/api/requirements", { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": "intake-key-802", "content-length": String(MAX_JSON_BODY_BYTES + 1) }, body: "{}" }), d);
+  assert.equal(declared.status, 413);
+});
+
+test("V02-T04 intake rejects a missing idempotency key, an unknown channel, or an empty description", async () => {
+  const d = makeDependencies();
+  const requirements = d.repositories!.requirements as unknown as Record<string, unknown>;
+  requirements.findIntakeReceipt = async () => null;
+  requirements.createManualRequirement = async () => { throw new Error("must not create"); };
+  (d.repositories as unknown as Record<string, unknown>).dictionaries = { list: async () => [{ version: 3, status: "published", entries: [{ name: "报表分析", personName: null }] }] };
+  const noKey = await handleApiRequest(new Request("http://localhost/api/requirements", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "t", description: "d", sourceChannel: "售后" }) }), d);
+  assert.equal(noKey.status, 400);
+  const badChannel = await handleApiRequest(new Request("http://localhost/api/requirements", { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": "intake-key-456" }, body: JSON.stringify({ title: "t", description: "d", sourceChannel: "未知渠道" }) }), d);
+  assert.equal(badChannel.status, 400);
+  const noDescription = await handleApiRequest(new Request("http://localhost/api/requirements", { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": "intake-key-457" }, body: JSON.stringify({ title: "t", sourceChannel: "售后" }) }), d);
+  assert.equal(noDescription.status, 400);
+  const badUrl = await handleApiRequest(new Request("http://localhost/api/requirements", { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": "intake-key-458" }, body: JSON.stringify({ title: "t", description: "d", sourceChannel: "售后", supplementUrl: "not-a-url" }) }), d);
+  assert.equal(badUrl.status, 400);
+  const badType = await handleApiRequest(new Request("http://localhost/api/requirements", { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": "intake-key-459" }, body: JSON.stringify({ title: "t", description: "d", sourceChannel: "售后", requirementType: "未知类型" }) }), d);
+  assert.equal(badType.status, 400);
+  const unknownModule = await handleApiRequest(new Request("http://localhost/api/requirements", { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": "intake-key-460" }, body: JSON.stringify({ title: "t", description: "d", sourceChannel: "售后", intakeModule: "不存在的模块" }) }), d);
+  assert.equal(unknownModule.status, 400);
+});
+
+test("V02-T07 PATCH edits manual requirements with version and idempotency semantics", async () => {
+  const d = makeDependencies();
+  const requirements = d.repositories!.requirements as unknown as Record<string, unknown>;
+  requirements.updateManualRequirement = async (input: { expectedSourceVersion: number }) => input.expectedSourceVersion === 1
+    ? { outcome: "updated", sourceVersion: 2, substantiveChanged: true, replay: false }
+    : input.expectedSourceVersion === 99
+      ? { outcome: "version_conflict", currentSourceVersion: 2 }
+      : { outcome: "not_manual" };
+  const request = (body: unknown, key = "edit-key-123", expected = 1) => new Request(`http://localhost/api/requirements/${requirement.id}`, { method: "PATCH", headers: { "content-type": "application/json", "Idempotency-Key": key }, body: JSON.stringify({ expectedSourceVersion: expected, ...typeof body === "object" && body !== null ? body : {} }) });
+  const ok = await handleApiRequest(request({ title: "改后的诉求" }), d);
+  assert.equal(ok.status, 200);
+  const okBody = await ok.json() as Record<string, unknown>;
+  assert.equal(okBody.outcome, "updated");
+  assert.equal(okBody.sourceVersion, 2);
+  assert.equal(okBody.substantiveChanged, true);
+  const stale = await handleApiRequest(request({ title: "旧版本" }, "edit-key-124", 99), d);
+  assert.equal(stale.status, 409);
+  assert.match(await stale.text(), /源版本 2/);
+  const tbRow = await handleApiRequest(request({ title: "x" }, "edit-key-125", 3), d);
+  assert.equal(tbRow.status, 409);
+  const noKey = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ expectedSourceVersion: 1 }) }), d);
+  assert.equal(noKey.status, 400);
+  const badBody = await handleApiRequest(request({ title: "" }, "edit-key-126"), d);
+  assert.equal(badBody.status, 400);
+});
+
+test("V02-T09 audience tags route saves with optimistic version and rejects unknown levels", async () => {
+  const d = makeDependencies();
+  const requirements = d.repositories!.requirements as unknown as Record<string, unknown>;
+  let saved: { tags: string[]; expectedVersion: number } | null = null;
+  requirements.setAudienceTags = async (_id: string, input: { tags: string[]; expectedVersion: number }) => {
+    saved = input;
+    return input.expectedVersion === 0 ? { outcome: "updated", version: 1 } : { outcome: "version_conflict", currentVersion: 1 };
+  };
+  const put = (body: unknown) => new Request(`http://localhost/api/requirements/${requirement.id}/audience`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const ok = await handleApiRequest(put({ tags: ["L2", "L5"], expectedVersion: 0 }), d);
+  assert.equal(ok.status, 200);
+  assert.deepEqual(await ok.json(), { requirementId: requirement.id, audienceVersion: 1, confirmed: true, tags: ["L2", "L5"] });
+  assert.deepEqual(saved, { tags: ["L2", "L5"], expectedVersion: 0, actorId: "actor-1" });
+  const stale = await handleApiRequest(put({ tags: ["L1"], expectedVersion: 5 }), d);
+  assert.equal(stale.status, 409);
+  assert.match(await stale.text(), /版本 1/);
+  const badLevel = await handleApiRequest(put({ tags: ["L9"], expectedVersion: 0 }), d);
+  assert.equal(badLevel.status, 400);
+});
+
+test("V02-T11 RICE draft routes: read defaults, save with optimistic version, conflict carries current", async () => {
+  const d = makeDependencies();
+  const requirements = d.repositories!.requirements as unknown as Record<string, unknown>;
+  let stored: { editVersion: number } = { editVersion: 0 };
+  requirements.getRiceDraft = async () => stored.editVersion === 0 ? null : { requirementId: requirement.id, reachInput: "200", impactInput: "3", confidenceInput: "80", effortInput: "4", notes: "依据", sourceVersion: 1, editVersion: stored.editVersion, updatedBy: "actor-1", updatedAt: "2026-10-25T00:00:00.000Z" };
+  requirements.saveRiceDraft = async (input: { expectedEditVersion: number }) => input.expectedEditVersion === stored.editVersion
+    ? { outcome: "saved", editVersion: (stored = { editVersion: input.expectedEditVersion + 1 }).editVersion }
+    : { outcome: "version_conflict", currentEditVersion: stored.editVersion };
+  const empty = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/rice-draft`), d);
+  assert.equal(empty.status, 200);
+  const emptyBody = await empty.json() as Record<string, unknown>;
+  assert.equal(emptyBody.status, "待补充");
+  assert.equal(emptyBody.score, null);
+  const save = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/rice-draft`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ reach: "200/月", notes: "依据", expectedEditVersion: 0 }) }), d);
+  assert.equal(save.status, 200);
+  assert.equal((await save.json() as Record<string, unknown>).editVersion, 1);
+  // V02-T12：量纲已确认（rice-v1）：完整合法输入给出可复算分数（200×3×0.8÷4=120）
+  const read = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/rice-draft`), d);
+  const readBody = await read.json() as Record<string, unknown>;
+  assert.equal(readBody.status, "已计算");
+  assert.equal(readBody.score, 120);
+  assert.equal(readBody.configVersion, "rice-v1");
+  const stale = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/rice-draft`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ reach: "x", expectedEditVersion: 0 }) }), d);
+  assert.equal(stale.status, 409);
+});
+
+test("V02-T11 RICE draft save reports a stale source baseline as a conflict", async () => {
+  const d = makeDependencies();
+  const requirements = d.repositories!.requirements as unknown as Record<string, unknown>;
+  // 仓储判定草稿基线源版本（3）落后于当前需求源版本（5）：返回 source_version_conflict。
+  requirements.saveRiceDraft = async () => ({ outcome: "source_version_conflict", currentSourceVersion: 3 });
+  const res = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/rice-draft`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ reach: "200", expectedEditVersion: 2 }) }), d);
+  assert.equal(res.status, 409);
+  assert.match(await res.text(), /源版本 3/);
+});
+
+test("V02-T13 Kano evidence routes: import validates, approve rejects flagged material", async () => {
+  const d = makeDependencies();
+  const requirements = d.repositories!.requirements as unknown as Record<string, unknown>;
+  const imported: unknown[] = [];
+  requirements.createKanoEvidence = async (input: { summary: string }) => {
+    const record = { id: "ev-1", version: 1, status: "draft", piiFlagged: input.summary.includes("13800138000") };
+    imported.push(input);
+    return record;
+  };
+  requirements.approveKanoEvidence = async () => ({ outcome: "pii_flagged" });
+  const badUrl = await handleApiRequest(new Request("http://localhost/api/kano/evidence", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "t", summary: "s", evidenceFragments: [], sourceUrl: "not-a-url" }) }), d);
+  assert.equal(badUrl.status, 400);
+  const importOk = await handleApiRequest(new Request("http://localhost/api/kano/evidence", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "访谈总结", summary: "含 13800138000 的总结", evidenceFragments: [{ ref: "S1", text: "片段" }] }) }), d);
+  assert.equal(importOk.status, 201);
+  assert.equal((await importOk.json() as Record<string, unknown>).piiFlagged, true);
+  const approve = await handleApiRequest(new Request("http://localhost/api/kano/evidence/ev-1/approve", { method: "POST" }), d);
+  assert.equal(approve.status, 409);
+});
+
+test("V02-T14 Kano run routes: trigger guards and stale flags", async () => {
+  const d = makeDependencies();
+  const requirements = d.repositories!.requirements as unknown as Record<string, unknown>;
+  requirements.listKanoEvidence = async () => [
+    { id: "ev-ok", version: 2, title: "t", sourceUrl: null, sourceSection: null, summary: "s", evidenceFragments: [], coverageNotes: null, knownAudiences: [], knownScenes: null, interviewDate: null, status: "approved", piiFlagged: false, createdBy: "m", createdAt: "2026-10-25T00:00:00.000Z", approvedBy: null, approvedAt: null },
+    { id: "ev-draft", version: 3, title: "t", sourceUrl: null, sourceSection: null, summary: "s", evidenceFragments: [], coverageNotes: null, knownAudiences: [], knownScenes: null, interviewDate: null, status: "draft", piiFlagged: false, createdBy: "m", createdAt: "2026-10-25T00:00:00.000Z", approvedBy: null, approvedAt: null },
+  ];
+  let active = false;
+  requirements.createKanoRun = async () => active ? { outcome: "active_run_exists" } : { outcome: "created", run: { id: "run-1", runVersion: 1 } };
+  requirements.listKanoRuns = async () => [{ id: "run-1", requirementId: requirement.id, runVersion: 1, status: "succeeded", sourceVersion: 1, audienceSnapshot: { tags: [], confirmed: false }, evidenceVersion: 2, promptVersion: "rq-kano-v1", model: null, result: null, safeErrorCode: null, safeErrorSummary: null, createdBy: "actor-1", createdAt: "2026-10-25T00:00:00.000Z", completedAt: null }];
+  const post = (evidenceVersion: number) => new Request(`http://localhost/api/requirements/${requirement.id}/kano-runs`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ evidenceVersion }) });
+  const draft = await handleApiRequest(post(3), d);
+  assert.equal(draft.status, 409);
+  const ok = await handleApiRequest(post(2), d);
+  assert.equal(ok.status, 202);
+  active = true;
+  const activeConflict = await handleApiRequest(post(2), d);
+  assert.equal(activeConflict.status, 409);
+  const list = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/kano-runs`), d);
+  const body = await list.json() as { items: Array<{ staleInputs: boolean }> };
+  // 源版本一致但最新已批准资料是 v2 且报告引用 v2 → 不过期；此处 run.sourceVersion=1 与 requirement 一致
+  assert.equal(typeof body.items[0]?.staleInputs, "boolean");
+});
+
+// ---- PRD-26 / 5a：聊天一键复制草稿接口 ----
+type DraftExtractor = NonNullable<ApiDependencies["chatIntake"]>["extractor"];
+function draftDependencies(extract: DraftExtractor["extract"], options: { limit?: { perMinute: number; perDay: number } } = {}) {
+  const d = makeDependencies();
+  (d.repositories as unknown as Record<string, unknown>).dictionaries = { list: async () => [{ version: 3, status: "published", entries: [{ name: "报表分析" }, "导航"] }] };
+  const audits: { eventType: string; result: string; entityId: string; safeDetails: Record<string, unknown> }[] = [];
+  d.repositories!.audit.append = async (event) => { audits.push(event as never); };
+  const created: unknown[] = [];
+  (d.repositories!.requirements as unknown as Record<string, unknown>).createManualRequirement = async (input: unknown) => { created.push(input); return { requirementId: requirement.id, platformRequirementId: "RQ-000001", replay: false }; };
+  d.chatIntake = { extractor: { extract }, ...(options.limit ? { limit: options.limit } : {}) };
+  return { d, audits, created };
 }
+const sampleDraft = { title: "导出骑行报表", description: "售后反馈用户希望导出报表", sourceChannel: "售后" as const, requirementType: null, productModel: null, constraintNotes: null, intakeModule: "报表分析", proposer: "小王", aiFilled: ["title", "description", "sourceChannel", "intakeModule", "proposer"] as never };
+// 抽取结果：草稿 + 是否兜底（fallback=true 表示标题/描述取自掩码原文）。
+const extraction = (draft: typeof sampleDraft, fallback = false) => ({ draft, fallback });
+const draftRequest = (text: unknown) => new Request("http://localhost/api/requirements/intake-draft", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text }) });
+
+test("intake-draft returns a draft without creating a requirement and audits only the text length", async () => {
+  let seen: { text: string; modules: readonly string[] } | null = null;
+  const { d, audits, created } = draftDependencies(async (input) => { seen = input; return extraction(sampleDraft); });
+  const chat = "客户小王说：希望能导出骑行报表，电话 13812345678";
+  const response = await handleApiRequest(draftRequest(chat), d);
+  assert.equal(response.status, 200);
+  const body = await response.json() as { draft: { title: string }; similar: unknown[]; fallback: boolean; aiFilledCount: number };
+  assert.equal(body.draft.title, "导出骑行报表");
+  assert.deepEqual(body.similar, []);
+  // 兜底标记与 AI 填充数量必须显式返回，客户端据此提示与统计。
+  assert.equal(body.fallback, false);
+  assert.equal(body.aiFilledCount, 5);
+  assert.equal(created.length, 0);
+  assert.deepEqual(seen!.modules, ["报表分析", "导航"]);
+  assert.equal(audits.length, 1);
+  assert.equal(audits[0]!.eventType, "intake.draft_extracted");
+  assert.equal(audits[0]!.safeDetails.textLength, Array.from(chat).length);
+  assert.equal(audits[0]!.safeDetails.fallback, false);
+  assert.equal(audits[0]!.safeDetails.aiFilledCount, 5);
+  // 一次抽取的审计要能串联：请求号既在 safeDetails 也做 entityId，并带提示词版本。
+  assert.match(String(audits[0]!.safeDetails.requestId), /^[0-9a-f-]{36}$/);
+  assert.equal(audits[0]!.safeDetails.promptVersion, CHAT_PROMPT_VERSION);
+  assert.equal(audits[0]!.entityId, audits[0]!.safeDetails.requestId);
+  assert.equal(JSON.stringify(audits[0]).includes("13812345678"), false);
+  assert.equal(JSON.stringify(audits[0]).includes("小王"), false);
+});
+
+test("intake-draft rejects empty or oversized text and unauthenticated callers", async () => {
+  let calls = 0;
+  const { d } = draftDependencies(async () => { calls += 1; return extraction(sampleDraft); });
+  assert.equal((await handleApiRequest(draftRequest("   "), d)).status, 400);
+  assert.equal((await handleApiRequest(draftRequest("x".repeat(20_001)), d)).status, 400);
+  assert.equal((await handleApiRequest(new Request("http://localhost/api/requirements/intake-draft", { method: "POST", body: "not json" }), d)).status, 400);
+  const anonymous = { ...unauthenticated, chatIntake: d.chatIntake! };
+  assert.equal((await handleApiRequest(draftRequest("hi"), anonymous)).status, 401);
+  assert.equal(calls, 0);
+});
+
+test("intake-draft returns 503 when the extractor is not configured", async () => {
+  const { d } = draftDependencies(async () => extraction(sampleDraft));
+  delete (d as { chatIntake?: unknown }).chatIntake;
+  assert.equal((await handleApiRequest(draftRequest("hi"), d)).status, 503);
+});
+
+test("intake-draft does not call the model while AI is paused for quota", async () => {
+  let calls = 0;
+  const { d } = draftDependencies(async () => { calls += 1; return extraction(sampleDraft); });
+  d.repositories!.flags = { get: async () => ({ value: { until: "2026-10-08T01:00:00.000Z", reason: "rate_limited" }, updatedAt: "2026-10-08T00:00:00.000Z" }), set: async () => undefined };
+  const response = await handleApiRequest(draftRequest("hi"), d);
+  assert.equal(response.status, 503);
+  assert.equal(calls, 0);
+});
+
+test("intake-draft limits each actor to the per-minute cap and sets Retry-After", async () => {
+  let calls = 0;
+  const { d } = draftDependencies(async () => { calls += 1; return extraction(sampleDraft); }, { limit: { perMinute: 2, perDay: 100 } });
+  assert.equal((await handleApiRequest(draftRequest("a"), d)).status, 200);
+  assert.equal((await handleApiRequest(draftRequest("b"), d)).status, 200);
+  const limited = await handleApiRequest(draftRequest("c"), d);
+  assert.equal(limited.status, 429);
+  assert.ok(Number(limited.headers.get("Retry-After")) >= 1);
+  assert.equal(calls, 2);
+});
+
+test("intake-draft maps provider rate limiting to 429 with Retry-After and audits only the error class", async () => {
+  const { d, audits } = draftDependencies(async () => { throw Object.assign(new Error("sk-secret-key-1234567890 upstream said no"), { code: "rate_limited" }); });
+  const response = await handleApiRequest(draftRequest("需要导出"), d);
+  assert.equal(response.status, 429);
+  assert.ok(Number(response.headers.get("Retry-After")) >= 1);
+  const text = await response.text();
+  assert.equal(text.includes("sk-secret"), false);
+  assert.equal(audits[0]!.eventType, "intake.draft_failed");
+  assert.equal(audits[0]!.result, "failed");
+  assert.equal(audits[0]!.safeDetails.errorClass, "rate_limited");
+  assert.equal(JSON.stringify(audits[0]).includes("sk-secret"), false);
+});
+
+test("intake-draft maps provider config errors to 500 and reports them to diagnostics without leaking secrets", async () => {
+  const reported: Array<{ event: string; details: Record<string, unknown> }> = [];
+  const { d, audits } = draftDependencies(async () => { throw new AiProviderError("auth_error", "AI provider authentication failed (HTTP 401).", 401); });
+  d.diagnostics = { error: (event, details) => { reported.push({ event, details }); } };
+  const response = await handleApiRequest(draftRequest("需要导出"), d);
+  assert.equal(response.status, 500);
+  const text = await response.text();
+  assert.equal(text.includes("sk-secret"), false);
+  assert.equal(audits[0]!.safeDetails.errorClass, "auth_error");
+  assert.equal(audits[0]!.safeDetails.httpStatus, 401);
+  assert.equal(reported.length, 1);
+  assert.equal(reported[0]!.event, "intake_draft_failed");
+  assert.equal(reported[0]!.details.errorClass, "auth_error");
+  assert.equal(reported[0]!.details.textLength, 4);
+  // 供应商状态码可以进诊断，供应商正文和密钥不行。
+  assert.equal(reported[0]!.details.httpStatus, 401);
+  assert.match(String(reported[0]!.details.requestId), /^[0-9a-f-]{36}$/);
+  assert.equal(JSON.stringify(reported).includes("sk-secret"), false);
+  assert.equal(JSON.stringify(reported).includes("upstream"), false);
+});
+
+test("intake-draft maps timeouts and unusable model output to a retryable 503", async () => {
+  for (const code of ["timeout", "network_error", "analysis_failure"]) {
+    const { d, audits } = draftDependencies(async () => { throw Object.assign(new Error("upstream"), { code }); });
+    const response = await handleApiRequest(draftRequest("需要导出"), d);
+    assert.equal(response.status, 503, code);
+    assert.equal(audits[0]!.safeDetails.errorClass, code);
+  }
+});
+
+test("intake-draft ties every attempt to one requestId and records the prompt version on failure too", async () => {
+  const ok = draftDependencies(async () => extraction(sampleDraft));
+  assert.equal((await handleApiRequest(draftRequest("需要导出"), ok.d)).status, 200);
+  const failed = draftDependencies(async () => { throw new AiProviderError("timeout", "AI provider request timed out."); });
+  assert.equal((await handleApiRequest(draftRequest("需要导出"), failed.d)).status, 503);
+  for (const attempt of [ok, failed]) {
+    assert.match(String(attempt.audits[0]!.safeDetails.requestId), /^[0-9a-f-]{36}$/);
+    assert.equal(attempt.audits[0]!.safeDetails.promptVersion, CHAT_PROMPT_VERSION);
+    assert.equal(attempt.audits[0]!.entityId, attempt.audits[0]!.safeDetails.requestId);
+  }
+  assert.notEqual(ok.audits[0]!.entityId, failed.audits[0]!.entityId);
+});
+
+test("intake-draft returns 503 instead of 500 when the module dictionary cannot be read", async () => {
+  let calls = 0;
+  const { d } = draftDependencies(async () => { calls += 1; return extraction(sampleDraft); });
+  (d.repositories as unknown as Record<string, unknown>).dictionaries = { list: async () => { throw new Error("db down"); } };
+  const response = await handleApiRequest(draftRequest("需要导出"), d);
+  assert.equal(response.status, 503);
+  assert.equal(calls, 0);
+});
+
+test("intake-draft reports the fallback draft honestly in the response and the audit", async () => {
+  const { d, audits } = draftDependencies(async () => extraction({ ...sampleDraft, title: "张伟 2026-11-18 09:12", description: "客户电话（手机号已掩码）", aiFilled: [] as never }, true));
+  const response = await handleApiRequest(draftRequest("张伟 2026-11-18 09:12\n手机 13812345678"), d);
+  assert.equal(response.status, 200);
+  const body = await response.json() as { fallback: boolean; aiFilledCount: number; draft: { aiFilled: string[] } };
+  assert.equal(body.fallback, true);
+  assert.equal(body.aiFilledCount, 0);
+  assert.deepEqual(body.draft.aiFilled, []);
+  assert.equal(audits[0]!.eventType, "intake.draft_extracted");
+  assert.equal(audits[0]!.safeDetails.fallback, true);
+  assert.equal(audits[0]!.safeDetails.aiFilledCount, 0);
+});
+
+test("intake-draft lists similar requirements and falls back to a title prefix", async () => {
+  const queries: string[] = [];
+  const { d } = draftDependencies(async () => extraction({ ...sampleDraft, title: "导出骑行报表到表格文件" }));
+  (d.repositories!.requirements as unknown as Record<string, unknown>).search = async (query: { q?: string }) => {
+    queries.push(query.q ?? "");
+    return { items: query.q === "导出骑行报表到表" ? [{ ...requirement, id: "r-1", platformRequirementId: "RQ-000009", title: "导出骑行报表", sourceType: "teambition" }] : [], nextCursor: null };
+  };
+  const body = await (await handleApiRequest(draftRequest("需要导出"), d)).json() as { similar: { platformRequirementId: string; title: string }[] };
+  assert.deepEqual(queries, ["导出骑行报表到表格文件", "导出骑行报表到表"]);
+  assert.equal(body.similar.length, 1);
+  assert.equal(body.similar[0]!.platformRequirementId, "RQ-000009");
+});
+
+test("intake-draft still returns the draft when the similar-requirement search or audit fails", async () => {
+  const { d } = draftDependencies(async () => extraction(sampleDraft));
+  (d.repositories!.requirements as unknown as Record<string, unknown>).search = async () => { throw new Error("db down"); };
+  d.repositories!.audit.append = async () => { throw new Error("audit down"); };
+  const response = await handleApiRequest(draftRequest("需要导出"), d);
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json() as { similar: unknown[] }).similar, []);
+});
+
+// ---- 0031 集团需求池：pool 作用域、详情守卫、执行人名单 ----
+const groupSource: SourceConfigRecord = { ...source, id: "77777777-7777-4777-8777-777777777777", pool: "group", executorAllowlist: [{ userId: "tb-user-1", name: "张三" }] };
+const groupRequirement = { ...requirement, id: "88888888-8888-4888-8888-888888888888", sourceConfigId: groupSource.id };
+const sourceBody = (extra: Record<string, unknown> = {}) => ({ projectName: "集团需求收集", enabled: true, schedule: { enabled: false, time: null, timezone: null }, ...extra });
+const postSource = (d: ApiDependencies, body: Record<string, unknown>) => handleApiRequest(new Request("http://localhost/api/sources", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), d);
+function poolDependencies() {
+  const d = makeDependencies();
+  d.repositories!.sources.get = async (id) => id === groupSource.id ? groupSource : id === source.id ? source : null;
+  d.repositories!.sources.list = async () => [source, groupSource];
+  d.repositories!.requirements!.get = (async (id: string) => id === groupRequirement.id ? groupRequirement : id === requirement.id ? requirement : null) as never;
+  return d;
+}
+test("requirement detail derives the pool from the id and returns it read-only", async () => {
+  const d = poolDependencies();
+  const group = await handleApiRequest(new Request(`http://localhost/api/requirements/${groupRequirement.id}`), d);
+  assert.equal(group.status, 200);
+  assert.equal((await group.json() as { pool?: string }).pool, "group");
+  const product = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`), d);
+  assert.equal(product.status, 200);
+  assert.equal((await product.json() as { pool?: string }).pool, "product");
+});
+test("an explicit pool that disagrees with the requirement answers 404, and anonymous stays 401", async () => {
+  const d = poolDependencies();
+  assert.equal((await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}?pool=group`), d)).status, 404);
+  assert.equal((await handleApiRequest(new Request(`http://localhost/api/requirements/${groupRequirement.id}?pool=product`), d)).status, 404);
+  // 先认证后判池：未登录请求不能被守卫降级成 404（那样会泄露 UUID 是否存在）。
+  assert.equal((await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}?pool=group`), unauthenticated)).status, 401);
+});
+test("source listing exposes the pool and allowlist display names without TB user ids", async () => {
+  const d = makeDependencies();
+  d.repositories!.sources.list = async () => [groupSource];
+  const body = await (await handleApiRequest(new Request("http://localhost/api/sources"), d)).json() as { items: Array<Record<string, unknown>> };
+  assert.equal(body.items[0]!.pool, "group");
+  assert.deepEqual(body.items[0]!.executorAllowlist, ["张三"]);
+  assert.equal(JSON.stringify(body).includes("tb-user-1"), false);
+});
+test("group source creation resolves names to bindings and rejects unusable allowlists", async () => {
+  const build = (members?: Array<{ userId: string; name: string }>) => {
+    const d = makeDependencies();
+    d.teambitionSourceProjects = { resolveProject: async () => ({ projectId: "p2", requirementTypeId: "t2" }) };
+    if (members) d.teambitionMembers = { listOrganizationMembers: async () => members };
+    d.repositories!.sources.list = async () => [];
+    let saved: unknown;
+    d.repositories!.sources.create = (async (input: unknown) => { saved = input; return { ...source, pool: "group", externalProjectId: "p2", executorAllowlist: (input as { executorAllowlist?: unknown }).executorAllowlist }; }) as never;
+    return { d, saved: () => saved as { executorAllowlist?: unknown } | undefined };
+  };
+  // 未注入成员目录：不能假装保存成功。
+  assert.equal((await postSource(build().d, sourceBody({ pool: "group", executorAllowlist: ["张三"] }))).status, 503);
+  // 未解析姓名 → 400 + 独立字段，供卡片列出并保留输入。
+  const unresolved = await postSource(build([{ userId: "tb-user-2", name: "李四" }]).d, sourceBody({ pool: "group", executorAllowlist: ["张三"] }));
+  assert.equal(unresolved.status, 400);
+  assert.deepEqual((await unresolved.json() as { error: { details?: { unresolvedExecutorNames?: string[] } } }).error.details?.unresolvedExecutorNames, ["张三"]);
+  // 空名单不能启用；21 个姓名超上限。
+  assert.equal((await postSource(build([{ userId: "tb-user-1", name: "张三" }]).d, sourceBody({ pool: "group", executorAllowlist: [] }))).status, 400);
+  assert.equal((await postSource(build([{ userId: "tb-user-1", name: "张三" }]).d, sourceBody({ pool: "group", executorAllowlist: Array.from({ length: 21 }, (_, i) => `人${i}`) }))).status, 400);
+  // 产品池传名单直接拒绝，避免“看起来过滤了其实没有”。
+  assert.equal((await postSource(build([{ userId: "tb-user-1", name: "张三" }]).d, sourceBody({ executorAllowlist: ["张三"] }))).status, 400);
+  // 正常路径：trim/去重后解析为 {userId,name}，只保存绑定，不回传 user_id。
+  const ok = build([{ userId: "tb-user-1", name: "张三" }]);
+  const created = await postSource(ok.d, sourceBody({ pool: "group", executorAllowlist: [" 张三 ", "张三"] }));
+  assert.equal(created.status, 201);
+  assert.deepEqual(ok.saved()?.executorAllowlist, [{ userId: "tb-user-1", name: "张三" }]);
+  assert.deepEqual((await created.json() as { executorAllowlist?: string[] }).executorAllowlist, ["张三"]);
+});
+test("each pool keeps one source: a second product source conflicts while a group source is allowed", async () => {
+  const d = makeDependencies();
+  d.teambitionSourceProjects = { resolveProject: async () => ({ projectId: "p2", requirementTypeId: "t2" }) };
+  d.teambitionMembers = { listOrganizationMembers: async () => [{ userId: "tb-user-1", name: "张三" }] };
+  d.repositories!.sources.create = (async (input: { pool?: string }) => ({ ...source, id: "99999999-9999-4999-8999-999999999999", pool: input.pool ?? "product", externalProjectId: "p2" })) as never;
+  assert.equal((await postSource(d, sourceBody())).status, 409);
+  const group = await postSource(d, sourceBody({ pool: "group", executorAllowlist: ["张三"] }));
+  assert.equal(group.status, 201);
+  assert.equal((await group.json() as { pool?: string }).pool, "group");
+});
+test("updating a source cannot move it between pools", async () => {
+  const d = makeDependencies();
+  const response = await handleApiRequest(new Request(`http://localhost/api/sources/${source.id}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(sourceBody({ pool: "group", executorAllowlist: ["张三"] })) }), d);
+  assert.equal(response.status, 400);
+});
+
+test("集团池详情的 Base 记录链接按集团模板生成，产品池仍用产品模板", async () => {
+  const d = poolDependencies();
+  d.repositories!.sources.get = (async (id: string) => id === groupSource.id ? groupSource : id === source.id ? source : null) as never;
+  process.env.RQSYS_BASE_RECORD_URL_TEMPLATE = "https://x.feishu.cn/base/PRODUCT?table=tblP&record={recordId}";
+  process.env.RQSYS_GROUP_BASE_RECORD_URL_TEMPLATE = "https://x.feishu.cn/base/GROUP?table=tblG&record={recordId}";
+  try {
+    const groupRow = { ...groupRequirement, baseRecordId: "rec-group-1" };
+    d.repositories!.requirements!.get = (async (id: string) => id === groupRow.id ? groupRow : requirement) as never;
+    const groupDetail = await (await handleApiRequest(new Request(`http://localhost/api/requirements/${groupRow.id}`), d)).json() as { baseRecordUrl?: string };
+    assert.equal(groupDetail.baseRecordUrl, "https://x.feishu.cn/base/GROUP?table=tblG&record=rec-group-1");
+    const productRow = { ...requirement, baseRecordId: "rec-product-1" };
+    d.repositories!.requirements!.get = (async (id: string) => id === productRow.id ? productRow : groupRow) as never;
+    const productDetail = await (await handleApiRequest(new Request(`http://localhost/api/requirements/${productRow.id}`), d)).json() as { baseRecordUrl?: string };
+    assert.equal(productDetail.baseRecordUrl, "https://x.feishu.cn/base/PRODUCT?table=tblP&record=rec-product-1");
+  } finally {
+    delete process.env.RQSYS_BASE_RECORD_URL_TEMPLATE;
+    delete process.env.RQSYS_GROUP_BASE_RECORD_URL_TEMPLATE;
+  }
+});
+
+test("列表行的池标签与 Base 链接都按行自己的来源取，集团池未配模板时为 null 而不是回落产品模板", async () => {
+  const d = poolDependencies();
+  const groupRow = { ...groupRequirement, baseRecordId: "rec-group-1" };
+  (d.repositories!.requirements as unknown as Record<string, unknown>).search = async () => ({ items: [groupRow], nextCursor: null });
+  process.env.RQSYS_BASE_RECORD_URL_TEMPLATE = "https://x.feishu.cn/base/PRODUCT?table=tblP&record={recordId}";
+  process.env.RQSYS_GROUP_BASE_RECORD_URL_TEMPLATE = "https://x.feishu.cn/base/GROUP?table=tblG&record={recordId}";
+  try {
+    const list = async (query: string) => (await (await handleApiRequest(new Request(`http://localhost/api/requirements${query}`), d)).json() as { items: Array<{ baseRecordUrl?: string | null; pool?: string }> }).items[0]!;
+    const group = await list("?pool=group");
+    assert.equal(group.baseRecordUrl, "https://x.feishu.cn/base/GROUP?table=tblG&record=rec-group-1");
+    // 每行必须带归属池：前端靠它显示池标签（2026-11-25 妙搭缺这个字段导致集团 Tab 全标产品池）。
+    assert.equal(group.pool, "group");
+    // 行自己的来源是集团池：请求缺省 product 也不能把它说成产品池、更不能用产品池模板。
+    const byDefault = await list("");
+    assert.equal(byDefault.baseRecordUrl, "https://x.feishu.cn/base/GROUP?table=tblG&record=rec-group-1");
+    assert.equal(byDefault.pool, "group");
+    delete process.env.RQSYS_GROUP_BASE_RECORD_URL_TEMPLATE;
+    assert.equal((await list("?pool=group")).baseRecordUrl, null);
+  } finally {
+    delete process.env.RQSYS_BASE_RECORD_URL_TEMPLATE;
+    delete process.env.RQSYS_GROUP_BASE_RECORD_URL_TEMPLATE;
+  }
+});
+
+// ---- 2026-11-21：PRD 提示词（POST/GET /api/requirements/:id/prd-prompts） ----
+
+test("PRD 提示词：无成功评估 409、生成 201、GET 列版本、单飞与超时映射", async () => {
+  const d = makeDependencies();
+  const repositories = d.repositories as unknown as Record<string, unknown>;
+  const assessments = [{ id: "assessment-1", requirementId: requirement.id, version: 3, status: "succeeded", promptVersion: "rq-assessment-v1", model: "m", inputs: {}, output: {}, errorCode: null, errorDetail: null, createdAt: "2026-10-07T00:00:00.000Z", completedAt: "2026-10-07T00:00:01.000Z" }];
+  let expired: Array<[string, string, string]> = [];
+  repositories.assessments = {
+    list: async () => assessments,
+    expireStaleRunning: async (id: string, before: string, at: string) => { expired.push([id, before, at]); return 0; },
+  };
+  const listed: Array<{ id: string; version: number }> = [assessments[0]!];
+  repositories.prdPrompts = {
+    list: async () => [{ id: "prd-1", requirementId: requirement.id, version: 1, status: "succeeded", promptVersion: "rq-prd-prompt-v1", model: "stub", inputs: { investigationNotes: "第一版调研", assessmentVersion: 3 }, output: { prompt: "x", assumptions: [], openQuestions: [] }, errorCode: null, createdAt: "2026-10-07T00:00:00.000Z", completedAt: "2026-10-07T00:00:10.000Z" }],
+    expireStaleRunning: async (id: string, before: string, at: string) => { expired.push([id, before, at]); return 0; },
+    create: async () => { throw new Error("unused"); },
+    complete: async () => null,
+    fail: async () => null,
+  };
+  const runs: Array<Record<string, unknown>> = [];
+  const record = {
+    id: "prd-2", requirementId: requirement.id, version: 2, status: "succeeded" as const, promptVersion: "rq-prd-prompt-v1", model: "stub",
+    inputs: { investigationNotes: "访谈 5 位用户", assessmentVersion: 3 }, output: { prompt: "## 角色与任务", assumptions: [], openQuestions: [] },
+    errorCode: null, createdAt: "2026-10-08T00:00:00.000Z", completedAt: "2026-10-08T00:00:30.000Z",
+  };
+  d.prdPrompt = { runner: { run: async (input: Record<string, unknown>) => { runs.push(input); return record; } } as never };
+
+  // GET：先清理过期 running，再按版本倒序列出；只回传回填需要的字段。
+  const list = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/prd-prompts`), d);
+  assert.equal(list.status, 200);
+  const items = (await list.json() as { items: Array<Record<string, unknown>> }).items;
+  assert.equal(items.length, 1);
+  assert.deepEqual(Object.keys(items[0]!).sort(), ["assessmentVersion", "completedAt", "createdAt", "errorCode", "id", "investigationNotes", "model", "output", "promptVersion", "requirementId", "status", "version"]);
+  assert.equal(items[0]!.investigationNotes, "第一版调研");
+  assert.deepEqual(expired[0], [requirement.id, "2026-10-07T23:58:00.000Z", "2026-10-08T00:00:00.000Z"]);
+
+  // POST：201 裸对象；评估与调研结论都传入 runner。
+  const ok = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/prd-prompts`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ investigationNotes: "访谈 5 位用户" }),
+  }), d);
+  assert.equal(ok.status, 201);
+  const body = await ok.json() as Record<string, unknown>;
+  assert.equal(body.id, "prd-2");
+  assert.equal(body.version, 2);
+  assert.equal(body.investigationNotes, "访谈 5 位用户");
+  assert.equal(runs[0]!.assessment instanceof Object, true);
+  assert.equal(runs[0]!.investigationNotes, "访谈 5 位用户");
+
+  // 无成功评估：409 ASSESSMENT_REQUIRED，不调模型。
+  repositories.assessments = { list: async () => [], expireStaleRunning: async () => 0 };
+  const required = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/prd-prompts`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ investigationNotes: "" }),
+  }), d);
+  assert.equal(required.status, 409);
+  assert.equal((await required.json() as { error: { code: string } }).error.code, "ASSESSMENT_REQUIRED");
+  assert.equal(runs.length, 1);
+
+  // 显式指定不属于本需求的评估：400（先恢复一条成功评估）。
+  repositories.assessments = { list: async () => assessments, expireStaleRunning: async () => 0 };
+  const foreign = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/prd-prompts`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ assessmentId: "99999999-9999-4999-8999-999999999999" }),
+  }), d);
+  assert.equal(foreign.status, 400);
+});
+
+test("PRD §4.7.5：duplicateCandidates 只保留同标题候选，duplicates 语义不变", async () => {
+  const d = makeDependencies();
+  const repositories = d.repositories as unknown as { requirements: Record<string, unknown> };
+  repositories.requirements.listDuplicateCandidates = async () => [
+    { id: "req-2", title: requirement.title, platformRequirementId: "RQ-000002", teambitionRequirementId: "tb-2" },
+    { id: "req-3", title: `  ${requirement.title}  `, platformRequirementId: "RQ-000003", teambitionRequirementId: null },
+    { id: "req-4", title: "完全不同的标题", platformRequirementId: "RQ-000004", teambitionRequirementId: "tb-4" },
+  ];
+  const response = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`), d);
+  assert.equal(response.status, 200);
+  const body = await response.json() as { duplicateCandidates: Array<{ id: string }>; duplicates: unknown[] };
+  // 同标题（含首尾空白）保留；不同标题丢弃；duplicates 仍是「以本需求为主记录的子记录」。
+  assert.deepEqual(body.duplicateCandidates.map((item) => item.id), ["req-2", "req-3"]);
+  assert.deepEqual(body.duplicates, []);
+
+  // 无候选返回空数组而不是 null/缺字段。
+  const none = makeDependencies();
+  (none.repositories as unknown as { requirements: Record<string, unknown> }).requirements.listDuplicateCandidates = async () => [];
+  const empty = await (await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`), none)).json() as { duplicateCandidates: unknown };
+  assert.deepEqual(empty.duplicateCandidates, []);
+
+  // 仓储未实现该方法（旧桩/旧适配器）时降级为空数组，不影响详情。
+  const legacy = makeDependencies();
+  delete (legacy.repositories as unknown as { requirements: Record<string, unknown> }).requirements.listDuplicateCandidates;
+  const fallback = await (await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`), legacy)).json() as { duplicateCandidates: unknown };
+  assert.deepEqual(fallback.duplicateCandidates, []);
+});
+
+test("重新分析已分析过的需求缺省强制重跑，显式 force:false 才走轻量重试", async () => {
+  // 回归：此前不带 body 时 force=false，已分析需求被 handler 的同源幂等守卫短路——只入队不执行。
+  const d = makeDependencies();
+  const queued: Record<string, unknown>[] = [];
+  d.repositories!.requirements!.get = async (id: string) => id === requirement.id
+    ? { ...requirement, pipeline: { ...requirement.pipeline, analysis: "analyzed" as const } } as RequirementRecord
+    : null;
+  d.repositories!.jobs.enqueue = async (input) => {
+    queued.push(input as unknown as Record<string, unknown>);
+    return { ...input, id: "analysis-job", status: "queued", attemptCount: 0, maxAttempts: 3, lockedUntil: null, lastErrorCode: null, lastErrorSummary: null, createdAt: input.availableAt, updatedAt: input.availableAt };
+  };
+  const forced = await handleApiRequest(new Request(`http://localhost/api/analysis/${requirement.id}/retry`, { method: "POST" }), d);
+  assert.equal(forced.status, 202);
+  assert.equal(queued[0]?.dedupeKey, `analysis:${requirement.id}:sv1:after2:force`);
+  assert.equal((queued[0]?.payload as Record<string, unknown>).force, true);
+
+  const light = await handleApiRequest(new Request(`http://localhost/api/analysis/${requirement.id}/retry`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ force: false }),
+  }), d);
+  assert.equal(light.status, 202);
+  assert.equal(queued[1]?.dedupeKey, `analysis:${requirement.id}:sv1:after2`);
+  assert.equal((queued[1]?.payload as Record<string, unknown>).force, undefined);
+});
+
+// 0034：「我的需求」/回收站：平台身份先换成飞书 user_id，再按负责人口径过滤。
+test("0034 mine list and counts resolve the platform actor to a Feishu user_id", async () => {
+  const d = makeDependencies();
+  const searches: unknown[] = [];
+  d.feishuUserSelections = { resolve: async (platformUserId: string) => platformUserId === "actor-1" ? { feishuUserId: "feishu-1", feishuIdType: "user_id", name: "我" } : null };
+  d.repositories!.requirements!.search = async (query) => { searches.push(query); return { items: [], nextCursor: null }; };
+  (d.repositories!.requirements as unknown as { mineCounts: (owner: string) => Promise<unknown> }).mineCounts = async (owner: string) => {
+    assert.equal(owner, "feishu-1");
+    return { product: 3, group: 2, total: 5, suppressed: 1 };
+  };
+
+  const mine = await handleApiRequest(new Request("http://localhost/api/requirements/mine?pool=group"), d);
+  assert.equal(mine.status, 200);
+  assert.deepEqual(await mine.json(), { items: [], nextCursor: null, identityResolved: true });
+  assert.deepEqual(searches[0], { pool: "group", ownerFeishuUserId: "feishu-1", deleted: false, limit: 25 });
+
+  const counts = await handleApiRequest(new Request("http://localhost/api/requirements/mine/counts"), d);
+  assert.equal(counts.status, 200);
+  assert.deepEqual(await counts.json(), { identityResolved: true, product: 3, group: 2, total: 5, suppressed: 1 });
+
+  // M4：身份服务缺失/调用失败是可重试故障，必须 503，不能伪装成「未绑定」空态。
+  const unavailable = makeDependencies();
+  unavailable.repositories!.requirements!.search = async () => { throw new Error("search must not run without identity"); };
+  const failed = await handleApiRequest(new Request("http://localhost/api/requirements/mine"), unavailable);
+  assert.equal(failed.status, 503);
+  assert.equal((await failed.json() as { error: { code: string } }).error.code, "DEPENDENCY_UNAVAILABLE");
+  const countsFailed = await handleApiRequest(new Request("http://localhost/api/requirements/mine/counts"), unavailable);
+  assert.equal(countsFailed.status, 503);
+
+  // 未绑定飞书才是 200 空态（identityResolved=false），前端显示可解释的空页。
+  const unlinked = makeDependencies();
+  unlinked.feishuUserSelections = { resolve: async () => null };
+  unlinked.repositories!.requirements!.search = async () => ({ items: [], nextCursor: null });
+  const empty = await handleApiRequest(new Request("http://localhost/api/requirements/mine"), unlinked);
+  assert.equal(empty.status, 200);
+  assert.deepEqual(await empty.json(), { items: [], nextCursor: null, identityResolved: false });
+});
+
+test("0034 delete and restore go through the Feishu identity and map lifecycle outcomes", async () => {
+  const d = makeDependencies();
+  const calls: unknown[] = [];
+  const nowIso = "2026-10-08T00:00:00.000Z";
+  d.feishuUserSelections = { resolve: async () => ({ feishuUserId: "feishu-1", feishuIdType: "user_id", name: "我" }) };
+  (d.repositories!.requirements as unknown as { markDeleted: (input: unknown) => Promise<unknown> }).markDeleted = async (input) => { calls.push(input); return { outcome: "deleted", requirement: { ...requirement, deletedAt: nowIso, deletedBy: "feishu-1" } }; };
+  (d.repositories!.requirements as unknown as { restoreDeleted: (input: unknown) => Promise<unknown> }).restoreDeleted = async (input) => { calls.push(input); return { outcome: "restored", requirement: { ...requirement, deletedAt: null, deletedBy: null } }; };
+
+  const deleted = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`, { method: "DELETE" }), d);
+  assert.equal(deleted.status, 200);
+  assert.deepEqual(await deleted.json(), { requirementId: requirement.id, deletedAt: nowIso, deletedBy: "actor-1", replayed: false });
+  const deleteCall = calls[0] as { requirementId: string; ownerFeishuUserId: string; deletedBy: string; at: string; audit: { actorId: string; occurredAt: string } };
+  assert.equal(deleteCall.requirementId, requirement.id);
+  assert.equal(deleteCall.ownerFeishuUserId, "feishu-1", "负责人匹配仍用飞书 user_id");
+  assert.equal(deleteCall.deletedBy, "actor-1", "deleted_by 存登录身份（妙搭 userId）");
+  assert.equal(deleteCall.at, nowIso);
+  // M7：审计随删除一起传给仓储，在同一事务里写；审计 id 由仓储生成，调用方不传。
+  assert.equal(deleteCall.audit.actorId, "actor-1");
+  assert.equal(deleteCall.audit.occurredAt, nowIso);
+  assert.equal("id" in deleteCall.audit, false);
+
+  const restored = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/restore`, { method: "POST" }), d);
+  assert.equal(restored.status, 200);
+  assert.deepEqual(await restored.json(), { requirementId: requirement.id, deletedAt: null, deletedBy: null, replayed: false });
+  const restoreCall = calls[1] as { requirementId: string; deleterUserId: string; audit: { actorId: string; occurredAt: string } };
+  assert.equal(restoreCall.requirementId, requirement.id);
+  assert.equal(restoreCall.deleterUserId, "actor-1");
+  assert.equal(restoreCall.audit.actorId, "actor-1");
+  assert.equal(restoreCall.audit.occurredAt, nowIso);
+
+  // M10：本来就不在回收站 → 409，不是幂等 200；且还原不依赖飞书身份服务。
+  const notDeleted = makeDependencies();
+  (notDeleted.repositories!.requirements as unknown as { restoreDeleted: () => Promise<unknown> }).restoreDeleted = async () => ({ outcome: "not_deleted", requirement });
+  const gone = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/restore`, { method: "POST" }), notDeleted);
+  assert.equal(gone.status, 409);
+  assert.equal((await gone.json() as { error: { code: string } }).error.code, "CONFLICT");
+
+  // 不是当前负责人 → 403；身份无法解析 → 403/503（不拿平台 id 猜归属）。
+  const forbidden = makeDependencies();
+  forbidden.feishuUserSelections = { resolve: async () => ({ feishuUserId: "feishu-1", feishuIdType: "user_id", name: "我" }) };
+  (forbidden.repositories!.requirements as unknown as { markDeleted: () => Promise<unknown> }).markDeleted = async () => ({ outcome: "forbidden" });
+  assert.equal((await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`, { method: "DELETE" }), forbidden)).status, 403);
+
+  const unresolved = makeDependencies();
+  unresolved.feishuUserSelections = { resolve: async () => null };
+  (unresolved.repositories!.requirements as unknown as { markDeleted: () => Promise<unknown> }).markDeleted = async () => ({ outcome: "deleted", requirement });
+  assert.equal((await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`, { method: "DELETE" }), unresolved)).status, 403);
+
+  const noService = makeDependencies();
+  (noService.repositories!.requirements as unknown as { markDeleted: () => Promise<unknown> }).markDeleted = async () => ({ outcome: "deleted", requirement });
+  assert.equal((await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`, { method: "DELETE" }), noService)).status, 503);
+});
+
+test("0034 a deleted requirement's detail only reveals deletedBy to the deleter and always reports canRestore", async () => {
+  // deleted_by 存登录身份（妙搭 userId），与 auth.actor.id 同口径比较，不需要飞书身份解析。
+  const deletedRecord = { ...requirement, deletedAt: "2026-10-08T00:00:00.000Z", deletedBy: "actor-1" } as unknown as RequirementRecord;
+  const mine = makeDependencies();
+  mine.repositories!.requirements!.get = async (id: string) => id === requirement.id ? deletedRecord : null;
+  const self = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`), mine);
+  assert.equal(self.status, 200);
+  const selfBody = await self.json() as { deletedBy: string | null; canRestore: boolean };
+  assert.equal(selfBody.deletedBy, "actor-1");
+  assert.equal(selfBody.canRestore, true);
+
+  const other = makeDependencies({ id: "actor-2" });
+  other.repositories!.requirements!.get = async (id: string) => id === requirement.id ? deletedRecord : null;
+  const stranger = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`), other);
+  assert.equal(stranger.status, 200);
+  const strangerBody = await stranger.json() as { deletedBy: string | null; canRestore: boolean };
+  assert.equal(strangerBody.deletedBy, null);
+  assert.equal(strangerBody.canRestore, false);
+});
+
+test("0034 recycle bin uses the signed-in Miaoda user id and aggregates both pools", async () => {
+  const d = makeDependencies();
+  const searches: unknown[] = [];
+  d.feishuUserSelections = { resolve: async () => ({ feishuUserId: "feishu-1", feishuIdType: "user_id", name: "我" }) };
+  d.repositories!.requirements!.search = async (query) => { searches.push(query); return { items: [], nextCursor: null }; };
+  // 不带 pool：聚合两池，deleted_by=妙搭 userId，不解析飞书身份。
+  const bin = await handleApiRequest(new Request("http://localhost/api/requirements?deleted=true"), d);
+  assert.equal(bin.status, 200);
+  assert.deepEqual(await bin.json(), { items: [], nextCursor: null, identityResolved: true });
+  assert.deepEqual(searches[0], { pool: "all", limit: 25, deleted: true, deletedBy: "actor-1" });
+
+  // 显式 pool 才按池过滤。
+  await handleApiRequest(new Request("http://localhost/api/requirements?deleted=true&pool=group"), d);
+  assert.deepEqual(searches[1], { pool: "group", limit: 25, deleted: true, deletedBy: "actor-1" });
+
+  // mine 别名仍按负责人口径，需要飞书身份。
+  const mine = await handleApiRequest(new Request("http://localhost/api/requirements?mine=true"), d);
+  assert.equal(mine.status, 200);
+  assert.deepEqual(searches[2], { pool: "product", limit: 25, deleted: false, ownerFeishuUserId: "feishu-1" });
+
+  // 回收站不依赖身份服务：没有解析器也照常返回（只认登录身份）。
+  const anonymous = makeDependencies();
+  const anonymousSearches: unknown[] = [];
+  anonymous.repositories!.requirements!.search = async (query) => { anonymousSearches.push(query); return { items: [], nextCursor: null }; };
+  const binWithoutIdentity = await handleApiRequest(new Request("http://localhost/api/requirements?deleted=true"), anonymous);
+  assert.equal(binWithoutIdentity.status, 200);
+  assert.equal((anonymousSearches[0] as { deletedBy: string }).deletedBy, "actor-1");
+
+  // 「我的需求」没有身份服务是可重试故障 → 503。
+  const mineUnavailable = await handleApiRequest(new Request("http://localhost/api/requirements?mine=true"), anonymous);
+  assert.equal(mineUnavailable.status, 503);
+});
+
+test("0034 list rows carry the per-row pool label, including my-requirements", async () => {
+  // 2026-11-25 线上缺陷：妙搭 /mine 列表项缺 pool，集团 Tab 全被渲染成「产品池」。
+  // 这里锁住契约：列表行必须带归属池，且按来源解析，不能只看请求的 pool 参数。
+  const groupSource = { ...source, id: "99999999-9999-4999-8999-999999999999", pool: "group" as const };
+  const d = makeDependencies();
+  d.feishuUserSelections = { resolve: async () => ({ feishuUserId: "feishu-1", feishuIdType: "user_id", name: "我" }) };
+  d.repositories!.sources = { ...d.repositories!.sources, list: async () => [source, groupSource] };
+  d.repositories!.requirements!.search = async () => ({ items: [{ ...requirement, sourceConfigId: groupSource.id }], nextCursor: null });
+  const response = await handleApiRequest(new Request("http://localhost/api/requirements/mine?pool=group"), d);
+  assert.equal(response.status, 200);
+  assert.equal(((await response.json()) as { items: Array<{ pool?: string }> }).items[0]?.pool, "group");
+});
+
+test("0034 M14 every requirement-scoped write rejects a deleted requirement with 409", async () => {
+  const deletedRecord = { ...requirement, deletedAt: "2026-10-08T00:00:00.000Z", deletedBy: "feishu-1" } as unknown as RequirementRecord;
+  const d = makeDependencies();
+  d.feishuUserSelections = { resolve: async () => ({ feishuUserId: "feishu-1", feishuIdType: "user_id", name: "我" }) };
+  d.repositories!.requirements!.get = async (id: string) => id === requirement.id ? deletedRecord : null;
+
+  // 统一守卫在分发前拦截：这些路由都没有各自加 deleted 判断，仍然全部 409。
+  const writes: Array<[string, string]> = [
+    ["PATCH", `/api/requirements/${requirement.id}`],
+    ["PUT", `/api/requirements/${requirement.id}/owner`],
+    ["PUT", `/api/requirements/${requirement.id}/audience`],
+    ["PUT", `/api/requirements/${requirement.id}/scoring`],
+    ["PUT", `/api/requirements/${requirement.id}/priority-override`],
+    ["PUT", `/api/requirements/${requirement.id}/analysis-context`],
+    ["POST", `/api/requirements/${requirement.id}/assessments`],
+    ["POST", `/api/requirements/${requirement.id}/prd-prompts`],
+    ["POST", `/api/requirements/${requirement.id}/push`],
+    ["POST", `/api/requirements/${requirement.id}/kano-runs`],
+    ["POST", `/api/analysis/${requirement.id}/retry`],
+  ];
+  for (const [method, path] of writes) {
+    const response = await handleApiRequest(new Request(`http://localhost${path}`, { method }), d);
+    assert.equal(response.status, 409, `${method} ${path}`);
+    assert.equal((await response.json() as { error: { code: string } }).error.code, "REQUIREMENT_DELETED", `${method} ${path}`);
+  }
+
+  // 已删除详情按 UUID 仍可只读打开；评估历史这类 GET 不能被写闸口误伤。
+  assert.equal((await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`), d)).status, 200);
+  assert.notEqual((await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/assessments`), d)).status, 409);
+
+  // DELETE 幂等重放与还原必须放行，否则回收站按钮会被自己的闸口挡住。
+  (d.repositories!.requirements as unknown as { markDeleted: () => Promise<unknown> }).markDeleted = async () => ({ outcome: "replayed", requirement: deletedRecord });
+  const replay = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`, { method: "DELETE" }), d);
+  assert.equal(replay.status, 200);
+  assert.equal((await replay.json() as { replayed: boolean }).replayed, true);
+
+  (d.repositories!.requirements as unknown as { restoreDeleted: () => Promise<unknown> }).restoreDeleted = async () => ({ outcome: "restored", requirement });
+  const restored = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/restore`, { method: "POST" }), d);
+  assert.equal(restored.status, 200);
+  assert.equal((await restored.json() as { replayed: boolean }).replayed, false);
+});

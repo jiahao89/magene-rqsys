@@ -2152,7 +2152,9 @@ components:
         pool:
           type: string
           enum: [product, group]
-          description: 只读归属池；详情不传 pool，客户端据此做页面作用域守卫。
+          description: >-
+            只读归属池：详情与列表行都返回，客户端据此显示池标签并做页面作用域守卫；
+            请求方不需要（也不要）用它反推服务端过滤。
         sourceRequirementId: { type: string, nullable: true }
         # 重复决策派生的处理状态；active 时 resolution 为 null。
         processingState: { type: string, enum: [active, suppressed_duplicate, suppressed_ignored] }

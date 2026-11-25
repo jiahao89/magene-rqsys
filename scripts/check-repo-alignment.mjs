@@ -99,7 +99,61 @@ const APP_ONLY = {
   "runtime.ts": "妙达应用装配入口，root 对应 server.ts（已在 DECLARED）",
 };
 
+// 声明为平台适配的文件里，有些共用函数仍必须逐字一致。只按整个文件声明会把字段级漂移
+// 一并放过（2026-11-25：妙搭 /mine 列表缺 pool 字段就是这样漏掉的）。这里按函数名抽取后比对。
+const MIRRORED_SNIPPETS = {
+  "http/app.ts": ["identityUnavailable", "deletedRequirementWriteGate", "requirementListPayload"],
+};
+
 const IGNORE = /\.test\.ts$/;
+
+/** 按函数名抽取源码片段：括号配对时跳过字符串、模板字面量与注释，避免 `${}` / `}` 干扰。 */
+function extractFunction(source, name) {
+  const start = source.indexOf(`function ${name}(`);
+  if (start < 0) return null;
+  // 先跳过参数表的括号（参数里的对象类型也有 {}），再从函数体的 { 开始配对。
+  let parens = 0;
+  let bodyStart = -1;
+  for (let i = source.indexOf("(", start); i < source.length; i += 1) {
+    const ch = source[i];
+    if (ch === "(") parens += 1;
+    else if (ch === ")") {
+      parens -= 1;
+      if (parens === 0) { bodyStart = source.indexOf("{", i); break; }
+    }
+  }
+  if (bodyStart < 0) return null;
+  const braceStart = bodyStart;
+  let depth = 0;
+  for (let i = braceStart; i < source.length; i += 1) {
+    const ch = source[i];
+    if (ch === '"' || ch === "'" || ch === "`") {
+      const quote = ch;
+      i += 1;
+      while (i < source.length) {
+        if (source[i] === "\\") { i += 2; continue; }
+        if (source[i] === quote) break;
+        i += 1;
+      }
+      continue;
+    }
+    if (ch === "/" && source[i + 1] === "/") {
+      while (i < source.length && source[i] !== "\n") i += 1;
+      continue;
+    }
+    if (ch === "/" && source[i + 1] === "*") {
+      const end = source.indexOf("*/", i + 2);
+      i = end < 0 ? source.length : end + 1;
+      continue;
+    }
+    if (ch === "{") depth += 1;
+    else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) return source.slice(start, i + 1);
+    }
+  }
+  return null;
+}
 
 async function walk(dir, base = dir) {
   const out = [];
@@ -144,8 +198,16 @@ for (const rel of rootFiles) {
     continue;
   }
   if (isShared) failures.push(`共用逻辑必须一致，但已漂移：${rel}`);
-  else if (declaredReason) observed.declared.push(`${rel} — ${declaredReason}`);
-  else failures.push(`出现未声明的新漂移，需要人工判定：${rel}`);
+  else if (declaredReason) {
+    const drifted = [];
+    for (const name of MIRRORED_SNIPPETS[rel] ?? []) {
+      const left = extractFunction(a, name);
+      const right = extractFunction(b, name);
+      if (left === null || right === null || normalize(left) !== normalize(right)) drifted.push(name);
+    }
+    if (drifted.length) failures.push(`平台适配文件里的共用函数已漂移：${rel} → ${drifted.join(", ")}`);
+    else observed.declared.push(`${rel} — ${declaredReason}`);
+  } else failures.push(`出现未声明的新漂移，需要人工判定：${rel}`);
 }
 
 const missingShared = SHARED.filter((rel) => !observed.sharedOk.includes(rel));
@@ -159,6 +221,11 @@ for (const rel of appFiles) {
   if (reason) { appOnlyCount += 1; continue; }
   failures.push(`app 仓独有模块未声明：${rel}`);
 }
+// 片段声明的自检：文件必须已声明为平台适配，否则这条约束永远不会生效。
+for (const rel of Object.keys(MIRRORED_SNIPPETS)) {
+  if (!DECLARED[rel]) failures.push(`片段约束指向了未声明为平台适配的文件：${rel}`);
+}
+
 for (const [rel] of Object.entries(APP_ONLY)) {
   if (!existsSync(join(APP_API, rel))) failures.push(`声明的 app 独有模块已不存在，请更新声明：${rel}`);
 }
