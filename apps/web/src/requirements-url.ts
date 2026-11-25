@@ -152,3 +152,39 @@ export function requirementPoolUrl(
   const suffix = hash ? (hash.startsWith("#") ? hash : `#${hash}`) : "";
   return `${pathname || "/"}${buildRequirementPoolSearch(filters, requirementId)}${suffix}`;
 }
+
+// ---------- PRD §4.13：我的需求 / 回收站 URL ----------
+
+/** 「我的需求」Tab 的池：缺省 product，与首页卡/菜单入口一致。 */
+export function readMyRequirementsPool(search: string): "product" | "group" {
+  return new URLSearchParams(search).get("pool") === "group" ? "group" : "product";
+}
+
+/**
+ * 「我的需求」页 URL：`?stage=mine&pool=product|group[&requirement=<id>]#my-requirements`。
+ * 列表筛选不在本页使用（PRD §4.13.4 不显示高级筛选），只保留池与详情深链。
+ */
+export function myRequirementsUrl(
+  pathname: string,
+  pool: "product" | "group",
+  requirementId?: string | null,
+  hash = "#my-requirements",
+): string {
+  const params = new URLSearchParams();
+  params.set("stage", "mine");
+  params.set("pool", pool);
+  const requirement = requirementId?.trim();
+  if (requirement) params.set("requirement", requirement);
+  const suffix = hash ? (hash.startsWith("#") ? hash : `#${hash}`) : "";
+  return `${pathname || "/"}?${params.toString()}${suffix}`;
+}
+
+/** 回收站 URL：`?stage=recycle[&requirement=<id>]#recycle-bin`。 */
+export function recycleBinUrl(pathname: string, requirementId?: string | null, hash = "#recycle-bin"): string {
+  const params = new URLSearchParams();
+  params.set("stage", "recycle");
+  const requirement = requirementId?.trim();
+  if (requirement) params.set("requirement", requirement);
+  const suffix = hash ? (hash.startsWith("#") ? hash : `#${hash}`) : "";
+  return `${pathname || "/"}?${params.toString()}${suffix}`;
+}

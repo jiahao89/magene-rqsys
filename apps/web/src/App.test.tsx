@@ -195,14 +195,16 @@ describe("RQ-Sys local workbench", () => {
   });
 
   it("loads source configuration from the API and can request a manual sync", async () => {
-    fetchMock
-      .mockResolvedValueOnce(Response.json({ status: "ok", service: "rq-sys-api" }))
-      .mockResolvedValueOnce(Response.json({ items: [{
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/sources") return Response.json({ items: [{
         id: "source-1", projectId: "project-1", projectName: "产品需求", requirementTypeId: "req-type",
         enabled: true, schedule: { enabled: false, weekday: null, time: null, timezone: null },
-      }] }))
-      .mockResolvedValueOnce(Response.json({ items: [] }))
-      .mockResolvedValueOnce(Response.json({ items: [] }));
+      }] });
+      if (path === "/api/requirements/mine/counts") return Response.json({ identityResolved: true, total: 0, product: 0, group: 0, suppressed: 0 });
+      return Response.json({ items: [] });
+    });
 
     render(<App />);
     expect(await screen.findByText("产品需求")).toBeInTheDocument();
@@ -582,5 +584,65 @@ describe("RQ-Sys local workbench", () => {
     const unassignedTodo = await screen.findByRole("button", { name: /待分配负责人/ });
     expect(unassignedTodo.querySelector(".todo-value")).toHaveTextContent("—");
     expect(unassignedTodo).toBeDisabled();
+  });
+
+  it("shows the my-requirements card with pool counts, links it to the same route as the menu, and opens the page", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/requirements/mine/counts") return Response.json({ identityResolved: true, product: 8, group: 4, total: 12, suppressed: 2 });
+      if (path.startsWith("/api/requirements/mine?")) return Response.json({ items: [], nextCursor: null, identityResolved: true });
+      return Response.json({ items: [], nextCursor: null });
+    });
+
+    render(<App />);
+    expect(await screen.findByText("产品池 8 · 集团池 4（含已压制）")).toBeInTheDocument();
+    expect(screen.getByText("12")).toBeInTheDocument();
+    const nav = screen.getByRole("navigation", { name: "主导航" });
+    const navLabels = within(nav).getAllByRole("link").map((link) => link.textContent ?? "");
+    expect(navLabels.indexOf("我的需求")).toBe(navLabels.indexOf("需求池") + 1);
+    expect(within(nav).getByRole("link", { name: "我的需求" })).toHaveAttribute("href", "/#my-requirements");
+
+    fireEvent.click(screen.getByText("产品池 8 · 集团池 4（含已压制）").closest("a")!);
+    expect(await screen.findByRole("heading", { level: 1, name: "我的需求" })).toBeInTheDocument();
+    expect(window.location.hash).toBe("#my-requirements");
+    expect(screen.getByRole("tab", { name: /产品需求池/ })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("restores the group tab from a stage=mine deep link and hides the count when unavailable", async () => {
+    window.history.replaceState(null, "", "/?stage=mine&pool=group#my-requirements");
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/requirements/mine/counts") return Response.json({ error: { code: "DEPENDENCY_UNAVAILABLE", message: "upstream" } }, { status: 503 });
+      if (path.startsWith("/api/requirements/mine?")) return Response.json({ items: [], nextCursor: null, identityResolved: false });
+      return Response.json({ items: [], nextCursor: null });
+    });
+
+    render(<App />);
+    expect(await screen.findByRole("heading", { level: 1, name: "我的需求" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /集团需求池/ })).toHaveAttribute("aria-selected", "true");
+    // 计数失败只降级数字，不显示 0，也不阻塞列表。
+    expect(await screen.findByText("数量暂不可用")).toBeInTheDocument();
+    expect(screen.queryByText("含已压制 · 共 0 条")).not.toBeInTheDocument();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/requirements/mine?pool=group&limit=25", expect.anything()));
+  });
+
+  it("opens the recycle bin route with the deleted=true list payload", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path.startsWith("/api/requirements?deleted=true")) return Response.json({ items: [], nextCursor: null, identityResolved: true });
+      if (path === "/api/requirements/mine/counts") return Response.json({ identityResolved: true, product: 0, group: 0, total: 0, suppressed: 0 });
+      return Response.json({ items: [], nextCursor: null });
+    });
+    render(<App />);
+    fireEvent.click(within(screen.getByRole("navigation", { name: "主导航" })).getByRole("link", { name: "我的需求" }));
+    fireEvent.click(await screen.findByRole("button", { name: "回收站" }));
+
+    expect(await screen.findByRole("heading", { level: 1, name: "回收站" })).toBeInTheDocument();
+    expect(window.location.hash).toBe("#recycle-bin");
+    expect(await screen.findByText("回收站是空的")).toBeInTheDocument();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/api/requirements?deleted=true&limit=25"), expect.anything()));
   });
 });

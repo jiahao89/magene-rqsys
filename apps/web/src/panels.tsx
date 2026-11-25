@@ -11,9 +11,9 @@ import { stateLabel } from "./state-labels";
 import { RequirementDetailSkeleton, SkeletonBlock, SkeletonTableRows } from "./skeleton";
 import { checkScheduleHealth } from "./schedule";
 import { readRequirementDeepLink } from "./deep-link";
-import { emptyRequirementListFilters, readRequirementListFilters, requirementFilterCount, requirementPoolUrl, type RequirementListFilters, type RequirementProcessingView } from "./requirements-url";
+import { emptyRequirementListFilters, myRequirementsUrl, readMyRequirementsPool, readRequirementListFilters, recycleBinUrl, requirementFilterCount, requirementPoolUrl, type RequirementListFilters, type RequirementProcessingView } from "./requirements-url";
 import { formatDateTime, requirementDisplayId, requirementOwnerView, requirementSourceFacts, requirementSourceName, requirementTime, sortRequirementsForAttention } from "./requirement-view";
-import { AUDIT_PAGE_LIMIT, ApiError, addTeamPerson, applyRequirementAiScore, bindTeamPersonFeishu, createSource, createRequirementAssessment, deleteTeamPerson, getBatch, getFunctionModules, getRequirement, exportRequirementsCsv, getBaseLinks, getGates, getOpsJobs, getOpsMetrics, getReadiness, getRequirementSourceCounts, listRequirementAssessments, setGate, listAudit, listBatches, listDictionaryVersions, listMappings, listRequirements, listTeamPeople, pushRequirement, renameTeamPerson, revokeDuplicateDecision, saveAnalysisContext, saveFunctionModules, retryAnalysis, setPriorityOverride, retrySyncItem, saveRequirementScore, searchFeishuUsers, setDuplicateDecision, setOwner, unbindTeamPersonFeishu, updateSource, type AnalysisVersionSummary, type AuditEvent, type OpsJob, type OpsMetrics, type GatesResponse, type AssessmentConfidence, type AssessmentVerdict, type BatchDetail, type BaseLinks, type BatchSummary, type DictionaryVersion, type DuplicateDecision, type PersonMapping, type PublishStatus, type FeishuUserSelection, type FeishuUserCandidate, type FunctionModuleEntry, type RequirementDetail, type RequirementProcessingState, type RequirementResolution, type RequirementAssessment, type RequirementScoreVersion, type RequirementSourceCounts, type RequirementSummary, type ScoringInputs, type SourceConfig, type SourceConfigUpdate, type TeamPerson, type RequirementPool, clearOwner } from "./api";
+import { AUDIT_PAGE_LIMIT, ApiError, addTeamPerson, applyRequirementAiScore, bindTeamPersonFeishu, createSource, createRequirementAssessment, deleteRequirement, deleteTeamPerson, getBatch, getFunctionModules, getMyRequirementCounts, getRequirement, exportRequirementsCsv, getBaseLinks, getGates, getOpsJobs, getOpsMetrics, getReadiness, getRequirementSourceCounts, listMyRequirements, listRecycleBinRequirements, listRequirementAssessments, restoreRequirement, setGate, listAudit, listBatches, listDictionaryVersions, listMappings, listRequirements, listTeamPeople, pushRequirement, renameTeamPerson, revokeDuplicateDecision, saveAnalysisContext, saveFunctionModules, retryAnalysis, setPriorityOverride, retrySyncItem, saveRequirementScore, searchFeishuUsers, setDuplicateDecision, setOwner, unbindTeamPersonFeishu, updateSource, type AnalysisVersionSummary, type AuditEvent, type OpsJob, type OpsMetrics, type GatesResponse, type AssessmentConfidence, type AssessmentVerdict, type BatchDetail, type BaseLinks, type BatchSummary, type DictionaryVersion, type DuplicateDecision, type MyRequirementCounts, type PersonMapping, type PublishStatus, type FeishuUserSelection, type FeishuUserCandidate, type FunctionModuleEntry, type RequirementDetail, type RequirementProcessingState, type RequirementResolution, type RequirementAssessment, type RequirementScoreVersion, type RequirementSourceCounts, type RequirementSummary, type ScoringInputs, type SourceConfig, type SourceConfigUpdate, type TeamPerson, type RequirementPool, clearOwner } from "./api";
 import type { WorkbenchTab } from "./workbench-routing";
 import { PrdPromptSection } from "./prd-prompt";
 
@@ -1062,10 +1062,15 @@ function requirementListQuery(filter: RequirementListFilters, pool: RequirementP
   };
 }
 
-export function RequirementsPanel({ onRefresh, initialRequirementId, scope = "product", onGroupCountChange }: { onRefresh: () => void; initialRequirementId?: string | null; scope?: RequirementPool; onGroupCountChange?: (count: number | null) => void }) {
+export function RequirementsPanel({ onRefresh, initialRequirementId, scope = "product", onGroupCountChange, mine = false, onRequirementChanged }: { onRefresh: () => void; initialRequirementId?: string | null; scope?: RequirementPool; onGroupCountChange?: (count: number | null) => void; /** PRD §4.13：我的需求模式：服务端按当前身份过滤，隐藏来源 Tab/高级筛选/新建入口。 */ mine?: boolean; /** 删除/还原后通知外层刷新计数。 */ onRequirementChanged?: () => void }) {
   const isGroup = scope === "group";
   // 集团池没有来源维度：即使 URL 带了 source（从产品池复制/手改地址），也不把它带进请求。
-  const [initialFilters] = useState(() => { const parsed = readRequirementListFilters(window.location.search); return scope === "group" ? { ...parsed, source: "" } : parsed; });
+  // 我的需求页按 PRD 省略 processingState（返回 active + suppressed），不沿用需求池默认的「仅活跃」。
+  const [initialFilters] = useState(() => {
+    const parsed = readRequirementListFilters(window.location.search);
+    if (mine) return { ...emptyRequirementListFilters, processingState: "all" as RequirementProcessingView };
+    return scope === "group" ? { ...parsed, source: "" } : parsed;
+  });
   // 页头条数回填用 ref：父组件传内联回调时不应触发计数请求重跑。
   const onGroupCountChangeRef = useRef(onGroupCountChange);
   useEffect(() => { onGroupCountChangeRef.current = onGroupCountChange; }, [onGroupCountChange]);
@@ -1104,7 +1109,12 @@ export function RequirementsPanel({ onRefresh, initialRequirementId, scope = "pr
   const [detailError, setDetailError] = useState<string | null>(null);
   const [autoOpenOwnerPicker, setAutoOpenOwnerPicker] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // PRD §4.13：单条删除的确认弹窗（回收站与列表共用同一实现）。
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [restoreBusy, setRestoreBusy] = useState(false);
 
   // ARCO-05：更多筛选的展开状态（受控按钮 + 条件渲染，替代 details/summary）。
   const [moreFiltersOpen, setMoreFiltersOpen] = useState(false);
@@ -1148,8 +1158,10 @@ export function RequirementsPanel({ onRefresh, initialRequirementId, scope = "pr
     setLoadState("loading"); setLoadError(null);
     try {
       // 分诊视图（priority_asc）按优先级排序且不分页：单页最多 100 条，避免游标与排序不一致。
-      const priorityMode = filter.sort === "priority_asc";
-      const page = await listRequirements({ ...requirementListQuery(filter, scope), limit: priorityMode ? 100 : 25, ...(!priorityMode && nextCursor ? { cursor: nextCursor } : {}) });
+      const priorityMode = !mine && filter.sort === "priority_asc";
+      const page = mine
+        ? await listMyRequirements({ pool: scope, limit: 25, ...(nextCursor ? { cursor: nextCursor } : {}) })
+        : await listRequirements({ ...requirementListQuery(filter, scope), limit: priorityMode ? 100 : 25, ...(!priorityMode && nextCursor ? { cursor: nextCursor } : {}) });
       if (version !== listRequestVersion.current) return;
       setRows((prev) => nextCursor ? [...prev, ...page.items] : page.items);
       setCursor(page.nextCursor);
@@ -1160,7 +1172,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId, scope = "pr
       if (!nextCursor) { setRows([]); setCursor(null); }
       setLoadError(errorText(cause)); setLoadState("error");
     }
-  }, [scope]);
+  }, [scope, mine]);
 
   // 来源计数只影响 Tab 上的数字：接口失败/未部署时静默降级，不打断列表。
   // 集团池只取 all 作为页头条数，不渲染五个来源 Tab。
@@ -1173,14 +1185,15 @@ export function RequirementsPanel({ onRefresh, initialRequirementId, scope = "pr
 
   useEffect(() => {
     void load(initialFilters, null);
+    if (mine) return;
     loadSourceCounts();
     void listTeamPeople().then(setPeople).catch((cause: unknown) => setPeopleError(errorText(cause)));
-  }, [load, initialFilters, loadSourceCounts]);
+  }, [load, initialFilters, loadSourceCounts, mine]);
 
   const open = useCallback(async (id: string, options?: { push?: boolean; openOwnerPicker?: boolean; silent?: boolean }) => {
     if (options?.push) {
       listScrollTop.current = window.scrollY || document.documentElement.scrollTop || 0;
-      window.history.pushState(null, "", requirementPoolUrl(window.location.pathname || "/", appliedFiltersRef.current, id, window.location.hash));
+      window.history.pushState(null, "", mine ? myRequirementsUrl(window.location.pathname || "/", scope, id, "#my-requirements") : requirementPoolUrl(window.location.pathname || "/", appliedFiltersRef.current, id, window.location.hash));
     }
     document.documentElement.scrollTop = 0;
     document.body.scrollTop = 0;
@@ -1210,7 +1223,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId, scope = "pr
     } catch (cause) {
       if (version === detailRequestVersion.current) { setDetailError(errorText(cause)); setDetailLoading(false); }
     }
-  }, [scope]);
+  }, [scope, mine]);
 
   // 同一页面实例切池（产品池 ↔ 集团池）时 React 会复用本组件：作废在途请求与上一池的列表行，
   // 详情对象保留、由渲染层按 detail.pool 判池（不符只显示 404），切回原池即可恢复，无需重新请求。
@@ -1275,12 +1288,52 @@ export function RequirementsPanel({ onRefresh, initialRequirementId, scope = "pr
     finally { setBusy(false); }
   };
 
+  // PRD §4.13：删除/还原。删除成功后从当前列表移除并通知外层刷新计数；详情打开时回到列表。
+  const confirmDelete = async () => {
+    if (!deleteTargetId) return;
+    const targetId = deleteTargetId;
+    setDeleteBusy(true); setActionError(null);
+    try {
+      await deleteRequirement(targetId);
+      setRows((prev) => prev.filter((row) => row.id !== targetId));
+      setDeleteTargetId(null);
+      setNotice("已移入回收站");
+      if (detailId === targetId) closeDetail();
+      onRequirementChanged?.();
+      onRefresh();
+    } catch (cause) {
+      setDeleteTargetId(null);
+      setActionError(errorText(cause));
+    } finally { setDeleteBusy(false); }
+  };
+
+  const restoreDeleted = async (id: string) => {
+    setRestoreBusy(true); setActionError(null);
+    try {
+      await restoreRequirement(id);
+      setNotice("已还原");
+      onRequirementChanged?.();
+      onRefresh();
+      await open(id, { silent: true });
+    } catch (cause) {
+      // 并发：别人已先还原/需求已不在回收站。刷新到最新状态，而不是弹成失败。
+      if (cause instanceof ApiError && cause.status === 409) {
+        setNotice("这条需求已不在回收站，已刷新最新状态。");
+        onRequirementChanged?.();
+        onRefresh();
+        await open(id, { silent: true }).catch(() => undefined);
+      } else {
+        setActionError(errorText(cause));
+      }
+    } finally { setRestoreBusy(false); }
+  };
+
   // 返回列表：用 replaceState 立刻把 URL 恢复为「筛选 + 无 requirement」，
   // 刷新/分享列表地址都不会再落回详情；已加载的 rows/cursor 仍在 state 中。
   const closeDetail = () => {
     detailRequestVersion.current += 1;
     setDetailId(null); setSelected(null); setDetailError(null); setDetailLoading(false); setAutoOpenOwnerPicker(false);
-    window.history.replaceState(null, "", requirementPoolUrl(window.location.pathname || "/", appliedFiltersRef.current, null, window.location.hash));
+    window.history.replaceState(null, "", mine ? myRequirementsUrl(window.location.pathname || "/", scope, null, "#my-requirements") : requirementPoolUrl(window.location.pathname || "/", appliedFiltersRef.current, null, window.location.hash));
   };
 
   const applyFilters = () => {
@@ -1335,7 +1388,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId, scope = "pr
   const refresh = () => {
     // 手动刷新：列表与详情各自静默更新（不整页重载）；总览数据由 onRefresh 在后台静默刷新。
     void load(appliedFiltersRef.current, null);
-    loadSourceCounts();
+    if (!mine) loadSourceCounts();
     if (detailId) void open(detailId, { silent: true });
     onRefresh();
   };
@@ -1357,8 +1410,8 @@ export function RequirementsPanel({ onRefresh, initialRequirementId, scope = "pr
     finally { setExportBusy(false); }
   };
 
-  // 服务端已按优先级排序时不重排；默认视图保持“注意力排序”（仅作用于已加载记录）。
-  const sortedRows = prioritySort === "priority_asc" ? rows : sortRequirementsForAttention(rows);
+  // 服务端已按优先级排序时不重排；我的需求按服务端默认创建时间倒序，不做注意力重排。
+  const sortedRows = mine || prioritySort === "priority_asc" ? rows : sortRequirementsForAttention(rows);
 
   if (detailId) {
     // 跨池守卫的渲染层兜底：同一实例切池时 selected 仍指向上一个池的详情，但绝不渲染它。
@@ -1377,6 +1430,19 @@ export function RequirementsPanel({ onRefresh, initialRequirementId, scope = "pr
         onRefresh={refresh}
         onAct={runAction}
         onSaved={(id) => void open(id, { silent: true })}
+        onDelete={selected ? () => setDeleteTargetId(selected.id) : undefined}
+        canDelete={Boolean(selected?.canDelete ?? (mine && selected?.lifecycleState !== "deleted"))}
+        onRestore={restoreDeleted}
+        canRestore={selected?.canRestore === true}
+        restoreBusy={restoreBusy}
+      />
+      <ConfirmModal
+        visible={deleteTargetId !== null}
+        title="移入回收站？"
+        description="这条需求会从需求池隐藏，但不会被物理删除；可在回收站还原。飞书 Base 中的历史行会保留，不会删除或改动。"
+        okText="移入回收站"
+        onOk={() => void confirmDelete()}
+        onCancel={() => { if (!deleteBusy) setDeleteTargetId(null); }}
       />
     </section>;
   }
@@ -1384,7 +1450,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId, scope = "pr
   return <section className="panel requirements-panel">
     {/* 5c-1：来源是一等维度。Tab 直接顶在列表上方，带计数、可深链；计数拿不到时只显示文字。
         集团池只有一个 TB 来源，不渲染来源 Tab，也不请求五来源计数。 */}
-    {!isGroup && <div className="source-tabs" role="tablist" aria-label="需求来源">
+    {!mine && !isGroup && <div className="source-tabs" role="tablist" aria-label="需求来源">
       {SOURCE_TABS.map((tab, index) => {
         const active = sourceFilter === tab.value;
         const countKey = sourceCountKey(tab.value);
@@ -1407,7 +1473,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId, scope = "pr
         </button>;
       })}
     </div>}
-    <div className="processing-view-switch" role="group" aria-label="重复处理视图">
+    {!mine && <div className="processing-view-switch" role="group" aria-label="重复处理视图">
       <span className="processing-view-switch-label">重复处理</span>
       {PROCESSING_VIEWS.map((view) => <ArcoButton
         key={view.value}
@@ -1415,8 +1481,8 @@ export function RequirementsPanel({ onRefresh, initialRequirementId, scope = "pr
         aria-pressed={processingState === view.value}
         onClick={() => applyProcessingView(view.value)} htmlType="button">{view.label}</ArcoButton>)}
       <span className="processing-view-hint">已压制需求保留记录，但不会进入 AI 分析、Base 推送与通知。</span>
-    </div>
-    <div className="qtoolbar">
+    </div>}
+    {!mine && <div className="qtoolbar">
       <div className="qtoolbar-main">
         <label className="qfield qfield-search">
           <span className="sr-only">需求标题</span>
@@ -1478,23 +1544,258 @@ export function RequirementsPanel({ onRefresh, initialRequirementId, scope = "pr
         <ArcoButton htmlType="button" size="small" onClick={refresh}><RefreshCw size={14} />刷新</ArcoButton>
         <ArcoButton type="primary" htmlType="button" size="small" onClick={applyFilters}>筛选</ArcoButton>
       </div>
-    </div>
-    <p className="status-hint">
+    </div>}
+    {!mine && <p className="status-hint">
       <strong>三个状态分别是什么意思：</strong>
       <span><em>同步状态</em> — 是否已从 Teambition 拉到最新原文（已同步/待同步/同步失败）</span>
       <span><em>AI 分析状态</em> — 是否已生成模块与优先级建议（已分析/待分析/可重试/失败）</span>
       <span><em>推送状态</em> — 是否已写入飞书多维表格（已推送/待推送/推送失败）。三者互不影响，分析失败不会阻止推送。</span>
-    </p>
-    <StateBanner loadError={loadError ?? peopleError} notice={notice} onCloseNotice={() => setNotice(null)} />
+    </p>}
+    <StateBanner loadError={loadError ?? peopleError ?? actionError} notice={notice} onCloseNotice={() => setNotice(null)} />
     <div className="list-summary" role="status">
       {exportNotice && <span className="status-hint" role="status">{exportNotice}</span>}
-      <span className="list-summary-count">已加载 {sortedRows.length} 条{cursor ? "，还有更多" : ""}{activeFilterCount > 0 ? `（已应用 ${activeFilterCount} 个筛选）` : ""}</span>
-      <span className="list-summary-sort">{prioritySort === "priority_asc" ? "分诊视图：按生效优先级 P0 → P3 排序，单页最多 100 条（不分页）" : "排序仅作用于已加载的记录：待分配 → 推送失败 → 待推送 → 已推送"}</span>
+      <span className="list-summary-count">已加载 {sortedRows.length} 条{cursor ? "，还有更多" : ""}{!mine && activeFilterCount > 0 ? `（已应用 ${activeFilterCount} 个筛选）` : ""}</span>
+      <span className="list-summary-sort">{mine ? "分配给你的需求；含已压制，删除后进入回收站。" : prioritySort === "priority_asc" ? "分诊视图：按生效优先级 P0 → P3 排序，单页最多 100 条（不分页）" : "排序仅作用于已加载的记录：待分配 → 推送失败 → 待推送 → 已推送"}</span>
+      {mine && <ArcoButton htmlType="button" size="small" onClick={refresh}><RefreshCw size={14} />刷新</ArcoButton>}
     </div>
     <div id="requirement-tab-panel" role="tabpanel" aria-label="需求列表">
-      <RequirementsTable rows={sortedRows} loading={loadState === "loading"} showSource={!isGroup} onOpen={(row) => void open(row.id, { push: true })} onAssign={(row) => void open(row.id, { push: true, openOwnerPicker: true })} />
-      {cursor && prioritySort !== "priority_asc" && <div className="rules-form"><Button onPress={() => void load(appliedFiltersRef.current, cursor)} isDisabled={loadState === "loading"} variant="secondary" size="small">加载更多</Button></div>}
+      <RequirementsTable
+        rows={sortedRows}
+        loading={loadState === "loading"}
+        showSource={!isGroup}
+        showPool={mine}
+        emptyState={mine ? { title: "暂无分配给你的需求", description: "负责人匹配或人工指派后会出现在这里。" } : undefined}
+        onOpen={(row) => void open(row.id, { push: true })}
+        onAssign={(row) => void open(row.id, { push: true, openOwnerPicker: true })}
+        onDelete={mine ? (row) => setDeleteTargetId(row.id) : undefined}
+      />
+      {cursor && (mine || prioritySort !== "priority_asc") && <div className="rules-form"><Button onPress={() => void load(appliedFiltersRef.current, cursor)} isDisabled={loadState === "loading"} variant="secondary" size="small">加载更多</Button></div>}
     </div>
+    <ConfirmModal
+      visible={deleteTargetId !== null}
+      title="移入回收站？"
+      description="这条需求会从需求池隐藏，但不会被物理删除；可在回收站还原。飞书 Base 中的历史行会保留，不会删除或改动。"
+      okText="移入回收站"
+      onOk={() => void confirmDelete()}
+      onCancel={() => { if (!deleteBusy) setDeleteTargetId(null); }}
+    />
+  </section>;
+}
+
+/** PRD §4.13.4：「我的需求」页：产品池/集团池两个 Tab，Tab 切换写 ?pool= 并重置分页。 */
+export function MyRequirementsPanel({ onRefresh }: { onRefresh: () => void }) {
+  const [pool, setPool] = useState<RequirementPool>(() => readMyRequirementsPool(window.location.search));
+  const [counts, setCounts] = useState<MyRequirementCounts | null>(null);
+  const [countsState, setCountsState] = useState<LoadState>("loading");
+
+  const loadCounts = useCallback(() => {
+    setCountsState("loading");
+    void getMyRequirementCounts()
+      .then((value) => { setCounts(value); setCountsState("ready"); })
+      .catch(() => { setCounts(null); setCountsState("error"); });
+  }, []);
+  useEffect(() => { loadCounts(); }, [loadCounts]);
+  // 浏览器前进/后退恢复同一 Tab；Tab 切换只 replaceState，避免历史里堆一屏池切换。
+  useEffect(() => {
+    const onPopState = () => setPool(readMyRequirementsPool(window.location.search));
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+  const switchPool = (next: RequirementPool) => {
+    if (next === pool) return;
+    setPool(next);
+    window.history.replaceState(null, "", myRequirementsUrl(window.location.pathname || "/", next, null, "#my-requirements"));
+  };
+
+  const tabs: Array<{ value: RequirementPool; label: string; count: number | null }> = [
+    { value: "product", label: "产品需求池", count: countsState === "ready" && counts ? counts.product : null },
+    { value: "group", label: "集团需求池", count: countsState === "ready" && counts ? counts.group : null },
+  ];
+
+  return <div className="composite-page my-requirements-page">
+    <div className="my-requirements-tabs">
+      <div className="source-tabs" role="tablist" aria-label="我的需求池">
+        {tabs.map((tab) => <button key={tab.value} type="button" role="tab" aria-selected={pool === tab.value}
+          className={`source-tab${pool === tab.value ? " is-active" : ""}`} onClick={() => switchPool(tab.value)}>
+          <span>{tab.label}</span>
+          {tab.count !== null ? <span className="source-tab-count">{tab.count}</span> : null}
+        </button>)}
+      </div>
+      <div className="my-requirements-tabs-meta">
+        {countsState === "error" ? <span className="subtle-text">数量暂不可用</span> : null}
+        {countsState === "ready" && counts ? <span className="subtle-text">含已压制 · 共 {counts.total} 条</span> : null}
+      </div>
+    </div>
+    {countsState === "ready" && counts && !counts.identityResolved ? <div className="notice-banner" role="status">
+      <span>当前账号还没有可识别的飞书身份；请在团队管理中绑定飞书账号后再查看。</span>
+    </div> : null}
+    <RequirementsPanel key={pool} scope={pool} mine onRefresh={onRefresh} onRequirementChanged={loadCounts} />
+  </div>;
+}
+
+/** PRD §4.13.6：个人回收站；只显示本人删除项，还原不二次确认、不写 Base。 */
+export function RecycleBinPanel({ onRefresh }: { onRefresh: () => void }) {
+  const [rows, setRows] = useState<RequirementSummary[]>([]);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [loadState, setLoadState] = useState<LoadState>("loading");
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [restoringId, setRestoringId] = useState<string | null>(null);
+  const [detailId, setDetailId] = useState<string | null>(() => readRequirementDeepLink(window.location.search));
+  const [selected, setSelected] = useState<RequirementDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(Boolean(readRequirementDeepLink(window.location.search)));
+  const [detailError, setDetailError] = useState<string | null>(null);
+
+  const load = useCallback(async (nextCursor: string | null) => {
+    if (!nextCursor) setLoadState("loading");
+    setLoadError(null);
+    try {
+      const page = await listRecycleBinRequirements({ limit: 25, ...(nextCursor ? { cursor: nextCursor } : {}) });
+      setRows((prev) => nextCursor ? [...prev, ...page.items] : page.items);
+      setCursor(page.nextCursor);
+      setLoadState("ready");
+    } catch (cause) {
+      if (!nextCursor) setRows([]);
+      setLoadError(errorText(cause));
+      setLoadState("error");
+    }
+  }, []);
+
+  const openDetail = useCallback(async (id: string) => {
+    setDetailId(id); setSelected(null); setDetailLoading(true); setDetailError(null); setNotice(null);
+    window.history.pushState(null, "", recycleBinUrl(window.location.pathname || "/", id));
+    try { setSelected(await getRequirement(id)); }
+    catch (cause) { setDetailError(errorText(cause)); }
+    finally { setDetailLoading(false); }
+  }, []);
+
+  useEffect(() => { void load(null); }, [load]);
+  useEffect(() => {
+    const onPopState = () => {
+      const next = readRequirementDeepLink(window.location.search);
+      if (next) { void openDetail(next); return; }
+      setDetailId(null); setSelected(null); setDetailError(null);
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [openDetail]);
+
+  const closeDetail = () => {
+    setDetailId(null); setSelected(null); setDetailError(null);
+    window.history.replaceState(null, "", recycleBinUrl(window.location.pathname || "/", null));
+  };
+
+  const restore = async (id: string) => {
+    setRestoringId(id); setActionError(null);
+    try {
+      await restoreRequirement(id);
+      setRows((prev) => prev.filter((row) => row.id !== id));
+      setNotice("已还原");
+      if (detailId === id) closeDetail();
+      onRefresh();
+    } catch (cause) {
+      // 并发：这条需求已不在回收站（别人已还原）。刷新列表并提示，不弹成错误。
+      if (cause instanceof ApiError && cause.status === 409) {
+        setNotice("这条需求已不在回收站，已刷新列表。");
+        if (detailId === id) closeDetail();
+        void load(null);
+        onRefresh();
+      } else {
+        setActionError(errorText(cause));
+      }
+    } finally { setRestoringId(null); }
+  };
+
+  if (detailId) {
+    return <section className="panel requirements-panel">
+      <RequirementDetailPage
+        detail={selected}
+        detailId={detailId}
+        loading={detailLoading}
+        error={detailError}
+        notice={notice ?? actionError}
+        busy={restoringId !== null}
+        autoOpenOwnerPicker={false}
+        onCloseNotice={() => { setNotice(null); setActionError(null); }}
+        onBack={closeDetail}
+        onRefresh={() => void openDetail(detailId)}
+        onAct={async () => false}
+        onSaved={() => undefined}
+        canDelete={false}
+        onRestore={restore}
+        canRestore={selected?.canRestore === true}
+        restoreBusy={restoringId !== null}
+      />
+    </section>;
+  }
+
+  const columns = [
+    {
+      title: "需求",
+      dataIndex: "title",
+      render: (_value: unknown, row: RequirementSummary) => <div className="requirement-title">
+        <span className="req-id">{requirementDisplayId(row)}</span>
+        <strong>{row.title}</strong>
+      </div>,
+    },
+    { title: "池", dataIndex: "pool", width: 90, render: (_value: unknown, row: RequirementSummary) => poolChip(row.pool) },
+    {
+      title: "来源",
+      dataIndex: "sourceType",
+      width: 130,
+      render: (_value: unknown, row: RequirementSummary) => requirementSourceInfo(row)?.name ?? requirementSourceName(row),
+    },
+    {
+      title: "删除时间",
+      dataIndex: "deletedAt",
+      width: 180,
+      render: (_value: unknown, row: RequirementSummary) => formatDateTime(row.deletedAt ?? null) ?? <span className="req-empty-value">—</span>,
+    },
+    {
+      title: "删除前处理状态",
+      dataIndex: "processingState",
+      width: 150,
+      render: (_value: unknown, row: RequirementSummary) => processingStateLabels[requirementProcessingState(row)],
+    },
+    {
+      title: "操作",
+      dataIndex: "id",
+      width: 110,
+      render: (_value: unknown, row: RequirementSummary) => <ArcoButton type="text" size="small" className="link-button"
+        onClick={(event) => { event.stopPropagation(); void restore(row.id); }} disabled={restoringId !== null} htmlType="button">{restoringId === row.id ? "还原中…" : "还原"}</ArcoButton>,
+    },
+  ];
+
+  return <section className="panel requirements-panel recycle-bin-panel">
+    <StateBanner loadError={loadError ?? actionError} notice={notice} onCloseNotice={() => setNotice(null)} />
+    <div className="list-summary" role="status">
+      <span className="list-summary-count">已加载 {rows.length} 条{cursor ? "，还有更多" : ""}</span>
+      <span className="list-summary-sort">只显示你删除的需求；不做物理删除，可随时还原。</span>
+    </div>
+    {!rows.length
+      ? loadState === "loading"
+        ? <SkeletonTableRows rows={4} columns={5} />
+        : <div className="table-empty"><strong>回收站是空的</strong><span>你移入回收站的需求会出现在这里，可随时还原。</span></div>
+      : <div className="table-scroll req-list-scroll">
+        <ArcoTable<RequirementSummary>
+          className="req-list"
+          rowKey="id"
+          scroll={{ x: 900 }}
+          columns={columns}
+          data={rows}
+          pagination={false}
+          border={false}
+          onRow={(row) => ({
+            style: { cursor: "pointer" },
+            tabIndex: 0,
+            "aria-label": `打开已删除需求：${row.title}`,
+            onClick: () => void openDetail(row.id),
+            onKeyDown: (event: KeyboardEvent<HTMLElement>) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); void openDetail(row.id); } },
+          })}
+        />
+      </div>}
+    {cursor && <div className="rules-form"><Button onPress={() => void load(cursor)} isDisabled={loadState === "loading"} variant="secondary" size="small">加载更多</Button></div>}
   </section>;
 }
 
@@ -2308,7 +2609,7 @@ function SimilarRequirementSection({ requirementId, title }: { requirementId: st
   </section>;
 }
 
-function RequirementDetailPage({ detail, detailId, loading, error, notice, busy, autoOpenOwnerPicker, onCloseNotice, onBack, onRefresh, onAct, onSaved }: {
+function RequirementDetailPage({ detail, detailId, loading, error, notice, busy, autoOpenOwnerPicker, onCloseNotice, onBack, onRefresh, onAct, onSaved, onDelete, canDelete = false, onRestore, canRestore = false, restoreBusy = false }: {
   detail: RequirementDetail | null;
   detailId: string;
   loading: boolean;
@@ -2321,6 +2622,12 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
   onRefresh: () => void;
   onAct: (action: () => Promise<string>, detailId: string) => Promise<boolean>;
   onSaved: (id: string) => void;
+  /** PRD §4.13：只有当前有效负责人可见「移入回收站」。 */
+  onDelete?: () => void;
+  canDelete?: boolean;
+  onRestore?: (id: string) => Promise<void>;
+  canRestore?: boolean;
+  restoreBusy?: boolean;
 }) {
   const [ownerPickerOpen, setOwnerPickerOpen] = useState(autoOpenOwnerPicker);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
@@ -2360,6 +2667,48 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
   const processingState = requirementProcessingState(detail);
   const suppressed = processingState !== "active";
   const suppressedLabel = processingStateLabels[processingState];
+  // PRD §4.13.7：已删除详情只读；只有删除人能看到还原入口，其余动作一律不渲染。
+  const deleted = Boolean(detail.deletedAt) || detail.lifecycleState === "deleted";
+  if (deleted) {
+    return <div className="req-detail-page req-deleted-detail">
+      <header className="req-detail-summary">
+        <div className="req-summary-backbar"><Button onPress={onBack} variant="secondary" size="small"><ArrowLeft size={14} />返回</Button></div>
+        <div className="req-summary-hero">
+          <div className="req-summary-copy">
+            <h2 className="req-summary-title">{detail.title}<span className="status-chip status-muted">已删除</span>{detail.pool === "group" ? <span className="pool-chip">集团池</span> : null}</h2>
+            <span className="req-summary-id">{detail.platformRequirementId ?? (detail.sourceRequirementId ? `REQ-${detail.sourceRequirementId.slice(0, 8)}` : "WEB")} · v{detail.sourceVersion}</span>
+          </div>
+        </div>
+        <div className="req-summary-meta">
+          <span className="req-deleted-meta">删除时间：{detail.deletedAt ? timeLabel(detail.deletedAt) : "—"}</span>
+          <span className="req-deleted-meta">删除前处理状态：{suppressedLabel}</span>
+          <div className="req-summary-actions" role="group" aria-label="已删除需求操作">
+            {canRestore ? <ArcoButton type="primary" size="small" htmlType="button" loading={restoreBusy} onClick={() => void onRestore?.(detail.id)}>还原需求</ArcoButton> : null}
+            <Button onPress={onRefresh} isDisabled={busy || restoreBusy} variant="secondary" size="small"><RefreshCw size={14} />刷新</Button>
+          </div>
+        </div>
+        <p className="detail-actionbar-hint">已删除需求只读：编辑、负责人、重复判定、AI 分析、评估、提示词、评分与 Base 推送均已停止；飞书 Base 中的历史行保留原样。</p>
+      </header>
+      <StateBanner loadError={error} notice={notice} onCloseNotice={onCloseNotice} />
+      <section className="req-section" aria-labelledby="req-l1-heading">
+        <div className="req-section-head"><h3 id="req-l1-heading">需求信息</h3><span className="req-source-note">{sourceLabel}</span></div>
+        <div className="req-field">
+          <span className="req-meta-label">标题</span>
+          <p className="req-l1-title">{detail.title}</p>
+        </div>
+        <div className="req-field req-description-field">
+          <span className="req-meta-label">描述</span>
+          {facts.description ? <p className="req-description is-expanded">{facts.description}</p> : <span className="req-empty-value">—</span>}
+        </div>
+        <dl className="req-source-grid">
+          <div><dt>池</dt><dd>{poolChip(detail.pool)}</dd></div>
+          <div><dt>来源</dt><dd>{sourceLabel}</dd></div>
+          <div><dt>删除时间</dt><dd>{detail.deletedAt ? timeLabel(detail.deletedAt) : "—"}</dd></div>
+          <div><dt>删除前处理状态</dt><dd>{suppressedLabel}</dd></div>
+        </dl>
+      </section>
+    </div>;
+  }
   const evidence = analysisStrings(structured.evidence);
   const factItems = Array.isArray(structured.facts)
     ? (structured.facts as { text?: unknown }[]).map((fact) => analysisText(fact.text)).filter((text): text is string => text !== null)
@@ -2512,6 +2861,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
           <Button aria-expanded={ownerPickerOpen} aria-controls={ownerEditorId} onPress={() => setOwnerPickerOpen((open) => !open)} isDisabled={busy || suppressed} variant="primary" size="small">{suppressed ? "分配 / 变更负责人（已压制）" : "分配 / 变更负责人"}</Button>
           <ArcoButton htmlType="button" size="small" onClick={() => void onAct(async () => { await retryAnalysis(detail.id); return "AI 分析重试已入队"; }, detail.id)} disabled={busy || !analysisRetryable} title={analysisRetryable ? "重新提交 AI 分析（会消耗一次模型调用）" : analysisDisabledReason}>{analysisActionLabel}</ArcoButton><span className="subtle-text">会消耗一次模型调用</span>
           <ArcoButton htmlType="button" size="small" onClick={() => void onAct(async () => { const result = await pushRequirement(detail.id); return result.status === "queued" ? "Base 推送重试已入队" : `推送状态：${result.status}`; }, detail.id)} disabled={busy || !pushRetryable} title={pushRetryable ? "重新提交 Base 推送" : pushDisabledReason}>重试 Base 推送</ArcoButton>
+          {canDelete && onDelete ? <ArcoButton htmlType="button" size="small" status="danger" onClick={onDelete}>移入回收站</ArcoButton> : null}
           <Button onPress={onRefresh} isDisabled={busy} variant="secondary" size="small"><RefreshCw size={14} />刷新</Button>
         </div>
       </div>
@@ -2688,11 +3038,11 @@ function isRowActionTarget(target: EventTarget | null): boolean {
   return target instanceof Element && Boolean(target.closest("button, a, input, select, textarea"));
 }
 
-function RequirementsTable({ rows, loading, showSource = true, onOpen, onAssign }: { rows: RequirementSummary[]; loading: boolean; showSource?: boolean; onOpen: (row: RequirementSummary) => void; onAssign: (row: RequirementSummary) => void }) {
+function RequirementsTable({ rows, loading, showSource = true, showPool = false, emptyState, onOpen, onAssign, onDelete }: { rows: RequirementSummary[]; loading: boolean; showSource?: boolean; showPool?: boolean; emptyState?: { title: string; description: string }; onOpen: (row: RequirementSummary) => void; onAssign: (row: RequirementSummary) => void; onDelete?: (row: RequirementSummary) => void }) {
   // 首屏加载骨架屏；静默刷新时保留已渲染的行，避免整块列表闪烁。
   if (!rows.length) return loading
-    ? <SkeletonTableRows rows={6} columns={5} />
-    : <div className="table-empty"><strong>没有匹配的需求</strong><span>数据仅在 API 返回后显示，不使用演示数据。</span></div>;
+    ? <SkeletonTableRows rows={6} columns={6} />
+    : <div className="table-empty"><strong>{emptyState?.title ?? "没有匹配的需求"}</strong><span>{emptyState?.description ?? "数据仅在 API 返回后显示，不使用演示数据。"}</span></div>;
   const columns = [
     {
       title: "需求标题",
@@ -2704,6 +3054,7 @@ function RequirementsTable({ rows, loading, showSource = true, onOpen, onAssign 
         return <div className="req-row-title-cell">
           <span className="req-row-title" title={row.title}>{row.title}</span>
           {sourceInfo ? <span className={`source-badge is-${sourceInfo.kind}`} title={sourceInfo.note}><span className="source-badge-name">{sourceInfo.name}</span>{sourceInfo.channel ? <span className="source-badge-channel">·{sourceInfo.channel}</span> : null}</span> : null}
+          {showPool ? poolChip(row.pool) : null}
           {badge ? <span className={`status-chip ${badge.className} processing-badge`} title={badge.title}>{badge.label}</span> : null}
           {row.sourceMissingSince ? <span className="status-chip processing-badge" title={`上次全量同步（${timeLabel(row.sourceMissingSince)}）未再出现该 TB 需求；记录保留，处理与推送状态不变`}>来源已移除</span> : null}
           {suppressed ? <span className="sr-only">（已压制：不进入 AI 分析/Base 推送/通知）</span> : null}
@@ -2755,7 +3106,10 @@ function RequirementsTable({ rows, loading, showSource = true, onOpen, onAssign 
       width: 120,
       render: (_value: unknown, row: RequirementSummary) => {
         const owner = requirementOwnerView(row);
-        return <div className="req-row-action">{owner.unassigned ? <Button onPress={() => onAssign(row)} variant="secondary" size="small">分配</Button> : null}</div>;
+        return <div className="req-row-action">
+          {owner.unassigned ? <Button onPress={() => onAssign(row)} variant="secondary" size="small">分配</Button> : null}
+          {onDelete ? <ArcoButton type="text" size="small" className="link-button" onClick={(event) => { event.stopPropagation(); onDelete(row); }} htmlType="button">删除</ArcoButton> : null}
+        </div>;
       },
     },
   ];

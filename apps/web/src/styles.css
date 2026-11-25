@@ -1776,3 +1776,33 @@ html[data-theme="dark"] .advice-card { background: var(--rq-surface-subtle); bor
 .sources-page .source-card { flex: 1; }
 .sources-page .executor-add { flex-wrap: nowrap; }
 .sources-page .executor-add .arco-input { flex: 1 1 160px; min-width: 0; max-width: 320px; }
+
+/* ---------- PRD §4.13：我的需求 / 回收站 ---------- */
+.my-requirements-card { margin-bottom: 18px; padding: 0; overflow: hidden; }
+.my-requirements-card-link {
+  display: flex; align-items: center; gap: 16px; padding: 16px 18px; color: inherit; text-decoration: none;
+  transition: background-color .15s ease;
+}
+.my-requirements-card-link:hover { background: var(--rq-surface-muted); }
+.my-requirements-card-link:focus-visible { outline: 2px solid var(--rq-link); outline-offset: -2px; }
+.my-requirements-card-icon {
+  display: inline-flex; width: 38px; height: 38px; flex: none; align-items: center; justify-content: center;
+  border-radius: var(--rq-radius-md); background: var(--rq-surface-muted); color: var(--rq-link);
+}
+.my-requirements-card-copy { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.my-requirements-card-title { color: var(--rq-text-strong); font-size: 15px; font-weight: 650; }
+.my-requirements-card-hint { color: var(--rq-text-soft); font-size: var(--rq-font-caption); }
+.my-requirements-card-count { display: flex; margin-left: auto; flex-direction: column; align-items: flex-end; gap: 3px; text-align: right; }
+.my-requirements-card-count strong { color: var(--rq-text-strong); font-size: 26px; line-height: 1; font-variant-numeric: tabular-nums; }
+.my-requirements-card-count span { color: var(--rq-text-soft); font-size: var(--rq-font-caption); }
+.my-requirements-card-action { display: inline-flex; flex: none; align-items: center; gap: 4px; color: var(--rq-link); font-size: var(--rq-font-caption); }
+.my-requirements-tabs { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.my-requirements-tabs .source-tabs { margin: 0; }
+.my-requirements-tabs-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.req-deleted-detail .req-summary-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.req-deleted-meta { color: var(--rq-text-soft); font-size: var(--rq-font-caption); }
+@media (max-width: 720px) {
+  .my-requirements-card-link { flex-wrap: wrap; }
+  .my-requirements-card-count { margin-left: 0; align-items: flex-start; text-align: left; }
+  .my-requirements-card-action { width: 100%; }
+}

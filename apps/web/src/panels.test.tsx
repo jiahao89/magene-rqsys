@@ -1,7 +1,7 @@
 // 工单 16/17 面板测试：数据全部来自 mock API；覆盖正向、权限拒绝与详情/重试交互。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { AnalysisContextSection, AuditPanel, OpsPanel, BatchesPanel, MappingsPanel, ModulesPanel, PeoplePanel, PriorityOverrideSection, RequirementsPanel, ScoringPanel, SourcesPanel, SyncRecordsPanel } from "./panels";
+import { AnalysisContextSection, AuditPanel, OpsPanel, BatchesPanel, MappingsPanel, ModulesPanel, MyRequirementsPanel, PeoplePanel, PriorityOverrideSection, RecycleBinPanel, RequirementsPanel, ScoringPanel, SourcesPanel, SyncRecordsPanel } from "./panels";
 import { AudienceEditor, IntakeForm } from "./intake-form";
 import type { RequirementDetail, SourceConfig, TeamPerson } from "./api";
 
@@ -2988,5 +2988,167 @@ describe("集团需求池切池守卫与创建入口（P2 修复）", () => {
     rerender(<RequirementsPanel scope="product" onRefresh={() => undefined} />);
     expect(await screen.findByRole("button", { name: "新建需求" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "从聊天粘贴" })).toBeInTheDocument();
+  });
+});
+
+describe("My requirements and recycle bin (PRD §4.13)", () => {
+  const activeRow = {
+    id: "req-mine-1", sourceRequirementId: "tb-1", sourceType: "teambition", sourceChannel: null, title: "我的活跃需求",
+    productModel: null, requirementType: null, constraintNotes: null, supplementUrl: null, intakeModule: null,
+    audience: { tags: [], confirmed: false, version: 0 }, sourceVersion: 1,
+    pipeline: { pull: "synced", analysis: "analyzed", owner: "manual", push: "pushed" },
+    processingState: "active", pool: "product", ownerName: "我", updatedAt: "2026-11-25T01:00:00.000Z", source: {},
+  };
+  const suppressedRow = { ...activeRow, id: "req-mine-2", title: "我的已压制需求", processingState: "suppressed_duplicate" };
+  const groupRow = { ...activeRow, id: "req-mine-3", title: "集团池的我的需求", pool: "group" };
+  const deletedRow = {
+    ...activeRow, id: "req-del-1", title: "被删除的需求", pool: "group", processingState: "suppressed_ignored",
+    deletedAt: "2026-11-25T08:00:00.000Z",
+  };
+
+  function mockMine(overrides: { counts?: unknown } = {}) {
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/requirements/mine/counts") return jsonOk(overrides.counts ?? { identityResolved: true, product: 2, group: 1, total: 3, suppressed: 1 });
+      if (path.startsWith("/api/requirements/mine?")) {
+        return jsonOk({ items: path.includes("pool=group") ? [groupRow] : [activeRow, suppressedRow], nextCursor: null, identityResolved: true });
+      }
+      if (path === "/api/requirements/req-mine-1" && init?.method !== "DELETE") return jsonOk({ ...activeRow, analysis: null, analyses: [] });
+      return jsonOk({ items: [], nextCursor: null });
+    });
+  }
+
+  it("renders the two pool tabs with counts and calls the mine list without advanced filters", async () => {
+    mockMine();
+    render(<MyRequirementsPanel onRefresh={() => undefined} />);
+
+    expect(await screen.findByText("含已压制 · 共 3 条")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /产品需求池/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: /集团需求池/ })).toBeInTheDocument();
+    // PRD §4.13.4：不显示来源 Tab、高级筛选和新建入口。
+    expect(screen.queryByRole("tablist", { name: "需求来源" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("需求标题")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "新建需求" })).not.toBeInTheDocument();
+    expect(await screen.findByText("我的活跃需求")).toBeInTheDocument();
+    expect(screen.getByText("我的已压制需求")).toBeInTheDocument();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/requirements/mine?pool=product&limit=25", expect.anything()));
+  });
+
+  it("switches pool tab, writes ?pool= to the URL and requests the other pool", async () => {
+    mockMine();
+    render(<MyRequirementsPanel onRefresh={() => undefined} />);
+    await screen.findByText("我的活跃需求");
+
+    fireEvent.click(screen.getByRole("tab", { name: /集团需求池/ }));
+    expect(await screen.findByText("集团池的我的需求")).toBeInTheDocument();
+    expect(window.location.search).toContain("pool=group");
+    expect(window.location.search).toContain("stage=mine");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/requirements/mine?pool=group&limit=25", expect.anything()));
+  });
+
+  it("deletes a requirement only after confirmation and removes it from the list", async () => {
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/requirements/mine/counts") return jsonOk({ identityResolved: true, product: 1, group: 0, total: 1, suppressed: 0 });
+      if (path.startsWith("/api/requirements/mine?")) return jsonOk({ items: [activeRow], nextCursor: null, identityResolved: true });
+      if (path === "/api/requirements/req-mine-1" && init?.method === "DELETE") return jsonOk({ requirementId: "req-mine-1", deletedAt: "2026-11-25T09:00:00.000Z", deletedBy: "u-1", replayed: false });
+      return jsonOk({ items: [], nextCursor: null });
+    });
+    render(<MyRequirementsPanel onRefresh={() => undefined} />);
+    await screen.findByText("我的活跃需求");
+
+    fireEvent.click(screen.getByRole("button", { name: "删除" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).getByText("移入回收站？")).toBeInTheDocument();
+    expect(within(dialog).getByText(/飞书 Base 中的历史行会保留/)).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "移入回收站" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/requirements/req-mine-1", expect.objectContaining({ method: "DELETE" })));
+    expect(await screen.findByText("已移入回收站")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText("我的活跃需求")).not.toBeInTheDocument());
+  });
+
+  it("lists only the recycle bin payload and restores without a second confirmation", async () => {
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path.startsWith("/api/requirements?deleted=true")) return jsonOk({ items: [deletedRow], nextCursor: null, identityResolved: true });
+      if (path === "/api/requirements/req-del-1/restore" && init?.method === "POST") return jsonOk({ requirementId: "req-del-1", deletedAt: null, deletedBy: null });
+      return jsonOk({ items: [], nextCursor: null });
+    });
+    render(<RecycleBinPanel onRefresh={() => undefined} />);
+
+    expect(await screen.findByText("被删除的需求")).toBeInTheDocument();
+    expect(screen.getByText("集团池")).toBeInTheDocument();
+    expect(screen.getByText("已压制（忽略）")).toBeInTheDocument();
+    expect(screen.getByText(/只显示你删除的需求/)).toBeInTheDocument();
+    expect(screen.queryByText("清空回收站")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "还原" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/requirements/req-del-1/restore", expect.objectContaining({ method: "POST" })));
+    expect(await screen.findByText("已还原")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText("被删除的需求")).not.toBeInTheDocument());
+  });
+
+  it("opens a deleted detail read-only and only shows restore to the deleter", async () => {
+    const deletedDetail = { ...deletedRow, deletedBy: "u-1", canRestore: true, analysis: null, analyses: [], source: {} };
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path.startsWith("/api/requirements?deleted=true")) return jsonOk({ items: [deletedRow], nextCursor: null, identityResolved: true });
+      if (path === "/api/requirements/req-del-1" && init?.method !== "DELETE") return jsonOk(deletedDetail);
+      if (path === "/api/requirements/req-del-1/restore" && init?.method === "POST") return jsonOk({ requirementId: "req-del-1", deletedAt: null, deletedBy: null });
+      return jsonOk({ items: [], nextCursor: null });
+    });
+    render(<RecycleBinPanel onRefresh={() => undefined} />);
+
+    fireEvent.click(await screen.findByText("被删除的需求"));
+    expect(await screen.findByText("已删除")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "还原需求" })).toBeInTheDocument();
+    // 已删除详情只读：不出现负责人/分析/推送动作。
+    expect(screen.queryByRole("button", { name: /分配 \/ 变更负责人/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /重试 AI 分析|重新分析/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "重试 Base 推送" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "还原需求" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/requirements/req-del-1/restore", expect.objectContaining({ method: "POST" })));
+    // 还原成功后回到回收站列表，行已移除。
+    expect(await screen.findByText("回收站是空的")).toBeInTheDocument();
+  });
+
+  it("does not show restore when the server does not mark canRestore, even if deletedBy leaks", async () => {
+    const deletedDetail = { ...deletedRow, deletedBy: "u-1", canRestore: false, analysis: null, analyses: [], source: {} };
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path.startsWith("/api/requirements?deleted=true")) return jsonOk({ items: [deletedRow], nextCursor: null, identityResolved: true });
+      if (path === "/api/requirements/req-del-1" && init?.method !== "DELETE") return jsonOk(deletedDetail);
+      return jsonOk({ items: [], nextCursor: null });
+    });
+    render(<RecycleBinPanel onRefresh={() => undefined} />);
+    fireEvent.click(await screen.findByText("被删除的需求"));
+
+    expect(await screen.findByText("已删除")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "还原需求" })).not.toBeInTheDocument();
+  });
+
+  it("treats a 409 restore as already restored: refresh the list and show a calm notice", async () => {
+    let listCalls = 0;
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path.startsWith("/api/requirements?deleted=true")) {
+        listCalls += 1;
+        return jsonOk({ items: listCalls === 1 ? [deletedRow] : [], nextCursor: null, identityResolved: true });
+      }
+      if (path === "/api/requirements/req-del-1/restore" && init?.method === "POST") {
+        return new Response(JSON.stringify({ error: { code: "CONFLICT", message: "需求不在回收站。" } }), { status: 409, headers: { "content-type": "application/json" } });
+      }
+      return jsonOk({ items: [], nextCursor: null });
+    });
+    render(<RecycleBinPanel onRefresh={() => undefined} />);
+    await screen.findByText("被删除的需求");
+
+    fireEvent.click(screen.getByRole("button", { name: "还原" }));
+    expect(await screen.findByText("这条需求已不在回收站，已刷新列表。")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText("被删除的需求")).not.toBeInTheDocument());
+    expect(listCalls).toBeGreaterThanOrEqual(2);
   });
 });

@@ -568,6 +568,12 @@ export interface RequirementSummary {
   manualOwner?: { feishuUserId: string; feishuIdType: "open_id" | "user_id" | "union_id"; name: string | null; assignedAt: string } | null;
   duplicateOf?: string | null;
   updatedAt?: string | null;
+  /** 池归属（回收站/我的需求行需要；普通列表可缺省按 product 处理）。 */
+  pool?: RequirementPool;
+  /** PRD §4.13：生命周期；正常列表恒为 active，回收站为 deleted。 */
+  lifecycleState?: "active" | "deleted";
+  /** 逻辑删除时间（仅回收站/已删除详情返回）。 */
+  deletedAt?: string | null;
 }
 
 export interface AnalysisVersionSummary {
@@ -667,6 +673,14 @@ export interface RequirementDetail {
   lastPushedAt?: string | null;
   /** 池归属（服务端按来源推导）；页面用于跨池守卫与「集团池」标签。 */
   pool?: RequirementPool;
+  /** PRD §4.13：已删除详情只读；deletedAt 非空表示在回收站。 */
+  lifecycleState?: "active" | "deleted";
+  deletedAt?: string | null;
+  /** 只对删除人本人返回；null 表示不是删除人（M16：不泄露原始用户 ID 给别人）。 */
+  deletedBy?: string | null;
+  /** 兼容服务端可选下发的权限布尔；缺省时按 deletedBy 是否为空判断还原权限。 */
+  canDelete?: boolean;
+  canRestore?: boolean;
 }
 
 export interface BatchSummary {
@@ -705,6 +719,53 @@ export async function exportRequirementsCsv(params: { q?: string; executorName?:
 export async function listRequirements(params: { q?: string; executorName?: string; pullState?: string; ownerState?: string; analysisState?: string; pushState?: string; processingState?: "active" | "suppressed"; priority?: "P0" | "P1" | "P2" | "P3"; source?: "teambition" | "web_manual" | "base_form" | "chat_paste"; sort?: "created_desc" | "priority_asc"; batchId?: string; since?: string; until?: string; pool?: RequirementPool; limit?: number; cursor?: string; fetcher?: typeof fetch; signal?: AbortSignal } = {}): Promise<{ items: RequirementSummary[]; nextCursor: string | null }> {
   const { fetcher = fetch, q, executorName, pullState, ownerState, analysisState, pushState, processingState, priority, source, sort, batchId, since, until, pool, limit, cursor, signal } = params;
   return requestJson<{ items: RequirementSummary[]; nextCursor: string | null }>(`/api/requirements${buildSearch({ q, executorName, pullState, ownerState, analysisState, pushState, processingState, priority, source, sort, batchId, since, until, pool, limit, cursor })}`, fetcher, signal);
+}
+
+// ---------- PRD §4.13：我的需求与回收站 ----------
+
+/** 首页「我的需求」卡与页面 Tab 计数；counts 缺失或为负时按接口异常处理，不用 0 冒充。 */
+export interface MyRequirementCounts {
+  identityResolved: boolean;
+  total: number;
+  product: number;
+  group: number;
+  suppressed: number;
+}
+
+export async function getMyRequirementCounts(fetcher: typeof fetch = fetch): Promise<MyRequirementCounts> {
+  const result = await requestJson<{
+    identityResolved?: unknown; total?: unknown; product?: unknown; group?: unknown; suppressed?: unknown;
+    counts?: { identityResolved?: unknown; total?: unknown; product?: unknown; group?: unknown; suppressed?: unknown } | null;
+  }>("/api/requirements/mine/counts", fetcher);
+  const raw = result?.counts ?? result;
+  const count = (value: unknown): number | null => (typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null);
+  const product = count(raw?.product);
+  const group = count(raw?.group);
+  const total = count(raw?.total);
+  if (typeof raw?.identityResolved !== "boolean" || product === null || group === null || total === null) {
+    throw new ApiError("我的需求计数响应格式不正确。", 502, "INVALID_MY_REQUIREMENT_COUNTS");
+  }
+  return { identityResolved: raw.identityResolved, total, product, group, suppressed: count(raw?.suppressed) ?? 0 };
+}
+
+/** 我的需求列表：服务端按当前登录身份解析负责人；pool 区分产品池/集团池。 */
+export async function listMyRequirements(params: { pool?: RequirementPool; limit?: number; cursor?: string; fetcher?: typeof fetch } = {}): Promise<{ items: RequirementSummary[]; nextCursor: string | null }> {
+  const { fetcher = fetch, ...rest } = params;
+  return requestJson<{ items: RequirementSummary[]; nextCursor: string | null }>(`/api/requirements/mine${buildSearch(rest)}`, fetcher);
+}
+
+/** 回收站：只返回当前用户删除的项，按删除时间倒序。 */
+export async function listRecycleBinRequirements(params: { limit?: number; cursor?: string; fetcher?: typeof fetch } = {}): Promise<{ items: RequirementSummary[]; nextCursor: string | null }> {
+  const { fetcher = fetch, limit, cursor } = params;
+  return requestJson<{ items: RequirementSummary[]; nextCursor: string | null }>(`/api/requirements${buildSearch({ deleted: "true", limit, cursor })}`, fetcher);
+}
+
+export async function deleteRequirement(id: string, fetcher: typeof fetch = fetch): Promise<{ deletedAt?: string | null }> {
+  return deleteJson<{ deletedAt?: string | null }>(`/api/requirements/${id}`, fetcher);
+}
+
+export async function restoreRequirement(id: string, fetcher: typeof fetch = fetch): Promise<{ lifecycleState?: string; processingState?: string }> {
+  return postJson<{ lifecycleState?: string; processingState?: string }>(`/api/requirements/${id}/restore`, {}, fetcher);
 }
 
 /**
