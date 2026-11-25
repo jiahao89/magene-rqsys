@@ -309,6 +309,21 @@ function baseRecordUrl(recordId: string | null, pool: SourcePool = "product"): s
   if (!recordId || !template || !template.startsWith("https://") || !template.includes("{recordId}")) return null;
   return template.replaceAll("{recordId}", encodeURIComponent(recordId));
 }
+// 数据源页底部展示的 Base 入口：复用同一份记录模板，去掉 record 参数，只留 Base/表地址。
+// 只读展示用；未配置或不是 https 时返回 null，前端显示「未配置」而不是给出坏链接。
+const BASE_LINK_PLACEHOLDER = "__rqsys_record_placeholder__";
+function baseLinkFromTemplate(envKey: "RQSYS_BASE_RECORD_URL_TEMPLATE" | "RQSYS_GROUP_BASE_RECORD_URL_TEMPLATE"): { url: string | null } {
+  const template = process.env[envKey]?.trim();
+  if (!template) return { url: null };
+  let parsed: URL;
+  try { parsed = new URL(template.replaceAll("{recordId}", BASE_LINK_PLACEHOLDER)); } catch { return { url: null }; }
+  if (parsed.protocol !== "https:") return { url: null };
+  // record 参数与任何承载记录 ID 占位符的参数都不属于 Base 地址本身。
+  for (const [key, value] of [...parsed.searchParams.entries()]) {
+    if (key === "record" || value.includes(BASE_LINK_PLACEHOLDER)) parsed.searchParams.delete(key);
+  }
+  return { url: parsed.toString().replace(/[?#]$/, "") };
+}
 // 运维视图只回传作业元数据与安全错误摘要；payload 可能含 actorId/hash 等运行细节，
 // dedupeKey 也可能内嵌 owner open_id 等人员标识，两者都不下发。
 function opsJobDto(job: PipelineJobRecord) {
@@ -612,6 +627,14 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
         } : null,
       },
       ai,
+    });
+  }
+  // 数据源页底部：两个池的飞书 Base 入口（只读，仅展示，不提供编辑）。
+  if (method === "GET" && url.pathname === "/api/base-links") {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    return json({
+      product: baseLinkFromTemplate("RQSYS_BASE_RECORD_URL_TEMPLATE"),
+      group: baseLinkFromTemplate("RQSYS_GROUP_BASE_RECORD_URL_TEMPLATE"),
     });
   }
   if (method === "GET" && url.pathname === "/api/sources") {

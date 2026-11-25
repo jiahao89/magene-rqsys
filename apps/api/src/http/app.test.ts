@@ -264,6 +264,33 @@ test("overview AI block reports a running analysis with a null result at its sta
 
 test("lists only user-maintained source settings after injected identity authentication", async () => { const r = await handleApiRequest(new Request("http://localhost/api/sources"), makeDependencies()); assert.equal(r.status, 200); assert.deepEqual(await r.json(), { items: [{ id: source.id, pool: "product", projectName: "Project", enabled: true, executorAllowlist: [], schedule: { enabled: false, weekday: null, weekdays: null, time: null, timezone: null } }] }); });
 test("rejects protected routes without an identity provider", async () => { const r = await handleApiRequest(new Request("http://localhost/api/sources"), unauthenticated); assert.equal(r.status, 401); });
+test("base links expose both pools without the record parameter and stay null when unconfigured", async () => {
+  const previous = {
+    product: process.env.RQSYS_BASE_RECORD_URL_TEMPLATE,
+    group: process.env.RQSYS_GROUP_BASE_RECORD_URL_TEMPLATE,
+  };
+  try {
+    process.env.RQSYS_BASE_RECORD_URL_TEMPLATE = "https://aimagene.feishu.cn/base/GRnEboCIga7Omas8RwgcDmmgnib?table=tbl6Gfi0KJ2a1llK&record={recordId}";
+    process.env.RQSYS_GROUP_BASE_RECORD_URL_TEMPLATE = "https://aimagene.feishu.cn/base/HZ6NbvXKJa0o5Qs4hgQcSoirnde?table=tblNVlrwYOPU5kuz&record={recordId}";
+    const configured = await handleApiRequest(new Request("http://localhost/api/base-links"), makeDependencies());
+    assert.equal(configured.status, 200);
+    assert.deepEqual(await configured.json(), {
+      product: { url: "https://aimagene.feishu.cn/base/GRnEboCIga7Omas8RwgcDmmgnib?table=tbl6Gfi0KJ2a1llK" },
+      group: { url: "https://aimagene.feishu.cn/base/HZ6NbvXKJa0o5Qs4hgQcSoirnde?table=tblNVlrwYOPU5kuz" },
+    });
+    delete process.env.RQSYS_BASE_RECORD_URL_TEMPLATE;
+    delete process.env.RQSYS_GROUP_BASE_RECORD_URL_TEMPLATE;
+    const unconfigured = await handleApiRequest(new Request("http://localhost/api/base-links"), makeDependencies());
+    assert.equal(unconfigured.status, 200);
+    assert.deepEqual(await unconfigured.json(), { product: { url: null }, group: { url: null } });
+  } finally {
+    if (previous.product === undefined) delete process.env.RQSYS_BASE_RECORD_URL_TEMPLATE;
+    else process.env.RQSYS_BASE_RECORD_URL_TEMPLATE = previous.product;
+    if (previous.group === undefined) delete process.env.RQSYS_GROUP_BASE_RECORD_URL_TEMPLATE;
+    else process.env.RQSYS_GROUP_BASE_RECORD_URL_TEMPLATE = previous.group;
+  }
+});
+
 test("updates source settings by project name while keeping server-owned IDs and metadata", async () => { const d = makeDependencies(); const r = await handleApiRequest(new Request(`http://localhost/api/sources/${source.id}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectName: "Project", enabled: false, schedule: { enabled: true, weekday: 1, time: "09:30", timezone: "Asia/Shanghai" } }) }), d); assert.equal(r.status, 200); const body = await r.json() as Record<string, unknown>; assert.deepEqual(body, { id: source.id, pool: "product", projectName: "Project", enabled: false, executorAllowlist: [], schedule: { enabled: true, weekday: 1, weekdays: [1], time: "09:30", timezone: "Asia/Shanghai" } }); assert.equal(source.externalProjectId, "p1"); assert.equal(source.requirementTypeId, "type1"); assert.deepEqual(source.fieldMap, { title: "name" }); });
 test("updates source schedule with a multi-weekday list", async () => {
   const d = makeDependencies();

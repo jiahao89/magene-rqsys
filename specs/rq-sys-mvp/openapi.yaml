@@ -103,6 +103,25 @@ paths:
                 required: [counts, ai]
         '401': { $ref: '#/components/responses/Unauthorized' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /api/base-links:
+    get:
+      summary: Read-only Feishu Base links for both pools
+      description: >-
+        数据源页底部展示的飞书 Base 入口（只读，仅展示，不可编辑）。地址来自
+        RQSYS_BASE_RECORD_URL_TEMPLATE / RQSYS_GROUP_BASE_RECORD_URL_TEMPLATE，
+        去掉 record 参数后返回 Base/表地址；未配置或不是 https 时对应 url 为 null。
+      responses:
+        '200':
+          description: Base links by pool; url is null when the pool has no usable template
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  product: { $ref: '#/components/schemas/BaseLink' }
+                  group: { $ref: '#/components/schemas/BaseLink' }
+                required: [product, group]
+        '401': { $ref: '#/components/responses/Unauthorized' }
   /api/sources:
     get:
       summary: List configured sources
@@ -1883,6 +1902,12 @@ components:
     PushState:
       type: string
       enum: [pending, running, pushed, failed]
+    BaseLink:
+      type: object
+      description: Read-only Feishu Base entry shown on the data-source page; null URL when unconfigured.
+      properties:
+        url: { type: [string, 'null'], format: uri }
+      required: [url]
     SourceConfig:
       type: object
       properties:
