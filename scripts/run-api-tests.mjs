@@ -25,16 +25,20 @@ child.stdout.on("data", (chunk) => { output += chunk; });
 child.stderr.on("data", (chunk) => { output += chunk; });
 const exitCode = await new Promise((resolveExit) => child.on("close", resolveExit));
 
-process.stdout.write(output);
-const summary = output.match(/^ℹ tests (\d+)$/m);
+// 先把子进程输出完整刷出去，再判断结果：管道是异步写，直接 process.exit 会把日志从中间截断。
+await new Promise((flushed) => process.stdout.write(output, flushed));
+// 本机（spec reporter）打印 `ℹ tests N`，CI（TAP reporter）打印 `# tests N`，两种都要认。
+const summary = output.match(/^[ \t]*(?:#|ℹ)[ \t]*tests[ \t]+(\d+)[ \t]*$/m);
+process.exitCode = exitCode ?? 1;
 if (!summary) {
   console.error("\n未找到用例总数（测试进程可能在收集阶段就退出了）；按失败处理。");
-  process.exit(1);
+  process.exitCode = 1;
+} else {
+  const tests = Number(summary[1]);
+  if (tests < MIN_TESTS) {
+    console.error(`\nAPI 用例数低于下限：${tests} < ${MIN_TESTS}。整段用例可能被静默吞掉，请检查测试文件是否被误覆盖或删除。`);
+    process.exitCode = 1;
+  } else {
+    console.log(`\n用例数下限通过：${tests} ≥ ${MIN_TESTS}`);
+  }
 }
-const tests = Number(summary[1]);
-if (tests < MIN_TESTS) {
-  console.error(`\nAPI 用例数低于下限：${tests} < ${MIN_TESTS}。整段用例可能被静默吞掉，请检查测试文件是否被误覆盖或删除。`);
-  process.exit(1);
-}
-console.log(`\n用例数下限通过：${tests} ≥ ${MIN_TESTS}`);
-process.exit(exitCode ?? 1);
