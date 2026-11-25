@@ -48,16 +48,16 @@ function kanoFetch(captured: { url?: string; body?: Record<string, unknown>; abo
   }) as unknown as typeof fetch;
 }
 
-test("kano provider shares the main analysis defaults: empty env values fall back instead of passing through", async () => {
+test("kano provider keeps the model default but refuses a missing AI_BASE_URL", async () => {
   const saved = { ...process.env };
   try {
     process.env.AI_BASE_URL = ""; process.env.AI_MODEL = ""; process.env.AI_TIMEOUT_MS = ""; process.env.AI_API_KEY = "k";
     const captured: { url?: string; body?: Record<string, unknown> } = {};
     const provider = createDeepSeekKanoProvider({ fetch: kanoFetch(captured) });
     assert.equal(provider.model, "deepseek-flash", "同一份 AI_MODEL 默认值，不能和主分析分叉");
-    await provider.run("p");
-    assert.equal(captured.url, "https://api.deepseek.com/chat/completions");
-    assert.equal(captured.body?.model, "deepseek-flash");
+    // 2026-11-25：缺 AI_BASE_URL 直接报错，不再静默落到 DeepSeek 默认地址。
+    await assert.rejects(() => provider.run("p"), (error) => error instanceof Error && /AI_BASE_URL/.test(error.message));
+    assert.equal(captured.url, undefined, "配置缺失时不得发出请求");
   } finally {
     process.env = saved;
   }
@@ -66,7 +66,7 @@ test("kano provider shares the main analysis defaults: empty env values fall bac
 test("kano provider treats an empty AI_TIMEOUT_MS as unset rather than a zero-ms abort", async () => {
   const saved = { ...process.env };
   try {
-    process.env.AI_TIMEOUT_MS = ""; process.env.AI_API_KEY = "k";
+    process.env.AI_BASE_URL = "https://api.deepseek.com"; process.env.AI_TIMEOUT_MS = ""; process.env.AI_API_KEY = "k";
     const captured: { aborted?: boolean } = {};
     const provider = createDeepSeekKanoProvider({ fetch: kanoFetch(captured) });
     await provider.run("p");
@@ -80,7 +80,7 @@ test("kano provider treats an empty AI_TIMEOUT_MS as unset rather than a zero-ms
 test("kano provider omits temperature for AI_TEMPERATURE=none and accepts fenced JSON", async () => {
   const saved = { ...process.env };
   try {
-    process.env.AI_TEMPERATURE = "none"; process.env.AI_API_KEY = "k";
+    process.env.AI_BASE_URL = "https://api.deepseek.com"; process.env.AI_TEMPERATURE = "none"; process.env.AI_API_KEY = "k";
     const captured: { body?: Record<string, unknown> } = {};
     const provider = createDeepSeekKanoProvider({ fetch: kanoFetch(captured, "```json\n{\"ok\":true}\n```") });
     assert.deepEqual(await provider.run("p"), { ok: true });

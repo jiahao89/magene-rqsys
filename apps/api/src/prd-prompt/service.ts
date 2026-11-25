@@ -3,7 +3,7 @@
 // 不做模板降级——失败落 failed 版本、保留 PM 输入、返回稳定错误码，供下次重试生成新版本。
 import { z } from "zod";
 import { maskPii } from "../analysis/contract.js";
-import { AiProviderError, getAiProviderConfig, parseModelJson, type AiProviderConfig, type FetchLike } from "../analysis/provider.js";
+import { AI_BASE_URL_MISSING_MESSAGE, AiProviderError, getAiProviderConfig, parseModelJson, type AiProviderConfig, type FetchLike } from "../analysis/provider.js";
 import type { RequirementPrdPromptRepository } from "../application/repositories.js";
 import type { AnalysisRunRecord, RequirementAssessmentRecord, RequirementPrdPromptRecord, RequirementRecord } from "../domain/persistence.js";
 import { PRD_PROMPT_SECTIONS, PRD_PROMPT_VERSION, buildPrdPromptMessages } from "./prompt.js";
@@ -121,6 +121,7 @@ export function createPrdPromptRunner(options: {
   return {
     async run({ requirement, assessment, investigationNotes, actorId: _actorId, analysis, piiMarkers }) {
       if (!config.apiKey) throw new PrdPromptFailure("provider_error", "AI provider credential is not configured.");
+      if (!config.baseUrl) throw new PrdPromptFailure("provider_error", AI_BASE_URL_MISSING_MESSAGE);
       const notes = investigationNotes.trim();
       if (notes.length > MAX_INVESTIGATION_NOTES) throw new PrdPromptFailure("invalid_output", "investigation_notes_too_long");
       const startedAt = now().toISOString();

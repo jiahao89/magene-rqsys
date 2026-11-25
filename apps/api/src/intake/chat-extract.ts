@@ -8,7 +8,7 @@
 
 import { z } from "zod";
 import { maskPii } from "../analysis/contract.js";
-import { AiProviderError, getAiProviderConfig, parseModelJson, type AiProviderConfig, type FetchLike } from "../analysis/provider.js";
+import { AiProviderError, assertAiBaseUrlConfigured, getAiProviderConfig, parseModelJson, type AiProviderConfig, type FetchLike } from "../analysis/provider.js";
 import { REQUIREMENT_INTAKE_CHANNELS, REQUIREMENT_INTAKE_TYPES } from "../contracts/pipeline.js";
 
 export const CHAT_TEXT_MAX_LENGTH = 20_000;
@@ -178,6 +178,7 @@ export function createChatIntakeExtractor(options: Partial<AiProviderConfig> & {
   return {
     async extract({ text: source, modules }) {
       if (!config.apiKey) throw new AiProviderError("auth_error", "AI provider credential is not configured.");
+      assertAiBaseUrlConfigured(config.baseUrl);
       const maskedText = maskPii(source, []);
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), config.timeoutMs);

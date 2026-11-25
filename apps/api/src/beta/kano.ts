@@ -4,7 +4,7 @@
 // 报告永远标记「AI假设（待验证）」；模型超时/非法输出→安全失败，由用户手动重跑（不自动重试，不饿死主流程）。
 import { z } from "zod";
 import { AUDIENCE_LEVELS, maskPii } from "../analysis/contract.js";
-import { DEFAULT_BASE_URL, DEFAULT_MODEL, parseModelJson, parseTemperature } from "../analysis/provider.js";
+import { AI_BASE_URL_MISSING_MESSAGE, DEFAULT_MODEL, parseModelJson, parseTemperature } from "../analysis/provider.js";
 
 export const KANO_PROMPT_VERSION = "rq-kano-v1";
 
@@ -107,7 +107,8 @@ export function createDeepSeekKanoProvider(options: { apiKey?: string; baseUrl?:
   const env = process.env;
   const apiKey = options.apiKey || env.AI_API_KEY;
   // 与主分析同一组配置：空字符串视为未设置（?? 会让空值穿透，导致请求打到空 URL/空模型）。
-  const baseUrl = (options.baseUrl || env.AI_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, "");
+  // 2026-11-25：与主分析同口径，AI_BASE_URL 缺失时不回落任何默认地址。
+  const baseUrl = (options.baseUrl ?? env.AI_BASE_URL ?? "").trim().replace(/\/+$/, "");
   const model = options.model || env.AI_MODEL || DEFAULT_MODEL;
   // AI_TIMEOUT_MS 为空字符串时 Number("") 等于 0，会让每次调用立刻被中断。
   const configuredTimeout = Number(options.timeoutMs ?? env.AI_TIMEOUT_MS);
@@ -118,6 +119,7 @@ export function createDeepSeekKanoProvider(options: { apiKey?: string; baseUrl?:
     model,
     async run(prompt: string) {
       if (!apiKey) throw new KanoProviderError("auth_error", "Kano provider credential is not configured.");
+      if (!baseUrl) throw new KanoProviderError("auth_error", AI_BASE_URL_MISSING_MESSAGE);
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       let response: Response;

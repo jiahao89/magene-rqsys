@@ -4,7 +4,7 @@
 // 失败版本保留 error_code 供追溯；模型调用只带脱敏后的需求与补充内容，不写 Base、不改需求本体。
 import { z } from "zod";
 import { maskPii } from "../analysis/contract.js";
-import { AiProviderError, getAiProviderConfig, parseModelJson, type AiProviderConfig, type FetchLike } from "../analysis/provider.js";
+import { AiProviderError, assertAiBaseUrlConfigured, getAiProviderConfig, parseModelJson, type AiProviderConfig, type FetchLike } from "../analysis/provider.js";
 import type { RequirementAssessmentRepository } from "../application/repositories.js";
 import type { AnalysisRunRecord, RequirementAssessmentRecord, RequirementRecord } from "../domain/persistence.js";
 import type { RequirementAssessmentInput } from "../contracts/pipeline.js";
@@ -99,6 +99,7 @@ export function createAssessmentRunner(options: {
   return {
     async run({ requirement, inputs, actorId, analysis, piiMarkers }) {
       if (!config.apiKey) throw new AiProviderError("auth_error", "AI provider credential is not configured.");
+      assertAiBaseUrlConfigured(config.baseUrl);
       const startedAt = now().toISOString();
       // PRD §4.10.3：inputs 固定落三个键，空字符串保留（全空也允许生成），便于版本追溯与 hash 对比。
       const storedInputs = {

@@ -1,8 +1,9 @@
 import { z } from "zod";
 import { buildAnalysisRequest, type AnalysisDictionary, type AnalysisPriorityRule, type SafeAnalysisRequest, validateAnalysisOutput, type ValidatedAnalysis } from "./contract.js";
 
-export const DEFAULT_BASE_URL = "https://api.deepseek.com";
 export const DEFAULT_MODEL = "deepseek-flash";
+/** 配置缺失时的统一报错：不静默回落到任何默认地址，避免把请求打到非预期供应商。 */
+export const AI_BASE_URL_MISSING_MESSAGE = "AI provider base URL is not configured (AI_BASE_URL).";
 const DEFAULT_TIMEOUT_MS = 20_000;
 const DEFAULT_TEMPERATURE = 0;
 const DEFAULT_PROMPT_VERSION = "rq-analysis-v4";
@@ -56,12 +57,18 @@ export function parseTemperature(raw: string | undefined): number | null {
   return Number.isFinite(parsed) && parsed >= 0 && parsed <= 2 ? parsed : DEFAULT_TEMPERATURE;
 }
 
+/** 调用前校验 Base URL 已配置；缺配置直接报错，绝不回落到默认地址。 */
+export function assertAiBaseUrlConfigured(baseUrl: string): void {
+  if (!baseUrl) throw new AiProviderError("request_error", AI_BASE_URL_MISSING_MESSAGE);
+}
+
 export function getAiProviderConfig(env: NodeJS.ProcessEnv = process.env): AiProviderConfig {
   const timeout = Number(env.AI_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS);
   const key = env.AI_API_KEY || undefined;
   return {
     ...(key === undefined ? {} : { apiKey: key }),
-    baseUrl: (env.AI_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, ""),
+    // 2026-11-25：AI_BASE_URL 缺失不再回落到 DeepSeek 默认地址，改由调用方直接报错。
+    baseUrl: (env.AI_BASE_URL ?? "").trim().replace(/\/+$/, ""),
     model: env.AI_MODEL || DEFAULT_MODEL,
     timeoutMs: Number.isFinite(timeout) && timeout > 0 ? timeout : DEFAULT_TIMEOUT_MS,
     temperature: parseTemperature(env.AI_TEMPERATURE),
@@ -256,6 +263,7 @@ export function createDeepSeekProvider(options: Partial<AiProviderConfig> & { fe
     promptVersion: config.promptVersion,
     async analyze(input) {
       if (!config.apiKey) throw new AiProviderError("auth_error", "AI provider credential is not configured.");
+      assertAiBaseUrlConfigured(config.baseUrl);
       const request = buildAnalysisRequest(input);
       const evidenceSegments = buildEvidenceSegments(request);
       const controller = new AbortController();

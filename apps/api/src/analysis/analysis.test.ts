@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildAnalysisRequest, maskPii, validateAnalysisOutput } from "./contract.js";
-import { createDeepSeekProvider, getAiProviderConfig, parseModelJson, type AiProvider, type FetchLike } from "./provider.js";
+import { AiProviderError, createDeepSeekProvider, getAiProviderConfig, parseModelJson, type AiProvider, type FetchLike } from "./provider.js";
 import type { ValidatedAnalysis } from "./contract.js";
 import { runAnalysis, type AnalysisRepository, type AnalysisRun, type AnalysisServiceInput } from "./service.js";
 
@@ -80,18 +80,30 @@ test("validateAnalysisOutput accepts a fully evidenced contract, ignores model p
   assert.throws(() => validateAnalysisOutput({ ...validResult, inferences: [{ text: "推断" }] }, { dictionary, priorityRule: null, sourceText: "支持查询和筛选" }));
 });
 
-test("provider config does not invent credentials when AI_API_KEY is unset", () => {
+test("provider config invents neither credentials nor a base URL when unset", () => {
   const config = getAiProviderConfig({});
   assert.equal(config.apiKey, undefined);
-  assert.equal(config.baseUrl, "https://api.deepseek.com");
+  // 2026-11-25：AI_BASE_URL 缺失不再回落到 DeepSeek 默认地址。
+  assert.equal(config.baseUrl, "");
   assert.equal(config.model, "deepseek-flash");
   assert.equal(config.temperature, 0);
   assert.equal(getAiProviderConfig({ AI_TEMPERATURE: "none" }).temperature, null);
 });
 
+test("missing AI_BASE_URL fails loudly without calling the default DeepSeek endpoint", async () => {
+  let called = false;
+  const provider = createDeepSeekProvider({ apiKey: "k", fetch: async () => { called = true; return jsonResponse({}); } });
+  await assert.rejects(
+    () => provider.analyze({ title: "支持查询", description: "", context: "", piiMarkers: [], dictionary, priorityRule: null }),
+    (error: unknown) => error instanceof AiProviderError && error.code === "request_error" && /AI_BASE_URL/.test(error.message),
+  );
+  assert.equal(called, false, "配置缺失时不得发出任何请求");
+  assert.equal(getAiProviderConfig({ AI_BASE_URL: "  https://ai.example/v1/  " }).baseUrl, "https://ai.example/v1");
+});
+
 test("provider accepts fenced JSON returned by Claude-compatible models", async () => {
   const fetchStub: FetchLike = async () => jsonResponse({ choices: [{ message: { content: "```json\n" + JSON.stringify(validResult) + "\n```" } }] });
-  const provider = createDeepSeekProvider({ apiKey: "test-secret", fetch: fetchStub });
+  const provider = createDeepSeekProvider({ baseUrl: "https://api.deepseek.com", apiKey: "test-secret", fetch: fetchStub });
   const result = await provider.analyze({ title: "支持查询", description: "支持查询和筛选", context: "", piiMarkers: [], dictionary, priorityRule: null });
   assert.deepEqual(result, validResult);
 });
@@ -102,7 +114,7 @@ test("provider omits temperature when AI_TEMPERATURE is none for Claude-compatib
     requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
     return jsonResponse({ choices: [{ message: { content: JSON.stringify(validResult) } }] });
   };
-  const provider = createDeepSeekProvider({ ...getAiProviderConfig({ AI_TEMPERATURE: "none" }), apiKey: "test-secret", fetch: fetchStub });
+  const provider = createDeepSeekProvider({ ...getAiProviderConfig({ AI_BASE_URL: "https://api.deepseek.com", AI_TEMPERATURE: "none" }), apiKey: "test-secret", fetch: fetchStub });
   const result = await provider.analyze({ title: "支持查询", description: "支持查询和筛选", context: "", piiMarkers: [], dictionary, priorityRule: null });
   assert.deepEqual(result, validResult);
   assert.equal(requestBody !== undefined && "temperature" in requestBody, false);
@@ -116,7 +128,7 @@ test("DeepSeek provider sends JSON-mode request and parses structured response v
     authorization = new Headers(init?.headers).get("authorization");
     return jsonResponse({ choices: [{ message: { content: JSON.stringify(validResult) } }] });
   };
-  const provider = createDeepSeekProvider({ apiKey: "test-secret", fetch: fetchStub });
+  const provider = createDeepSeekProvider({ baseUrl: "https://api.deepseek.com", apiKey: "test-secret", fetch: fetchStub });
   const result = await provider.analyze({ title: "支持查询", description: "支持查询和筛选", context: "", piiMarkers: [], dictionary, priorityRule: null });
   assert.deepEqual(result, validResult);
   assert.equal(authorization, "Bearer test-secret");
@@ -140,7 +152,7 @@ test("provider resolves model evidence references to exact source excerpts", asy
     requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
     return jsonResponse({ choices: [{ message: { content: JSON.stringify(referencedResult) } }] });
   };
-  const provider = createDeepSeekProvider({ apiKey: "test-secret", fetch: fetchStub });
+  const provider = createDeepSeekProvider({ baseUrl: "https://api.deepseek.com", apiKey: "test-secret", fetch: fetchStub });
   const title = "同步 AI 与 Base 推送";
   const result = await provider.analyze({ title, description: "", context: "", piiMarkers: [], dictionary, priorityRule: null });
   assert.deepEqual(result.evidence, [title]);
@@ -154,6 +166,7 @@ test("provider resolves model evidence references to exact source excerpts", asy
 test("provider ignores an AI-generated priority when no calibrated rule is published", async () => {
   const uncalibratedResult = { ...validResult, priority: "P1" as const };
   const provider = createDeepSeekProvider({
+    baseUrl: "https://api.deepseek.com",
     apiKey: "test-secret",
     fetch: async () => jsonResponse({ choices: [{ message: { content: JSON.stringify(uncalibratedResult) } }] }),
   });
@@ -251,7 +264,7 @@ test("outbound model payload carries no names, user IDs, contacts, credentials o
     outbound = String(init?.body);
     return jsonResponse({ choices: [{ message: { content: JSON.stringify(validResult) } }] });
   };
-  const provider = createDeepSeekProvider({ apiKey: "sk-test-secret", fetch: fetchStub });
+  const provider = createDeepSeekProvider({ baseUrl: "https://api.deepseek.com", apiKey: "sk-test-secret", fetch: fetchStub });
   await provider.analyze({
     title: "张三 提的查询需求 @李四",
     description: "负责人张三 提交了新需求：需要支持查询和筛选。用户ID aabbccddeeff001122334455 邮箱 lee@corp.cn 手机 13911112222 证件 110101199003078515",
@@ -307,7 +320,7 @@ test("a response body that stalls until the deadline fails as a timeout, not a h
     });
     return new Response(body, { status: 200, headers: { "content-type": "application/json" } });
   };
-  const provider = createDeepSeekProvider({ apiKey: "k", timeoutMs: 50, fetch: fetchStub });
+  const provider = createDeepSeekProvider({ baseUrl: "https://api.deepseek.com", apiKey: "k", timeoutMs: 50, fetch: fetchStub });
   await assert.rejects(
     () => provider.analyze({ title: "支持查询", description: "支持查询和筛选", context: "", piiMarkers: [], dictionary, priorityRule: null }),
     (error: unknown) => error instanceof Error && /timed out/.test(error.message),
