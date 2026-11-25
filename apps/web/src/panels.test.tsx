@@ -1070,7 +1070,7 @@ describe("RequirementsPanel (ticket 17)", () => {
     expect(historyCalls).toBeGreaterThanOrEqual(2);
   });
 
-  it("times out an assessment generation after 125 seconds, not before", async () => {
+  it("waits 125 seconds and never reports a failed assessment while the server may still be generating", async () => {
     fetchMock.mockImplementation(async (input, init) => {
       const path = typeof input === "string" ? input : new Request(input).url;
       if (path === "/api/people") return jsonOk({ items: [] });
@@ -1086,12 +1086,15 @@ describe("RequirementsPanel (ticket 17)", () => {
     render(<RequirementsPanel onRefresh={() => undefined} />);
     await openFirstRow();
 
+    // 用户已填内容必须在超时/核对/最终提示全过程中保留。
+    fireEvent.change(screen.getByRole("textbox", { name: "需求背景" }), { target: { value: "不能丢的背景" } });
+
     vi.useFakeTimers();
     try {
       fireEvent.click(screen.getByRole("button", { name: "生成评估" }));
       // 服务端模型超时取 AI_TIMEOUT_MS（120s），客户端 125s；124.999s 时不能抢跑。
       await act(async () => { await vi.advanceTimersByTimeAsync(124_999); });
-      expect(screen.queryByText("评估生成超时，请稍后重试。")).not.toBeInTheDocument();
+      expect(screen.queryByText(/服务端仍在生成/)).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: "生成中…（约 30 秒）" })).toBeDisabled();
 
       // 客户端超时后先核对落库结果，不立刻报失败。
@@ -1099,9 +1102,12 @@ describe("RequirementsPanel (ticket 17)", () => {
       expect(screen.getByText("评估生成较慢，正在核对最新结果…")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "生成评估" })).toBeEnabled();
 
-      // 核对窗口内仍没有更新的版本，才提示超时。
+      // 核对窗口走完仍没有更新的版本：只提示服务端仍在生成，不判失败（平台最坏 3×120s）。
       await act(async () => { await vi.advanceTimersByTimeAsync(90_000); });
-      expect(screen.getByText("评估生成超时，请稍后重试。")).toBeInTheDocument();
+      expect(screen.getByText("服务端仍在生成，请稍后刷新查看。")).toBeInTheDocument();
+      expect(screen.queryByText(/评估生成超时/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/生成失败/)).not.toBeInTheDocument();
+      expect(screen.getByRole("textbox", { name: "需求背景" })).toHaveValue("不能丢的背景");
     } finally {
       vi.useRealTimers();
     }
@@ -1142,7 +1148,8 @@ describe("RequirementsPanel (ticket 17)", () => {
 
     // 超时后服务端其实已成功落库：界面按成功处理，并解锁同页 PRD 提示词块。
     expect(await screen.findByText("评估 v2 已生成。")).toBeInTheDocument();
-    expect(screen.queryByText("评估生成超时，请稍后重试。")).not.toBeInTheDocument();
+    expect(screen.queryByText(/服务端仍在生成/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/生成失败/)).not.toBeInTheDocument();
     expect(await screen.findByText(/评估 v2 · 建议暂缓/)).toBeInTheDocument();
   });
 

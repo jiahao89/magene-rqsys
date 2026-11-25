@@ -2124,15 +2124,15 @@ function RequirementAssessmentSection({ requirementId, onSaved }: { requirementI
     return () => window.clearInterval(timer);
   }, [hasRunning, reconciling, load]);
 
-  // 超时核对的兜底窗口：过了这段时间仍没有更新的版本，才按超时提示，并允许重新生成。
+  // 超时核对的兜底窗口：过了这段时间仍没有更新的版本，也不判失败（平台最坏 3×120s），
+  // 只提示服务端仍在生成；保留待核对标记，已有 running 行时后续轮询仍能补解锁。
   useEffect(() => {
     if (!reconciling) return;
     const timer = window.setTimeout(() => {
       if (!pendingRecovery.current) return;
-      pendingRecovery.current = null;
       setReconciling(false);
-      setNotice(null);
-      setError("评估生成超时，请稍后重试。");
+      setError(null);
+      setNotice("服务端仍在生成，请稍后刷新查看。");
     }, ASSESSMENT_RECONCILE_WINDOW_MS);
     return () => window.clearTimeout(timer);
   }, [reconciling]);
