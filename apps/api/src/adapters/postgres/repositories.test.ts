@@ -445,7 +445,23 @@ test("requirement search filters by latest batch and last-seen time on the serve
   const {pool,calls}=recordingPool();const store=new PostgresRepositories(pool);
   await store.requirements.search({batchId:"33333333-3333-4333-8333-333333333333",since:"2026-01-01T00:00:00Z",until:"2026-01-02T00:00:00Z",limit:25});
   assert.match(calls[0]!.sql,/latest_batch_id=\$7/);assert.match(calls[0]!.sql,/last_seen_at >= \$8/);assert.match(calls[0]!.sql,/last_seen_at <= \$9/);
-  assert.deepEqual(calls[0]!.values,[null,null,null,null,null,null,"33333333-3333-4333-8333-333333333333","2026-01-01T00:00:00Z","2026-01-02T00:00:00Z",null,null,26,null,null,null,"product",false,null]);
+  // 末两个参数是 0034 回收站的 (deleted_at,id) 游标；普通列表传 null，不改变过滤语义。
+  assert.deepEqual(calls[0]!.values,[null,null,null,null,null,null,"33333333-3333-4333-8333-333333333333","2026-01-01T00:00:00Z","2026-01-02T00:00:00Z",null,null,26,null,null,null,"product",false,null,null,null]);
+});
+
+test("recycle-bin aggregate search drops the pool filter, orders by deleted_at and keeps parameters aligned", async()=>{
+  const {pool,calls}=recordingPool();const store=new PostgresRepositories(pool);
+  await store.requirements.search({deleted:true,deletedBy:"actor-1",pool:"all",limit:10,deletedCursor:{deletedAt:"2026-01-02T00:00:00.000Z",id:"55555555-5555-4555-8555-555555555555"}});
+  const sql=calls[0]!.sql as string, values=calls[0]!.values as unknown[];
+  // 聚合两池：不带任何池过滤，按删除时间倒序。
+  assert.doesNotMatch(sql,/sc\.pool=/);
+  assert.match(sql,/ORDER BY r\.deleted_at DESC,r\.id DESC/);
+  assert.match(sql,/\(r\.deleted_at,r\.id\)<\(\$\d+::timestamptz,\$\d+::uuid\)/);
+  // 关键回归：参数个数必须等于 SQL 里最大的占位符；多传一个未引用的参数会让 PostgreSQL 报
+  // "could not determine data type of parameter $N"。
+  const maxPlaceholder=Math.max(...[...sql.matchAll(/\$(\d+)/g)].map((match)=>Number(match[1])));
+  assert.equal(values.length,maxPlaceholder);
+  assert.equal(values[11],11);
 });
 
 test("priority triage search filters effective priority and disables cursor pagination", async()=>{

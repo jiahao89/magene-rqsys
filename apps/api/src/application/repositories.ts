@@ -445,6 +445,12 @@ export interface RequirementSearchCursor {
   id: string;
 }
 
+// 0034：回收站按 (deleted_at, id) 倒序分页；和按创建时间的列表游标分开，避免两套排序混用。
+export interface DeletedRequirementSearchCursor {
+  deletedAt: string;
+  id: string;
+}
+
 import type { RequirementResolutionRecord } from "../domain/requirement-resolution.js";
 
 // 0034：需求逻辑删除/还原的仓储结果；not_deleted 表示还原时本来就没删（幂等提示用）。
@@ -452,10 +458,9 @@ export type RequirementLifecycleOutcome =
   | { outcome: "deleted" | "replayed" | "restored" | "not_deleted"; requirement: RequirementRecord }
   | { outcome: "not_found" }
   | { outcome: "forbidden" };
-// M7/M8：删除/还原的审计与状态变更必须同一事务；仓储按结果自行补 eventType 与 safeDetails，
-// 重放（没有实际状态变更）不写审计。
+// M7/M8：删除/还原的审计与状态变更必须同一事务；仓储按结果自行补 id/eventType/safeDetails，
+// 重放（没有实际状态变更）不写审计。调用方不需要知道 audit_events.id 是 uuid 列。
 export interface RequirementLifecycleAudit {
-  id: string;
   actorId: string;
   occurredAt: string;
 }
@@ -596,8 +601,8 @@ export interface RequirementQueryRepository {
     deleted?: boolean;
     /** 回收站只看某个删除人的记录（本期=本人）。 */
     deletedBy?: string;
-    /** 池作用域：缺省 product（集团池数据不进入产品池视图）。 */
-    pool?: SourcePool;
+    /** 池作用域：缺省 product（集团池数据不进入产品池视图）；0034 回收站传 all 表示聚合两池。 */
+    pool?: SourcePool | "all";
     /** created_desc（默认，游标分页）/ priority_asc（分诊视图，单页最多 100 条，不分页）。 */
     sort?: "created_desc" | "priority_asc";
     batchId?: string;
@@ -605,6 +610,8 @@ export interface RequirementQueryRepository {
     until?: string;
     limit: number;
     cursor?: RequirementSearchCursor;
+    // 0034：回收站的 (deleted_at,id) 游标；和 cursor 互斥。
+    deletedCursor?: DeletedRequirementSearchCursor;
   }): Promise<{ items: RequirementRecord[]; nextCursor: string | null }>;
   /** 5c-2：来源 Tab 计数。范围与列表默认一致（processing_state='active'），四种来源互斥。 */
   sourceCounts?(pool?: SourcePool): Promise<{ teambition: number; web_manual: number; base_form: number; chat_paste: number; all: number }>;
@@ -612,10 +619,11 @@ export interface RequirementQueryRepository {
   // 0034：我的需求计数（含已压制、不含已删除），按池拆分；owner 口径=人工负责人或唯一活跃的 TB 执行人映射。
   mineCounts?(ownerFeishuUserId: string): Promise<{ product: number; group: number; total: number; suppressed: number }>;
   // 0034：逻辑删除（只允许当前有效负责人）；ownerFeishuUserId 是经平台身份转换后的飞书 user_id。
+  // deleted_by 存登录身份（妙搭 userId），还原权限不依赖飞书身份解析服务。
   // M7/M8：传入 audit 时在同一事务内写审计，重放不写。
-  markDeleted?(input: { requirementId: string; ownerFeishuUserId: string; at: string; audit?: RequirementLifecycleAudit }): Promise<RequirementLifecycleOutcome>;
-  // 0034：还原（只有删除人能还原）；deleterFeishuUserId 同上，deleted_by 存飞书 user_id。
-  restoreDeleted?(input: { requirementId: string; deleterFeishuUserId: string; audit?: RequirementLifecycleAudit }): Promise<RequirementLifecycleOutcome>;
+  markDeleted?(input: { requirementId: string; ownerFeishuUserId: string; deletedBy: string; at: string; audit?: RequirementLifecycleAudit }): Promise<RequirementLifecycleOutcome>;
+  // 0034：还原（只有删除人能还原）；deleterUserId 与 deleted_by 同口径（妙搭 userId）。
+  restoreDeleted?(input: { requirementId: string; deleterUserId: string; audit?: RequirementLifecycleAudit }): Promise<RequirementLifecycleOutcome>;
   // 同步幂等查找：返回流水线推进所需的最小字段；deleted 用于在 upsert 前整条跳过已删除需求。
   findForSync(sourceConfigId: string, teambitionRequirementId: string): Promise<{
     id: string;

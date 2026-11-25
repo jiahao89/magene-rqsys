@@ -447,10 +447,11 @@ paths:
         - name: deleted
           in: query
           description: >-
-            0034 recycle-bin view. deleted=true returns only requirements deleted by the current user
-            (viewer identity is resolved to a Feishu user_id server-side; an unresolvable viewer gets
-            200 with identityResolved=false, while an unavailable identity service gets 503); every
-            other list excludes deleted rows by default.
+            0034 recycle-bin view. deleted=true returns only requirements deleted by the signed-in
+            Miaoda user (deleted_by stores auth.actor.id, so no Feishu identity resolution is
+            needed); without an explicit pool both pools are merged, ordered by deleted_at desc, id
+            desc, and the opaque cursor paginates on that same (deleted_at,id) key. An explicit pool
+            filters to that pool. Every other list excludes deleted rows by default.
           schema: { type: string, enum: [true, false], default: false }
         - name: mine
           in: query
@@ -957,9 +958,10 @@ paths:
       summary: Logically delete one requirement (0034)
       description: >-
         Only the current owner may delete (manual owner first, otherwise the unique active TB executor
-        mapping). The row is not removed: deleted_at/deleted_by are set, the sync chain skips it
-        entirely, and later analysis/push/notification work stops. Base rows are left untouched.
-        Idempotent for the same person (replayed=true).
+        mapping). The row is not removed: deleted_at is set and deleted_by stores the signed-in
+        Miaoda user id (auth.actor.id), so restoring never depends on Feishu identity resolution.
+        The sync chain skips the row entirely, and later analysis/push/notification work stops.
+        Base rows are left untouched. Idempotent for the same person (replayed=true).
       parameters:
         - $ref: '#/components/parameters/Id'
       responses:
@@ -983,15 +985,17 @@ paths:
     post:
       summary: Restore a logically deleted requirement (0034)
       description: >-
-        Only the person who deleted it may restore. Clearing deleted_at/deleted_by returns the
-        requirement to normal processing; suppressed duplicate/ignored decisions are kept. The Base
-        row is not re-written (it was never changed by the deletion). Idempotent: restoring a
-        non-deleted requirement returns replayed=true.
+        Only the person who deleted it may restore (deleted_by stores the Miaoda user id, so this
+        check does not depend on Feishu identity resolution). Clearing deleted_at/deleted_by returns
+        the requirement to normal processing; suppressed duplicate/ignored decisions are kept. The
+        Base row is not re-written (it was never changed by the deletion). Restoring a requirement
+        that is not in the recycle bin anymore (already restored or never deleted) returns 409
+        CONFLICT so the client refreshes instead of treating it as success.
       parameters:
         - $ref: '#/components/parameters/Id'
       responses:
         '200':
-          description: Restored (or replayed)
+          description: Restored
           content:
             application/json:
               schema:
@@ -1001,10 +1005,11 @@ paths:
                   requirementId: { type: string, format: uuid }
                   deletedAt: { type: 'null' }
                   deletedBy: { type: 'null' }
-                  replayed: { type: boolean }
+                  replayed: { type: boolean, description: Always false; a non-deleted requirement is 409 now. }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { description: Caller is not the person who deleted it, or the Feishu identity cannot be resolved. }
+        '403': { description: Caller is not the person who deleted it. }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: The requirement is no longer in the recycle bin (already restored or never deleted); refresh the list. }
         '503': { $ref: '#/components/responses/DependencyUnavailable' }
   /api/requirements/{id}/assessments:
     get:
@@ -2156,7 +2161,13 @@ components:
         deletedBy:
           type: [string, 'null']
           description: >-
-            0034 删除人的飞书 user_id；只对删除人本人返回，其他人一律 null（M16 不泄露删除人）。
+            0034 删除人的妙搭 userId（auth.actor.id）；只对删除人本人返回，其他人一律 null
+            （M16 不泄露删除人）。
+        canRestore:
+          type: boolean
+          description: >-
+            0034 详情专用：当前登录人是否就是删除人。前端只按这个字段决定是否显示「还原」，
+            不要用 deletedBy 反推（deletedBy 对其他人为 null）。
         resolution:
           type: [object, 'null']
           properties:

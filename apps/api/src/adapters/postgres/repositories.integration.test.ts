@@ -11,6 +11,7 @@ import { buildPriorityRule } from "../../analysis/priority-rule.js";
 import { createPostgresSyncPersistence } from "./sync-persistence.js";
 import { recoverAnalysisPipeline } from "../../scheduler/analysis-recovery.js";
 import { recheckOwnerMappings } from "../../scheduler/owner-recheck.js";
+import { decodeDeletedRequirementCursor } from "../../application/requirement-cursor.js";
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),"../../../../../");
 async function getDatabaseUrl(){if(process.env.DATABASE_URL)return process.env.DATABASE_URL;const env=await readFile(resolve(root,".env"),"utf8").catch(()=>"");const value=env.match(/^DATABASE_URL=(.+)$/m)?.[1]?.trim();if(!value)throw new Error("PostgreSQL integration tests require DATABASE_URL in environment or repo .env");return value;}
@@ -970,15 +971,18 @@ test("logical delete scopes my-requirements, survives a later upsert and restore
     assert.equal((await ctx.repos.requirements.mineCounts!("feishu-other")).product, 0);
 
     const lifecycleAudit = async () => (await ctx.repos.audit.search({ entityId: created.id, limit: 20 })).filter((e) => e.eventType.startsWith("requirement."));
-    // M7：审计与状态变更同一事务；有人无权限时不写审计。
-    assert.equal((await ctx.repos.requirements.markDeleted!({ requirementId: created.id, ownerFeishuUserId: "feishu-other", at: "2026-10-08T00:00:30Z", audit: { id: "audit-lifecycle-forbidden", actorId: "actor-1", occurredAt: "2026-10-08T00:00:30Z" } })).outcome, "forbidden");
+    // M7：审计与状态变更同一事务；没有权限时不写审计。审计 id 由仓储生成，调用方只给 actor/时间。
+    assert.equal((await ctx.repos.requirements.markDeleted!({ requirementId: created.id, ownerFeishuUserId: "feishu-other", deletedBy: "actor-1", at: "2026-10-08T00:00:30Z", audit: { actorId: "actor-1", occurredAt: "2026-10-08T00:00:30Z" } })).outcome, "forbidden");
     assert.equal((await lifecycleAudit()).length, 0);
-    assert.equal((await ctx.repos.requirements.markDeleted!({ requirementId: created.id, ownerFeishuUserId: "feishu-owner", at: "2026-10-08T00:01:00Z", audit: { id: "audit-lifecycle-delete", actorId: "actor-1", occurredAt: "2026-10-08T00:01:00Z" } })).outcome, "deleted");
+    assert.equal((await ctx.repos.requirements.markDeleted!({ requirementId: created.id, ownerFeishuUserId: "feishu-owner", deletedBy: "actor-1", at: "2026-10-08T00:01:00Z", audit: { actorId: "actor-1", occurredAt: "2026-10-08T00:01:00Z" } })).outcome, "deleted");
     const afterDelete = await lifecycleAudit();
     assert.deepEqual(afterDelete.map((e) => e.eventType), ["requirement.deleted"]);
-    assert.deepEqual(afterDelete[0]!.safeDetails, { sourceVersion: 1, pool: "product" });
-    // M8：重放不追加审计。
-    assert.equal((await ctx.repos.requirements.markDeleted!({ requirementId: created.id, ownerFeishuUserId: "feishu-owner", at: "2026-10-08T00:02:00Z", audit: { id: "audit-lifecycle-replay", actorId: "actor-1", occurredAt: "2026-10-08T00:02:00Z" } })).outcome, "replayed");
+    // deleted_by 存登录身份（妙搭 userId），审计补处理状态与是否已有 Base 行。
+    assert.equal((await ctx.repos.requirements.get(created.id))?.deletedBy, "actor-1");
+    assert.deepEqual(afterDelete[0]!.safeDetails, { sourceVersion: 1, pool: "product", processingState: "active", hasBaseRecord: false });
+    // M8：同人重放不追加审计；换个人重放是 forbidden，也不能改写 deleted_by。
+    assert.equal((await ctx.repos.requirements.markDeleted!({ requirementId: created.id, ownerFeishuUserId: "feishu-owner", deletedBy: "actor-1", at: "2026-10-08T00:02:00Z", audit: { actorId: "actor-1", occurredAt: "2026-10-08T00:02:00Z" } })).outcome, "replayed");
+    assert.equal((await ctx.repos.requirements.markDeleted!({ requirementId: created.id, ownerFeishuUserId: "feishu-owner", deletedBy: "actor-2", at: "2026-10-08T00:02:30Z", audit: { actorId: "actor-2", occurredAt: "2026-10-08T00:02:30Z" } })).outcome, "forbidden");
     assert.equal((await lifecycleAudit()).length, 1);
     assert.equal((await ctx.repos.requirements.mineCounts!("feishu-owner")).product, 0);
     assert.equal((await ctx.repos.requirements.search({ limit: 10 })).items.length, 0, "默认列表排除已删除");
@@ -991,12 +995,52 @@ test("logical delete scopes my-requirements, survives a later upsert and restore
     assert.equal(row?.title, "Requirement");
     assert.ok(row?.deletedAt && row?.deletedBy === "feishu-owner");
 
-    assert.equal((await ctx.repos.requirements.restoreDeleted!({ requirementId: created.id, deleterFeishuUserId: "feishu-other", audit: { id: "audit-lifecycle-restore-forbidden", actorId: "actor-1", occurredAt: "2026-10-08T00:03:00Z" } })).outcome, "forbidden");
-    assert.equal((await ctx.repos.requirements.restoreDeleted!({ requirementId: created.id, deleterFeishuUserId: "feishu-owner", audit: { id: "audit-lifecycle-restore", actorId: "actor-1", occurredAt: "2026-10-08T00:04:00Z" } })).outcome, "restored");
-    assert.deepEqual((await lifecycleAudit()).map((e) => e.eventType).sort(), ["requirement.deleted", "requirement.restored"]);
+    assert.equal((await ctx.repos.requirements.restoreDeleted!({ requirementId: created.id, deleterUserId: "actor-2", audit: { actorId: "actor-2", occurredAt: "2026-10-08T00:03:00Z" } })).outcome, "forbidden");
+    assert.equal((await ctx.repos.requirements.restoreDeleted!({ requirementId: created.id, deleterUserId: "actor-1", audit: { actorId: "actor-1", occurredAt: "2026-10-08T00:04:00Z" } })).outcome, "restored");
+    const afterRestore = await lifecycleAudit();
+    assert.deepEqual(afterRestore.map((e) => e.eventType).sort(), ["requirement.deleted", "requirement.restored"]);
+    assert.deepEqual(afterRestore.find((e) => e.eventType === "requirement.restored")?.safeDetails, { sourceVersion: 1, pool: "product", processingState: "active" });
     // 本来就没删的还原同样不写审计。
-    assert.equal((await ctx.repos.requirements.restoreDeleted!({ requirementId: created.id, deleterFeishuUserId: "feishu-owner", audit: { id: "audit-lifecycle-restore-replay", actorId: "actor-1", occurredAt: "2026-10-08T00:05:00Z" } })).outcome, "not_deleted");
+    assert.equal((await ctx.repos.requirements.restoreDeleted!({ requirementId: created.id, deleterUserId: "actor-1", audit: { actorId: "actor-1", occurredAt: "2026-10-08T00:05:00Z" } })).outcome, "not_deleted");
     assert.equal((await lifecycleAudit()).length, 2);
     assert.equal((await ctx.repos.requirements.mineCounts!("feishu-owner")).product, 1);
+  } finally { await cleanup(ctx); }
+});
+
+test("recycle bin aggregates both pools and pages by (deleted_at,id) without gaps (0034)", async () => {
+  const ctx = await setup();
+  try {
+    const product = await ctx.repos.sources.create(config);
+    const group = await ctx.repos.sources.create({ ...config, pool: "group", projectId: "group-project" });
+    const productBatch = await ctx.repos.batches.create({ sourceConfigId: product.id, triggerType: "manual", actorId: null, idempotencyKey: "recycle-product-batch", startedAt: "2026-10-08T00:00:00Z" });
+    const groupBatch = await ctx.repos.batches.create({ sourceConfigId: group.id, triggerType: "manual", actorId: null, idempotencyKey: "recycle-group-batch", startedAt: "2026-10-08T00:00:00Z" });
+    const productRow = await ctx.repos.requirements.upsertRequirement(product.id, "task-recycle-product", requirementWrite(product.id, productBatch.id, { teambitionRequirementId: "task-recycle-product" }));
+    const groupRow = await ctx.repos.requirements.upsertRequirement(group.id, "task-recycle-group", requirementWrite(group.id, groupBatch.id, { teambitionRequirementId: "task-recycle-group" }));
+    for (const [id, name] of [[productRow.id, "Owner P"], [groupRow.id, "Owner G"]] as const) {
+      await ctx.repos.requirements.assignManualOwner(id, { feishuUserId: "feishu-owner", feishuIdType: "user_id", name, assignedBy: "actor-1", assignedAt: "2026-10-08T00:00:00Z" });
+    }
+    // 集团池先删、产品池后删：回收站按 deleted_at 倒序应产品池在前。
+    assert.equal((await ctx.repos.requirements.markDeleted!({ requirementId: groupRow.id, ownerFeishuUserId: "feishu-owner", deletedBy: "actor-1", at: "2026-10-08T00:01:00Z" })).outcome, "deleted");
+    assert.equal((await ctx.repos.requirements.markDeleted!({ requirementId: productRow.id, ownerFeishuUserId: "feishu-owner", deletedBy: "actor-1", at: "2026-10-08T00:02:00Z" })).outcome, "deleted");
+
+    // 显式 pool 才按池过滤；不带 pool（all）聚合两池。
+    assert.equal((await ctx.repos.requirements.search({ deleted: true, deletedBy: "actor-1", pool: "group", limit: 10 })).items.length, 1);
+    const all = await ctx.repos.requirements.search({ deleted: true, deletedBy: "actor-1", pool: "all", limit: 10 });
+    assert.deepEqual(all.items.map((row) => row.id), [productRow.id, groupRow.id]);
+
+    // 每页 1 条翻两页：游标用 (deleted_at,id)，跨池不重不漏。
+    const first = await ctx.repos.requirements.search({ deleted: true, deletedBy: "actor-1", pool: "all", limit: 1 });
+    assert.equal(first.items.length, 1);
+    assert.equal(first.items[0]!.id, productRow.id);
+    assert.ok(first.nextCursor);
+    const cursor = decodeDeletedRequirementCursor(first.nextCursor!);
+    assert.ok(cursor);
+    const second = await ctx.repos.requirements.search({ deleted: true, deletedBy: "actor-1", pool: "all", limit: 1, deletedCursor: cursor });
+    assert.equal(second.items.length, 1);
+    assert.equal(second.items[0]!.id, groupRow.id);
+    assert.equal(second.nextCursor, null);
+
+    // 别人删的进不了我的回收站。
+    assert.equal((await ctx.repos.requirements.search({ deleted: true, deletedBy: "actor-2", pool: "all", limit: 10 })).items.length, 0);
   } finally { await cleanup(ctx); }
 });

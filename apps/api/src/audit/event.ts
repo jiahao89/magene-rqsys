@@ -74,6 +74,9 @@ const ALLOWED_DETAIL_KEYS: readonly string[] = [
   "sourceRequirementId",
   // 0031：Base 推送按池路由时的池标签（诊断用；不含任何企业/人员标识）。
   "pool",
+  // 0034：逻辑删除/还原时的处理状态与是否已有 Base 行（只记状态与布尔，不含人员/内容）。
+  "processingState",
+  "hasBaseRecord",
   "sourceVersion",
   "analysisVersion",
   "priorAnalysisVersion",

@@ -21,7 +21,7 @@ import type {
   RequirementSearchCursor, SourceConfigRepository, SourceSnapshotRepository, SyncBatchRepository, SyncItemRepository, TeamDirectoryRepository,
   RequirementScoringRepository,
 } from "../../application/repositories.js";
-import { encodeRequirementCursor } from "../../application/requirement-cursor.js";
+import { encodeDeletedRequirementCursor, encodeRequirementCursor } from "../../application/requirement-cursor.js";
 import { encodeBatchCursor } from "../../application/batch-cursor.js";
 import { redactSafeDetails } from "../../audit/event.js";
 
@@ -453,12 +453,18 @@ async getPipelineCounts(pool?:SourcePool){
     },
   };
 }
-async search(q:{q?:string;executorName?:string;pullState?:PullState;analysisState?:AnalysisState;ownerState?:OwnerState;pushState?:PushState;processingState?:string;priority?:PriorityLevel;source?:"teambition"|"web_manual"|"base_form"|"chat_paste";ownerFeishuUserId?:string;deleted?:boolean;deletedBy?:string;pool?:SourcePool;sort?:"created_desc"|"priority_asc";batchId?:string;since?:string;until?:string;limit:number;cursor?:RequirementSearchCursor}){const prioritySort=q.sort==='priority_asc',limit=prioritySort?Math.min(q.limit,100):q.limit,cursor=prioritySort?undefined:q.cursor;const values:unknown[]=[q.q===undefined?null:escapeIlikePattern(q.q),q.executorName??null,q.pullState??null,q.analysisState??null,q.ownerState??null,q.pushState??null,q.batchId??null,q.since??null,q.until??null,cursor?.createdAt??null,cursor?.id??null,limit+1,q.processingState??null,q.priority??null,prioritySort?"priority_asc":null];let sourceFilter="";
-if(q.source!==undefined){values.push(q.source);const n=values.length;sourceFilter=` AND (($${n}::text='teambition' AND r.source_type='teambition') OR ($${n}::text='web_manual' AND r.source_type='web_manual' AND COALESCE(r.source_payload->>'intakeOrigin','')<>'chat_paste') OR ($${n}::text='base_form' AND r.source_type='base_form') OR ($${n}::text='chat_paste' AND r.source_type='web_manual' AND r.source_payload->>'intakeOrigin'='chat_paste'))`;}values.push(q.pool??"product");const poolParam=values.length;const poolFilter=` AND (($${poolParam}::text='product' AND (r.source_config_id IS NULL OR sc.pool='product')) OR ($${poolParam}::text='group' AND sc.pool='group'))`;
-// 0034：我的需求（人工负责人优先；否则 TB 执行人经活跃映射指向该飞书 user_id）/ 回收站（只看已删除）。
+async search(q:{q?:string;executorName?:string;pullState?:PullState;analysisState?:AnalysisState;ownerState?:OwnerState;pushState?:PushState;processingState?:string;priority?:PriorityLevel;source?:"teambition"|"web_manual"|"base_form"|"chat_paste";ownerFeishuUserId?:string;deleted?:boolean;deletedBy?:string;pool?:SourcePool|"all";sort?:"created_desc"|"priority_asc";batchId?:string;since?:string;until?:string;limit:number;cursor?:RequirementSearchCursor;deletedCursor?:{deletedAt:string;id:string}}){
+// 0034：回收站固定按 deleted_at DESC,id DESC 分页（跨池聚合时 created_at 排序会乱），其它列表保持原排序。
+const recycle=q.deleted===true,prioritySort=!recycle&&q.sort==='priority_asc',limit=prioritySort?Math.min(q.limit,100):q.limit,cursor=prioritySort||recycle?undefined:q.cursor;const values:unknown[]=[q.q===undefined?null:escapeIlikePattern(q.q),q.executorName??null,q.pullState??null,q.analysisState??null,q.ownerState??null,q.pushState??null,q.batchId??null,q.since??null,q.until??null,cursor?.createdAt??null,cursor?.id??null,limit+1,q.processingState??null,q.priority??null,prioritySort?"priority_asc":null];let sourceFilter="";
+if(q.source!==undefined){values.push(q.source);const n=values.length;sourceFilter=` AND (($${n}::text='teambition' AND r.source_type='teambition') OR ($${n}::text='web_manual' AND r.source_type='web_manual' AND COALESCE(r.source_payload->>'intakeOrigin','')<>'chat_paste') OR ($${n}::text='base_form' AND r.source_type='base_form') OR ($${n}::text='chat_paste' AND r.source_type='web_manual' AND r.source_payload->>'intakeOrigin'='chat_paste'))`;}// pool="all" 时整段不追加参数：SQL 里没有占位符的绑定参数会让 PostgreSQL 报 could not determine data type。
+let poolFilter="";if(q.pool!=="all"){values.push(q.pool??"product");const poolParam=values.length;poolFilter=` AND (($${poolParam}::text='product' AND (r.source_config_id IS NULL OR sc.pool='product')) OR ($${poolParam}::text='group' AND sc.pool='group'))`;}
+// 0034：我的需求（人工负责人优先；否则 TB 执行人经活跃映射指向该飞书 user_id）/ 回收站（只看本人删除，deleted_by=妙搭 userId）。
 let ownerFilter="";if(q.ownerFeishuUserId!==undefined){values.push(q.ownerFeishuUserId);const ownerParam=values.length;ownerFilter=` AND (CASE WHEN r.manual_owner_feishu_user_id IS NOT NULL THEN (r.manual_owner_feishu_user_id=$${ownerParam}::text AND r.manual_owner_feishu_id_type='user_id') ELSE (EXISTS (SELECT 1 FROM person_mappings pmx WHERE pmx.source_config_id=r.source_config_id AND pmx.teambition_user_id=r.executor_user_id AND pmx.active AND pmx.feishu_user_id=$${ownerParam}::text AND pmx.feishu_id_type='user_id') AND (SELECT count(DISTINCT pmo.feishu_user_id||'|'||pmo.feishu_id_type) FROM person_mappings pmo WHERE pmo.source_config_id=r.source_config_id AND pmo.teambition_user_id=r.executor_user_id AND pmo.active)=1) END)`;}
 values.push(q.deleted===true);const deletedParam=values.length;const deletedFilter=` AND (($${deletedParam}::boolean AND r.deleted_at IS NOT NULL) OR (NOT $${deletedParam}::boolean AND r.deleted_at IS NULL))`;
-values.push(q.deletedBy??null);const deletedByParam=values.length;const deletedByFilter=` AND ($${deletedByParam}::text IS NULL OR r.deleted_by=$${deletedByParam}::text)`;const{rows}=await this.pool.query("SELECT r.*, sv.priority AS current_score_priority FROM requirements r LEFT JOIN requirement_score_versions sv ON sv.id=r.current_score_version_id LEFT JOIN source_configs sc ON sc.id=r.source_config_id WHERE ($1::text IS NULL OR r.title ILIKE '%'||$1||'%') AND ($2::text IS NULL OR lower(btrim(r.executor_name))=lower(btrim($2))) AND ($3::text IS NULL OR r.pull_state=$3) AND ($4::text IS NULL OR r.analysis_state=$4) AND ($5::text IS NULL OR r.owner_state=$5) AND ($6::text IS NULL OR r.push_state=$6) AND ($7::uuid IS NULL OR r.latest_batch_id=$7) AND ($8::timestamptz IS NULL OR r.last_seen_at >= $8) AND ($9::timestamptz IS NULL OR r.last_seen_at <= $9) AND ($10::timestamptz IS NULL OR (date_trunc('milliseconds', r.created_at AT TIME ZONE 'UTC'),r.id)<(date_trunc('milliseconds',$10::timestamptz AT TIME ZONE 'UTC'),$11::uuid)) AND ($13::text IS NULL OR ($13::text='active' AND r.processing_state='active') OR ($13::text='suppressed' AND r.processing_state<>'active') OR r.processing_state=$13::text) AND ($14::text IS NULL OR COALESCE(r.priority_override, sv.priority)=$14::text)"+sourceFilter+poolFilter+ownerFilter+deletedFilter+deletedByFilter+" ORDER BY CASE WHEN $15::text='priority_asc' THEN CASE COALESCE(r.priority_override, sv.priority) WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 WHEN 'P3' THEN 3 ELSE 4 END ELSE 0 END, date_trunc('milliseconds', r.created_at AT TIME ZONE 'UTC') DESC,r.id DESC LIMIT $12",values);const more=rows.length>limit,page=rows.slice(0,limit);return{items:page.map(requirement),nextCursor:prioritySort||!more?null:encodeRequirementCursor({createdAt:asDate(page.at(-1)!.created_at)!,id:String(page.at(-1)!.id)})};}
+values.push(q.deletedBy??null);const deletedByParam=values.length;const deletedByFilter=` AND ($${deletedByParam}::text IS NULL OR r.deleted_by=$${deletedByParam}::text)`;
+// 回收站游标：与 ORDER BY (deleted_at DESC,id DESC) 同一组键，避免同毫秒跨页重复/漏行。
+values.push(q.deletedCursor?.deletedAt??null);const deletedCursorAt=values.length;values.push(q.deletedCursor?.id??null);const deletedCursorId=values.length;const deletedCursorFilter=` AND ($${deletedCursorAt}::timestamptz IS NULL OR (r.deleted_at,r.id)<($${deletedCursorAt}::timestamptz,$${deletedCursorId}::uuid))`;
+const{rows}=await this.pool.query("SELECT r.*, sv.priority AS current_score_priority FROM requirements r LEFT JOIN requirement_score_versions sv ON sv.id=r.current_score_version_id LEFT JOIN source_configs sc ON sc.id=r.source_config_id WHERE ($1::text IS NULL OR r.title ILIKE '%'||$1||'%') AND ($2::text IS NULL OR lower(btrim(r.executor_name))=lower(btrim($2))) AND ($3::text IS NULL OR r.pull_state=$3) AND ($4::text IS NULL OR r.analysis_state=$4) AND ($5::text IS NULL OR r.owner_state=$5) AND ($6::text IS NULL OR r.push_state=$6) AND ($7::uuid IS NULL OR r.latest_batch_id=$7) AND ($8::timestamptz IS NULL OR r.last_seen_at >= $8) AND ($9::timestamptz IS NULL OR r.last_seen_at <= $9) AND ($10::timestamptz IS NULL OR (date_trunc('milliseconds', r.created_at AT TIME ZONE 'UTC'),r.id)<(date_trunc('milliseconds',$10::timestamptz AT TIME ZONE 'UTC'),$11::uuid)) AND ($13::text IS NULL OR ($13::text='active' AND r.processing_state='active') OR ($13::text='suppressed' AND r.processing_state<>'active') OR r.processing_state=$13::text) AND ($14::text IS NULL OR COALESCE(r.priority_override, sv.priority)=$14::text)"+sourceFilter+poolFilter+ownerFilter+deletedFilter+deletedByFilter+deletedCursorFilter+(recycle?" ORDER BY r.deleted_at DESC,r.id DESC LIMIT $12":" ORDER BY CASE WHEN $15::text='priority_asc' THEN CASE COALESCE(r.priority_override, sv.priority) WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 WHEN 'P3' THEN 3 ELSE 4 END ELSE 0 END, date_trunc('milliseconds', r.created_at AT TIME ZONE 'UTC') DESC,r.id DESC LIMIT $12"),values);const more=rows.length>limit,page=rows.slice(0,limit);const last=page.at(-1);return{items:page.map(requirement),nextCursor:!more||!last||prioritySort?null:(recycle?encodeDeletedRequirementCursor({deletedAt:asDate(last.deleted_at)!,id:String(last.id)}):encodeRequirementCursor({createdAt:asDate(last.created_at)!,id:String(last.id)}))};}
 // 0034：我的需求计数（含已压制、不含已删除），按池拆分；owner=人工负责人或 TB 执行人映射。
 async mineCounts(ownerFeishuUserId:string){
   // 口径：人工负责人优先；没有人工负责人时要求唯一活跃的 TB 执行人映射；已压制计入、已删除不计。
@@ -469,15 +475,15 @@ async mineCounts(ownerFeishuUserId:string){
 }
 // 0034/M7：删除与审计必须在同一事务；审计写失败整体回滚，不留半套状态。
 // M8：重放（同一个人重复删除/还原本来就没删）不产生新审计。
-async markDeleted(p:{requirementId:string;ownerFeishuUserId:string;at:string;audit?:{id:string;actorId:string;occurredAt:string}}){
+async markDeleted(p:{requirementId:string;ownerFeishuUserId:string;deletedBy:string;at:string;audit?:{actorId:string;occurredAt:string}}){
   const owner=`CASE WHEN r.manual_owner_feishu_user_id IS NOT NULL THEN (r.manual_owner_feishu_user_id=$3 AND r.manual_owner_feishu_id_type='user_id') ELSE (EXISTS (SELECT 1 FROM person_mappings pmx WHERE pmx.source_config_id=r.source_config_id AND pmx.teambition_user_id=r.executor_user_id AND pmx.active AND pmx.feishu_user_id=$3 AND pmx.feishu_id_type='user_id') AND (SELECT count(DISTINCT pmo.feishu_user_id||'|'||pmo.feishu_id_type) FROM person_mappings pmo WHERE pmo.source_config_id=r.source_config_id AND pmo.teambition_user_id=r.executor_user_id AND pmo.active)=1) END`;
   const c=await this.pool.connect();
   try{
     await c.query("BEGIN");
-    const{rows}=await c.query(`UPDATE requirements r SET deleted_at=$2,deleted_by=$3,updated_at=now() WHERE r.id=$1 AND r.deleted_at IS NULL AND (${owner}) RETURNING r.*`,[p.requirementId,p.at,p.ownerFeishuUserId]);
+    const{rows}=await c.query(`UPDATE requirements r SET deleted_at=$2,deleted_by=$4,updated_at=now() WHERE r.id=$1 AND r.deleted_at IS NULL AND (${owner}) RETURNING r.*`,[p.requirementId,p.at,p.ownerFeishuUserId,p.deletedBy]);
     if(rows[0]){
       const rec=requirement(rows[0]);
-      if(p.audit)await appendAuditInTransaction(c,{...p.audit,eventType:"requirement.deleted",entityType:"requirement",result:"succeeded",safeDetails:{sourceVersion:rec.sourceVersion,pool:await sourcePoolInTransaction(c,rec.sourceConfigId)}},p.requirementId);
+      if(p.audit)await appendAuditInTransaction(c,{id:randomUUID(),...p.audit,eventType:"requirement.deleted",entityType:"requirement",result:"succeeded",safeDetails:{sourceVersion:rec.sourceVersion,pool:await sourcePoolInTransaction(c,rec.sourceConfigId),processingState:rec.processingState??"active",hasBaseRecord:rec.baseRecordId!==null}},p.requirementId);
       await c.query("COMMIT");
       return{outcome:"deleted" as const,requirement:rec};
     }
@@ -485,20 +491,20 @@ async markDeleted(p:{requirementId:string;ownerFeishuUserId:string;at:string;aud
     await c.query("COMMIT");
     if(!existing[0])return{outcome:"not_found" as const};
     if(existing[0].deleted_at!==null&&existing[0].deleted_at!==undefined){
-      return String(existing[0].deleted_by)===p.ownerFeishuUserId?{outcome:"replayed" as const,requirement:requirement(existing[0])}:{outcome:"forbidden" as const};
+      return String(existing[0].deleted_by)===p.deletedBy?{outcome:"replayed" as const,requirement:requirement(existing[0])}:{outcome:"forbidden" as const};
     }
     return{outcome:"forbidden" as const};
   }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}
 }
 // 0034：还原（只有删除人能还原）；事务与审计口径同 markDeleted。
-async restoreDeleted(p:{requirementId:string;deleterFeishuUserId:string;audit?:{id:string;actorId:string;occurredAt:string}}){
+async restoreDeleted(p:{requirementId:string;deleterUserId:string;audit?:{actorId:string;occurredAt:string}}){
   const c=await this.pool.connect();
   try{
     await c.query("BEGIN");
-    const{rows}=await c.query("UPDATE requirements SET deleted_at=NULL,deleted_by=NULL,updated_at=now() WHERE id=$1 AND deleted_at IS NOT NULL AND deleted_by=$2 RETURNING *",[p.requirementId,p.deleterFeishuUserId]);
+    const{rows}=await c.query("UPDATE requirements SET deleted_at=NULL,deleted_by=NULL,updated_at=now() WHERE id=$1 AND deleted_at IS NOT NULL AND deleted_by=$2 RETURNING *",[p.requirementId,p.deleterUserId]);
     if(rows[0]){
       const rec=requirement(rows[0]);
-      if(p.audit)await appendAuditInTransaction(c,{...p.audit,eventType:"requirement.restored",entityType:"requirement",result:"succeeded",safeDetails:{sourceVersion:rec.sourceVersion,pool:await sourcePoolInTransaction(c,rec.sourceConfigId)}},p.requirementId);
+      if(p.audit)await appendAuditInTransaction(c,{id:randomUUID(),...p.audit,eventType:"requirement.restored",entityType:"requirement",result:"succeeded",safeDetails:{sourceVersion:rec.sourceVersion,pool:await sourcePoolInTransaction(c,rec.sourceConfigId),processingState:rec.processingState??"active"}},p.requirementId);
       await c.query("COMMIT");
       return{outcome:"restored" as const,requirement:rec};
     }

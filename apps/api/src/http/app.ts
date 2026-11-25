@@ -29,7 +29,7 @@ import { createPrdPromptRateLimiter, type PrdPromptRateLimit } from "../prd-prom
 import { analysisPiiMarkers, loadDirectoryRosterNames } from "../requirements/processing.js";
 import { requirementTitleKey } from "../sync/service.js";
 import { readAiPause } from "../ops/ai-pause.js";
-import { decodeRequirementCursor } from "../application/requirement-cursor.js";
+import { decodeDeletedRequirementCursor, decodeRequirementCursor } from "../application/requirement-cursor.js";
 import { decodeBatchCursor } from "../application/batch-cursor.js";
 import { basePushIdempotencyKey } from "../application/idempotency-keys.js";
 
@@ -428,13 +428,20 @@ function prdPromptDto(r: RequirementPrdPromptRecord) {
   };
 }
 function requirementSearchDto(req: RequirementRecord) { return requirementDto(req); }
-/** 0034：列表/我的需求的响应组装；按页内来源批量解析负责人姓名与 Base 深链。 */
-async function requirementListPayload(repositories: ApiRepositories, page: { items: RequirementRecord[]; nextCursor: string | null }, pool: SourcePool) {
+/** 0034：列表/我的需求的响应组装；按页内来源批量解析负责人姓名、池标签与 Base 深链。 */
+async function requirementListPayload(repositories: ApiRepositories, page: { items: RequirementRecord[]; nextCursor: string | null }, pool: SourcePool | "all") {
   const pageSourceIds = [...new Set(page.items.map((item) => item.sourceConfigId).filter((id): id is string => Boolean(id)))];
   const mappings = repositories.people ? (await Promise.all(pageSourceIds.map((id) => repositories.people!.listActive(id)))).flat() : [];
   const nameByTbUser = new Map(mappings.filter((m) => m.teambitionUserId && m.teambitionDisplayName).map((m) => [`${m.sourceConfigId}:${m.teambitionUserId}`, m.teambitionDisplayName as string]));
+  // 回收站聚合两池后每行要能显示池标签；按来源一次性取，解析失败只影响标签不失败整个列表。
+  const poolBySource = new Map<string, SourcePool>();
+  try { for (const source of await repositories.sources.list()) poolBySource.set(source.id, source.pool ?? "product"); } catch { /* 标签是展示增强 */ }
+  const fallbackPool: SourcePool = pool === "all" ? "product" : pool;
   return {
-    items: page.items.map((item) => ({ ...requirementSearchDto(item), baseRecordUrl: baseRecordUrl(item.baseRecordId, pool), ownerName: manualOwnerName(item) ?? (item.executorUserId && item.sourceConfigId ? nameByTbUser.get(`${item.sourceConfigId}:${item.executorUserId}`) ?? null : null) })),
+    items: page.items.map((item) => {
+      const itemPool = (item.sourceConfigId ? poolBySource.get(item.sourceConfigId) : undefined) ?? fallbackPool;
+      return { ...requirementSearchDto(item), baseRecordUrl: baseRecordUrl(item.baseRecordId, itemPool), ownerName: manualOwnerName(item) ?? (item.executorUserId && item.sourceConfigId ? nameByTbUser.get(`${item.sourceConfigId}:${item.executorUserId}`) ?? null : null), pool: itemPool };
+    }),
     nextCursor: page.nextCursor,
   };
 }
@@ -1150,22 +1157,30 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
     const query = Object.fromEntries(url.searchParams.entries());
     const parsed = RequirementListQuerySchema.safeParse(query); if (!parsed.success) return jsonError("VALIDATION_FAILED");
-    // 优先级分诊视图（sort=priority_asc）按生效优先级排序且不分页：忽略游标，最多返回 100 条。
-    const cursor = parsed.data.sort === "priority_asc" ? undefined : decodeRequirementCursor(parsed.data.cursor);
-    if (parsed.data.sort !== "priority_asc" && parsed.data.cursor !== undefined && cursor === undefined) return jsonError("VALIDATION_FAILED", "Invalid cursor.");
-    // 0034：回收站/我的需求按飞书 user_id 过滤；平台 userId 不能直接比较。
-    const identityRequired = parsed.data.deleted === true || parsed.data.mine === true;
+    const recycle = parsed.data.deleted === true;
+    // 0034：回收站按 deleted_by=妙搭 userId 过滤，不依赖飞书身份解析（身份服务抖动不影响回收站）；
+    // 「我的需求」按负责人口径，仍要把平台 userId 换成飞书 user_id。
+    const identityRequired = parsed.data.mine === true;
     const identity = identityRequired ? await resolveFeishuIdentity(dependencies, auth.actor.id) : null;
     if (identity) { const unavailable = identityUnavailable(identity); if (unavailable) return unavailable; }
     if (identity && !identity.ok) return json({ items: [], nextCursor: null, identityResolved: false });
+    // 优先级分诊视图（sort=priority_asc）按生效优先级排序且不分页：忽略游标，最多返回 100 条。
+    // 回收站固定按删除时间倒序，用 (deleted_at,id) 游标；显式传 pool 才按池过滤，否则聚合两池。
+    const poolExplicit = url.searchParams.has("pool");
+    const pool: SourcePool | "all" = recycle && !poolExplicit ? "all" : parsed.data.pool;
+    const cursor = parsed.data.sort === "priority_asc" || recycle ? undefined : decodeRequirementCursor(parsed.data.cursor);
+    const deletedCursor = recycle ? decodeDeletedRequirementCursor(parsed.data.cursor) : undefined;
+    if (parsed.data.sort !== "priority_asc" && parsed.data.cursor !== undefined && (recycle ? deletedCursor === undefined : cursor === undefined)) return jsonError("VALIDATION_FAILED", "Invalid cursor.");
     const page = await repositories.requirements.search({ ...(parsed.data.q === undefined ? {} : { q: parsed.data.q }), ...(parsed.data.executorName === undefined ? {} : { executorName: parsed.data.executorName }), ...(parsed.data.pullState === undefined ? {} : { pullState: parsed.data.pullState }), ...(parsed.data.analysisState === undefined ? {} : { analysisState: parsed.data.analysisState }), ...(parsed.data.ownerState === undefined ? {} : { ownerState: parsed.data.ownerState }), ...(parsed.data.pushState === undefined ? {} : { pushState: parsed.data.pushState }),
       ...(parsed.data.processingState === undefined ? {} : { processingState: parsed.data.processingState }), ...(parsed.data.priority === undefined ? {} : { priority: parsed.data.priority }), ...(parsed.data.source === undefined ? {} : { source: parsed.data.source }),
-      // 0034：回收站=本人删除的记录；mine=我的需求（负责人口径）。
-      ...(parsed.data.deleted === true ? { deleted: true as const, deletedBy: identity!.feishuUserId! } : { deleted: false as const }),
+      // 0034：回收站=本人删除的记录（deleted_by 存妙搭 userId）；mine=我的需求（负责人口径）。
+      ...(recycle ? { deleted: true as const, deletedBy: auth.actor.id } : { deleted: false as const }),
       ...(parsed.data.mine === true ? { ownerFeishuUserId: identity!.feishuUserId! } : {}),
-      pool: parsed.data.pool, ...(parsed.data.sort === undefined ? {} : { sort: parsed.data.sort }), ...(parsed.data.batchId === undefined ? {} : { batchId: parsed.data.batchId }), ...(parsed.data.since === undefined ? {} : { since: parsed.data.since }), ...(parsed.data.until === undefined ? {} : { until: parsed.data.until }), limit: parsed.data.limit, ...(cursor === undefined ? {} : { cursor }) });
-    const payload = await requirementListPayload(repositories, page, parsed.data.pool);
-    return json(identityRequired ? { ...payload, identityResolved: true } : payload);
+      pool, ...(recycle ? {} : parsed.data.sort === undefined ? {} : { sort: parsed.data.sort }), ...(parsed.data.batchId === undefined ? {} : { batchId: parsed.data.batchId }), ...(parsed.data.since === undefined ? {} : { since: parsed.data.since }), ...(parsed.data.until === undefined ? {} : { until: parsed.data.until }), limit: parsed.data.limit,
+      ...(cursor === undefined ? {} : { cursor }), ...(deletedCursor === undefined ? {} : { deletedCursor }) });
+    const payload = await requirementListPayload(repositories, page, pool);
+    // 回收站恒为登录身份过滤（identityResolved=true）；我的需求在解析失败时已提前返回空页。
+    return json(recycle || identityRequired ? { ...payload, identityResolved: true } : payload);
   }
   // I3-2：需求池 CSV 导出。复用列表筛选（q/负责人/状态/优先级/批次/时间），忽略分页，上限 5000 条。
   if (method === "GET" && url.pathname === "/api/requirements/export") {
@@ -1596,14 +1611,14 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     const currentScore = repositories.scoring ? await repositories.scoring.current(req.id) : null;
     const aiScore = repositories.scoring ? await repositories.scoring.aiSuggestion(req.id) : null;
     const scoreHistory = repositories.scoring ? await repositories.scoring.list(req.id) : [];
-    // M16：deleted_by 只对删除人返回；其他人看到已删除态但不泄露删除人。
+    // M16：deleted_by 只对删除人返回；canRestore 直接告诉前端能不能点还原（不靠 deletedBy 推断）。
+    // deleted_by 存登录身份（妙搭 userId），与 auth.actor.id 同口径比较，不依赖飞书身份解析。
     const detailDto = requirementDto(req, latest && latest.status === "analyzed" ? latest.structuredResult : null, history.map(analysisVersionDto), ownerName, currentScore?.priority ?? null, detailPool);
-    if (req.deletedAt) {
-      const viewer = await resolveFeishuIdentity(dependencies, auth.actor.id);
-      detailDto.deletedBy = viewer.ok && viewer.feishuUserId === req.deletedBy ? (req.deletedBy ?? null) : null;
-    }
+    const canRestore = Boolean(req.deletedAt) && req.deletedBy === auth.actor.id;
+    if (req.deletedAt) detailDto.deletedBy = canRestore ? (req.deletedBy ?? null) : null;
     return json({
       ...detailDto,
+      canRestore,
       duplicates,
       duplicateCandidates,
       resolution: resolution ?? requirementResolutionDto(req),
@@ -1622,34 +1637,34 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     const requirementId = pathUuid(requirementMatch[1]!, dependencies); if (!requirementId) return jsonError("NOT_FOUND");
     const nowIso = (dependencies.now ?? (() => new Date()))().toISOString();
     // 负责人列存飞书 user_id：先做平台身份转换，解析不到就不能判定归属。
+    // deleted_by 另存登录身份（妙搭 userId）：还原权限只认登录身份，不依赖身份解析服务。
     const identity = await resolveFeishuIdentity(dependencies, auth.actor.id);
     if (!identity.ok) return identity.reason === "unavailable"
       ? jsonError("DEPENDENCY_UNAVAILABLE", "身份解析服务暂不可用，请稍后重试。")
       : jsonError("FORBIDDEN", "无法解析你的飞书身份，暂不能删除需求。");
     let result: import("../application/repositories.js").RequirementLifecycleOutcome;
     // M7/M8：审计在仓储的同一事务内写入；重放（已删除同人）不追加审计。审计失败整体回滚并返回 503。
-    try { result = await repositories.requirements.markDeleted({ requirementId, ownerFeishuUserId: identity.feishuUserId!, at: nowIso, audit: { id: randomUUID(), actorId: auth.actor.id, occurredAt: nowIso } }); }
+    try { result = await repositories.requirements.markDeleted({ requirementId, ownerFeishuUserId: identity.feishuUserId!, deletedBy: auth.actor.id, at: nowIso, audit: { actorId: auth.actor.id, occurredAt: nowIso } }); }
     catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
     if (result.outcome === "not_found") return jsonError("NOT_FOUND");
     if (result.outcome === "forbidden") return jsonError("FORBIDDEN", "只有当前负责人可以删除这条需求。");
-    return json({ requirementId, deletedAt: result.requirement.deletedAt ?? nowIso, deletedBy: identity.feishuUserId, replayed: result.outcome === "replayed" });
+    return json({ requirementId, deletedAt: result.requirement.deletedAt ?? nowIso, deletedBy: auth.actor.id, replayed: result.outcome === "replayed" });
   }
   const restoreMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/restore$/);
   if (method === "POST" && restoreMatch) {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.requirements?.restoreDeleted) return jsonError("DEPENDENCY_UNAVAILABLE");
     const requirementId = pathUuid(restoreMatch[1]!, dependencies); if (!requirementId) return jsonError("NOT_FOUND");
-    const identity = await resolveFeishuIdentity(dependencies, auth.actor.id);
-    if (!identity.ok) return identity.reason === "unavailable"
-      ? jsonError("DEPENDENCY_UNAVAILABLE", "身份解析服务暂不可用，请稍后重试。")
-      : jsonError("FORBIDDEN", "无法解析你的飞书身份，暂不能还原需求。");
     const nowIso = (dependencies.now ?? (() => new Date()))().toISOString();
+    // deleted_by 存的是登录身份（妙搭 userId）：还原直接比对，不经过飞书身份解析。
     let result: import("../application/repositories.js").RequirementLifecycleOutcome;
-    try { result = await repositories.requirements.restoreDeleted({ requirementId, deleterFeishuUserId: identity.feishuUserId!, audit: { id: randomUUID(), actorId: auth.actor.id, occurredAt: nowIso } }); }
+    try { result = await repositories.requirements.restoreDeleted({ requirementId, deleterUserId: auth.actor.id, audit: { actorId: auth.actor.id, occurredAt: nowIso } }); }
     catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
     if (result.outcome === "not_found") return jsonError("NOT_FOUND");
     if (result.outcome === "forbidden") return jsonError("FORBIDDEN", "只有删除人本人可以还原这条需求。");
-    return json({ requirementId, deletedAt: null, deletedBy: null, replayed: result.outcome === "not_deleted" });
+    // M10：本来就不在回收站（已被别人还原/从未删除）不是幂等成功，回 409 让前端刷新列表。
+    if (result.outcome === "not_deleted") return jsonError("CONFLICT", "这条需求已不在回收站（可能已被还原），请刷新列表。");
+    return json({ requirementId, deletedAt: null, deletedBy: null, replayed: false });
   }
   const itemRetryMatch = url.pathname.match(/^\/api\/items\/([^/]+)\/retry$/);
   if (method === "POST" && itemRetryMatch) {
