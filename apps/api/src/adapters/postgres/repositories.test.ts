@@ -464,6 +464,29 @@ test("recycle-bin aggregate search drops the pool filter, orders by deleted_at a
   assert.equal(values[11],11);
 });
 
+test("every conditional SQL fragment adds and drops its bind parameters together", async()=>{
+  // 回归：回收站分支的 ORDER BY 不引用排序参数 $15，之前参数数组仍带着它，PG 在 Parse 阶段报
+  // 42P18 could not determine data type of parameter $15。凡是按分支拼 SQL，参数必须跟着一起加减。
+  const cases: Array<Record<string, unknown>> = [
+    {},
+    { sort: "priority_asc" },
+    { deleted: false, pool: "group" },
+    { deleted: true },
+    { deleted: true, sort: "priority_asc" },
+    { deleted: true, pool: "all" },
+    { deleted: true, deletedBy: "actor-1", deletedCursor: { deletedAt: "2026-01-02T00:00:00.000Z", id: "55555555-5555-4555-8555-555555555555" } },
+    { deleted: true, pool: "all", ownerFeishuUserId: "feishu-1" },
+    { source: "chat_paste", processingState: "suppressed", priority: "P1" },
+  ];
+  for (const input of cases) {
+    const {pool,calls}=recordingPool();const store=new PostgresRepositories(pool);
+    await store.requirements.search({ ...input, limit: 25 } as never);
+    const sql=calls[0]!.sql as string, values=calls[0]!.values as unknown[];
+    const maxPlaceholder=Math.max(...[...sql.matchAll(/\$(\d+)/g)].map((match)=>Number(match[1])));
+    assert.equal(values.length,maxPlaceholder,`参数与占位符不一致：${JSON.stringify(input)}`);
+  }
+});
+
 test("priority triage search filters effective priority and disables cursor pagination", async()=>{
   const {pool,calls}=recordingPool();const store=new PostgresRepositories(pool);
   const page=await store.requirements.search({priority:"P2",sort:"priority_asc",limit:25,cursor:{createdAt:"2026-01-01T00:00:00.000Z",id:"55555555-5555-4555-8555-555555555555"}});
