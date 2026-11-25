@@ -1647,7 +1647,7 @@ test("0034 list rows carry the per-row pool label, including my-requirements", a
   const d = makeDependencies();
   d.feishuUserSelections = { resolve: async () => ({ feishuUserId: "feishu-1", feishuIdType: "user_id", name: "我" }) };
   d.repositories!.sources = { ...d.repositories!.sources, list: async () => [source, groupSource] };
-  d.repositories!.requirements!.search = async () => ({ items: [{ ...requirement, sourceConfigId: groupSource.id }], nextCursor: null });
+  d.repositories!.requirements!.search = async () => ({ items: [{ ...requirement, sourceConfigId: groupSource.id } as unknown as RequirementRecord], nextCursor: null });
   const response = await handleApiRequest(new Request("http://localhost/api/requirements/mine?pool=group"), d);
   assert.equal(response.status, 200);
   assert.equal(((await response.json()) as { items: Array<{ pool?: string }> }).items[0]?.pool, "group");
