@@ -182,6 +182,16 @@ export async function listSources(fetcher: typeof fetch = fetch): Promise<Source
   return result.items;
 }
 
+/** 飞书 Base 地址（只读展示）：两个池各自承载需求推送与消息通知。 */
+export interface BaseLinks {
+  product: { url: string } | null;
+  group: { url: string } | null;
+}
+
+export async function getBaseLinks(fetcher: typeof fetch = fetch): Promise<BaseLinks> {
+  return requestJson<BaseLinks>("/api/base-links", fetcher);
+}
+
 export async function listTeamPeople(fetcher: typeof fetch = fetch): Promise<TeamPerson[]> {
   return (await requestJson<{ items: TeamPerson[] }>("/api/people", fetcher)).items;
 }

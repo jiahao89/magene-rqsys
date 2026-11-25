@@ -379,6 +379,46 @@ describe("SourcesPanel (ticket 16)", () => {
     expect(errorRow).not.toHaveTextContent("tblXYZ789012");
     expect(errorRow).not.toHaveTextContent("https://example.com");
   });
+
+  it("shows both Feishu Base links at the bottom with copy actions", async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const productBase = "https://aimagene.feishu.cn/base/GRnEboCIga7Omas8RwgcDmmgnib?table=tbl6Gfi0KJ2a1llK";
+    const groupBase = "https://aimagene.feishu.cn/base/HZ6NbvXKJa0o5Qs4hgQcSoirnde?table=tblNVlrwYOPU5kuz";
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/base-links") return jsonOk({ product: { url: productBase }, group: { url: groupBase } });
+      return jsonOk({ items: [] });
+    });
+    render(<SourcesPanel sources={[source]} loadState="ready" onRefresh={() => undefined} />);
+
+    expect(await screen.findByText("飞书 Base 地址")).toBeInTheDocument();
+    expect(screen.getByText("这两个 Base 承载需求推送与飞书消息通知，仅在应用内展示，不可编辑。")).toBeInTheDocument();
+    const productLink = screen.getByRole("link", { name: productBase });
+    expect(productLink).toHaveAttribute("href", productBase);
+    expect(productLink).toHaveAttribute("target", "_blank");
+    expect(screen.getByRole("link", { name: groupBase })).toHaveAttribute("href", groupBase);
+    // ≥1200px 两列（Arco xl=12），窄屏由 xs=24 回落单列。
+    expect(document.querySelectorAll(".arco-col-xs-24.arco-col-xl-12")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "复制需求池 Base 链接" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(productBase));
+    expect(await screen.findByRole("button", { name: "复制需求池 Base 链接" })).toHaveTextContent("已复制");
+  });
+
+  it("marks an unconfigured Base link without leaking record ids or env names", async () => {
+    const groupBase = "https://aimagene.feishu.cn/base/HZ6NbvXKJa0o5Qs4hgQcSoirnde?table=tblNVlrwYOPU5kuz";
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/base-links") return jsonOk({ product: null, group: { url: groupBase } });
+      return jsonOk({ items: [] });
+    });
+    render(<SourcesPanel sources={[source]} loadState="ready" onRefresh={() => undefined} />);
+
+    expect(await screen.findByText("飞书 Base 地址")).toBeInTheDocument();
+    expect(await screen.findByText("未配置")).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/record=/);
+    expect(document.body.textContent).not.toMatch(/RQSYS_/);
+  });
 });
 
 describe("BatchesPanel (ticket 16)", () => {

@@ -4,7 +4,7 @@
 import { Fragment, useCallback, useEffect, useId, useRef, useState, Component, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { AudienceEditor, BetaPanel, IntakeForm, ManualEditSection } from "./intake-form";
 import { Button, Card, Chip, Input } from "./arco";
-import { Button as ArcoButton, Checkbox as ArcoCheckbox, Collapse, Input as ArcoInput, InputNumber as ArcoInputNumber, Select as ArcoSelect, Table as ArcoTable, Tabs as ArcoTabs } from "@arco-design/web-react";
+import { Button as ArcoButton, Card as ArcoCard, Checkbox as ArcoCheckbox, Descriptions as ArcoDescriptions, Grid as ArcoGrid, Space as ArcoSpace, Tag as ArcoTag, Typography as ArcoTypography, Collapse, Input as ArcoInput, InputNumber as ArcoInputNumber, Select as ArcoSelect, Table as ArcoTable, Tabs as ArcoTabs } from "@arco-design/web-react";
 import { ConfirmModal } from "./confirm-modal";
 import { ArrowLeft, RefreshCw, X } from "lucide-react";
 import { stateLabel } from "./state-labels";
@@ -13,7 +13,7 @@ import { checkScheduleHealth } from "./schedule";
 import { readRequirementDeepLink } from "./deep-link";
 import { emptyRequirementListFilters, readRequirementListFilters, requirementFilterCount, requirementPoolUrl, type RequirementListFilters, type RequirementProcessingView } from "./requirements-url";
 import { formatDateTime, requirementDisplayId, requirementOwnerView, requirementSourceFacts, requirementSourceName, requirementTime, sortRequirementsForAttention } from "./requirement-view";
-import { AUDIT_PAGE_LIMIT, ApiError, addTeamPerson, applyRequirementAiScore, bindTeamPersonFeishu, createSource, createRequirementAssessment, deleteTeamPerson, getBatch, getFunctionModules, getRequirement, exportRequirementsCsv, getGates, getOpsJobs, getOpsMetrics, getReadiness, getRequirementSourceCounts, listRequirementAssessments, setGate, listAudit, listBatches, listDictionaryVersions, listMappings, listRequirements, listTeamPeople, pushRequirement, renameTeamPerson, revokeDuplicateDecision, saveAnalysisContext, saveFunctionModules, retryAnalysis, setPriorityOverride, retrySyncItem, saveRequirementScore, searchFeishuUsers, setDuplicateDecision, setOwner, unbindTeamPersonFeishu, updateSource, type AnalysisVersionSummary, type AuditEvent, type OpsJob, type OpsMetrics, type GatesResponse, type AssessmentConfidence, type AssessmentVerdict, type BatchDetail, type BatchSummary, type DictionaryVersion, type DuplicateDecision, type PersonMapping, type PublishStatus, type FeishuUserSelection, type FeishuUserCandidate, type FunctionModuleEntry, type RequirementDetail, type RequirementProcessingState, type RequirementResolution, type RequirementAssessment, type RequirementScoreVersion, type RequirementSourceCounts, type RequirementSummary, type ScoringInputs, type SourceConfig, type SourceConfigUpdate, type TeamPerson, type RequirementPool, clearOwner } from "./api";
+import { AUDIT_PAGE_LIMIT, ApiError, addTeamPerson, applyRequirementAiScore, bindTeamPersonFeishu, createSource, createRequirementAssessment, deleteTeamPerson, getBatch, getFunctionModules, getRequirement, exportRequirementsCsv, getBaseLinks, getGates, getOpsJobs, getOpsMetrics, getReadiness, getRequirementSourceCounts, listRequirementAssessments, setGate, listAudit, listBatches, listDictionaryVersions, listMappings, listRequirements, listTeamPeople, pushRequirement, renameTeamPerson, revokeDuplicateDecision, saveAnalysisContext, saveFunctionModules, retryAnalysis, setPriorityOverride, retrySyncItem, saveRequirementScore, searchFeishuUsers, setDuplicateDecision, setOwner, unbindTeamPersonFeishu, updateSource, type AnalysisVersionSummary, type AuditEvent, type OpsJob, type OpsMetrics, type GatesResponse, type AssessmentConfidence, type AssessmentVerdict, type BatchDetail, type BaseLinks, type BatchSummary, type DictionaryVersion, type DuplicateDecision, type PersonMapping, type PublishStatus, type FeishuUserSelection, type FeishuUserCandidate, type FunctionModuleEntry, type RequirementDetail, type RequirementProcessingState, type RequirementResolution, type RequirementAssessment, type RequirementScoreVersion, type RequirementSourceCounts, type RequirementSummary, type ScoringInputs, type SourceConfig, type SourceConfigUpdate, type TeamPerson, type RequirementPool, clearOwner } from "./api";
 import type { WorkbenchTab } from "./workbench-routing";
 import { PrdPromptSection } from "./prd-prompt";
 
@@ -225,6 +225,20 @@ function ExecutorAllowlistEditor({ value, onChange, disabled }: { value: string[
   </div>;
 }
 
+export function SourcesPanel({ sources, loadState, onRefresh }: { sources: SourceConfig[]; loadState: LoadState; onRefresh: () => void }) {
+  // 方案 A：同一 provider 两条来源配置，按 pool 分组渲染；≥1200px 两列，窄屏单列。
+  const product = sources.find((item) => (item.pool ?? "product") === "product");
+  const group = sources.find((item) => item.pool === "group");
+  return <div className="sources-page">
+    <ArcoGrid.Row gutter={[16, 16]} align="stretch">
+      <ArcoGrid.Col xs={24} xl={12}><SourceConfigCard pool="product" existing={product} loadState={loadState} onRefresh={onRefresh} /></ArcoGrid.Col>
+      <ArcoGrid.Col xs={24} xl={12}><SourceConfigCard pool="group" existing={group} loadState={loadState} onRefresh={onRefresh} /></ArcoGrid.Col>
+    </ArcoGrid.Row>
+    <BaseFormReadonlyPanel />
+    <BaseLinksPanel />
+  </div>;
+}
+
 function SourceConfigCard({ pool, existing, loadState, onRefresh }: { pool: RequirementPool; existing?: SourceConfig; loadState: LoadState; onRefresh: () => void }) {
   const isGroup = pool === "group";
   const [draft, setDraft] = useState<SourceConfigUpdate>(() => existing ? {
@@ -238,6 +252,9 @@ function SourceConfigCard({ pool, existing, loadState, onRefresh }: { pool: Requ
   const [loadError, setLoadError] = useState<string | null>(null);
   const [unresolvedNames, setUnresolvedNames] = useState<string[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
+  // 最近同步：只读该池最近一批，失败只降级本项，不影响来源配置的读写。
+  const [lastBatch, setLastBatch] = useState<BatchSummary | null>(null);
+  const [lastBatchState, setLastBatchState] = useState<LoadState>("loading");
   const executorNames = draft.executorAllowlist ?? [];
   const emptyAllowlist = isGroup && executorNames.length === 0;
 
@@ -254,6 +271,15 @@ function SourceConfigCard({ pool, existing, loadState, onRefresh }: { pool: Requ
     });
     // 仅在服务端配置实际变化时重同步，避免覆盖用户正在编辑的草稿。
   }, [loadedKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLastBatchState("loading");
+    void listBatches({ pool: isGroup ? "group" : undefined, limit: 1 })
+      .then((result) => { if (!cancelled) { setLastBatch(result.items[0] ?? null); setLastBatchState("ready"); } })
+      .catch(() => { if (!cancelled) { setLastBatch(null); setLastBatchState("error"); } });
+    return () => { cancelled = true; };
+  }, [isGroup]);
 
   const set = <K extends keyof SourceConfigUpdate>(key: K, value: SourceConfigUpdate[K]) => setDraft((prev) => ({ ...prev, [key]: value }));
   const selectedDays = draft.schedule.weekdays ?? (draft.schedule.weekday === null ? [] : [draft.schedule.weekday]);
@@ -294,52 +320,55 @@ function SourceConfigCard({ pool, existing, loadState, onRefresh }: { pool: Requ
     ? "集团池独立同步 Teambition「需求收集与管理」项目；仅收录执行人名单内的需求。凭据保存在服务端。"
     : "填写 Teambition 项目名称；系统会自动匹配项目及需求任务类型。凭据保存在服务端。";
   const prefix = isGroup ? "集团池" : "";
+  const BATCH_STATUS_LABELS: Record<string, string> = { queued: "排队中", running: "进行中", succeeded: "成功", partial_failure: "部分失败", failed: "失败" };
+  const lastSyncText = lastBatchState === "loading"
+    ? "读取中…"
+    : lastBatch
+      ? `${formatDateTime(lastBatch.startedAt ?? null) ?? lastBatch.startedAt ?? "时间未知"} · ${BATCH_STATUS_LABELS[lastBatch.status] ?? lastBatch.status}`
+      : lastBatchState === "error" ? "暂不可用" : "暂无同步记录";
 
-  return <section className="panel requirements-panel" aria-label={isGroup ? "集团需求池来源配置" : "产品需求池来源配置"}>
-    <div className="panel-heading"><div><h2>{title}</h2><p>{description}</p></div>{existing && <span className={`status-chip ${existing.enabled ? "status-live" : "status-muted"}`}><span />{existing.enabled ? "已启用" : "已停用"}</span>}</div>
-    <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
-    {unresolvedNames.length > 0 && <div className="alert-banner" role="alert"><div><strong>执行人未解析</strong><span>{unresolvedNames.join("、")}：请填写 Teambition 组织目录中的准确姓名。</span></div></div>}
-    {emptyAllowlist && <div className="notice-banner" role="status"><span>请至少填写 1 个执行人后再启用同步；名单为空时不能保存或启用。</span></div>}
-    <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
-      <label className="field"><span>Teambition 项目名称</span><Input aria-label={`${prefix}项目名称`} value={draft.projectName} onChange={(e) => set("projectName", e.target.value)} /></label>
-      <div className="rules-threshold"><ArcoCheckbox checked={draft.enabled} disabled={emptyAllowlist} onChange={(checked: boolean) => set("enabled", checked)}>{isGroup ? "启用集团池同步" : "启用同步"}</ArcoCheckbox></div>
-    </div>
-    {isGroup && <div className="rules-form" style={{ alignItems: "stretch", flexDirection: "column" }}>
-      <div className="rules-threshold"><span>执行人名单（任一执行人在名单内即同步）</span></div>
-      <ExecutorAllowlistEditor value={executorNames} onChange={(next) => set("executorAllowlist", next)} disabled={busy} />
-    </div>}
-    <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
-      <div className="rules-threshold"><span>周计划（可多选）</span><div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-        {WEEKDAY_LABELS.map((label, index) => { const day = index + 1; return <ArcoButton key={label} htmlType="button" size="small" type={selectedDays.includes(day) ? "primary" : "secondary"} aria-label={isGroup ? `集团池${label}` : label} aria-pressed={selectedDays.includes(day)} onClick={() => toggleWeekday(day)}>{label}</ArcoButton>; })}
-      </div></div>
-      <label className="field field--short"><span>执行时间（HH:MM）</span><Input aria-label={`${prefix}执行时间`} placeholder="09:00" value={draft.schedule.time ?? ""} onChange={(e) => set("schedule", { ...draft.schedule, time: e.target.value === "" ? null : e.target.value })} /></label>
-      <label className="field"><span>时区</span><Input aria-label={`${prefix}时区`} placeholder="Asia/Shanghai" value={draft.schedule.timezone ?? ""} onChange={(e) => set("schedule", { ...draft.schedule, timezone: e.target.value === "" ? null : e.target.value })} /></label>
-      <div className="rules-threshold"><ArcoCheckbox checked={draft.schedule.enabled} onChange={(checked: boolean) => set("schedule", { ...draft.schedule, enabled: checked })}>{isGroup ? "启用集团池周计划" : "启用周计划"}</ArcoCheckbox></div>
-    </div>
-    <div className="rules-form"><Button onPress={() => void save()} isDisabled={busy || loadState === "loading" || emptyAllowlist} variant="primary" size="small">{isGroup ? (existing ? "保存集团池设置" : "创建集团池来源") : (existing ? "保存更新" : "创建来源")}</Button></div>
-    {loadState === "ready" && <ConnectionSelfCheck existing={existing} draft={draft} pool={pool} />}
-    {loadState === "error" && <div className="table-empty"><strong>无法读取来源配置</strong><span>请检查 API 连接后重试。</span></div>}
-    {!existing && loadState === "ready" && <div className="table-empty"><strong>{isGroup ? "尚未配置集团池数据源" : "尚未配置数据源"}</strong><span>{isGroup ? "填写项目名称与执行人名单后创建；名单为空时不能启用同步。" : "填写项目名称并创建后，可手动同步；周计划启用后按设定执行。"}</span></div>}
-    {existing && <ArcoTable<{ project: string; schedule: string }>
-      rowKey="project"
-      data={[{ project: existing.projectName, schedule: scheduleLabel(existing.schedule) }]}
-      pagination={false}
-      border={false}
-      columns={[{ title: "项目", dataIndex: "project" }, { title: "定时同步", dataIndex: "schedule" }]}
-    />}
+  return <section className="source-card-wrap" aria-label={isGroup ? "集团需求池来源配置" : "产品需求池来源配置"}>
+    <ArcoCard className={`source-card ${isGroup ? "is-group" : "is-product"}`} title={<ArcoSpace size={8} align="center" wrap>
+      <ArcoTypography.Title heading={5} style={{ margin: 0 }}>{title}</ArcoTypography.Title>
+      {existing && <ArcoTag color={existing.enabled ? "green" : "gray"} bordered={false}>{existing.enabled ? "当前已启用" : "当前已停用"}</ArcoTag>}
+    </ArcoSpace>}>
+      <ArcoTypography.Paragraph type="secondary">{description}</ArcoTypography.Paragraph>
+      {/* 摘要即表单：每个字段只出现一次，卡片标题上的 Tag 表示已保存状态，勾选框表示保存后的状态。 */}
+      <ArcoDescriptions column={1} size="small" className="source-summary" labelStyle={{ width: 132 }} data={[
+        { label: "项目名称", value: <ArcoInput aria-label={`${prefix}项目名称`} value={draft.projectName} onChange={(value: string) => set("projectName", value)} /> },
+        { label: "同步状态", value: <ArcoSpace size={8} wrap>
+          <ArcoCheckbox checked={draft.enabled} disabled={emptyAllowlist} onChange={(checked: boolean) => set("enabled", checked)}>{isGroup ? "启用集团池同步" : "启用同步"}</ArcoCheckbox>
+          <span className="subtle-text">保存后启用</span>
+        </ArcoSpace> },
+        ...(isGroup ? [{ label: "执行人名单", value: <ExecutorAllowlistEditor value={executorNames} onChange={(next) => set("executorAllowlist", next)} disabled={busy} /> }] : []),
+        { label: "周计划", value: <ArcoSpace direction="vertical" size={8} style={{ width: "100%" }}>
+          <ArcoSpace size={4} wrap>
+            {WEEKDAY_LABELS.map((label, index) => { const day = index + 1; return <ArcoButton key={label} htmlType="button" size="small" type={selectedDays.includes(day) ? "primary" : "secondary"} aria-label={isGroup ? `集团池${label}` : label} aria-pressed={selectedDays.includes(day)} onClick={() => toggleWeekday(day)}>{label}</ArcoButton>; })}
+          </ArcoSpace>
+          <ArcoSpace size={8} wrap>
+            <ArcoInput aria-label={`${prefix}执行时间`} placeholder="09:00" style={{ width: 120 }} value={draft.schedule.time ?? ""} onChange={(value: string) => set("schedule", { ...draft.schedule, time: value === "" ? null : value })} />
+            <ArcoInput aria-label={`${prefix}时区`} placeholder="Asia/Shanghai" style={{ width: 180 }} value={draft.schedule.timezone ?? ""} onChange={(value: string) => set("schedule", { ...draft.schedule, timezone: value === "" ? null : value })} />
+            <ArcoCheckbox checked={draft.schedule.enabled} onChange={(checked: boolean) => set("schedule", { ...draft.schedule, enabled: checked })}>{isGroup ? "启用集团池周计划" : "启用周计划"}</ArcoCheckbox>
+              <span className="subtle-text">保存后启用</span>
+          </ArcoSpace>
+        </ArcoSpace> },
+        { label: "最近同步", value: lastSyncText },
+      ]} />
+
+      <ArcoSpace size={8} style={{ marginTop: 16 }}>
+        <ArcoButton type="primary" htmlType="button" size="small" onClick={() => void save()} disabled={busy || loadState === "loading" || emptyAllowlist}>{isGroup ? (existing ? "保存集团池设置" : "创建集团池来源") : (existing ? "保存更新" : "创建来源")}</ArcoButton>
+      </ArcoSpace>
+
+      <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
+      {unresolvedNames.length > 0 && <div className="alert-banner" role="alert"><div><strong>执行人未解析</strong><span>{unresolvedNames.join("、")}：请填写 Teambition 组织目录中的准确姓名。</span></div></div>}
+      {emptyAllowlist && <div className="notice-banner" role="status"><span>请至少填写 1 个执行人后再启用同步；名单为空时不能保存或启用。</span></div>}
+      {loadState === "ready" && <ConnectionSelfCheck existing={existing} draft={draft} pool={pool} />}
+      {loadState === "error" && <div className="table-empty"><strong>无法读取来源配置</strong><span>请检查 API 连接后重试。</span></div>}
+      {!existing && loadState === "ready" && <div className="table-empty"><strong>{isGroup ? "尚未配置集团池数据源" : "尚未配置数据源"}</strong><span>{isGroup ? "填写项目名称与执行人名单后创建；名单为空时不能启用同步。" : "填写项目名称并创建后，可手动同步；周计划启用后按设定执行。"}</span></div>}
+    </ArcoCard>
   </section>;
 }
 
-export function SourcesPanel({ sources, loadState, onRefresh }: { sources: SourceConfig[]; loadState: LoadState; onRefresh: () => void }) {
-  // 方案 A：同一 provider 两条来源配置，按 pool 分组渲染，不再用 sources[0]。
-  const product = sources.find((item) => (item.pool ?? "product") === "product");
-  const group = sources.find((item) => item.pool === "group");
-  return <>
-    <SourceConfigCard pool="product" existing={product} loadState={loadState} onRefresh={onRefresh} />
-    <SourceConfigCard pool="group" existing={group} loadState={loadState} onRefresh={onRefresh} />
-    <BaseFormReadonlyPanel />
-  </>;
-}
 
 /** 数据源页的多维表格收集表只读卡片：来源地址、同步规则、最近一次同步（PRD §4.11）。 */
 function BaseFormReadonlyPanel() {
@@ -382,11 +411,11 @@ function BaseFormReadonlyPanel() {
     && typeof stats?.writeBackFailed === "number"
     && typeof stats?.readFailed === "boolean";
   const lastError = sanitizeBaseFormError(stats?.lastError ?? null);
-  return <section className="panel requirements-panel" aria-labelledby="baseform-source-heading">
-    <div className="panel-heading">
-      <div><h2 id="baseform-source-heading">多维表格需求收集表</h2><p>销售、售后等通过飞书收集表提交需求。收集表同步已暂停，本页保留来源地址与暂停前的同步记录，只读。</p></div>
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}><span className="status-chip status-warning"><span />同步已暂停</span><span className="status-chip status-muted"><span />只读</span></div>
-    </div>
+  return <ArcoCard className="baseform-card" title={<h3 id="baseform-source-heading">多维表格需求收集表</h3>} extra={<ArcoSpace size={8}>
+    <ArcoTag color="orange" bordered={false}>同步已暂停</ArcoTag>
+    <ArcoTag color="gray" bordered={false}>只读</ArcoTag>
+  </ArcoSpace>}>
+    <ArcoTypography.Paragraph type="secondary">销售、售后等通过飞书收集表提交需求。收集表同步已暂停，本页保留来源地址与暂停前的同步记录，只读。</ArcoTypography.Paragraph>
     <div className="baseform-readonly-grid">
       {shareUrl ? <div className="baseform-block">
         <h3>来源地址</h3>
@@ -414,7 +443,49 @@ function BaseFormReadonlyPanel() {
         </dl> : <p className="detail-note">同步统计暂不可用</p>}
       </div>
     </div>
-  </section>;
+  </ArcoCard>;
+}
+
+/** 数据源页最下方的飞书 Base 地址卡片：两个池的 Base 承载需求推送与消息通知，只读展示。 */
+function BaseLinksPanel() {
+  const [links, setLinks] = useState<BaseLinks | null>(null);
+  const [unavailable, setUnavailable] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
+  const [copyError, setCopyError] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    // 接口未就位或读取失败时只降级本卡片，不影响上面的来源配置。
+    void getBaseLinks()
+      .then((value) => { if (!cancelled) setLinks(value); })
+      .catch(() => { if (!cancelled) { setLinks({ product: null, group: null }); setUnavailable(true); } });
+    return () => { cancelled = true; };
+  }, []);
+  const copy = async (key: string, url: string) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(key); setCopyError(null);
+      window.setTimeout(() => setCopied((current) => (current === key ? null : current)), 2000);
+    } catch { setCopyError("复制失败，请手动选中链接复制。"); }
+  };
+  const rows: Array<{ key: string; label: string; url: string | null }> = [
+    { key: "product", label: "需求池 Base", url: links?.product?.url?.trim() || null },
+    { key: "group", label: "集团需求池 Base", url: links?.group?.url?.trim() || null },
+  ];
+  return <ArcoCard className="base-links-card" title={<ArcoTypography.Title heading={5} style={{ margin: 0 }}>飞书 Base 地址</ArcoTypography.Title>}>
+    <ArcoTypography.Paragraph type="secondary">这两个 Base 承载需求推送与飞书消息通知，仅在应用内展示，不可编辑。</ArcoTypography.Paragraph>
+    <div className="base-link-list">
+      {rows.map((row) => <div className="base-link-row" key={row.key}>
+        <ArcoTypography.Text className="base-link-label">{row.label}</ArcoTypography.Text>
+        {row.url
+          ? <>
+              <a className="base-link-url" href={row.url} target="_blank" rel="noreferrer">{row.url}</a>
+              <ArcoButton size="small" htmlType="button" aria-label={`复制${row.label} 链接`} onClick={() => void copy(row.key, row.url as string)}>{copied === row.key ? "已复制" : "复制"}</ArcoButton>
+            </>
+          : <span className="subtle-text">{links === null ? "读取中…" : unavailable ? "暂不可用" : "未配置"}</span>}
+      </div>)}
+    </div>
+    {copyError ? <p className="status-hint" role="alert">{copyError}</p> : null}
+  </ArcoCard>;
 }
 
 /** PRD §4.11.4：lastError 只展示归一化摘要；前端兜底掩码，仍不安全时给统一文案。 */

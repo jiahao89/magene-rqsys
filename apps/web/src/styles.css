@@ -1747,3 +1747,27 @@ html[data-theme="dark"] .advice-card { background: var(--rq-surface-subtle); bor
 .duplicate-current-state code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--rq-font-caption); }
 .duplicate-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
 .duplicate-form { margin-top: 4px; }
+
+/* ---------- 数据源与计划（Arco 重排，2026-11-25） ---------- */
+.sources-page { display: flex; flex-direction: column; gap: 16px; }
+.sources-page .arco-card { border-radius: var(--border-radius-large); border-color: var(--color-border-2); box-shadow: none; }
+.sources-page .arco-card-header { border-bottom: 1px solid var(--color-border-2); }
+.sources-page .arco-card-body { padding: 16px; }
+.source-summary { margin: 0; }
+.source-summary .arco-descriptions-item-label { color: var(--color-text-3); }
+.source-summary .arco-descriptions-item-value { color: var(--color-text-1); }
+.base-link-list { display: flex; flex-direction: column; }
+.base-link-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 0; border-top: 1px solid var(--color-border-2); }
+.base-link-row:first-child { border-top: 0; }
+.base-link-label { min-width: 128px; color: var(--color-text-2); }
+.base-link-url { color: rgb(var(--primary-6)); word-break: break-all; }
+.source-summary .arco-descriptions-table { width: 100%; table-layout: fixed; }
+.source-summary .arco-descriptions-item-label { width: 132px; white-space: nowrap; }
+.source-summary .arco-descriptions-item-value { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+.baseform-block .req-system-grid { grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px 16px; }
+.sources-page .arco-row { align-items: stretch; }
+.sources-page .arco-col { display: flex; }
+.sources-page .source-card-wrap { display: flex; width: 100%; }
+.sources-page .source-card { flex: 1; }
+.sources-page .executor-add { flex-wrap: nowrap; }
+.sources-page .executor-add .arco-input { flex: 1 1 160px; min-width: 0; max-width: 320px; }
