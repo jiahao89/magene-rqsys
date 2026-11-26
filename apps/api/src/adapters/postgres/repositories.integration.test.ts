@@ -253,6 +253,7 @@ test("changed source upsert snapshots and resets analysis/push, keeps a manual o
     assert.equal(afterExecutorChange?.manualOwner?.feishuIdType,"open_id");
     assert.equal(afterExecutorChange?.executorUserId,"tb-owner-2");
     assert.equal((await ctx.repos.sourceSnapshots.latest(second.id))?.sourceVersion,3);
+    await ctx.repos.batches.complete(batch3.id,{status:"succeeded",totalCount:1,succeededCount:1,failedCount:0,errorSummary:null,completedAt:"2026-10-10T00:00:01Z"});
 
     // 同一用例留一条对照：非人工状态（auto_mapped）在 TB 执行人变更时必须回到 pending_mapping。
     const auto=await ctx.repos.requirements.upsertRequirement(source.id,"task-owner-auto",requirementWrite(source.id,batch3.id,{teambitionRequirementId:"task-owner-auto",executorUserId:"tb-auto-1",executorName:"Cy",sourceHash:"f".repeat(64),substantiveHash:"f".repeat(64),sourceVersion:1}));
@@ -260,6 +261,7 @@ test("changed source upsert snapshots and resets analysis/push, keeps a manual o
     const batch4=await ctx.repos.batches.create({sourceConfigId:source.id,triggerType:"manual",actorId:null,idempotencyKey:"source-version-0004",startedAt:"2026-10-11T00:00:00Z"});
     await ctx.repos.requirements.upsertRequirement(source.id,"task-owner-auto",requirementWrite(source.id,batch4.id,{teambitionRequirementId:"task-owner-auto",executorUserId:"tb-auto-2",executorName:"Di",sourceHash:"g".repeat(64),substantiveHash:"f".repeat(64),sourceVersion:2}));
     assert.equal((await ctx.repos.requirements.get(auto.id))?.pipeline.owner,"pending_mapping","非人工负责人在执行人变更后回到 pending_mapping");
+    await ctx.repos.batches.complete(batch4.id,{status:"succeeded",totalCount:1,succeededCount:1,failedCount:0,errorSummary:null,completedAt:"2026-10-11T00:00:01Z"});
 
     // 历史状态对照：线上 478 条 manually_mapped 里 475 条没有人工负责人列（集团池 191 条全在内）。
     // 这类行必须按非人工处理，执行人变更后回到 pending_mapping，不能被"人工负责人保留"的分支冻住。
@@ -269,6 +271,7 @@ test("changed source upsert snapshots and resets analysis/push, keeps a manual o
     const legacyBefore=await ctx.repos.requirements.get(legacy.id);
     assert.equal(legacyBefore?.pipeline.owner,"manually_mapped");
     assert.equal(legacyBefore?.manualOwner,null,"这条历史行没有人工负责人列");
+    await ctx.repos.batches.complete(batch5.id,{status:"succeeded",totalCount:1,succeededCount:1,failedCount:0,errorSummary:null,completedAt:"2026-10-12T00:00:01Z"});
     const batch6=await ctx.repos.batches.create({sourceConfigId:source.id,triggerType:"manual",actorId:null,idempotencyKey:"source-version-0006",startedAt:"2026-10-13T00:00:00Z"});
     await ctx.repos.requirements.upsertRequirement(source.id,"task-owner-legacy",requirementWrite(source.id,batch6.id,{teambitionRequirementId:"task-owner-legacy",executorUserId:"tb-legacy-2",executorName:"Fay",sourceHash:"i".repeat(64),substantiveHash:"h".repeat(64),sourceVersion:2}));
     assert.equal((await ctx.repos.requirements.get(legacy.id))?.pipeline.owner,"pending_mapping","只有状态、没有负责人列时按非人工处理");
