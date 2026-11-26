@@ -226,14 +226,16 @@ test("pool search treats % and _ literally and ships the search indexes", async 
   } finally { await cleanup(ctx); }
 });
 
-test("changed source upsert atomically snapshots, resets analysis and push, and only clears owner mapping when the TB owner changes",async()=>{
+test("changed source upsert snapshots and resets analysis/push, keeps a manual owner across a TB executor change, and resets non-manual states",async()=>{
   const ctx=await setup();
   try{
     const source=await ctx.repos.sources.create(config);
     const batch1=await ctx.repos.batches.create({sourceConfigId:source.id,triggerType:"manual",actorId:null,idempotencyKey:"source-version-0001",startedAt:"2026-10-08T00:00:00Z"});
     const first=await ctx.repos.requirements.upsertRequirement(source.id,"task-owner",requirementWrite(source.id,batch1.id,{teambitionRequirementId:"task-owner",executorUserId:"tb-owner-1",executorName:"Ada",snapshot:{payload:{version:1},isSubstantiveChange:false,capturedAt:"2026-10-08T00:00:00Z"}}));
     await ctx.repos.batches.complete(batch1.id,{status:"succeeded",totalCount:1,succeededCount:1,failedCount:0,errorSummary:null,completedAt:"2026-10-08T00:00:01Z"});
-    await ctx.repos.requirements.setOwner(first.id,"ou-owner-1","manually_mapped");
+    // 人工负责人要带 manual_owner_* 列：2026-11-26 口径是「同步不冲掉人工负责人」，
+    // 只改 owner_state 不带列就验证不了「原负责人没被清空」。
+    await ctx.repos.requirements.assignManualOwner(first.id,{feishuUserId:"ou-owner-1",feishuIdType:"open_id",name:"Ada Owner",assignedBy:"operator-1",assignedAt:"2026-10-08T00:00:00Z"});
     await ctx.repos.requirements.updateAnalysisState(first.id,"running");await ctx.repos.requirements.updateAnalysisState(first.id,"analyzed");
     await ctx.repos.requirements.setPushState(first.id,"running");await ctx.repos.requirements.setPushState(first.id,"pushed");
     const batch2=await ctx.repos.batches.create({sourceConfigId:source.id,triggerType:"manual",actorId:null,idempotencyKey:"source-version-0002",startedAt:"2026-10-09T00:00:00Z"});
@@ -244,8 +246,20 @@ test("changed source upsert atomically snapshots, resets analysis and push, and 
     assert.equal((await ctx.repos.sourceSnapshots.latest(second.id))?.sourceVersion,2);
     const batch3=await ctx.repos.batches.create({sourceConfigId:source.id,triggerType:"manual",actorId:null,idempotencyKey:"source-version-0003",startedAt:"2026-10-10T00:00:00Z"});
     await ctx.repos.requirements.upsertRequirement(source.id,"task-owner",requirementWrite(source.id,batch3.id,{teambitionRequirementId:"task-owner",executorUserId:"tb-owner-2",executorName:"Bea",sourceHash:"d".repeat(64),substantiveHash:"e".repeat(64),sourceVersion:3,snapshot:{payload:{version:3},isSubstantiveChange:false,capturedAt:"2026-10-10T00:00:00Z"}}));
-    assert.equal((await ctx.repos.requirements.get(second.id))?.pipeline.owner,"pending_mapping");
+    // 人工负责人：TB 执行人换人也保留，且原负责人字段不被清空。
+    const afterExecutorChange=await ctx.repos.requirements.get(second.id);
+    assert.equal(afterExecutorChange?.pipeline.owner,"manually_mapped","manually_mapped 在 TB 执行人变更后保留");
+    assert.equal(afterExecutorChange?.manualOwner?.feishuUserId,"ou-owner-1","人工负责人不被同步清空");
+    assert.equal(afterExecutorChange?.manualOwner?.feishuIdType,"open_id");
+    assert.equal(afterExecutorChange?.executorUserId,"tb-owner-2");
     assert.equal((await ctx.repos.sourceSnapshots.latest(second.id))?.sourceVersion,3);
+
+    // 同一用例留一条对照：非人工状态（auto_mapped）在 TB 执行人变更时必须回到 pending_mapping。
+    const auto=await ctx.repos.requirements.upsertRequirement(source.id,"task-owner-auto",requirementWrite(source.id,batch3.id,{teambitionRequirementId:"task-owner-auto",executorUserId:"tb-auto-1",executorName:"Cy",sourceHash:"f".repeat(64),substantiveHash:"f".repeat(64),sourceVersion:1}));
+    await ctx.repos.requirements.setOwner(auto.id,"ou-auto-1","auto_mapped");
+    const batch4=await ctx.repos.batches.create({sourceConfigId:source.id,triggerType:"manual",actorId:null,idempotencyKey:"source-version-0004",startedAt:"2026-10-11T00:00:00Z"});
+    await ctx.repos.requirements.upsertRequirement(source.id,"task-owner-auto",requirementWrite(source.id,batch4.id,{teambitionRequirementId:"task-owner-auto",executorUserId:"tb-auto-2",executorName:"Di",sourceHash:"g".repeat(64),substantiveHash:"f".repeat(64),sourceVersion:2}));
+    assert.equal((await ctx.repos.requirements.get(auto.id))?.pipeline.owner,"pending_mapping","非人工负责人在执行人变更后回到 pending_mapping");
   }finally{await cleanup(ctx);}
 });
 test("sync item persists orchestrator started time",async()=>{const ctx=await setup();try{const source=await ctx.repos.sources.create(config);const batch=await ctx.repos.batches.create({sourceConfigId:source.id,triggerType:"manual",actorId:null,idempotencyKey:"item-start-0001",startedAt:"2026-10-08T00:00:00Z"});const wrote=await ctx.repos.items.upsert({batchId:batch.id,requirementId:null,teambitionRequirementId:"task-start",action:"created",status:"succeeded",startedAt:"2026-10-08T00:00:05Z",completedAt:"2026-10-08T00:00:10Z"});assert.equal(wrote.startedAt,"2026-10-08T00:00:05.000Z");}finally{await cleanup(ctx);}});
