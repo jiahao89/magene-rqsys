@@ -278,3 +278,28 @@ test("修复层救不回来时落 failed，并把失败子类型写进 error_det
   await assert.rejects(() => envelopeShape.runner.run({ requirement, inputs: {}, actorId: "actor-1" }), (error: unknown) => error instanceof AiProviderError);
   assert.deepEqual(envelopeShape.calls.failedDetails, ["envelope"]);
 });
+
+test("评估响应体挂死时由统一超时中断并落 failed/timeout", async () => {
+  const h = harness(() => envelope(output));
+  const aborting = new AbortController();
+  const runner = createAssessmentRunner({
+    assessments: h.assessments,
+    config: { apiKey: "sk-test", baseUrl: "https://ai.example", model: "m", timeoutMs: 40, temperature: 0, promptVersion: "p" },
+    fetch: async (_input, init) => {
+      init?.signal?.addEventListener("abort", () => aborting.abort());
+      const body = new ReadableStream({
+        start(controller) {
+          aborting.signal.addEventListener("abort", () =>
+            controller.error(Object.assign(new Error("aborted"), { name: "AbortError" })));
+        },
+      });
+      return new Response(body, { status: 200, headers: { "content-type": "application/json" } });
+    },
+    now: () => new Date("2026-11-20T00:00:10.000Z"),
+  });
+  await assert.rejects(
+    () => runner.run({ requirement, inputs: {}, actorId: "actor-1" }),
+    (error: unknown) => error instanceof AiProviderError && error.code === "timeout",
+  );
+  assert.deepEqual(h.calls.failed, ["timeout"]);
+});

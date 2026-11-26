@@ -4,12 +4,13 @@
 //   永不阻塞本来合格的推送。
 // - AI 输出与 PM 确认字段分离：自动映射不覆盖 manually_mapped。
 
-import type {
-  AnalysisState,
-  OwnerState,
-  PullState,
-  PushState,
-  RequirementPipelineState,
+import {
+  isIntakeComplete,
+  type AnalysisState,
+  type OwnerState,
+  type PullState,
+  type PushState,
+  type RequirementPipelineState,
 } from "./workflow.js";
 
 export type PipelineStageKey = "pull" | "analysis" | "owner" | "push";
@@ -93,14 +94,10 @@ export function applyAutoOwnerSuggestion(current: OwnerState, hasExecutor: boole
   return hasExecutor ? "auto_mapped" : "not_required";
 }
 
-// 推送资格判断：分析状态（低置信、缺优先级、首轮失败）不阻塞本来合格的推送。
-// 合格条件：pull 已同步、owner 已完成映射处理（auto/manually/not_required）、push 待推送或失败待重试。
+// 推送资格判断：分析状态（低置信、缺优先级、首轮失败）与负责人映射状态（Q1 允许空负责人推送）
+// 均不阻塞本来合格的推送。
+// 合格条件：收录已完成（TB synced 或手工/表单 collected）且 push 待推送或失败待重试。
 export function isPushEligible(state: RequirementPipelineState): boolean {
-  if (state.pull !== "synced") return false;
-  const ownerResolved =
-    state.owner === "auto_mapped" ||
-    state.owner === "manually_mapped" ||
-    state.owner === "not_required";
-  if (!ownerResolved) return false;
+  if (!isIntakeComplete(state.pull)) return false;
   return state.push === "pending" || state.push === "failed";
 }

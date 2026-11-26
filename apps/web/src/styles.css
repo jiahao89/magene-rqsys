@@ -1257,6 +1257,8 @@ html[data-theme="dark"] .assessment-assumption-tag { color: var(--rq-warning); b
 .summary-score-meta { color: #5b6f92; font-size: var(--rq-font-caption); line-height: 1.45; }
 .summary-score-link { width: fit-content; margin-top: 3px; color: var(--rq-link-strong); font-size: var(--rq-font-caption); font-weight: 650; text-decoration: none; }
 .summary-score-link:hover { text-decoration: underline; }
+.arco-btn.summary-score-link { height: auto; min-width: 0; padding: 0; border: 0; background: transparent; color: var(--rq-link-strong); font-size: var(--rq-font-caption); font-weight: 650; line-height: 1.4; }
+.arco-btn.summary-score-link:hover { background: transparent; color: var(--rq-link-hover); text-decoration: underline; }
 .summary-score-empty { display: flex; flex-direction: column; gap: 3px; padding: 3px 0 1px; }
 .summary-score-empty strong { color: var(--rq-text-muted); font-size: 17px; font-weight: 650; }
 .summary-score-empty span { color: var(--rq-text-muted); font-size: var(--rq-font-caption); }
@@ -1681,7 +1683,7 @@ html[data-theme="dark"] input[type="datetime-local"] { color-scheme: dark; }
 .gate-side { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .gate-evidence { display: inline-flex; align-items: center; gap: 6px; color: var(--rq-text-muted); font-size: var(--rq-font-caption); }
 .gate-form { flex-basis: 100%; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.gate-form input { flex: 1; min-width: 240px; }
+.gate-form input, .gate-form .arco-input-wrapper { flex: 1; min-width: 240px; }
 
 /* 数据源页：多维表格来源与同步状态（只读）。 */
 .baseform-readonly-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }

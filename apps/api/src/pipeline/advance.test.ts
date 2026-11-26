@@ -182,3 +182,33 @@ test("无 TB 负责人但已在 Web 指定负责人：分析终态后保持 manu
     assert.equal(fixture.requirementRow.pipeline.owner, "manually_mapped");
   }
 });
+
+test("有 TB executorUserId 但未按 ID 命中时，回落按 executorName 匹配人员页 unique_name 绑定", async () => {
+  const lookups: Array<{ tbUserId?: string; normalizedName?: string }> = [];
+  const nameMapping = { ...mapping, teambitionUserId: null, matchMethod: "unique_name" as const, feishuUserId: "u-by-name" };
+  const fixture = makeAdvanceFixture(requirement({ executorUserId: "tb-unmapped", executorName: " Ada " }), false);
+  fixture.people = {
+    resolveActive: async (_sourceConfigId: string, by: { tbUserId?: string; normalizedName?: string }) => {
+      lookups.push(by);
+      return by.normalizedName === "ada" ? nameMapping : null;
+    },
+  } as never;
+  const outcome = await createAnalysisAdvancer(fixture)("req-1", "analyzed", "worker", 1);
+  assert.equal(outcome, "queued");
+  assert.deepEqual(lookups, [{ tbUserId: "tb-unmapped" }, { normalizedName: "ada" }]);
+  assert.deepEqual(fixture.ownerChanges, ["u-by-name:auto_mapped"]);
+
+  // push-service 也使用同一回落顺序，确保推送写入正确负责人。
+  const pushLookups: Array<{ tbUserId?: string; normalizedName?: string }> = [];
+  const pushFixture = makePushFixture(requirement({ executorUserId: "tb-unmapped", executorName: " Ada " }));
+  pushFixture.deps.people = {
+    resolveActive: async (_sourceConfigId: string, by: { tbUserId?: string; normalizedName?: string }) => {
+      pushLookups.push(by);
+      return by.normalizedName === "ada" ? nameMapping : null;
+    },
+  } as never;
+  const pushed = await createBasePushService(pushFixture.deps).pushRequirement("req-1", "k-fallback");
+  assert.equal(pushed.kind, "pushed");
+  assert.deepEqual(pushLookups, [{ tbUserId: "tb-unmapped" }, { normalizedName: "ada" }]);
+  assert.deepEqual(pushFixture.pushedInputs[0]!.owner, { userId: "u-by-name", idType: "open_id" });
+});

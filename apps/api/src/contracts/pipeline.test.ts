@@ -3,7 +3,11 @@ import test from "node:test";
 import {
   AuditListQuerySchema,
   BatchListQuerySchema,
+  HttpUrlSchema,
+  KanoEvidenceImportSchema,
   OwnerMappingUpdateSchema,
+  RequirementIntakeEditSchema,
+  RequirementIntakeSchema,
   RequirementListQuerySchema,
   SyncRunRequestSchema,
   SyncIdempotencyHeaderSchema,
@@ -87,4 +91,38 @@ test("Idempotency-Key header 契约：8-128 字符", () => {
   assert.ok(SyncIdempotencyHeaderSchema.safeParse("sched:proj-1:req-1:window").success);
   assert.ok(!SyncIdempotencyHeaderSchema.safeParse("short").success);
   assert.ok(!SyncIdempotencyHeaderSchema.safeParse("a".repeat(129)).success);
+});
+
+test("HttpUrlSchema 及 supplementUrl/sourceUrl 只接受不带凭据的 http(s) 链接", () => {
+  assert.ok(HttpUrlSchema.safeParse("https://docs.example.com/prd/1?tab=2").success);
+  assert.ok(HttpUrlSchema.safeParse("  http://internal.magene.cn:8080/doc  ").success);
+  for (const unsafe of [
+    "javascript:alert(1)",
+    "JAVASCRIPT:alert(1)",
+    "data:text/html,<script>alert(1)</script>",
+    "file:///etc/passwd",
+    "https://user:pass@example.com/doc",
+    "https://token@example.com/doc",
+    "https://:secret@example.com/doc",
+    "",
+    "not-a-url",
+    `https://example.com/${"a".repeat(500)}`,
+  ]) {
+    assert.equal(HttpUrlSchema.safeParse(unsafe).success, false, `must reject unsafe URL: ${unsafe}`);
+    assert.equal(
+      RequirementIntakeSchema.safeParse({ title: "T", description: "D", sourceChannel: "销售", supplementUrl: unsafe }).success,
+      false,
+    );
+    assert.equal(
+      RequirementIntakeEditSchema.safeParse({ expectedSourceVersion: 1, supplementUrl: unsafe }).success,
+      false,
+    );
+    assert.equal(
+      KanoEvidenceImportSchema.safeParse({ title: "T", summary: "S", evidenceFragments: [], sourceUrl: unsafe }).success,
+      false,
+    );
+  }
+  assert.ok(RequirementIntakeSchema.safeParse({ title: "T", description: "D", sourceChannel: "销售", supplementUrl: null }).success);
+  assert.ok(RequirementIntakeEditSchema.safeParse({ expectedSourceVersion: 1, supplementUrl: "https://example.com/a" }).success);
+  assert.ok(KanoEvidenceImportSchema.safeParse({ title: "T", summary: "S", evidenceFragments: [], sourceUrl: "https://example.com/b" }).success);
 });

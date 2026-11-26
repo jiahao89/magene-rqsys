@@ -20,6 +20,18 @@ const from = (r: any): RequirementAssessmentRecord => ({
   completedAt: asDate(r.completed_at),
 });
 
+function isSingleRunningConflict(error: unknown, indexName: string): boolean {
+  let current = error;
+  const seen = new Set<object>();
+  for (let depth = 0; depth < 6 && typeof current === "object" && current !== null && !seen.has(current); depth += 1) {
+    seen.add(current);
+    const candidate = current as { code?: unknown; constraint?: unknown; cause?: unknown; originalError?: unknown };
+    if (candidate.code === "23505" && (!candidate.constraint || candidate.constraint === indexName)) return true;
+    current = candidate.cause ?? candidate.originalError;
+  }
+  return false;
+}
+
 export class PostgresRequirementAssessmentRepository implements RequirementAssessmentRepository {
   constructor(private readonly pool: Pool) {}
 
@@ -62,7 +74,14 @@ export class PostgresRequirementAssessmentRepository implements RequirementAsses
       await c.query("COMMIT");
       return { outcome: "created" as const, record: from(rows[0]) };
     } catch (error) {
-      await c.query("ROLLBACK");
+      try { await c.query("ROLLBACK"); } catch { /* 连接失效由 release 兜底 */ }
+      if (isSingleRunningConflict(error, "requirement_assessments_single_running")) {
+        const existing = await this.pool.query(
+          "SELECT * FROM requirement_assessments WHERE requirement_id=$1 AND status='running' ORDER BY version DESC LIMIT 1",
+          [p.requirementId],
+        );
+        if (existing.rows[0]) return { outcome: "in_progress" as const, record: from(existing.rows[0]) };
+      }
       throw error;
     } finally {
       c.release();

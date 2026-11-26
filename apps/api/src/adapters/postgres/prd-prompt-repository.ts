@@ -14,9 +14,22 @@ const from = (r: any): RequirementPrdPromptRecord => ({
   inputs: (r.inputs ?? {}) as Record<string, unknown>,
   output: (r.output ?? null) as Record<string, unknown> | null,
   errorCode: r.error_code ?? null,
+  createdBy: r.created_by ?? null,
   createdAt: asDate(r.created_at)!,
   completedAt: asDate(r.completed_at),
 });
+
+function isSingleRunningConflict(error: unknown, indexName: string): boolean {
+  let current = error;
+  const seen = new Set<object>();
+  for (let depth = 0; depth < 6 && typeof current === "object" && current !== null && !seen.has(current); depth += 1) {
+    seen.add(current);
+    const candidate = current as { code?: unknown; constraint?: unknown; cause?: unknown; originalError?: unknown };
+    if (candidate.code === "23505" && (!candidate.constraint || candidate.constraint === indexName)) return true;
+    current = candidate.cause ?? candidate.originalError;
+  }
+  return false;
+}
 
 export class PostgresRequirementPrdPromptRepository implements RequirementPrdPromptRepository {
   constructor(private readonly pool: Pool) {}
@@ -29,6 +42,7 @@ export class PostgresRequirementPrdPromptRepository implements RequirementPrdPro
     promptVersion: string;
     model: string | null;
     inputs: Record<string, unknown>;
+    createdBy?: string | null;
     at: string;
     staleAfterMs: number;
   }): Promise<RequirementPrdPromptCreateResult> {
@@ -53,13 +67,20 @@ export class PostgresRequirementPrdPromptRepository implements RequirementPrdPro
       }
       const next = await c.query("SELECT COALESCE(MAX(version),0)+1 AS next FROM requirement_prd_prompts WHERE requirement_id=$1", [input.requirementId]);
       const { rows } = await c.query(
-        "INSERT INTO requirement_prd_prompts(id,requirement_id,version,status,prompt_version,model,inputs,created_at) VALUES($1,$2,$3,'running',$4,$5,$6,$7) RETURNING *",
-        [randomUUID(), input.requirementId, Number(next.rows[0]?.next ?? 1), input.promptVersion, input.model, JSON.stringify(input.inputs), input.at],
+        "INSERT INTO requirement_prd_prompts(id,requirement_id,version,status,prompt_version,model,inputs,created_by,created_at) VALUES($1,$2,$3,'running',$4,$5,$6,$7,$8) RETURNING *",
+        [randomUUID(), input.requirementId, Number(next.rows[0]?.next ?? 1), input.promptVersion, input.model, JSON.stringify(input.inputs), input.createdBy ?? null, input.at],
       );
       await c.query("COMMIT");
       return { outcome: "created" as const, record: from(rows[0]) };
     } catch (error) {
-      await c.query("ROLLBACK");
+      try { await c.query("ROLLBACK"); } catch { /* 连接失效由 release 兜底 */ }
+      if (isSingleRunningConflict(error, "requirement_prd_prompts_single_running")) {
+        const existing = await this.pool.query(
+          "SELECT * FROM requirement_prd_prompts WHERE requirement_id=$1 AND status='running' ORDER BY version DESC LIMIT 1",
+          [input.requirementId],
+        );
+        if (existing.rows[0]) return { outcome: "in_progress" as const, record: from(existing.rows[0]) };
+      }
       throw error;
     } finally {
       c.release();

@@ -3,7 +3,8 @@
 // （产品表为「TB地址」）。因此集团池必须显式映射到「TB链接」，且绝不能套用产品池那条
 // 「TB链接 → TB地址」的历史兼容改写，否则会写入不存在的字段。
 //
-// 注意：`duplicate`（Q2 重复标记字段）与当前线上行为一致，不在此处解析——保持既有语义不变。
+// Q2：`duplicate`（重复标记字段）按需配置生效——未在 BASE_FIELDS_JSON 中显式声明时保持缺省，
+// 避免向未建列的表写入；显式配置后保留 mark / canonicalLink 供 markDuplicateInBase 使用。
 
 import type { SourcePool } from "../domain/persistence.js";
 import type { BaseFieldMap } from "./client.js";
@@ -42,6 +43,15 @@ export const DEFAULT_GROUP_BASE_FIELDS: BaseFieldMap = {
   source: { ...DEFAULT_BASE_FIELDS.source, sourceUrl: "TB链接" },
 };
 
+function parseDuplicateFields(raw: unknown): BaseFieldMap["duplicate"] | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const candidate = raw as { mark?: unknown; canonicalLink?: unknown };
+  const mark = typeof candidate.mark === "string" ? candidate.mark.trim() : "";
+  if (!mark) return undefined;
+  const canonicalLink = typeof candidate.canonicalLink === "string" ? candidate.canonicalLink.trim() : "";
+  return canonicalLink ? { mark, canonicalLink } : { mark };
+}
+
 /**
  * 解析 BASE_FIELDS_JSON / GROUP_BASE_FIELDS_JSON。
  * - product（缺省）：保留历史兼容——配置写「TB链接」时改写为「TB地址」。
@@ -56,6 +66,7 @@ export function parseBaseFields(raw: string | undefined, options: { pool?: Sourc
     const source = { ...defaults.source, ...(parsed.source ?? {}) };
     // 历史兼容只保留在产品池：集团表列名就是「TB链接」，改写会写到不存在的字段。
     if (pool === "product" && source.sourceUrl === "TB链接") source.sourceUrl = "TB地址";
+    const duplicate = parseDuplicateFields(parsed.duplicate);
     return {
       requirementId: parsed.requirementId ?? defaults.requirementId,
       ...(parsed.platformRequirementId ?? defaults.platformRequirementId
@@ -70,6 +81,7 @@ export function parseBaseFields(raw: string | undefined, options: { pool?: Sourc
       notification: { ...DEFAULT_BASE_NOTIFICATION_FIELDS, ...(parsed.notification ?? {}) },
       selectOptions: { ...defaults.selectOptions, ...(parsed.selectOptions ?? {}), priority: ["P0", "P1", "P2", "P3"] },
       ...(typeof parsed.sourceMethod === "string" && parsed.sourceMethod.trim() ? { sourceMethod: parsed.sourceMethod.trim() } : {}),
+      ...(duplicate ? { duplicate } : {}),
     };
   } catch {
     return defaults;

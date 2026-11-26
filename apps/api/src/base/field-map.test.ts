@@ -38,3 +38,18 @@ test("base field parsing keeps selectOptions, priority order and sourceMethod", 
   // 非法 JSON 回落到默认，不影响推送（历史上 parse 失败会静默用默认值）。
   assert.equal(parseBaseFields("{not json").owner, "执行人");
 });
+
+test("parseBaseFields parses opt-in duplicate marker mapping when configured and omits it by default", () => {
+  assert.equal(parseBaseFields(undefined).duplicate, undefined);
+  assert.equal(parseBaseFields("{}").duplicate, undefined);
+  assert.equal(parseBaseFields(JSON.stringify({ duplicate: { mark: "   " } })).duplicate, undefined);
+  assert.equal(parseBaseFields(JSON.stringify({ duplicate: "invalid" })).duplicate, undefined);
+  assert.deepEqual(
+    parseBaseFields(JSON.stringify({ duplicate: { mark: " 重复标记 " } })).duplicate,
+    { mark: "重复标记" },
+  );
+  assert.deepEqual(
+    parseBaseFields(JSON.stringify({ duplicate: { mark: " 重复标记 ", canonicalLink: " 主记录链接 " } })).duplicate,
+    { mark: "重复标记", canonicalLink: "主记录链接" },
+  );
+});

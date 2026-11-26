@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { GROUP_POOL_DEFAULT_FIELD_MAP, normalizeTeambitionTask, resolveFieldMap } from "./normalize.js";
+import { GROUP_POOL_DEFAULT_FIELD_MAP, normalizeTeambitionTask, resolveFieldMap, sourcePayloadHash } from "./normalize.js";
+import { stableHash } from "../../sync/hashes.js";
 import type { TeambitionTaskRecord } from "./raw-types.js";
 
 const FIELD_ID = "custom-description";
@@ -136,4 +137,20 @@ test("executor name falls back to the organization member directory and an expli
     custom_fields: [{ _customfieldid: "exec", type: "text", value: "映射名" }],
   }, { executorName: "exec" }, members);
   assert.equal(mapped.sourceExecutorName, "映射名");
+});
+
+test("htmlToText safely handles out-of-range and surrogate numeric HTML entities without throwing", () => {
+  const normalized = normalizeTeambitionTask("project-1", task([
+    {
+      _customfieldid: "description",
+      type: "rtf",
+      value: [{ meta: { html: "<p>Valid &#65; &#x4E2D; &#x1F600; | Bad &#99999999; &#x110000; &#55296; &#xDFFF;</p>" } }],
+    },
+  ]), { description: "description" });
+  assert.equal(normalized.mappedFields.description, "Valid A 中 😀 | Bad &#99999999; &#x110000; &#55296; &#xDFFF;");
+});
+
+test("sourcePayloadHash matches sync/hashes stableHash using locale-independent key ordering", () => {
+  const payload = { b: 1, A: 2, _c: { z: true, a: false } };
+  assert.equal(sourcePayloadHash(payload), stableHash(payload));
 });

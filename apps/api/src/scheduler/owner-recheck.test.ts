@@ -79,7 +79,10 @@ function harness(input: {
           (query.pullState === undefined || item.pipeline.pull === query.pullState) &&
           (query.analysisState === undefined || item.pipeline.analysis === query.analysisState) &&
           (query.pushState === undefined || item.pipeline.push === query.pushState) &&
-          (query.ownerState === undefined || item.pipeline.owner === query.ownerState)
+          (query.ownerState === undefined || item.pipeline.owner === query.ownerState) &&
+          (query.processingState === undefined || (query.processingState === "active"
+            ? (item.processingState ?? "active") === "active"
+            : (item.processingState ?? "active") !== "active"))
         );
         return { items: items.slice(0, query.limit), nextCursor: null };
       },
@@ -142,9 +145,9 @@ test("解析到映射的需求会入队 base_push 并写 recheck 审计", async 
   assert.equal(report.enqueued, 1);
   assert.equal(report.skipped, 0);
   assert.deepEqual(report.errors, []);
-  // 候选查询：三个状态过滤 + 本轮上限
+  // 候选查询：三个状态过滤 + processingState=active + 本轮上限
   assert.deepEqual(h.state.searchQueries[0], {
-    pullState: "synced", analysisState: "analyzed", pushState: "pending", pool: "product", limit: OWNER_RECHECK_SCAN_LIMIT,
+    pullState: "synced", analysisState: "analyzed", pushState: "pending", processingState: "active", pool: "product", limit: OWNER_RECHECK_SCAN_LIMIT,
   });
   // 先按状态机允许的迁移落 owner，再按正常链路同款 key/payload 入队
   assert.deepEqual(h.state.setOwnerCalls, [{ id: "req-1", feishuUserId: "ou-1", state: "auto_mapped" }]);
@@ -178,7 +181,11 @@ test("解析不到映射时按 Q1 以空负责人入队，不改 owner 状态且
   assert.equal(report.skipped, 0);
   assert.equal(report.enqueued, 1);
   assert.deepEqual(report.errors, []);
-  assert.equal(h.state.resolveCalls.length, 1);
+  // 有 executorUserId 且有 executorName：先按 tbUserId 查，未命中时回落按 normalizedName 查。
+  assert.deepEqual(h.state.resolveCalls, [
+    { sourceConfigId: "src-1", by: { tbUserId: "tb-user-1" } },
+    { sourceConfigId: "src-1", by: { normalizedName: "张三" } },
+  ]);
   // 不伪造映射状态：owner_state 保持 pending_mapping，等映射补齐后由 remap 分支重推。
   assert.equal(h.state.setOwnerCalls.length, 0);
   assert.equal(h.state.enqueueCalls.length, 1);
@@ -399,4 +406,27 @@ test("集团池的待补推候选会被补推，产品池既有行为不受影�
       `集团池缺少 analysisState=${analysisState ?? "remap"} 的查询`,
     );
   }
+});
+
+test("有 tbUserId 但仅存在人员页 unique_name 绑定时，回落按规范化姓名命中并排除已压制需求", async () => {
+  const h = harness({
+    candidates: [
+      requirement({ id: "req-active", executorUserId: "tb-no-id-map", executorName: " 张三 " }),
+      requirement({ id: "req-suppressed", processingState: "suppressed_duplicate", executorUserId: "tb-user-1" }),
+    ],
+    mappings: {
+      "张三": mapping({ teambitionUserId: null, matchMethod: "unique_name", feishuUserId: "ou-unique-name" }),
+    },
+    latestAnalysisVersion: { "req-active": 2 },
+  });
+
+  const report = await h.run();
+
+  assert.equal(report.scanned, 1);
+  assert.equal(report.enqueued, 1);
+  assert.deepEqual(h.state.resolveCalls, [
+    { sourceConfigId: "src-1", by: { tbUserId: "tb-no-id-map" } },
+    { sourceConfigId: "src-1", by: { normalizedName: "张三" } },
+  ]);
+  assert.deepEqual(h.state.setOwnerCalls, [{ id: "req-active", feishuUserId: "ou-unique-name", state: "auto_mapped" }]);
 });

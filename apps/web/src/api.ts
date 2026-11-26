@@ -3,7 +3,9 @@ export type RequirementPool = "product" | "group";
 
 export interface HealthResponse {
   status: string;
-  service: string;
+  service?: string;
+  database?: string;
+  reason?: string;
 }
 
 /** 总览 AI 状态块（GET /api/overview/metrics 的 ai）：调用次数按 Asia/Shanghai 自然日统计，不含 token。 */
@@ -150,7 +152,7 @@ async function deleteJsonWithBody<T>(path: string, body: unknown, fetcher: typeo
 }
 
 export function getHealth(fetcher: typeof fetch = fetch): Promise<HealthResponse> {
-  return requestJson<HealthResponse>("/api/health", fetcher);
+  return requestJson<HealthResponse>("/api/health/ready", fetcher);
 }
 
 export async function getOverviewMetrics(fetcher: typeof fetch = fetch): Promise<OverviewMetrics> {
@@ -283,8 +285,8 @@ export interface BatchDetail {
   items: SyncItem[];
 }
 
-export function getBatch(id: string, fetcher: typeof fetch = fetch): Promise<BatchDetail> {
-  return requestJson<BatchDetail>(`/api/batches/${id}`, fetcher);
+export function getBatch(id: string, fetcher: typeof fetch = fetch, signal?: AbortSignal): Promise<BatchDetail> {
+  return requestJson<BatchDetail>(`/api/batches/${id}`, fetcher, signal);
 }
 
 export function retrySyncItem(id: string, fetcher: typeof fetch = fetch, idempotencyKey: string = crypto.randomUUID()): Promise<{ batchId: string; status: string }> {
@@ -337,8 +339,8 @@ export interface RequirementAssessment {
 }
 
 /** 评估历史：服务端可能返回 `{items}` 或裸数组，两种都接受。 */
-export async function listRequirementAssessments(id: string, fetcher: typeof fetch = fetch): Promise<RequirementAssessment[]> {
-  const result = await requestJson<{ items?: RequirementAssessment[] } | RequirementAssessment[]>(`/api/requirements/${id}/assessments`, fetcher);
+export async function listRequirementAssessments(id: string, fetcher: typeof fetch = fetch, signal?: AbortSignal): Promise<RequirementAssessment[]> {
+  const result = await requestJson<{ items?: RequirementAssessment[] } | RequirementAssessment[]>(`/api/requirements/${id}/assessments`, fetcher, signal);
   const items = Array.isArray(result) ? result : result?.items;
   return Array.isArray(items) ? items : [];
 }
@@ -398,8 +400,8 @@ export interface PrdPromptVersion {
 }
 
 /** 版本历史：服务端返回 `{items}` 或裸数组都接受；按 version DESC 排序。 */
-export async function listPrdPrompts(id: string, fetcher: typeof fetch = fetch): Promise<PrdPromptVersion[]> {
-  const result = await requestJson<{ items?: PrdPromptVersion[] } | PrdPromptVersion[]>(`/api/requirements/${id}/prd-prompts`, fetcher);
+export async function listPrdPrompts(id: string, fetcher: typeof fetch = fetch, signal?: AbortSignal): Promise<PrdPromptVersion[]> {
+  const result = await requestJson<{ items?: PrdPromptVersion[] } | PrdPromptVersion[]>(`/api/requirements/${id}/prd-prompts`, fetcher, signal);
   const items = Array.isArray(result) ? result : result?.items;
   return Array.isArray(items) ? [...items].sort((a, b) => b.version - a.version) : [];
 }
@@ -490,9 +492,9 @@ export function revokeDuplicateDecision(id: string, expectedVersion: number, fet
   return deleteJsonWithBody<DuplicateDecisionResult>(`/api/requirements/${id}/duplicate-decision`, { expectedVersion }, fetcher);
 }
 
-export async function searchFeishuUsers(query: string, fetcher: typeof fetch = fetch): Promise<FeishuUserCandidate[]> {
+export async function searchFeishuUsers(query: string, fetcher: typeof fetch = fetch, signal?: AbortSignal): Promise<FeishuUserCandidate[]> {
   const params = new URLSearchParams({ q: query.trim() });
-  const result = await requestJson<{ items: FeishuUserCandidate[] }>(`/api/feishu/users?${params.toString()}`, fetcher);
+  const result = await requestJson<{ items: FeishuUserCandidate[] }>(`/api/feishu/users?${params.toString()}`, fetcher, signal);
   return result.items;
 }
 
@@ -804,9 +806,9 @@ export async function getRequirementSourceCounts(params: { pool?: RequirementPoo
   }
 }
 
-export async function listBatches(params: { status?: string; since?: string; until?: string; pool?: RequirementPool; limit?: number; cursor?: string; fetcher?: typeof fetch } = {}): Promise<{ items: BatchSummary[]; nextCursor: string | null }> {
-  const { fetcher = fetch, status, since, until, pool, limit, cursor } = params;
-  return requestJson<{ items: BatchSummary[]; nextCursor: string | null }>(`/api/batches${buildSearch({ status, since, until, pool, limit, cursor })}`, fetcher);
+export async function listBatches(params: { status?: string; since?: string; until?: string; pool?: RequirementPool; limit?: number; cursor?: string; fetcher?: typeof fetch; signal?: AbortSignal } = {}): Promise<{ items: BatchSummary[]; nextCursor: string | null }> {
+  const { fetcher = fetch, status, since, until, pool, limit, cursor, signal } = params;
+  return requestJson<{ items: BatchSummary[]; nextCursor: string | null }>(`/api/batches${buildSearch({ status, since, until, pool, limit, cursor })}`, fetcher, signal);
 }
 
 export interface FeishuUserSelection {
@@ -900,19 +902,19 @@ export interface OpsMetrics {
 }
 
 /** 运营指标（PRD §10）：窗口内成功率/耗时 + 当前快照。 */
-export function getOpsMetrics(params: { days?: number; pool?: RequirementPool; fetcher?: typeof fetch } = {}): Promise<OpsMetrics> {
-  const { fetcher = fetch, days, pool } = params;
-  return requestJson<{ metrics: OpsMetrics }>(`/api/ops/metrics${buildSearch({ days, pool })}`, fetcher as typeof fetch).then((result) => result.metrics);
+export function getOpsMetrics(params: { days?: number; pool?: RequirementPool; fetcher?: typeof fetch; signal?: AbortSignal } = {}): Promise<OpsMetrics> {
+  const { fetcher = fetch, days, pool, signal } = params;
+  return requestJson<{ metrics: OpsMetrics }>(`/api/ops/metrics${buildSearch({ days, pool })}`, fetcher as typeof fetch, signal).then((result) => result.metrics);
 }
 
-export function getOpsJobs(params: { limit?: number; pool?: RequirementPool; fetcher?: typeof fetch } = {}): Promise<{ now: string; items: { failed: OpsJob[]; stuck: OpsJob[] } }> {
-  const { fetcher = fetch, limit, pool } = params;
-  return requestJson<{ now: string; items: { failed: OpsJob[]; stuck: OpsJob[] } }>(`/api/ops/jobs${buildSearch({ limit, pool })}`, fetcher);
+export function getOpsJobs(params: { limit?: number; pool?: RequirementPool; fetcher?: typeof fetch; signal?: AbortSignal } = {}): Promise<{ now: string; items: { failed: OpsJob[]; stuck: OpsJob[] } }> {
+  const { fetcher = fetch, limit, pool, signal } = params;
+  return requestJson<{ now: string; items: { failed: OpsJob[]; stuck: OpsJob[] } }>(`/api/ops/jobs${buildSearch({ limit, pool })}`, fetcher, signal);
 }
 
-export function listAudit(params: { entityId?: string; eventType?: string; since?: string; until?: string; limit?: number; fetcher?: typeof fetch } = {}): Promise<AuditEvent[]> {
-  const { fetcher = fetch, entityId, eventType, since, until, limit } = params;
-  return requestJson<{ items: AuditEvent[] }>(`/api/audit${buildSearch({ entityId, eventType, since, until, limit })}`, fetcher).then((result) => result.items);
+export function listAudit(params: { entityId?: string; eventType?: string; since?: string; until?: string; limit?: number; fetcher?: typeof fetch; signal?: AbortSignal } = {}): Promise<AuditEvent[]> {
+  const { fetcher = fetch, entityId, eventType, since, until, limit, signal } = params;
+  return requestJson<{ items: AuditEvent[] }>(`/api/audit${buildSearch({ entityId, eventType, since, until, limit })}`, fetcher, signal).then((result) => result.items);
 }
 
 export interface IntakeResult {
@@ -994,8 +996,8 @@ export interface RiceDraft {
   status: string;
   score: number | null;
 }
-export function getRiceDraft(id: string, fetcher: typeof fetch = fetch): Promise<RiceDraft> {
-  return requestJson<RiceDraft>(`/api/requirements/${id}/rice-draft`, fetcher);
+export function getRiceDraft(id: string, fetcher: typeof fetch = fetch, signal?: AbortSignal): Promise<RiceDraft> {
+  return requestJson<RiceDraft>(`/api/requirements/${id}/rice-draft`, fetcher, signal);
 }
 export function saveRiceDraft(id: string, input: { reach?: string | null; impact?: string | null; confidence?: string | null; effort?: string | null; notes?: string | null; expectedEditVersion: number }, fetcher: typeof fetch = fetch): Promise<{ requirementId: string; editVersion: number; status: string }> {
   return putJson(`/api/requirements/${id}/rice-draft`, input, fetcher);
@@ -1006,8 +1008,8 @@ export interface KanoEvidenceVersionDto {
   knownAudiences: string[]; knownScenes: string | null; interviewDate: string | null;
   status: "draft" | "approved" | "retired"; piiFlagged: boolean; createdAt: string; approvedAt: string | null;
 }
-export function listKanoEvidence(fetcher: typeof fetch = fetch): Promise<{ items: KanoEvidenceVersionDto[] }> {
-  return requestJson<{ items: KanoEvidenceVersionDto[] }>("/api/kano/evidence", fetcher);
+export function listKanoEvidence(fetcher: typeof fetch = fetch, signal?: AbortSignal): Promise<{ items: KanoEvidenceVersionDto[] }> {
+  return requestJson<{ items: KanoEvidenceVersionDto[] }>("/api/kano/evidence", fetcher, signal);
 }
 export interface KanoCapability {
   capability: string; audience: string | null;
@@ -1026,6 +1028,6 @@ export interface KanoRunDto {
 export function triggerKanoRun(id: string, evidenceVersion: number, fetcher: typeof fetch = fetch): Promise<{ requirementId: string; runVersion: number; status: string }> {
   return postJson(`/api/requirements/${id}/kano-runs`, { evidenceVersion }, fetcher);
 }
-export function listKanoRuns(id: string, fetcher: typeof fetch = fetch): Promise<{ items: KanoRunDto[] }> {
-  return requestJson<{ items: KanoRunDto[] }>(`/api/requirements/${id}/kano-runs`, fetcher);
+export function listKanoRuns(id: string, fetcher: typeof fetch = fetch, signal?: AbortSignal): Promise<{ items: KanoRunDto[] }> {
+  return requestJson<{ items: KanoRunDto[] }>(`/api/requirements/${id}/kano-runs`, fetcher, signal);
 }

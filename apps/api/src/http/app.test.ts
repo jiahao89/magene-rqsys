@@ -1694,3 +1694,174 @@ test("0034 M14 every requirement-scoped write rejects a deleted requirement with
   assert.equal(restored.status, 200);
   assert.equal((await restored.json() as { replayed: boolean }).replayed, false);
 });
+
+test("Wave 2: manual scoring supports umsc_weighted_v3 thresholds and publish blocks v1 over v3", async () => {
+  const d = makeDependencies();
+  let saved: Record<string, unknown> | null = null;
+  const v3Rule = {
+    id: "rule-v3", version: 3, status: "published" as const,
+    rules: { formulaType: "umsc_weighted_v3", thresholds: { p0: 10, p1: 7, p2: 4 } },
+    validationEvidence: [{ calibratedAt: "2026-11-01" }], createdBy: null,
+    createdAt: "2026-11-01T00:00:00.000Z", publishedAt: "2026-11-01T00:00:00.000Z",
+  };
+  const v1Draft = {
+    id: "88888888-8888-4888-8888-888888888888", version: 4, status: "draft" as const,
+    rules: { scoring: { user: { 高: 3 }, market: { 高: 3 }, business: { 高: 3 }, technology: { 高: 3 } }, thresholds: { p0: 10, p1: 7, p2: 4 } },
+    validationEvidence: [{ sample: 1 }], createdBy: "u", createdAt: "2026-11-02T00:00:00.000Z", publishedAt: null,
+  };
+  d.repositories!.priorityRules = {
+    getPublished: async () => v3Rule,
+    get: async (id: string) => id === v1Draft.id ? v1Draft : null,
+    list: async () => [v1Draft, v3Rule],
+    create: async () => v1Draft,
+    publish: async () => v1Draft,
+  } as never;
+  d.repositories!.scoring = {
+    current: async () => null,
+    saveManual: async (input: Record<string, unknown>) => { saved = input; return { outcome: "saved", version: { version: 1, score: input.score, priority: input.priority } }; },
+    aiSuggestion: async () => null,
+    list: async () => [],
+  } as never;
+  // inputs: U=4*3=12, M=1*1=1, S=1*1=1, C=2, alpha=1 -> score = 12 * 2 / 2 = 12.0 -> P0 under v3 (p0=10), would be P2 under v2 (p0=45)!
+  const scoreRes = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/scoring`, {
+    method: "PUT", headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      expectedVersion: 0, alpha: 1, reason: "v3 calibration check",
+      inputs: { user: { pain: 4, frequency: 3 }, market: { sellingPoint: 1, competitor: 1 }, strategy: { roadmap: 1, dependency: 1 }, cost: { workload: 2, technicalRisk: 1, resource: 1 } },
+    }),
+  }), d);
+  assert.equal(scoreRes.status, 200);
+  assert.equal(saved!.score, 12);
+  assert.equal(saved!.priority, "P0");
+
+  const publishBlocked = await handleApiRequest(new Request(`http://localhost/api/rules/priority/${v1Draft.id}/publish`, { method: "POST" }), d);
+  assert.equal(publishBlocked.status, 409);
+});
+
+test("Wave 2: detail and CSV export preserve manualOwner precedence over TB executor", async () => {
+  const d = makeDependencies();
+  const withManual = {
+    ...requirement,
+    executorUserId: "tb-user-1",
+    executorName: "TB执行人",
+    manualOwner: { feishuUserId: "u-manual", feishuIdType: "user_id" as const, name: "人工负责人", assignedBy: "op", assignedAt: "2026-10-08T00:00:00.000Z", pushedFeishuUserId: null, assignmentVersion: 1 },
+  } as unknown as RequirementRecord;
+  d.repositories!.requirements!.get = async () => withManual;
+  d.repositories!.requirements!.search = async () => ({ items: [withManual], nextCursor: null });
+  d.repositories!.people = {
+    upsertManual: async () => { throw new Error("unused"); },
+    listActive: async () => [],
+    resolveActive: async () => ({ id: "m1", sourceConfigId: source.id, teambitionUserId: "tb-user-1", teambitionDisplayName: "TB映射名", normalizedName: "tb映射名", feishuUserId: "u-tb", feishuIdType: "user_id", matchMethod: "manual", active: true, createdBy: null, createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z" }),
+  };
+  const detail = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`), d);
+  assert.equal(detail.status, 200);
+  assert.equal(((await detail.json()) as { ownerName: string }).ownerName, "人工负责人");
+
+  const csv = await handleApiRequest(new Request("http://localhost/api/requirements/export"), d);
+  assert.equal(csv.status, 200);
+  const text = await csv.text();
+  assert.match(text, /人工负责人/);
+  assert.doesNotMatch(text, /,TB执行人,/);
+});
+
+test("Wave 2: requirementPoolGuard skips /mine and invalid UUIDs before hitting requirements.get", async () => {
+  const d = makeDependencies();
+  const getCalls: string[] = [];
+  d.database = {} as never;
+  d.feishuUserSelections = { resolve: async () => ({ feishuUserId: "feishu-1", feishuIdType: "user_id", name: "我" }) };
+  d.repositories!.requirements!.get = async (id: string) => { getCalls.push(id); return null; };
+  const mineRes = await handleApiRequest(new Request("http://localhost/api/requirements/mine?pool=group"), d);
+  assert.equal(mineRes.status, 200);
+  assert.deepEqual(getCalls, []);
+
+  const badUuid = await handleApiRequest(new Request("http://localhost/api/requirements/not-a-uuid?pool=product"), d);
+  assert.equal(badUuid.status, 404);
+  assert.deepEqual(getCalls, []);
+});
+
+test("Wave 2: POST /api/analysis/:id/retry enforces MAX_JSON_BODY_BYTES with 413", async () => {
+  const d = makeDependencies();
+  const response = await handleApiRequest(new Request(`http://localhost/api/analysis/${requirement.id}/retry`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "content-length": String(3 * 1024 * 1024) },
+    body: "{}",
+  }), d);
+  assert.equal(response.status, 413);
+});
+
+test("Wave 2: assessments and prd-prompts honor AI pause, rate limits, and audit trail", async () => {
+  const d = makeDependencies();
+  const audited: Array<Record<string, unknown>> = [];
+  d.repositories!.audit = { append: async (ev) => { audited.push(ev as unknown as Record<string, unknown>); }, search: async () => [] };
+  d.repositories!.flags = {
+    get: async (name: string) => name === "ai_analysis_pause" ? { value: { until: "2026-10-08T01:00:00.000Z", reason: "rate_limited" }, updatedAt: "2026-10-08T00:00:00.000Z" } : null,
+    set: async () => undefined,
+  };
+  const assessmentRecord = {
+    id: "assess-1", requirementId: requirement.id, version: 1, status: "succeeded" as const,
+    promptVersion: "rq-assessment-v1", model: "m", inputs: {}, output: {}, errorCode: null, errorDetail: null,
+    createdBy: "actor-1", createdAt: "2026-10-08T00:00:00.000Z", completedAt: "2026-10-08T00:00:01.000Z",
+  };
+  d.repositories!.assessments = {
+    create: async () => ({ outcome: "created" as const, record: assessmentRecord }),
+    complete: async () => assessmentRecord, fail: async () => null,
+    list: async () => [assessmentRecord], expireStaleRunning: async () => 0,
+  };
+  d.repositories!.prdPrompts = {
+    create: async () => { throw new Error("unused"); },
+    complete: async () => null, fail: async () => null,
+    list: async () => [], expireStaleRunning: async () => 0,
+  };
+  d.assessments = { run: async () => assessmentRecord };
+  d.assessmentRateLimit = { perMinute: 1, perDay: 10 };
+  d.prdPrompt = {
+    runner: {
+      run: async () => ({
+        id: "prd-1", requirementId: requirement.id, version: 1, status: "succeeded" as const,
+        promptVersion: "rq-prd-prompt-v1", model: "m", inputs: { assessmentVersion: 1, investigationNotes: "notes" },
+        output: { prompt: "x", assumptions: [], openQuestions: [] }, errorCode: null,
+        createdBy: "actor-1", createdAt: "2026-10-08T00:00:00.000Z", completedAt: "2026-10-08T00:00:02.000Z",
+      }),
+    },
+  };
+  // AI pause blocks both endpoints with 503
+  assert.equal((await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/assessments`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }), d)).status, 503);
+  assert.equal((await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/prd-prompts`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ investigationNotes: "ok" }) }), d)).status, 503);
+
+  // Clear AI pause -> assessment rate limit (perMinute=1) allows 1st, 429 on 2nd; prd-prompt succeeds and writes audit
+  d.repositories!.flags = { get: async () => null, set: async () => undefined };
+  assert.equal((await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/assessments`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }), d)).status, 201);
+  const limited = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/assessments`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }), d);
+  assert.equal(limited.status, 429);
+  assert.ok(Number(limited.headers.get("retry-after")) >= 1);
+
+  const prdOk = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/prd-prompts`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ investigationNotes: "调研" }) }), d);
+  assert.equal(prdOk.status, 201);
+  assert.equal(audited.some((e) => e.eventType === "prd_prompt.generated"), true);
+});
+
+test("Wave 2: transient database errors across routes return 503 DEPENDENCY_UNAVAILABLE", async () => {
+  const d = makeDependencies();
+  d.repositories!.sources.list = async () => { throw Object.assign(new Error("cannot connect now"), { code: "57P03" }); };
+  const res = await handleApiRequest(new Request("http://localhost/api/sources"), d);
+  assert.equal(res.status, 503);
+  assert.equal(((await res.json()) as { error: { code: string } }).error.code, "DEPENDENCY_UNAVAILABLE");
+});
+
+test("Wave 2: POST /api/sync/run checks running batches within the target source's pool", async () => {
+  const d = makeDependencies();
+  const groupSource = { ...source, id: "99999999-9999-4999-8999-999999999999", pool: "group" as const };
+  let queriedPool: string | undefined;
+  d.repositories!.sources.get = async (id: string) => id === groupSource.id ? groupSource : null;
+  d.repositories!.batches.list = async (q) => {
+    queriedPool = q.pool;
+    return { items: [{ id: "b-run", sourceConfigId: groupSource.id, triggerType: "manual", actorId: "u", idempotencyKey: "k", status: "running", startedAt: "2026-10-08T00:00:00.000Z", completedAt: null, totalCount: 0, succeededCount: 0, failedCount: 0, errorSummary: null, createdAt: "2026-10-08T00:00:00.000Z" }], nextCursor: null };
+  };
+  const res = await handleApiRequest(new Request("http://localhost/api/sync/run", {
+    method: "POST",
+    headers: { "content-type": "application/json", "Idempotency-Key": "sync-group-conflict-0001" },
+    body: JSON.stringify({ sourceId: groupSource.id, mode: "full_pipeline" }),
+  }), d);
+  assert.equal(res.status, 409);
+  assert.equal(queriedPool, "group");
+});

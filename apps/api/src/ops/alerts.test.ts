@@ -104,3 +104,27 @@ test("alert text marks a truncated failed list", () => {
   const many = Array.from({ length: 50 }, (_, index) => job({ id: `job-${index}` }));
   assert.match(buildOpsAlertText(many, [], NOW), /失败作业 50\+ 条/);
 });
+
+test("0031: runOpsAlert scans both product and group pools so group failures trigger alerts", async () => {
+  const h = harness([]);
+  const failedPools: string[] = [];
+  const stuckPools: string[] = [];
+  const groupFailed = job({ id: "job-group-1", jobType: "sync", lastErrorCode: "TB_HTTP_500_UPSTREAM" });
+  const groupStuck = job({ id: "job-group-2", jobType: "base_push", status: "running" });
+  const jobs = {
+    listFailed: async (_limit: number, pool?: string) => {
+      failedPools.push(pool ?? "default");
+      return pool === "group" ? [groupFailed] : [];
+    },
+    listExhaustedRunning: async (_now: string, _limit: number, pool?: string) => {
+      stuckPools.push(pool ?? "default");
+      return pool === "group" ? [groupStuck] : [];
+    },
+  } as never;
+  const result = await runOpsAlert({ config, jobs, audit: h.audit, now: NOW, fetcher: h.fetcher });
+  assert.deepEqual(failedPools, ["product", "group"]);
+  assert.deepEqual(stuckPools, ["product", "group"]);
+  assert.equal(result.outcome, "sent");
+  assert.equal(result.failed, 1);
+  assert.equal(result.stuck, 1);
+});

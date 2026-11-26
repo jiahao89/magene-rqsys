@@ -22,12 +22,16 @@ import { readAiPause } from "../ops/ai-pause.js";
 import { randomUUID } from "node:crypto";
 import type {
   AnalysisRunRepository, AuditEventRepository, PipelineJobRepository, RequirementQueryRepository,
-  SystemFlagRepository,
+  RequirementSearchCursor, SystemFlagRepository,
 } from "../application/repositories.js";
+import { decodeRequirementCursor } from "../application/requirement-cursor.js";
 import type { PipelineJobRecord, RequirementRecord, SourcePool } from "../domain/persistence.js";
+import { isIntakeComplete } from "../domain/workflow.js";
 
-/** 单轮扫描上限：避免一次 tick 拉太多需求。 */
+/** 单轮扫描/入队上限：避免一次 tick 拉太多需求。 */
 export const ANALYSIS_RECOVERY_SCAN_LIMIT = 20;
+/** failed_retryable 分页扫描页数上限：越过已耗尽预算的旧行，防止前 20 条永久饿死后续需求。 */
+const MAX_RETRY_SCAN_PAGES = 20;
 /** 恢复覆盖面：两个池各自独立扫描。需求检索缺省只看产品池（2026-11-24 修正的盲区）。 */
 export const ANALYSIS_RECOVERY_POOLS: readonly SourcePool[] = ["product", "group"];
 /** 同一需求同一源版本累计自动调度重试上限；达到后放弃并留审计。 */
@@ -163,7 +167,7 @@ async function recoverStuckRunningAnalyses(
   pool: SourcePool,
 ): Promise<{ outcomes: AnalysisStuckOutcome[]; errors: string[] }> {
   const nowIso = now.toISOString();
-  const page = await repositories.requirements.search({ analysisState: "running", pool, limit });
+  const page = await repositories.requirements.search({ analysisState: "running", processingState: "active", pool, limit });
   const outcomes: AnalysisStuckOutcome[] = [];
   const errors: string[] = [];
 
@@ -262,39 +266,114 @@ async function retryFailedAnalyses(
   pool: SourcePool,
 ): Promise<{ outcomes: AnalysisRetryOutcome[]; errors: string[] }> {
   const nowIso = now.toISOString();
-  const page = await repositories.requirements.search({ pullState: "synced", analysisState: "failed_retryable", pool, limit });
   const outcomes: AnalysisRetryOutcome[] = [];
   const errors: string[] = [];
+  let cursor: RequirementSearchCursor | undefined;
+  let enqueuedCount = 0;
+  const seenCursors = new Set<string>();
 
-  for (const requirement of page.items) {
-    // 本轮刚由 running 回退的需求：下一轮再接手，避免同一个 poll 里"先回退又立刻重试"。
-    if (excludeRequirementIds.has(requirement.id)) continue;
+  for (let pageIndex = 0; pageIndex < MAX_RETRY_SCAN_PAGES && enqueuedCount < limit; pageIndex += 1) {
+    const page = await repositories.requirements.search({
+      analysisState: "failed_retryable",
+      processingState: "active",
+      pool,
+      limit,
+      ...(cursor === undefined ? {} : { cursor }),
+    });
 
-    // 入队失败时也要能落审计：priorAnalysisVersion 取到之前用 null 表示未知。
-    let priorAnalysisVersion: number | null = null;
-    let dedupeKey = "";
-    try {
-      const latestAnalysis = await repositories.analyses.latest(requirement.id);
-      priorAnalysisVersion = latestAnalysis?.analysisVersion ?? 0;
-      dedupeKey = analysisRetryDedupeKey(requirement, priorAnalysisVersion);
+    for (const requirement of page.items) {
+      if (enqueuedCount >= limit) break;
+      // 仅对已完成收录（TB synced / 手工与收集表 collected）的需求自动重试。
+      if (!isIntakeComplete(requirement.pipeline.pull)) continue;
+      // 本轮刚由 running 回退的需求：下一轮再接手，避免同一个 poll 里"先回退又立刻重试"。
+      if (excludeRequirementIds.has(requirement.id)) continue;
 
-      const existing = (await repositories.jobs.findByDedupeKey?.(dedupeKey)) ?? null;
-      if (isActiveJob(existing)) {
-        outcomes.push({ requirementId: requirement.id, action: "skipped", reason: "job_active", dedupeKey, priorAnalysisVersion });
-        continue;
-      }
-      if (existing?.status === "succeeded") {
-        // 可重试失败状态却挂着一个成功作业：不做自动动作，避免无意义地再分析一次。
-        outcomes.push({ requirementId: requirement.id, action: "skipped", reason: "job_succeeded", dedupeKey, priorAnalysisVersion });
-        continue;
-      }
+      // 入队失败时也要能落审计：priorAnalysisVersion 取到之前用 null 表示未知。
+      let priorAnalysisVersion: number | null = null;
+      let dedupeKey = "";
+      try {
+        const latestAnalysis = await repositories.analyses.latest(requirement.id);
+        priorAnalysisVersion = latestAnalysis?.analysisVersion ?? 0;
+        dedupeKey = analysisRetryDedupeKey(requirement, priorAnalysisVersion);
 
-      const events = await repositories.audit.search({ entityId: requirement.id, limit: AUDIT_SCAN_LIMIT });
-      const schedulerRetries = countSchedulerRetries(events, requirement.sourceVersion);
-      if (schedulerRetries >= maxRetries) {
-        // 达到上限：最多留一条 failed 审计，之后每轮静默跳过，绝不无限重试。
-        const alreadyReported = hasExhaustionMarker(events, requirement.sourceVersion, priorAnalysisVersion);
-        if (!alreadyReported) {
+        const existing = (await repositories.jobs.findByDedupeKey?.(dedupeKey)) ?? null;
+        if (isActiveJob(existing)) {
+          outcomes.push({ requirementId: requirement.id, action: "skipped", reason: "job_active", dedupeKey, priorAnalysisVersion });
+          continue;
+        }
+        if (existing?.status === "succeeded") {
+          // 可重试失败状态却挂着一个成功作业：不做自动动作，避免无意义地再分析一次。
+          outcomes.push({ requirementId: requirement.id, action: "skipped", reason: "job_succeeded", dedupeKey, priorAnalysisVersion });
+          continue;
+        }
+
+        const events = await repositories.audit.search({ entityId: requirement.id, limit: AUDIT_SCAN_LIMIT });
+        const schedulerRetries = countSchedulerRetries(events, requirement.sourceVersion);
+        if (schedulerRetries >= maxRetries) {
+          // 达到上限：最多留一条 failed 审计，之后每轮静默跳过，绝不无限重试。
+          const alreadyReported = hasExhaustionMarker(events, requirement.sourceVersion, priorAnalysisVersion);
+          if (!alreadyReported) {
+            await repositories.audit.append({
+              id: randomUUID(),
+              actorId: null,
+              eventType: "analysis.retry_requested",
+              entityType: "requirement",
+              entityId: requirement.id,
+              result: "failed",
+              safeDetails: {
+                source: "scheduler",
+                sourceVersion: requirement.sourceVersion,
+                priorAnalysisVersion,
+                analysisStatus: "retry_budget_exhausted",
+                reason: "retry_budget_exhausted",
+                attempt: schedulerRetries,
+              },
+              occurredAt: nowIso,
+            });
+          }
+          outcomes.push({
+            requirementId: requirement.id,
+            action: "exhausted",
+            reason: alreadyReported ? "already_reported" : "retry_budget_exhausted",
+            dedupeKey,
+            priorAnalysisVersion,
+          });
+          continue;
+        }
+
+        // 终态失败/取消的同一 key 作业会由仓储复用并重置回 queued；同轮重复执行也只会有一个作业。
+        await repositories.jobs.enqueue({
+          jobType: "analysis",
+          dedupeKey,
+          payload: {
+            requirementId: requirement.id,
+            sourceVersion: requirement.sourceVersion,
+            substantiveHash: requirement.substantiveHash,
+            actorId: null,
+          },
+          availableAt: nowIso,
+        });
+        await repositories.audit.append({
+          id: randomUUID(),
+          actorId: null,
+          eventType: "analysis.retry_requested",
+          entityType: "requirement",
+          entityId: requirement.id,
+          result: "succeeded",
+          safeDetails: {
+            source: "scheduler",
+            sourceVersion: requirement.sourceVersion,
+            priorAnalysisVersion,
+            analysisStatus: "queued_new_job",
+          },
+          occurredAt: nowIso,
+        });
+        enqueuedCount += 1;
+        outcomes.push({ requirementId: requirement.id, action: "enqueued", reason: "queued_new_job", dedupeKey, priorAnalysisVersion });
+      } catch (error) {
+        errors.push(`requirement ${requirement.id}: auto retry analysis: ${safeErrorMessage(error)}`);
+        // 入队失败留痕，便于排查；审计本身失败也不能向外抛（否则整轮恢复中断）。
+        try {
           await repositories.audit.append({
             id: randomUUID(),
             actorId: null,
@@ -305,75 +384,22 @@ async function retryFailedAnalyses(
             safeDetails: {
               source: "scheduler",
               sourceVersion: requirement.sourceVersion,
-              priorAnalysisVersion,
-              analysisStatus: "retry_budget_exhausted",
-              reason: "retry_budget_exhausted",
-              attempt: schedulerRetries,
+              ...(priorAnalysisVersion === null ? {} : { priorAnalysisVersion }),
+              analysisStatus: "enqueue_failed",
             },
             occurredAt: nowIso,
           });
+        } catch {
+          // 审计写入失败时只保留原始错误，不再掩盖它
         }
-        outcomes.push({
-          requirementId: requirement.id,
-          action: "exhausted",
-          reason: alreadyReported ? "already_reported" : "retry_budget_exhausted",
-          dedupeKey,
-          priorAnalysisVersion,
-        });
-        continue;
-      }
-
-      // 终态失败/取消的同一 key 作业会由仓储复用并重置回 queued；同轮重复执行也只会有一个作业。
-      await repositories.jobs.enqueue({
-        jobType: "analysis",
-        dedupeKey,
-        payload: {
-          requirementId: requirement.id,
-          sourceVersion: requirement.sourceVersion,
-          substantiveHash: requirement.substantiveHash,
-          actorId: null,
-        },
-        availableAt: nowIso,
-      });
-      await repositories.audit.append({
-        id: randomUUID(),
-        actorId: null,
-        eventType: "analysis.retry_requested",
-        entityType: "requirement",
-        entityId: requirement.id,
-        result: "succeeded",
-        safeDetails: {
-          source: "scheduler",
-          sourceVersion: requirement.sourceVersion,
-          priorAnalysisVersion,
-          analysisStatus: "queued_new_job",
-        },
-        occurredAt: nowIso,
-      });
-      outcomes.push({ requirementId: requirement.id, action: "enqueued", reason: "queued_new_job", dedupeKey, priorAnalysisVersion });
-    } catch (error) {
-      errors.push(`requirement ${requirement.id}: auto retry analysis: ${safeErrorMessage(error)}`);
-      // 入队失败留痕，便于排查；审计本身失败也不能向外抛（否则整轮恢复中断）。
-      try {
-        await repositories.audit.append({
-          id: randomUUID(),
-          actorId: null,
-          eventType: "analysis.retry_requested",
-          entityType: "requirement",
-          entityId: requirement.id,
-          result: "failed",
-          safeDetails: {
-            source: "scheduler",
-            sourceVersion: requirement.sourceVersion,
-            ...(priorAnalysisVersion === null ? {} : { priorAnalysisVersion }),
-            analysisStatus: "enqueue_failed",
-          },
-          occurredAt: nowIso,
-        });
-      } catch {
-        // 审计写入失败时只保留原始错误，不再掩盖它
       }
     }
+
+    if (!page.nextCursor || seenCursors.has(page.nextCursor)) break;
+    seenCursors.add(page.nextCursor);
+    const decoded = decodeRequirementCursor(page.nextCursor);
+    if (!decoded) break;
+    cursor = decoded;
   }
   return { outcomes, errors };
 }
@@ -400,7 +426,7 @@ export async function enqueueMissingAnalysisJobs(
   for (const pool of ANALYSIS_RECOVERY_POOLS) {
     let items: RequirementRecord[];
     try {
-      const page = await params.requirements.search({ analysisState: "pending", pool, limit: params.limit ?? ANALYSIS_RECOVERY_SCAN_LIMIT });
+      const page = await params.requirements.search({ analysisState: "pending", processingState: "active", pool, limit: params.limit ?? ANALYSIS_RECOVERY_SCAN_LIMIT });
       items = page.items;
     } catch (error) {
       report.errors.push(`search pending analysis (${pool}): ${safeErrorMessage(error)}`);
@@ -408,6 +434,7 @@ export async function enqueueMissingAnalysisJobs(
     }
     report.scanned += items.length;
     for (const requirement of items) {
+      if (!isIntakeComplete(requirement.pipeline.pull)) continue;
       try {
         const dedupeKey = `analysis:${requirement.id}:v${requirement.sourceVersion}`;
         const existing = await params.jobs.findByDedupeKey?.(dedupeKey);

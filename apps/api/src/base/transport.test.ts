@@ -115,8 +115,8 @@ test("tenant token 请求并缓存至过期前", async () => {
   assert.equal(tokenRequests.length, 1);
 });
 
-test("V02-T03 findByPlatformKey 按需求平台 ID 精确过滤；多行命中抛键冲突", async () => {
-  let items: unknown[] = [{ record_id: "rec-1", fields: { 需求平台ID: "RQ-000001" } }];
+test("V02-T03 findByPlatformKey 按需求平台 ID 精确过滤并同时请求双键字段；多行命中抛键冲突", async () => {
+  let items: unknown[] = [{ record_id: "rec-1", fields: { 需求平台ID: "RQ-000001", TB需求ID: "r1" } }];
   const client = new FeishuBitableClient({
     ...CONFIG,
     keyFields: { requirementId: "TB需求ID", platformRequirementId: "需求平台ID" },
@@ -125,7 +125,7 @@ test("V02-T03 findByPlatformKey 按需求平台 ID 精确过滤；多行命中�
       if (path.includes("/records?")) {
         const url = new URL(`https://x${path}`);
         assert.equal(url.searchParams.get("filter"), 'CurrentValue.[需求平台ID] = "RQ-000001"');
-        assert.deepEqual(JSON.parse(url.searchParams.get("field_names") ?? "[]"), ["需求平台ID"]);
+        assert.deepEqual(JSON.parse(url.searchParams.get("field_names") ?? "[]"), ["TB需求ID", "需求平台ID"]);
         return { body: { code: 0, data: { items } } };
       }
       return { body: { code: 0 } };
@@ -135,6 +135,42 @@ test("V02-T03 findByPlatformKey 按需求平台 ID 精确过滤；多行命中�
   assert.equal(found?.recordId, "rec-1");
   items = [{ record_id: "rec-1", fields: {} }, { record_id: "rec-2", fields: {} }];
   await assert.rejects(() => client.findByPlatformKey("RQ-000001"), BaseKeyConflictError);
+});
+
+test("findByRequirementKey 在配置了平台键时同时请求双键，确保跨键冲突检测在生产传输层生效", async () => {
+  const seenFieldNames: string[][] = [];
+  const client = new FeishuBitableClient({
+    ...CONFIG,
+    keyFields: { requirementId: "TB需求ID", platformRequirementId: "需求平台ID" },
+    fetch: fakeFetch((path) => {
+      if (path.includes("/tenant_access_token")) return { body: { code: 0, tenant_access_token: "t-1", expire: 3600 } };
+      if (path.includes("/records?")) {
+        const url = new URL(`https://x${path}`);
+        const fieldNames = JSON.parse(url.searchParams.get("field_names") ?? "[]") as string[];
+        seenFieldNames.push(fieldNames);
+        const filter = url.searchParams.get("filter") ?? "";
+        // 平台键查不到，回退 TB 键命中但行上记录了另一个平台 ID → 必须抛 BaseKeyConflictError
+        if (filter.includes("需求平台ID")) return { body: { code: 0, data: { items: [] } } };
+        return { body: { code: 0, data: { items: [{ record_id: "rec-conflict", fields: { TB需求ID: "tb-1", 需求平台ID: "RQ-999999" } }] } } };
+      }
+      return { body: { code: 0 } };
+    }, []),
+  });
+  const adapter = new FeishuBasePushAdapter(client, {
+    requirementId: "TB需求ID", platformRequirementId: "需求平台ID", owner: "执行人", source: {}, ai: {}, pm: [],
+  });
+  await assert.rejects(
+    () => adapter.push({
+      projectId: "p", requirementId: "tb-1", platformRequirementId: "RQ-000001",
+      requirementDbId: "11111111-2222-4333-8444-555555555555", title: "conflict",
+      owner: null, sourceVersion: 1, substantiveChanged: false, idempotencyKey: "k-conflict",
+    }),
+    BaseKeyConflictError,
+  );
+  assert.deepEqual(seenFieldNames, [
+    ["TB需求ID", "需求平台ID"],
+    ["TB需求ID", "需求平台ID"],
+  ]);
 });
 
 test("findByRequirementKey 使用 Bitable v1 按 TB 需求 ID 精确过滤", async () => {

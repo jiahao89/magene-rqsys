@@ -74,3 +74,26 @@ test("resolves a platform selection only after login and keeps the I64 identifie
   assert.equal((await handleApiRequest(new Request(url), unauthenticated)).status, 401);
   assert.equal((await handleApiRequest(new Request("http://localhost/api/feishu/users/resolve?platformUserId=1e20"), fixture)).status, 400);
 });
+
+test("mappings list scopes by ?pool= (default product, supports group, validates invalid)", async () => {
+  const groupSource: SourceConfigRecord = { ...source, id: "22222222-2222-4222-8222-222222222222", pool: "group" };
+  const productMapping = mappingRecord({ feishuUserId: "ou-product" });
+  const groupMapping = mappingRecord({ id: "map-group", sourceConfigId: groupSource.id, feishuUserId: "ou-group" });
+  const fixture = makeFixture();
+  fixture.repositories!.sources = { list: async () => [groupSource, { ...source, pool: "product" }], get: async () => null, update: async () => null, create: async () => { throw new Error("unused"); } };
+  fixture.repositories!.people = {
+    upsertManual: async () => { throw new Error("unused"); },
+    resolveActive: async () => null,
+    listActive: async (id) => id === groupSource.id ? [groupMapping] : id === source.id ? [productMapping] : [],
+  };
+  const def = await handleApiRequest(new Request("http://localhost/api/mappings"), fixture);
+  assert.equal(def.status, 200);
+  assert.deepEqual(((await def.json()) as { items: Array<{ feishuUserId: string }> }).items.map((m) => m.feishuUserId), ["ou-product"]);
+
+  const grp = await handleApiRequest(new Request("http://localhost/api/mappings?pool=group"), fixture);
+  assert.equal(grp.status, 200);
+  assert.deepEqual(((await grp.json()) as { items: Array<{ feishuUserId: string }> }).items.map((m) => m.feishuUserId), ["ou-group"]);
+
+  const bad = await handleApiRequest(new Request("http://localhost/api/mappings?pool=other"), fixture);
+  assert.equal(bad.status, 400);
+});

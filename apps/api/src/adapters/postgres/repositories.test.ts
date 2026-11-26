@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { PostgresRepositories, PostgresAuditEventRepository } from "./repositories.js";
+import { PostgresRequirementAssessmentRepository } from "./requirement-assessment-repository.js";
+import { PostgresRequirementPrdPromptRepository } from "./prd-prompt-repository.js";
 import { substantiveHash } from "../../sync/hashes.js";
 import { DEFAULT_TEAM_MEMBERS } from "../../domain/team-directory.js";
 
@@ -435,7 +437,8 @@ test("batch search applies inclusive time bounds and a stable composite cursor",
   const {pool,calls}=recordingPool();const store=new PostgresRepositories(pool);
   const cursor={startedAt:"2026-01-02T00:00:00.000Z",id:"33333333-3333-4333-8333-333333333333"};
   await store.batches.list({status:"failed",since:"2026-01-01T00:00:00Z",until:"2026-01-03T00:00:00Z",cursor,limit:10});
-  assert.match(calls[0]!.sql,/b\.started_at >= \$2/);assert.match(calls[0]!.sql,/b\.started_at <= \$3/);assert.match(calls[0]!.sql,/\(b\.started_at,b\.id\)<\(\$4::timestamptz,\$5::uuid\)/);
+  assert.match(calls[0]!.sql,/b\.started_at >= \$2/);assert.match(calls[0]!.sql,/b\.started_at <= \$3/);assert.match(calls[0]!.sql,/\(date_trunc\('milliseconds', b\.started_at AT TIME ZONE 'UTC'\),b\.id\)<\(date_trunc\('milliseconds',\$4::timestamptz AT TIME ZONE 'UTC'\),\$5::uuid\)/);
+  assert.match(calls[0]!.sql,/ORDER BY date_trunc\('milliseconds', b\.started_at AT TIME ZONE 'UTC'\) DESC,b\.id DESC/);
   // 0031：批次列表按池过滤，pool 作为第 7 个参数追加（缺省 product）。
   assert.match(calls[0]!.sql,/sc\.pool=\$7::text/);
   assert.deepEqual(calls[0]!.values,["failed","2026-01-01T00:00:00Z","2026-01-03T00:00:00Z",cursor.startedAt,cursor.id,11,"product"]);
@@ -453,10 +456,10 @@ test("recycle-bin aggregate search drops the pool filter, orders by deleted_at a
   const {pool,calls}=recordingPool();const store=new PostgresRepositories(pool);
   await store.requirements.search({deleted:true,deletedBy:"actor-1",pool:"all",limit:10,deletedCursor:{deletedAt:"2026-01-02T00:00:00.000Z",id:"55555555-5555-4555-8555-555555555555"}});
   const sql=calls[0]!.sql as string, values=calls[0]!.values as unknown[];
-  // 聚合两池：不带任何池过滤，按删除时间倒序。
+  // 聚合两池：不带任何池过滤，按删除时间（毫秒截断）倒序。
   assert.doesNotMatch(sql,/sc\.pool=/);
-  assert.match(sql,/ORDER BY r\.deleted_at DESC,r\.id DESC/);
-  assert.match(sql,/\(r\.deleted_at,r\.id\)<\(\$\d+::timestamptz,\$\d+::uuid\)/);
+  assert.match(sql,/ORDER BY date_trunc\('milliseconds', r\.deleted_at AT TIME ZONE 'UTC'\) DESC,r\.id DESC/);
+  assert.match(sql,/\(date_trunc\('milliseconds', r\.deleted_at AT TIME ZONE 'UTC'\),r\.id\)<\(date_trunc\('milliseconds',\$\d+::timestamptz AT TIME ZONE 'UTC'\),\$\d+::uuid\)/);
   // 关键回归：参数个数必须等于 SQL 里最大的占位符；多传一个未引用的参数会让 PostgreSQL 报
   // "could not determine data type of parameter $N"。
   const maxPlaceholder=Math.max(...[...sql.matchAll(/\$(\d+)/g)].map((match)=>Number(match[1])));
@@ -688,4 +691,249 @@ test("疑似重复候选按「同来源 + active + 排除自身」查询，标�
   await repositories.requirements.listDuplicateCandidates({ requirementId: "req-1", sourceConfigId: null });
   assert.deepEqual(calls[1]!.values, ["req-1", null]);
   assert.match(calls[1]!.sql, /\$2::uuid IS NULL AND source_config_id IS NULL/);
+});
+
+test("Wave 2: withRequirementLock serializes same requirement and never deadlocks a 1-connection pool across concurrent pushes", async () => {
+  const flags = new Map<string, { value: { owner: string; expiresAt: string }; updatedAt: string }>();
+  let checkedOut = 0;
+  const maxConnections = 1;
+  const waiters: Array<() => void> = [];
+  const acquireConn = async () => {
+    while (checkedOut >= maxConnections) {
+      await new Promise<void>((resolve) => waiters.push(resolve));
+    }
+    checkedOut += 1;
+  };
+  const releaseConn = () => {
+    checkedOut -= 1;
+    waiters.shift()?.();
+  };
+  const runSql = async (sql: string, values: unknown[] = []) => {
+    await acquireConn();
+    try {
+      if (sql.startsWith("INSERT INTO system_flags")) {
+        const name = String(values[0]);
+        const incoming = JSON.parse(String(values[1])) as { owner: string; expiresAt: string };
+        const nowIso = String(values[2]);
+        const current = flags.get(name);
+        if (!current || Date.parse(current.value.expiresAt) <= Date.parse(nowIso)) {
+          flags.set(name, { value: incoming, updatedAt: nowIso });
+          return { rows: [{ name }], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      }
+      if (sql.startsWith("DELETE FROM system_flags")) {
+        const name = String(values[0]);
+        const owner = String(values[1]);
+        if (flags.get(name)?.value.owner === owner) {
+          flags.delete(name);
+          return { rows: [], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      }
+      if (sql.startsWith("UPDATE system_flags")) return { rows: [], rowCount: 1 };
+      return { rows: [{ ok: 1 }], rowCount: 1 };
+    } finally {
+      releaseConn();
+    }
+  };
+  const pool = {
+    query: runSql,
+    connect: async () => ({ query: runSql, release() {} }),
+  } as never;
+  const storeA = new PostgresRepositories(pool).requirements;
+  const storeB = new PostgresRepositories(pool).requirements;
+
+  // 10 个不同需求并发执行，即使连接池上限=1 且 fn 内部多次查库，也绝不自死锁。
+  const results = await Promise.all(Array.from({ length: 10 }, (_, idx) =>
+    storeA.withRequirementLock(`req-par-${idx}`, async () => {
+      await new Promise((r) => setTimeout(r, 10));
+      await (pool as unknown as { query: (s: string) => Promise<unknown> }).query("SELECT 1");
+      return idx;
+    }),
+  ));
+  assert.deepEqual(results, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  assert.equal(flags.size, 0, "所有租约结束后应已释放");
+
+  // 跨实例同需求串行化 + 异常时自动释放
+  let active = 0;
+  let maxActive = 0;
+  const runSame = (store: typeof storeA, label: string) => store.withRequirementLock("req-shared", async () => {
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    await new Promise((r) => setTimeout(r, 30));
+    active -= 1;
+    return label;
+  });
+  const [a, b] = await Promise.all([runSame(storeA, "A"), runSame(storeB, "B")]);
+  assert.deepEqual([a, b], ["A", "B"]);
+  assert.equal(maxActive, 1);
+
+  await assert.rejects(() => storeA.withRequirementLock("req-err", async () => { throw new Error("boom"); }), /boom/);
+  assert.equal(flags.has("lock:requirement:req-err"), false);
+});
+
+test("Wave 2: PostgresTeamDirectoryRepository always scopes to pool='product'", async () => {
+  const { pool, calls } = directoryPool(["张三"], []);
+  const dir = new PostgresRepositories(pool).directory;
+  await dir.listPeople();
+  await dir.addPerson("李四", { id: "e1", actorId: "u1", eventType: "team_person.created", entityType: "team_person", result: "succeeded", safeDetails: {}, occurredAt: "2026-11-26T00:00:00.000Z" });
+  const sourceSelects = calls.filter((c) => c.sql.includes("FROM source_configs"));
+  assert.ok(sourceSelects.length >= 2);
+  for (const call of sourceSelects) {
+    assert.match(call.sql, /WHERE pool='product'/, call.sql);
+  }
+});
+
+test("Wave 2: upsertRequirement preserves manually_mapped owner_state when TB executor changes", async () => {
+  const calls: Array<{ sql: string; values: unknown[] }> = [];
+  const query = async (sql: string, values: unknown[] = []) => {
+    calls.push({ sql, values });
+    if (sql.includes("SELECT id,platform_requirement_id")) return { rows: [{ id: "r1", platform_requirement_id: "RQ-000001", source_version: 1, source_hash: "old", executor_user_id: "tb-1", executor_name: "A", deleted_at: null }], rowCount: 1 };
+    if (sql.startsWith("INSERT INTO requirements")) return { rows: [{ id: "r1" }], rowCount: 1 };
+    return { rows: [], rowCount: 0 };
+  };
+  const store = new PostgresRepositories({ query, connect: async () => ({ query, release() {} }) } as never).requirements;
+  await store.upsertRequirement("s1", "tb-req-1", {
+    sourceConfigId: "s1", teambitionRequirementId: "tb-req-1", title: "T", description: null, scope: null, acceptanceCriteria: null,
+    proposerUserId: null, proposerName: null, executorUserId: "tb-2", executorName: "B", statusId: null, createdAt: null, updatedAt: null,
+    sourceUrl: null, uniqueId: null, attachmentRefs: [], customFields: [], payload: {}, sourceHash: "new", substantiveHash: "sub",
+    sourceVersion: 2, latestBatchId: "b1",
+  });
+  const upsert = calls.find((c) => c.sql.startsWith("INSERT INTO requirements"))!;
+  assert.match(upsert.sql, /WHEN requirements\.owner_state='manually_mapped' THEN 'manually_mapped'/);
+});
+
+test("Wave 2: ownerMatchSql falls back from tb_user_id to normalized_name across search, mineCounts, and markDeleted", async () => {
+  const { pool, calls } = recordingPool();
+  const store = new PostgresRepositories(pool).requirements;
+  await store.search({ ownerFeishuUserId: "feishu-1", limit: 10 });
+  await store.mineCounts("feishu-1");
+  await store.markDeleted({ requirementId: "r1", ownerFeishuUserId: "feishu-1", deletedBy: "u1", at: "2026-11-26T00:00:00.000Z" });
+  const ownerQueries = calls.filter((c) => c.sql.includes("manual_owner_feishu_user_id"));
+  assert.equal(ownerQueries.length, 3);
+  for (const call of ownerQueries) {
+    assert.match(call.sql, /pm\.teambition_user_id=r\.executor_user_id/);
+    assert.match(call.sql, /pm\.normalized_name=lower\(regexp_replace\(btrim\(r\.executor_name\)/);
+  }
+});
+
+test("Wave 2: createManualRequirement sets manual_owner_assigned_by only when owner is provided, updateManualRequirement handles 23505, and getOpsMetrics excludes deleted rows", async () => {
+  const calls: Array<{ sql: string; values: unknown[] }> = [];
+  const query = async (sql: string, values: unknown[] = []) => {
+    calls.push({ sql, values });
+    if (sql.includes("next_number")) return { rows: [{ next_number: "9" }], rowCount: 1 };
+    if (sql.includes("pg_advisory_xact_lock")) return { rows: [{ lock_acquired: false }], rowCount: 1 };
+    return { rows: [], rowCount: 0 };
+  };
+  const store = new PostgresRepositories({ query, connect: async () => ({ query, release() {} }) } as never);
+  await store.requirements.createManualRequirement({
+    idempotencyKey: "k-no-owner", actorId: "actor-1", requestHash: "h1", title: "No owner", description: null, sourceChannel: "售后",
+  });
+  const insertNoOwner = calls.find((c) => c.sql.startsWith("INSERT INTO requirements"))!;
+  assert.equal(insertNoOwner.values[17], null, "manual_owner_assigned_by must be null when no owner is set");
+  assert.equal(insertNoOwner.values[18], null, "manual_owner_assigned_at must be null when no owner is set");
+
+  // updateManualRequirement concurrent 23505 race -> returns key_conflict cleanly
+  const racePool = {
+    query: async (sql: string) => sql.includes("requirement_edit_receipts")
+      ? { rows: [{ requirement_id: "other-req", request_hash: "other-hash", outcome: "updated", substantive_changed: false, source_version: 1 }], rowCount: 1 }
+      : { rows: [], rowCount: 0 },
+    connect: async () => ({
+      query: async (sql: string) => {
+        if (sql.includes("FROM requirements WHERE id=$1 FOR UPDATE")) return { rows: [baseFormEditRow()], rowCount: 1 };
+        if (sql.startsWith("INSERT INTO requirement_edit_receipts")) throw Object.assign(new Error("dup"), { code: "23505", constraint: "requirement_edit_receipts_pkey" });
+        return { rows: [], rowCount: 0 };
+      },
+      release() {},
+    }),
+  } as never;
+  const raceRes = await new PostgresRepositories(racePool).requirements.updateManualRequirement({
+    requirementId: "req-1", expectedSourceVersion: 1, idempotencyKey: "k-race", actorId: "actor-1", requestHash: "hash-1", sourceChannel: "销售",
+  });
+  assert.deepEqual(raceRes, { outcome: "key_conflict" });
+
+  // getOpsMetrics top-5 failures excludes deleted requirements
+  const opsRec = recordingPool();
+  await new PostgresRepositories(opsRec.pool).ops.getOpsMetrics({ days: 7, now: "2026-11-26T00:00:00.000Z" });
+  assert.match(opsRec.calls[1]!.sql, /rq\.deleted_at IS NULL/);
+});
+
+test("Wave 2: assessment and prd-prompt repos wire created_by and map 23505 single_running to in_progress", async () => {
+  const runningAssessment = {
+    id: "a-run", requirement_id: "req-1", version: 2, status: "running", prompt_version: "p1", model: "m1",
+    inputs: {}, output: null, error_code: null, error_detail: null, created_by: "u1", created_at: "2026-11-26T00:00:00.000Z", completed_at: null,
+  };
+  const assessPool = {
+    query: async () => ({ rows: [runningAssessment], rowCount: 1 }),
+    connect: async () => ({
+      query: async (sql: string) => {
+        if (sql.startsWith("INSERT INTO requirement_assessments")) {
+          throw Object.assign(new Error("unique"), { code: "23505", constraint: "requirement_assessments_single_running" });
+        }
+        return { rows: [], rowCount: 0 };
+      },
+      release() {},
+    }),
+  } as never;
+  const assessRes = await new PostgresRequirementAssessmentRepository(assessPool).create({
+    requirementId: "req-1", promptVersion: "p1", model: "m1", inputs: {}, createdBy: "u1", at: "2026-11-26T00:00:00.000Z", staleAfterMs: 120_000,
+  });
+  assert.equal(assessRes.outcome, "in_progress");
+  assert.equal(assessRes.record.id, "a-run");
+
+  let insertedCreatedBy: unknown;
+  const prdPool = {
+    query: async () => ({ rows: [], rowCount: 0 }),
+    connect: async () => ({
+      query: async (sql: string, values: unknown[] = []) => {
+        if (sql.startsWith("INSERT INTO requirement_prd_prompts")) {
+          insertedCreatedBy = values[6];
+          return { rows: [{ id: "p-1", requirement_id: "req-1", version: 1, status: "running", prompt_version: "pv1", model: "m1", inputs: {}, output: null, error_code: null, created_by: values[6], created_at: values[7], completed_at: null }], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      },
+      release() {},
+    }),
+  } as never;
+  const prdRes = await new PostgresRequirementPrdPromptRepository(prdPool).create({
+    requirementId: "req-1", promptVersion: "pv1", model: "m1", inputs: {}, createdBy: "actor-42", at: "2026-11-26T00:00:00.000Z", staleAfterMs: 120_000,
+  });
+  assert.equal(prdRes.outcome, "created");
+  assert.equal(insertedCreatedBy, "actor-42");
+  assert.equal(prdRes.record.createdBy, "actor-42");
+});
+
+test("Wave 2: priority override, analysis context, owner, and duplicate resolution write audit inside the same transaction", async () => {
+  const txCalls: string[] = [];
+  const reqRow = {
+    id: "req-1", platform_requirement_id: "RQ-000001", source_type: "teambition", source_config_id: "s1", teambition_requirement_id: "tb-1",
+    title: "T", description: null, scope: null, acceptance_criteria: null, proposer_user_id: null, proposer_name: null,
+    executor_user_id: null, executor_name: null, source_status_id: null, source_created_at: null, source_updated_at: null,
+    source_url: null, attachment_refs: [], source_custom_fields: [], source_payload: {}, source_hash: "h", substantive_hash: "s",
+    source_version: 1, latest_batch_id: null, base_record_id: null, last_pushed_at: null,
+    pull_state: "synced", analysis_state: "analyzed", owner_state: "not_required", push_state: "pending",
+    priority_override: "P0", priority_override_reason: "urgent", priority_override_actor_id: "u1", priority_override_at: "2026-11-26T00:00:00.000Z",
+    analysis_context_note: "ctx", analysis_context_updated_at: "2026-11-26T00:00:00.000Z", analysis_context_updated_by: "u1",
+    first_seen_at: "2026-11-26T00:00:00.000Z", last_seen_at: "2026-11-26T00:00:00.000Z", created_at: "2026-11-26T00:00:00.000Z", updated_at: "2026-11-26T00:00:00.000Z",
+  };
+  const txPool = {
+    query: async () => { throw new Error("must run inside transaction when auditEvent is provided"); },
+    connect: async () => ({
+      query: async (sql: string) => {
+        txCalls.push(sql);
+        if (sql.startsWith("UPDATE requirements SET priority_override")) return { rows: [reqRow], rowCount: 1 };
+        if (sql.startsWith("UPDATE requirements SET analysis_context_note")) return { rows: [reqRow], rowCount: 1 };
+        return { rows: [], rowCount: 0 };
+      },
+      release() {},
+    }),
+  } as never;
+  const store = new PostgresRepositories(txPool).requirements;
+  const ev = { id: "a1", actorId: "u1", eventType: "requirement.priority_override_set", entityType: "requirement", result: "succeeded" as const, safeDetails: { priority: "P0" }, occurredAt: "2026-11-26T00:00:00.000Z" };
+  await store.setPriorityOverride("req-1", { priority: "P0", reason: "urgent", actorId: "u1", at: "2026-11-26T00:00:00.000Z", auditEvent: ev });
+  await store.setAnalysisContext("req-1", { context: "ctx", actorId: "u1", at: "2026-11-26T00:00:00.000Z", auditEvent: { ...ev, eventType: "requirement.analysis_context_updated", safeDetails: { cleared: false } } });
+  assert.equal(txCalls.filter((s) => s === "BEGIN").length, 2);
+  assert.equal(txCalls.filter((s) => s.startsWith("INSERT INTO audit_events")).length, 2);
+  assert.equal(txCalls.filter((s) => s === "COMMIT").length, 2);
 });

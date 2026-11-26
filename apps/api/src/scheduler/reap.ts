@@ -12,13 +12,16 @@
 //
 // 判定不靠单纯的时间猜测：前两种看作业状态，第三种同时要求"尝试用尽 + 租约过期"。
 
-import type { PipelineJobRecord } from "../domain/persistence.js";
+import type { PipelineJobRecord, SourcePool, SyncBatchRecord } from "../domain/persistence.js";
 import type {
   BasePushRunRepository,
   PipelineJobRepository,
   RequirementQueryRepository,
   SyncBatchRepository,
 } from "../application/repositories.js";
+
+/** 0031：两池独立存储，批次回收与卡死作业回收必须覆盖产品池与集团池。 */
+const REAP_POOLS: readonly SourcePool[] = ["product", "group"];
 
 export interface ReapedBatch {
   batchId: string;
@@ -52,7 +55,17 @@ export async function reapOrphanedBatches(params: {
   const minAgeMs = params.minAgeMs ?? REAP_MIN_AGE_MS;
   const nowIso = params.now.toISOString();
   const cutoff = params.now.getTime() - minAgeMs;
-  const { items } = await params.batches.list({ status: "running", limit: params.limit ?? 50 });
+  const limit = params.limit ?? 50;
+  const seenBatchIds = new Set<string>();
+  const items: SyncBatchRecord[] = [];
+  for (const pool of REAP_POOLS) {
+    const page = await params.batches.list({ status: "running", pool, limit });
+    for (const batch of page.items) {
+      if (seenBatchIds.has(batch.id)) continue;
+      seenBatchIds.add(batch.id);
+      items.push(batch);
+    }
+  }
   const reaped: ReapedBatch[] = [];
 
   for (const batch of items) {
@@ -136,7 +149,17 @@ export async function reapExhaustedJobs(params: {
   const list = params.jobs.listExhaustedRunning;
   if (!list) return [];
   const nowIso = params.now.toISOString();
-  const exhausted = await list.call(params.jobs, nowIso, params.limit ?? 50);
+  const limit = params.limit ?? 50;
+  const seenJobIds = new Set<string>();
+  const exhausted: PipelineJobRecord[] = [];
+  for (const pool of REAP_POOLS) {
+    const rows = await list.call(params.jobs, nowIso, limit, pool);
+    for (const job of rows) {
+      if (seenJobIds.has(job.id)) continue;
+      seenJobIds.add(job.id);
+      exhausted.push(job);
+    }
+  }
   const reaped: ReapedJob[] = [];
 
   for (const job of exhausted) {

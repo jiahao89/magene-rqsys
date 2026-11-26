@@ -16,6 +16,16 @@ import { formatDateTime, requirementDisplayId, requirementOwnerView, requirement
 import { AUDIT_PAGE_LIMIT, ApiError, addTeamPerson, applyRequirementAiScore, bindTeamPersonFeishu, createSource, createRequirementAssessment, deleteRequirement, deleteTeamPerson, getBatch, getFunctionModules, getMyRequirementCounts, getRequirement, exportRequirementsCsv, getBaseLinks, getGates, getOpsJobs, getOpsMetrics, getReadiness, getRequirementSourceCounts, listMyRequirements, listRecycleBinRequirements, listRequirementAssessments, restoreRequirement, setGate, listAudit, listBatches, listDictionaryVersions, listMappings, listRequirements, listTeamPeople, pushRequirement, renameTeamPerson, revokeDuplicateDecision, saveAnalysisContext, saveFunctionModules, retryAnalysis, setPriorityOverride, retrySyncItem, saveRequirementScore, searchFeishuUsers, setDuplicateDecision, setOwner, unbindTeamPersonFeishu, updateSource, type AnalysisVersionSummary, type AuditEvent, type OpsJob, type OpsMetrics, type GatesResponse, type AssessmentConfidence, type AssessmentVerdict, type BatchDetail, type BaseLinks, type BatchSummary, type DictionaryVersion, type DuplicateDecision, type MyRequirementCounts, type PersonMapping, type PublishStatus, type FeishuUserSelection, type FeishuUserCandidate, type FunctionModuleEntry, type RequirementDetail, type RequirementProcessingState, type RequirementResolution, type RequirementAssessment, type RequirementScoreVersion, type RequirementSourceCounts, type RequirementSummary, type ScoringInputs, type SourceConfig, type SourceConfigUpdate, type TeamPerson, type RequirementPool, clearOwner } from "./api";
 import type { WorkbenchTab } from "./workbench-routing";
 import { PrdPromptSection } from "./prd-prompt";
+import { safeHttpUrl } from "./safe-url";
+
+/** 页内锚点跳转：直接滚动并聚焦目标标题，不修改 location.hash（避免触发 hash 路由 popstate 切页）。 */
+function scrollToSection(id: string): void {
+  const target = document.getElementById(id);
+  if (!target) return;
+  target.scrollIntoView?.({ behavior: "smooth", block: "start" });
+  if (!target.hasAttribute("tabindex")) target.setAttribute("tabindex", "-1");
+  target.focus?.({ preventScroll: true });
+}
 
 export type LoadState = "loading" | "ready" | "error";
 
@@ -54,7 +64,7 @@ function DeleteConfirmation({ description, disabled, onConfirm, triggerLabel = "
   // 弹窗关闭后把焦点还给触发按钮：Arco 的 focus-lock 只在弹窗内循环，关闭后默认回到 body。
   const triggerRef = useRef<HTMLButtonElement>(null);
   return <>
-    <ArcoButton htmlType="button" size="small" ref={triggerRef} aria-disabled={disabled} tabIndex={disabled ? -1 : 0} style={disabled ? { pointerEvents: "none", opacity: 0.6 } : undefined} onClick={() => { if (!disabled) setArcoOpen(true); }}>{triggerLabel}</ArcoButton>
+    <ArcoButton htmlType="button" size="small" ref={triggerRef} disabled={disabled} onClick={() => { if (!disabled) setArcoOpen(true); }}>{triggerLabel}</ArcoButton>
     <ConfirmModal visible={arcoOpen} title={heading} description={description} okText={confirmLabel} onOk={() => { setArcoOpen(false); onConfirm(); }} onCancel={() => setArcoOpen(false)} afterClose={() => triggerRef.current?.focus()} />
   </>;
 }
@@ -482,15 +492,18 @@ function BaseLinksPanel() {
   return <ArcoCard className="base-links-card" title={<ArcoTypography.Title heading={5} style={{ margin: 0 }}>飞书 Base 地址</ArcoTypography.Title>}>
     <ArcoTypography.Paragraph type="secondary">这两个 Base 承载需求推送与飞书消息通知，仅在应用内展示，不可编辑。</ArcoTypography.Paragraph>
     <div className="base-link-list">
-      {rows.map((row) => <div className="base-link-row" key={row.key}>
-        <ArcoTypography.Text className="base-link-label">{row.label}</ArcoTypography.Text>
-        {row.url
-          ? <>
-              <a className="base-link-url" href={row.url} target="_blank" rel="noreferrer">{row.url}</a>
-              <ArcoButton size="small" htmlType="button" aria-label={row.copyLabel} onClick={() => void copy(row.key, row.url as string)}>{copied === row.key ? "已复制" : "复制"}</ArcoButton>
-            </>
-          : <span className="subtle-text">{links === null ? "读取中…" : unavailable ? "暂不可用" : "未配置"}</span>}
-      </div>)}
+      {rows.map((row) => {
+        const safeUrl = safeHttpUrl(row.url);
+        return <div className="base-link-row" key={row.key}>
+          <ArcoTypography.Text className="base-link-label">{row.label}</ArcoTypography.Text>
+          {safeUrl
+            ? <>
+                <a className="base-link-url" href={safeUrl} target="_blank" rel="noreferrer">{safeUrl}</a>
+                <ArcoButton size="small" htmlType="button" aria-label={row.copyLabel} onClick={() => void copy(row.key, safeUrl)}>{copied === row.key ? "已复制" : "复制"}</ArcoButton>
+              </>
+            : <span className="subtle-text">{links === null ? "读取中…" : unavailable ? "暂不可用" : "未配置"}</span>}
+        </div>;
+      })}
     </div>
     {copyError ? <p className="status-hint" role="alert">{copyError}</p> : null}
   </ArcoCard>;
@@ -534,22 +547,31 @@ function FeishuAccountBinder({ personName, disabled, onSave, onCancel }: {
   const [searching, setSearching] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const searchRequestVersion = useRef(0);
 
   const search = useCallback(async (text: string) => {
     const clean = text.trim();
     if (clean.length < 2) { setError("请输入至少 2 个字符再搜索。"); return; }
+    const version = ++searchRequestVersion.current;
     setSearching(true); setError(null);
     try {
       const items = await searchFeishuUsers(clean);
+      if (version !== searchRequestVersion.current) return;
       setCandidates(items);
       setSelectedId(items[0]?.openId ?? "");
     } catch (cause) {
+      if (version !== searchRequestVersion.current) return;
       setCandidates([]); setSelectedId("");
       setError(cause instanceof ApiError ? errorText(cause) : "无法搜索飞书通讯录，请稍后重试。");
-    } finally { setSearching(false); }
+    } finally {
+      if (version === searchRequestVersion.current) setSearching(false);
+    }
   }, []);
   // 打开编辑器就用人员姓名搜一次：多数情况姓名即飞书姓名，少打一次字。
-  useEffect(() => { void search(personName); }, [personName, search]);
+  useEffect(() => {
+    void search(personName);
+    return () => { searchRequestVersion.current += 1; };
+  }, [personName, search]);
 
   const selected = candidates.find((candidate) => candidate.openId === selectedId) ?? null;
   const save = async () => {
@@ -593,13 +615,24 @@ export function PeoplePanel() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const loadRequestVersion = useRef(0);
 
   const load = useCallback(async () => {
+    const version = ++loadRequestVersion.current;
     setLoadState("loading");
-    try { setPeople(await listTeamPeople()); setLoadError(null); setLoadState("ready"); }
-    catch (cause) { setLoadError(errorText(cause)); setLoadState("error"); }
+    try {
+      const rows = await listTeamPeople();
+      if (version !== loadRequestVersion.current) return;
+      setPeople(rows); setLoadError(null); setLoadState("ready");
+    } catch (cause) {
+      if (version !== loadRequestVersion.current) return;
+      setLoadError(errorText(cause)); setLoadState("error");
+    }
   }, []);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+    return () => { loadRequestVersion.current += 1; };
+  }, [load]);
 
   const submit = async (action: () => Promise<{ items: TeamPerson[] }>, success: string) => {
     setBusy(true); setLoadError(null); setNotice(null);
@@ -669,9 +702,7 @@ export function ModulesPanel() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  // 模块列表很长，编辑表单在页面顶部；点「编辑」后必须把表单带到视野里，否则看起来像没反应。
-  const formRef = useRef<HTMLDivElement>(null);
-  const nameInputRef = useRef<HTMLInputElement>(null);
+  const loadRequestVersion = useRef(0);
   // 编辑用独立状态，避免改一条模块时顶部的「新增」表单跟着一起变。
   const [editName, setEditName] = useState("");
   const [editPerson, setEditPerson] = useState("");
@@ -686,20 +717,29 @@ export function ModulesPanel() {
   }, []);
 
   const load = useCallback(async () => {
+    const version = ++loadRequestVersion.current;
     setLoadState("loading");
     try {
       const [directory, roster] = await Promise.all([getFunctionModules(), listTeamPeople()]);
+      if (version !== loadRequestVersion.current) return;
       setVersion(directory.version); setItems(directory.items); setPeople(roster); setLoadError(null); setLoadState("ready");
-    } catch (cause) { setLoadError(errorText(cause)); setLoadState("error"); }
-    await loadVersions();
+    } catch (cause) {
+      if (version !== loadRequestVersion.current) return;
+      setLoadError(errorText(cause)); setLoadState("error");
+    }
+    if (version === loadRequestVersion.current) await loadVersions();
   }, [loadVersions]);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+    return () => { loadRequestVersion.current += 1; };
+  }, [load]);
 
-  const save = async (next: FunctionModuleEntry[]) => {
+  const save = async (next: FunctionModuleEntry[], resetAddForm = false) => {
     setBusy(true); setLoadError(null); setNotice(null);
     try {
       const result = await saveFunctionModules(version, next);
       setVersion(result.version); setItems(result.items); setEditing(null); setEditName(""); setEditPerson(""); setFormError(null);
+      if (resetAddForm) { setName(""); setPersonName(""); }
       setNotice(`已发布模块字典 v${result.version}，后续 AI 分析将使用新版本。`);
       await loadVersions();
     } catch (cause) {
@@ -718,10 +758,8 @@ export function ModulesPanel() {
     setFormError(null);
     const clean = name.trim();
     if (!clean) { setFormError("请填写功能模块名称。"); return; }
-    const duplicate = items.some((item) => item.name.toLocaleLowerCase() === clean.toLocaleLowerCase() && item.name !== editing);
-    if (duplicate) { setFormError("功能模块名称不能重复。"); return; }
-    const next = editing ? items.map((item) => item.name === editing ? { name: clean, personName: personName || null } : item) : [...items, { name: clean, personName: personName || null }];
-    void save(next);
+    if (items.some((item) => item.name.toLocaleLowerCase() === clean.toLocaleLowerCase())) { setFormError("功能模块名称不能重复。"); return; }
+    void save([...items, { name: clean, personName: personName || null }], true);
   };
 
   return <section className="panel requirements-panel">
@@ -781,26 +819,41 @@ export function BatchesPanel({ onRefresh, pool = "product" }: { onRefresh: () =>
   // 已生效筛选：加载更多必须沿用「点过筛选」的条件，而不是用户正在编辑的下拉值，
   // 否则会拿旧游标配新条件，翻页结果错位（与需求池的 appliedFiltersRef 同一规则）。
   const appliedFiltersRef = useRef({ status: "", since: "", until: "" });
+  const listRequestVersion = useRef(0);
+  const detailRequestVersion = useRef(0);
 
   const load = useCallback(async (filter: { status: string; since: string; until: string }, nextCursor: string | null) => {
     appliedFiltersRef.current = filter;
+    const version = ++listRequestVersion.current;
     setLoadState("loading"); setLoadError(null);
     try {
       const page = await listBatches({ status: filter.status || undefined, since: filter.since ? new Date(filter.since).toISOString() : undefined, until: filter.until ? new Date(filter.until).toISOString() : undefined, pool: pool === "group" ? ("group" as const) : undefined, limit: 10, ...(nextCursor ? { cursor: nextCursor } : {}) });
+      if (version !== listRequestVersion.current) return;
       setBatches((prev) => nextCursor ? [...prev, ...page.items] : page.items);
       setCursor(page.nextCursor);
       setLoadState("ready");
     } catch (cause) {
+      if (version !== listRequestVersion.current) return;
       if (!nextCursor) { setBatches([]); setCursor(null); }
       setLoadError(errorText(cause)); setLoadState("error");
     }
   }, [pool]);
-  useEffect(() => { void load({ status: "", since: "", until: "" }, null); }, [load]);
+  useEffect(() => {
+    void load({ status: "", since: "", until: "" }, null);
+    return () => { listRequestVersion.current += 1; detailRequestVersion.current += 1; };
+  }, [load]);
 
   const open = async (id: string) => {
+    const version = ++detailRequestVersion.current;
     setOpenBatch(null); setDetailError(null); setNotice(null);
-    try { setOpenBatch(await getBatch(id)); }
-    catch (cause) { setDetailError(errorText(cause)); }
+    try {
+      const detail = await getBatch(id);
+      if (version !== detailRequestVersion.current) return;
+      setOpenBatch(detail);
+    } catch (cause) {
+      if (version !== detailRequestVersion.current) return;
+      setDetailError(errorText(cause));
+    }
   };
   const retryItem = async (item: BatchDetail["items"][number]) => {
     setBusy(true); setNotice(null);
@@ -821,8 +874,8 @@ export function BatchesPanel({ onRefresh, pool = "product" }: { onRefresh: () =>
   return <section className="panel requirements-panel">
     <div className="panel-heading"><div><h2>同步批次历史</h2><p>触发者、批次时间与逐条结果由 API 提供；点击批次查看明细。</p></div><div style={{ display: "flex", gap: 8 }}>
       <ArcoSelect aria-label="批次状态筛选" value={statusFilter} onChange={(value: string) => setStatusFilter(value)} style={{ minWidth: 120 }} options={[{ label: "全部状态", value: "" }, { label: "进行中", value: "running" }, { label: "已完成", value: "succeeded" }, { label: "部分失败", value: "partial_failure" }, { label: "失败", value: "failed" }]} />
-      <label className="field"><span>开始时间</span><Input type="datetime-local" aria-label="批次开始时间" value={since} onChange={(e) => setSince(e.target.value)} /></label>
-      <label className="field"><span>结束时间</span><Input type="datetime-local" aria-label="批次结束时间" value={until} onChange={(e) => setUntil(e.target.value)} /></label>
+      <label className="field"><span>开始时间</span><input type="datetime-local" aria-label="批次开始时间" value={since} onChange={(e) => setSince(e.target.value)} /></label>
+      <label className="field"><span>结束时间</span><input type="datetime-local" aria-label="批次结束时间" value={until} onChange={(e) => setUntil(e.target.value)} /></label>
       <Button onPress={() => void load({ status: statusFilter, since, until }, null)} variant="secondary" size="small">筛选</Button>
       <Button onPress={() => { onRefresh(); void load({ status: statusFilter, since, until }, null); }} variant="secondary" size="small"><RefreshCw size={14} />刷新</Button>
     </div></div>
@@ -1027,7 +1080,10 @@ function OwnerBadge({ owner }: { owner: ReturnType<typeof requirementOwnerView> 
 
 function SourceValue({ value, href, emptyHint = "Teambition 未提供该字段" }: { value: string | null; href?: boolean; emptyHint?: string }) {
   if (!value) return <span className="req-empty-value" title={emptyHint}>—</span>;
-  if (href) return <a className="req-source-link" href={value} target="_blank" rel="noreferrer">{value}</a>;
+  if (href) {
+    const safeUrl = safeHttpUrl(value);
+    if (safeUrl) return <a className="req-source-link" href={safeUrl} target="_blank" rel="noreferrer">{safeUrl}</a>;
+  }
   return <span>{value}</span>;
 }
 
@@ -1217,6 +1273,8 @@ export function RequirementsPanel({ onRefresh, initialRequirementId, scope = "pr
           ...(detail.source === undefined ? {} : { source: detail.source }),
           ...(detail.ownerName === undefined ? {} : { ownerName: detail.ownerName }),
           ...(detail.updatedAt === undefined ? {} : { updatedAt: detail.updatedAt }),
+          ...(detail.processingState === undefined ? {} : { processingState: detail.processingState }),
+          ...(detail.resolution === undefined ? {} : { resolution: detail.resolution }),
         } : row));
         setDetailLoading(false);
       }
@@ -1635,6 +1693,7 @@ export function MyRequirementsPanel({ onRefresh }: { onRefresh: () => void }) {
 
 /** PRD §4.13.6：个人回收站；只显示本人删除项，还原不二次确认、不写 Base。 */
 export function RecycleBinPanel({ onRefresh }: { onRefresh: () => void }) {
+  const [initialDetailId] = useState<string | null>(() => readRequirementDeepLink(window.location.search));
   const [rows, setRows] = useState<RequirementSummary[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [loadState, setLoadState] = useState<LoadState>("loading");
@@ -1642,47 +1701,72 @@ export function RecycleBinPanel({ onRefresh }: { onRefresh: () => void }) {
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [restoringId, setRestoringId] = useState<string | null>(null);
-  const [detailId, setDetailId] = useState<string | null>(() => readRequirementDeepLink(window.location.search));
+  const [detailId, setDetailId] = useState<string | null>(initialDetailId);
   const [selected, setSelected] = useState<RequirementDetail | null>(null);
-  const [detailLoading, setDetailLoading] = useState(Boolean(readRequirementDeepLink(window.location.search)));
+  const [detailLoading, setDetailLoading] = useState(Boolean(initialDetailId));
   const [detailError, setDetailError] = useState<string | null>(null);
+  const listRequestVersion = useRef(0);
+  const detailRequestVersion = useRef(0);
 
   const load = useCallback(async (nextCursor: string | null) => {
+    const version = ++listRequestVersion.current;
     if (!nextCursor) setLoadState("loading");
     setLoadError(null);
     try {
       const page = await listRecycleBinRequirements({ limit: 25, ...(nextCursor ? { cursor: nextCursor } : {}) });
+      if (version !== listRequestVersion.current) return;
       setRows((prev) => nextCursor ? [...prev, ...page.items] : page.items);
       setCursor(page.nextCursor);
       setLoadState("ready");
     } catch (cause) {
+      if (version !== listRequestVersion.current) return;
       if (!nextCursor) setRows([]);
       setLoadError(errorText(cause));
       setLoadState("error");
     }
   }, []);
 
-  const openDetail = useCallback(async (id: string) => {
+  const openDetail = useCallback(async (id: string, options?: { push?: boolean }) => {
+    const version = ++detailRequestVersion.current;
     setDetailId(id); setSelected(null); setDetailLoading(true); setDetailError(null); setNotice(null);
-    window.history.pushState(null, "", recycleBinUrl(window.location.pathname || "/", id));
-    try { setSelected(await getRequirement(id)); }
-    catch (cause) { setDetailError(errorText(cause)); }
-    finally { setDetailLoading(false); }
+    if (options?.push) window.history.pushState(null, "", recycleBinUrl(window.location.pathname || "/", id));
+    try {
+      const detail = await getRequirement(id);
+      if (version !== detailRequestVersion.current) return;
+      setSelected(detail);
+    } catch (cause) {
+      if (version !== detailRequestVersion.current) return;
+      setDetailError(errorText(cause));
+    } finally {
+      if (version === detailRequestVersion.current) setDetailLoading(false);
+    }
   }, []);
 
-  useEffect(() => { void load(null); }, [load]);
+  useEffect(() => {
+    void load(null);
+    return () => { listRequestVersion.current += 1; detailRequestVersion.current += 1; };
+  }, [load]);
+  // 直接访问/刷新回收站深链（?stage=recycle&requirement=<id>）时在挂载期拉取详情，不重复 pushState。
+  const deepLinkOpened = useRef(false);
+  useEffect(() => {
+    if (!initialDetailId || deepLinkOpened.current) return;
+    deepLinkOpened.current = true;
+    void openDetail(initialDetailId);
+  }, [initialDetailId, openDetail]);
   useEffect(() => {
     const onPopState = () => {
       const next = readRequirementDeepLink(window.location.search);
       if (next) { void openDetail(next); return; }
-      setDetailId(null); setSelected(null); setDetailError(null);
+      detailRequestVersion.current += 1;
+      setDetailId(null); setSelected(null); setDetailError(null); setDetailLoading(false);
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, [openDetail]);
 
   const closeDetail = () => {
-    setDetailId(null); setSelected(null); setDetailError(null);
+    detailRequestVersion.current += 1;
+    setDetailId(null); setSelected(null); setDetailError(null); setDetailLoading(false);
     window.history.replaceState(null, "", recycleBinUrl(window.location.pathname || "/", null));
   };
 
@@ -1790,8 +1874,8 @@ export function RecycleBinPanel({ onRefresh }: { onRefresh: () => void }) {
             style: { cursor: "pointer" },
             tabIndex: 0,
             "aria-label": `打开已删除需求：${row.title}`,
-            onClick: () => void openDetail(row.id),
-            onKeyDown: (event: KeyboardEvent<HTMLElement>) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); void openDetail(row.id); } },
+            onClick: () => void openDetail(row.id, { push: true }),
+            onKeyDown: (event: KeyboardEvent<HTMLElement>) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); void openDetail(row.id, { push: true }); } },
           })}
         />
       </div>}
@@ -1813,9 +1897,10 @@ function BaseRecordReference({ recordId, url }: { recordId: string | null; url?:
       window.setTimeout(() => setCopied(false), 2000);
     } catch { setCopied(false); }
   };
+  const safeUrl = safeHttpUrl(url);
   return <span className="base-ref">
     <code className="base-ref-id">{recordId}</code>
-    {url ? <a className="link-button" href={url} target="_blank" rel="noreferrer">在飞书 Base 中打开</a> : null}
+    {safeUrl ? <a className="link-button" href={safeUrl} target="_blank" rel="noreferrer">在飞书 Base 中打开</a> : null}
     <ArcoButton type="text" className="link-button" onClick={() => void copy()} htmlType="button">{copied ? "已复制" : "复制记录 ID"}</ArcoButton>
     <span className="base-ref-hint">PM 处理状态与通知送达请在飞书 Base 中查看；本工作台不读取这些字段。</span>
   </span>;
@@ -1841,12 +1926,31 @@ export interface DimensionInsight {
   missing?: boolean;
 }
 
+type EditableScoringInputs = {
+  user: { pain: number | undefined; frequency: number | undefined };
+  market: { sellingPoint: number | undefined; competitor: number | undefined };
+  strategy: { roadmap: number | undefined; dependency: number | undefined };
+  cost: { workload: number | undefined; technicalRisk: number | undefined; resource: number | undefined };
+};
+
 function scoringValue(inputs: ScoringInputs, path: [keyof ScoringInputs, string]): number {
   return Number((inputs[path[0]] as Record<string, number>)[path[1]] ?? 0);
 }
 
-function withScoringValue(inputs: ScoringInputs, path: [keyof ScoringInputs, string], value: number): ScoringInputs {
-  return { ...inputs, [path[0]]: { ...(inputs[path[0]] as Record<string, number>), [path[1]]: value } } as ScoringInputs;
+function editableScoringValue(inputs: EditableScoringInputs, path: [keyof ScoringInputs, string]): number | undefined {
+  return (inputs[path[0]] as Record<string, number | undefined>)[path[1]];
+}
+
+function withScoringValue(inputs: EditableScoringInputs, path: [keyof ScoringInputs, string], value: number | undefined): EditableScoringInputs {
+  return { ...inputs, [path[0]]: { ...(inputs[path[0]] as Record<string, number | undefined>), [path[1]]: value } } as EditableScoringInputs;
+}
+
+function toValidScoringInputs(inputs: EditableScoringInputs): ScoringInputs | null {
+  for (const { path, max } of SCORE_ROWS) {
+    const val = editableScoringValue(inputs, path);
+    if (typeof val !== "number" || !Number.isInteger(val) || val < 1 || val > max) return null;
+  }
+  return inputs as ScoringInputs;
 }
 
 function scoreDimensions(inputs: ScoringInputs) {
@@ -1879,8 +1983,8 @@ export function ScoringPanel({ requirementId, scoring, dimensionInsights = [], c
     strategy: { roadmap: 1, dependency: 1 }, cost: { workload: 3, technicalRisk: 3, resource: 3 },
   };
   const [editing, setEditing] = useState(false);
-  const [inputs, setInputs] = useState<ScoringInputs>(baseInputs);
-  const [alpha, setAlpha] = useState<number>(current?.alpha ?? ai?.alpha ?? 0.8);
+  const [inputs, setInputs] = useState<EditableScoringInputs>(baseInputs);
+  const [alpha, setAlpha] = useState<number | undefined>(current?.alpha ?? ai?.alpha ?? 0.8);
   const [safetyFlag, setSafetyFlag] = useState(current?.safetyFlag ?? ai?.safetyFlag ?? false);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1902,10 +2006,13 @@ export function ScoringPanel({ requirementId, scoring, dimensionInsights = [], c
     { key: "C" as const, label: "C · 成本", value: dimensions.C, formula: `max(工作量 ${display.inputs.cost.workload}，风险 ${display.inputs.cost.technicalRisk}，资源 ${display.inputs.cost.resource})` },
   ]) : [];
   const aiAlreadyApplied = Boolean(current && ai && current.origin === "ai_applied" && current.analysisVersion === ai.analysisVersion);
+  const validInputs = toValidScoringInputs(inputs);
+  const validAlpha = typeof alpha === "number" && Number.isFinite(alpha) && alpha >= 0.5 && alpha <= 2 ? alpha : null;
   const save = async () => {
+    if (!validInputs || validAlpha === null) { setError("请填写合法的评分项（1 至对应上限）与 α 系数（0.5–2.0）。"); return; }
     setBusy(true); setError(null); setNotice(null);
     try {
-      await saveRequirementScore(requirementId, { expectedVersion: current?.version ?? 0, inputs, alpha, safetyFlag, reason });
+      await saveRequirementScore(requirementId, { expectedVersion: current?.version ?? 0, inputs: validInputs, alpha: validAlpha, safetyFlag, reason });
       setNotice("评分已保存并重算。");
       setEditing(false); setReason(""); onSaved();
     } catch (cause) { setError(errorText(cause)); }
@@ -1978,17 +2085,17 @@ export function ScoringPanel({ requirementId, scoring, dimensionInsights = [], c
             <tr>
               <td className="score-input-label">{label}</td>
               <td>{ai ? scoringValue(ai.inputs, path) : "—"}</td>
-              <td>{editing ? <ArcoInputNumber aria-label={`评分 ${label}`} min={1} max={max} step={1} precision={0} value={scoringValue(inputs, path)} onChange={(value: number | undefined) => setInputs(withScoringValue(inputs, path, typeof value === "number" ? value : 0))} style={{ width: 72 }} /> : scoringValue(display.inputs, path)}</td>
+              <td>{editing ? <ArcoInputNumber aria-label={`评分 ${label}`} min={1} max={max} step={1} precision={0} value={editableScoringValue(inputs, path)} onChange={(value: number | undefined) => setInputs(withScoringValue(inputs, path, typeof value === "number" && Number.isFinite(value) ? value : undefined))} style={{ width: 72 }} /> : scoringValue(display.inputs, path)}</td>
               <td>{rowLabel(path)}</td>
             </tr>
           </Fragment>;
         })}
-        <tr><td className="score-input-label">α 修正系数</td><td>{ai?.alpha ?? "—"}</td><td>{editing ? <ArcoInputNumber aria-label="评分 alpha" min={0.5} max={2} step={0.1} precision={1} value={alpha} onChange={(value: number | undefined) => setAlpha(typeof value === "number" ? value : 0)} style={{ width: 72 }} /> : display.alpha}</td><td>{display.rationale ?? "—"}</td></tr>
+        <tr><td className="score-input-label">α 修正系数</td><td>{ai?.alpha ?? "—"}</td><td>{editing ? <ArcoInputNumber aria-label="评分 alpha" min={0.5} max={2} step={0.1} precision={1} value={alpha} onChange={(value: number | undefined) => setAlpha(typeof value === "number" && Number.isFinite(value) ? value : undefined)} style={{ width: 72 }} /> : display.alpha}</td><td>{display.rationale ?? "—"}</td></tr>
       </tbody></table></div>
       {editing && <div className="rules-form score-edit-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
         <div className="rules-threshold"><ArcoCheckbox checked={safetyFlag} onChange={(checked: boolean) => setSafetyFlag(checked)}>涉及安全</ArcoCheckbox></div>
         <label className="field"><span>修改理由（必填）</span><ArcoInput aria-label="评分修改理由" value={reason} onChange={(value: string) => setReason(value)} /></label>
-        <ArcoButton type="primary" htmlType="button" size="small" onClick={() => void save()} disabled={busy || reason.trim().length === 0}>{busy ? "保存中…" : "保存评分"}</ArcoButton>
+        <ArcoButton type="primary" htmlType="button" size="small" onClick={() => void save()} disabled={busy || reason.trim().length === 0 || !validInputs || validAlpha === null}>{busy ? "保存中…" : "保存评分"}</ArcoButton>
       </div>}
       {historyOpen && <ArcoTable<RequirementScoreVersion>
         rowKey="id"
@@ -2363,6 +2470,8 @@ function RequirementAssessmentSection({ requirementId, onSaved }: { requirementI
   // 超时后待核对的一轮生成：记录发起前的最大版本号，只有更新的成功版本才算本轮成功。
   const pendingRecovery = useRef<{ baselineVersion: number } | null>(null);
   const [reconciling, setReconciling] = useState(false);
+  const loadRequestVersion = useRef(0);
+  const generateControllerRef = useRef<AbortController | null>(null);
   // 父组件每次渲染都会传新的内联回调，用 ref 保存以免重建 load 触发挂载 effect 循环。
   const onSavedRef = useRef(onSaved);
   useEffect(() => { onSavedRef.current = onSaved; }, [onSaved]);
@@ -2375,10 +2484,12 @@ function RequirementAssessmentSection({ requirementId, onSaved }: { requirementI
 
   // preferLatest：生成失败后刷新时直接选中最新（失败）版本，避免结论区还停在旧版本。
   const load = useCallback(async (silent = false, preferLatest = false) => {
+    const version = ++loadRequestVersion.current;
     if (!silent) { setLoadState("loading"); setLoadError(null); }
     try {
       // 防御：历史接口若返回错形状（如被通用列表路由兜底），不把无 version 的条目当成评估版本。
       const items = (await listRequirementAssessments(requirementId)).filter((item) => item && typeof item.version === "number");
+      if (version !== loadRequestVersion.current) return;
       const latest = items.reduce((max, item) => Math.max(max, item.version), 0) || null;
       // 超时核对：只有比发起时更新的成功版本才算本轮成功，避免把旧版本误当成新结果。
       const pending = pendingRecovery.current;
@@ -2411,11 +2522,15 @@ function RequirementAssessmentSection({ requirementId, onSaved }: { requirementI
       }
       setLoadState("ready");
     } catch (cause) {
+      if (version !== loadRequestVersion.current) return;
       if (!silent) { setLoadError(errorText(cause)); setLoadState("error"); }
     }
   }, [applyInputs, requirementId]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+    return () => { loadRequestVersion.current += 1; };
+  }, [load]);
 
   // 有 running 版本或超时核对中时每 5 秒静默刷新一次：生成完成后自动换成结论，期间保持按钮禁用。
   const hasRunning = history.some((item) => item.status === "running");
@@ -2455,11 +2570,21 @@ function RequirementAssessmentSection({ requirementId, onSaved }: { requirementI
     setNotice((current) => current === "正在生成，请稍候。" ? null : current);
   }, [hasRunning]);
 
-  // 切换需求时清空草稿输入，避免把上一条需求的背景带过去；下一条继续默认载入自己的最新输入。
+  // 切换需求时清空草稿输入与待核对状态，避免把上一条需求的背景或恢复状态带过去；下一条继续默认载入自己的最新输入。
   useEffect(() => {
+    generateControllerRef.current?.abort();
+    generateControllerRef.current = null;
+    pendingRecovery.current = null;
+    setReconciling(false);
+    setConflict(false);
+    setBusy(false);
     setBackground(""); setGoal(""); setScenario(""); setError(null); setNotice(null); setLoadedVersion(null);
     pendingInitialInputs.current = true;
     inputsEdited.current = false;
+    return () => {
+      generateControllerRef.current?.abort();
+      generateControllerRef.current = null;
+    };
   }, [requirementId]);
 
   const versions = [...history].sort((left, right) => right.version - left.version);
@@ -2485,10 +2610,13 @@ function RequirementAssessmentSection({ requirementId, onSaved }: { requirementI
     pendingRecovery.current = { baselineVersion };
     setReconciling(false);
     const controller = new AbortController();
+    generateControllerRef.current = controller;
+    let timedOut = false;
     // 服务端模型超时取 AI_TIMEOUT_MS（线上 120s），客户端留 5s 余量；超时后仍会核对落库结果。
-    const timer = window.setTimeout(() => controller.abort(), ASSESSMENT_CLIENT_TIMEOUT_MS);
+    const timer = window.setTimeout(() => { timedOut = true; controller.abort(); }, ASSESSMENT_CLIENT_TIMEOUT_MS);
     try {
       const created = await createRequirementAssessment(requirementId, inputs, undefined, controller.signal);
+      if (generateControllerRef.current !== controller) return;
       // 请求正常返回：本轮已有明确结果，不再走超时核对。
       pendingRecovery.current = null;
       setReconciling(false);
@@ -2500,6 +2628,7 @@ function RequirementAssessmentSection({ requirementId, onSaved }: { requirementI
       // 同页的 PRD 提示词块按「是否有成功评估」解锁；生成完立刻通知它重新拉取，不必刷新页面。
       onSavedRef.current?.();
     } catch (cause) {
+      if (generateControllerRef.current !== controller) return;
       // 同一需求已有未超时的 running 版本（409 单飞）：提示等待并禁用按钮，不重复烧 token。
       if (cause instanceof ApiError && cause.status === 409) {
         pendingRecovery.current = null;
@@ -2508,7 +2637,7 @@ function RequirementAssessmentSection({ requirementId, onSaved }: { requirementI
         setNotice("正在生成，请稍候。");
         setError(null);
         void load(true);
-      } else if (controller.signal.aborted) {
+      } else if (timedOut) {
         // 客户端先超时不等于服务端失败：服务端可能仍在重试并已落库成功。
         // 先不报失败，按版本号核对；确认成功就补 onSaved 解锁提示词块，窗口内没有结果才提示超时。
         setError(null);
@@ -2525,7 +2654,10 @@ function RequirementAssessmentSection({ requirementId, onSaved }: { requirementI
       }
     } finally {
       window.clearTimeout(timer);
-      setBusy(false);
+      if (generateControllerRef.current === controller) {
+        generateControllerRef.current = null;
+        setBusy(false);
+      }
     }
   };
 
@@ -2843,7 +2975,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
           {summaryScore ? <>
             <div className="summary-score-line"><strong>{summaryScore.score.toFixed(2)}</strong><span className={`priority-pill priority-${summaryScore.priority.toLowerCase()}`}>{summaryScore.priority}</span></div>
             <span className="summary-score-meta">v{summaryScore.version} · {scoreOriginLabel(summaryScore.origin)}{summaryScore.scoreConfidence ? ` · ${summaryScore.scoreConfidence}置信度` : ""}</span>
-            <a className="summary-score-link" href="#req-scoring-heading">查看评分与依据</a>
+            <ArcoButton type="text" className="summary-score-link" htmlType="button" onClick={() => scrollToSection("req-scoring-heading")}>查看评分与依据</ArcoButton>
           </> : <div className="summary-score-empty"><strong>暂无评分</strong><span>AI 分析后生成，或手动填写</span></div>}
         </div>
       </div>
@@ -2888,7 +3020,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
         <strong>该需求已被压制（{suppressedLabel}）</strong>
         <span>被压制的需求不会进入 AI 分析、Base 推送与通知；记录仍保留。请在下方「重复处理」撤销判定后恢复为活跃。</span>
       </div>
-      <ArcoButton href="#req-duplicate-heading" size="small">前往撤销判定</ArcoButton>
+      <ArcoButton htmlType="button" size="small" onClick={() => scrollToSection("req-duplicate-heading")}>前往撤销判定</ArcoButton>
     </div>}
 
     <section className="req-section" aria-labelledby="req-l1-heading">
@@ -2923,7 +3055,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
           {detail.productModel ? <div><dt>产品/型号</dt><dd>{detail.productModel}</dd></div> : null}
           {detail.requirementType ? <div><dt>需求类型（录入）</dt><dd>{detail.requirementType}</dd></div> : null}
           {detail.constraintNotes ? <div><dt>边界/限制</dt><dd>{detail.constraintNotes}</dd></div> : null}
-          {detail.supplementUrl ? <div><dt>来源链接</dt><dd>{/^https?:/i.test(detail.supplementUrl) ? <a href={detail.supplementUrl} target="_blank" rel="noreferrer">{detail.supplementUrl}</a> : detail.supplementUrl}</dd></div> : null}
+          {detail.supplementUrl ? <div><dt>来源链接</dt><dd>{safeHttpUrl(detail.supplementUrl) ? <a href={safeHttpUrl(detail.supplementUrl)!} target="_blank" rel="noreferrer">{detail.supplementUrl}</a> : detail.supplementUrl}</dd></div> : null}
         </dl>
       ) : null}
       <ManualEditSection detail={detail} onSaved={() => onSaved(detail.id)} />
@@ -2946,7 +3078,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
     <AnalysisContextSection detail={detail} onSaved={() => onSaved(detail.id)} />
 
     <RequirementAssessmentSection requirementId={detail.id} onSaved={() => setAssessmentRevision((value) => value + 1)} />
-    <PrdPromptSection requirementId={detail.id} assessmentRevision={assessmentRevision} />
+    <PrdPromptSection key={detail.id} requirementId={detail.id} assessmentRevision={assessmentRevision} />
 
     <section className="req-section" aria-labelledby="req-status-heading">
       <div className="req-section-head"><h3 id="req-status-heading">处理与推送</h3><span className="req-source-note">系统状态</span></div>
@@ -3170,14 +3302,17 @@ export function MappingsPanel({ onRefresh }: { onRefresh: () => void }) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const loadRequestVersion = useRef(0);
 
   const load = useCallback(async (nextCursor: string | null) => {
+    const version = ++loadRequestVersion.current;
     if (nextCursor) setLoadingMore(true); else setLoadState("loading");
     setLoadError(null);
     const [pendingPage, mappingPage] = await Promise.allSettled([
       listRequirements({ ownerState: "pending_mapping", limit: 25, ...(nextCursor ? { cursor: nextCursor } : {}) }),
       listMappings(),
     ]);
+    if (version !== loadRequestVersion.current) return;
     // 任一关键请求失败即进入错误态（自述的可恢复行为：不静默吞掉局部失败）
     if (pendingPage.status === "rejected" || mappingPage.status === "rejected") {
       const cause = pendingPage.status === "rejected" ? pendingPage.reason : mappingPage.status === "rejected" ? mappingPage.reason : null;
@@ -3191,13 +3326,15 @@ export function MappingsPanel({ onRefresh }: { onRefresh: () => void }) {
     setLoadState("ready");
     setLoadingMore(false);
   }, []);
-  useEffect(() => { void load(null); }, [load]);
+  useEffect(() => {
+    void load(null);
+    return () => { loadRequestVersion.current += 1; };
+  }, [load]);
 
-  const submit = async (user: FeishuUserSelection) => {
-    if (!targetId) return;
+  const submit = async (requirementId: string, user: FeishuUserSelection) => {
     setBusy(true); setNotice(null);
     try {
-      const result = await setOwner(targetId, { feishuUserId: user.feishuUserId, feishuIdType: user.feishuIdType, tbDisplayName: user.name });
+      const result = await setOwner(requirementId, { feishuUserId: user.feishuUserId, feishuIdType: user.feishuIdType, tbDisplayName: user.name });
       setNotice(`${user.name} 已指定为这条需求的负责人（${result.ownerState}），Base 推送已入队。`);
       setTargetId(null);
       onRefresh(); await load(null);
@@ -3219,7 +3356,7 @@ export function MappingsPanel({ onRefresh }: { onRefresh: () => void }) {
         { title: "需求", dataIndex: "title", render: (_value, row) => <div className="requirement-title"><span className="req-id">{requirementDisplayId(row)}</span><strong>{row.title}</strong></div> },
         { title: "TB 负责人", dataIndex: "executorName", width: 140, render: (_value, row) => row.executorName ?? "待匹配" },
         { title: "操作", dataIndex: "id", width: 320, render: (_value, row) => targetId === row.id
-            ? <div className="mapping-editor"><FeishuUserPicker disabled={busy} onMap={submit} saveLabel="保存" /><Button onPress={() => setTargetId(null)} isDisabled={busy} variant="secondary" size="small">取消</Button></div>
+            ? <div className="mapping-editor"><FeishuUserPicker key={row.id} disabled={busy} onMap={(user) => submit(row.id, user)} saveLabel="保存" /><Button onPress={() => setTargetId(null)} isDisabled={busy} variant="secondary" size="small">取消</Button></div>
             : <Button onPress={() => setTargetId(row.id)} variant="secondary" size="small">选择飞书用户</Button> },
       ]}
     /> : loadState === "loading" ? <SkeletonTableRows rows={4} columns={3} /> : <div className="table-empty"><strong>没有待匹配的负责人</strong><span>未匹配需求会出现在这里，等待为每一条需求单独指定负责人。</span></div>}
@@ -3249,22 +3386,32 @@ export function AuditPanel() {
   const [until, setUntil] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loadState, setLoadState] = useState<LoadState>("loading");
+  const loadRequestVersion = useRef(0);
 
   const load = useCallback(async (filter: { entityId: string; eventType: string; since: string; until: string }) => {
+    const version = ++loadRequestVersion.current;
     setLoadState("loading"); setLoadError(null);
     try {
-      setEvents(await listAudit({ entityId: filter.entityId || undefined, eventType: filter.eventType || undefined, since: filter.since || undefined, until: filter.until || undefined, limit: AUDIT_PAGE_LIMIT }));
+      const items = await listAudit({ entityId: filter.entityId || undefined, eventType: filter.eventType || undefined, since: filter.since || undefined, until: filter.until || undefined, limit: AUDIT_PAGE_LIMIT });
+      if (version !== loadRequestVersion.current) return;
+      setEvents(items);
       setLoadState("ready");
-    } catch (cause) { setLoadError(errorText(cause)); setLoadState("error"); }
+    } catch (cause) {
+      if (version !== loadRequestVersion.current) return;
+      setLoadError(errorText(cause)); setLoadState("error");
+    }
   }, []);
-  useEffect(() => { void load({ entityId: "", eventType: "", since: "", until: "" }); }, [load]);
+  useEffect(() => {
+    void load({ entityId: "", eventType: "", since: "", until: "" });
+    return () => { loadRequestVersion.current += 1; };
+  }, [load]);
 
   return <section className="panel requirements-panel">
     <div className="panel-heading"><div><h2>审计日志</h2><p>同步、分析、映射、推送与配置操作的留痕；对象、事件类型与时间筛选由服务端执行。审计日志暂不支持按池筛选。</p></div><div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
       <Input aria-label="对象 ID 筛选" placeholder="按对象 ID 筛选" value={entityId} onChange={(e) => setEntityId(e.target.value)} />
       <Input aria-label="事件类型筛选" placeholder="事件类型，如 analysis.retry_requested" value={eventType} onChange={(e) => setEventType(e.target.value)} />
-      <label className="field"><span>开始时间</span><Input type="datetime-local" aria-label="开始时间" value={since} onChange={(e) => setSince(e.target.value)} /></label>
-      <label className="field"><span>结束时间</span><Input type="datetime-local" aria-label="结束时间" value={until} onChange={(e) => setUntil(e.target.value)} /></label>
+      <label className="field"><span>开始时间</span><input type="datetime-local" aria-label="开始时间" value={since} onChange={(e) => setSince(e.target.value)} /></label>
+      <label className="field"><span>结束时间</span><input type="datetime-local" aria-label="结束时间" value={until} onChange={(e) => setUntil(e.target.value)} /></label>
       <Button onPress={() => void load({ entityId: entityId.trim(), eventType: eventType.trim(), since: since ? new Date(since).toISOString() : "", until: until ? new Date(until).toISOString() : "" })} variant="secondary" size="small">筛选</Button>
     </div></div>
     <StateBanner loadError={loadError} notice={null} onCloseNotice={() => undefined} />
@@ -3320,12 +3467,15 @@ export function OpsPanel() {
   const [pool, setPool] = useState<RequirementPool>("product");
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [loadError, setLoadError] = useState<string | null>(null);
+  const loadRequestVersion = useRef(0);
 
   const load = useCallback(async () => {
+    const version = ++loadRequestVersion.current;
     setLoadState("loading"); setLoadError(null);
     // 迁移与指标是辅助信息：读取失败不影响作业列表。
     // 上线 Gate 只在产品池视图显示，集团池视图不请求；切回产品池时 load 会重新取。
     const [jobsResult, readyResult, metricsResult, gatesResult] = await Promise.allSettled([getOpsJobs({ limit: 50, pool: pool === "group" ? "group" : undefined }), getReadiness(), getOpsMetrics({ days, pool: pool === "group" ? "group" : undefined }), pool === "product" ? getGates() : Promise.resolve(null)]);
+    if (version !== loadRequestVersion.current) return;
     if (jobsResult.status === "fulfilled") { setItems(jobsResult.value.items); setLoadState("ready"); }
     else { setLoadError(errorText(jobsResult.reason)); setLoadState("error"); }
     setMigrations(readyResult.status === "fulfilled" ? readyResult.value.migrations ?? null : null);
@@ -3348,7 +3498,10 @@ export function OpsPanel() {
     try { await setGate(id, { confirmed: false }); setGates(await getGates()); }
     catch (cause) { setGateError(errorText(cause)); }
   };
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+    return () => { loadRequestVersion.current += 1; };
+  }, [load]);
 
   return <section className="panel requirements-panel">
     <div className="panel-heading"><div><h2>作业运维</h2><p>只读视图：最近失败的作业，以及尝试次数用尽且租约过期的运行中作业。</p></div>
@@ -3414,7 +3567,7 @@ export function OpsPanel() {
               : <ArcoButton size="mini" onClick={() => { setGateEditing(gate.id); setGateEvidence(""); setGateError(null); }} htmlType="button">记录证据</ArcoButton>)}
           </div>
           {gateEditing === gate.id && <div className="rules-form gate-form">
-            <input aria-label={`${gate.id} 证据`} value={gateEvidence} onChange={(event) => setGateEvidence(event.target.value)} placeholder="截图/记录链接/日期等可核对证据" />
+            <ArcoInput aria-label={`${gate.id} 证据`} value={gateEvidence} onChange={(value: string) => setGateEvidence(value)} placeholder="截图/记录链接/日期等可核对证据" />
             <ArcoButton type="primary" size="small" onClick={() => void confirmGateAction(gate.id)} htmlType="button">确认通过</ArcoButton>
             <ArcoButton size="small" onClick={() => { setGateEditing(null); setGateError(null); }} htmlType="button">取消</ArcoButton>
           </div>}

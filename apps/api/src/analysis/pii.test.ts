@@ -15,3 +15,19 @@ test("maskPii masks mentions and platform user ids", () => {
   assert.equal(masked.includes("张三"), false);
   assert.equal(masked.includes("0123456789abcdef01234567"), false);
 });
+
+test("maskPii matches markers case-insensitively and escapes regex metacharacters", () => {
+  const masked = maskPii("Owner WANYING QI and wanying qi plus Jack (PM) reported issue", ["Wanying Qi", "Jack (PM)"]);
+  assert.equal(/wanying qi/i.test(masked), false);
+  assert.equal(/jack \(pm\)/i.test(masked), false);
+  assert.equal(masked.includes("reported issue"), true);
+});
+
+test("maskPii and countPiiFindings redact Bearer tokens and password credentials", () => {
+  const sample = "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig, standalone Bearer tok_1234567890 and password=superSecret123";
+  assert.ok(countPiiFindings(sample) >= 3);
+  const masked = maskPii(sample, []);
+  assert.equal(masked.includes("eyJhbGciOiJIUzI1NiJ9"), false);
+  assert.equal(masked.includes("tok_1234567890"), false);
+  assert.equal(masked.includes("superSecret123"), false);
+});

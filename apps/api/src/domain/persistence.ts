@@ -301,6 +301,7 @@ export interface RequirementPrdPromptRecord {
   inputs: Record<string, unknown>;
   output: Record<string, unknown> | null;
   errorCode: string | null;
+  createdBy?: string | null;
   createdAt: string;
   completedAt: string | null;
 }

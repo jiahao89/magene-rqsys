@@ -127,6 +127,19 @@ export type PrdPromptRequest = z.infer<typeof PrdPromptRequestSchema>;
 export type RequirementListQuery = z.infer<typeof RequirementListQuerySchema>;
 export type AuditListQuery = z.infer<typeof AuditListQuerySchema>;
 
+// 外部链接只接受 http(s) 且不得包含用户名/密码凭据：z.string().url() 会放行
+// javascript: / data: / file:// 以及 https://user:pass@host，与 base/form-sync.ts 口径对齐。
+export const HttpUrlSchema = z.string().trim().max(500).refine((value) => {
+  try {
+    const parsed = new URL(value);
+    return (parsed.protocol === "http:" || parsed.protocol === "https:")
+      && parsed.username === ""
+      && parsed.password === "";
+  } catch {
+    return false;
+  }
+}, { message: "URL must be a valid http(s) address without embedded credentials" });
+
 // V02-T04：Web 手工收录（web_manual）的固定渠道与创建请求校验。
 // 必填仅标题/描述/渠道（PRD 3.2）；描述是单字段，四段提示是 UI 引导不是四个必填项。
 export const REQUIREMENT_INTAKE_CHANNELS = ["销售", "售后", "电商", "运营/用研", "终端用户", "产品/研发/测试"] as const;
@@ -139,7 +152,7 @@ export const RequirementIntakeSchema = z.strictObject({
   productModel: z.string().trim().max(100).nullish(),
   requirementType: z.enum(REQUIREMENT_INTAKE_TYPES).nullish(),
   constraintNotes: z.string().trim().max(2_000).nullish(),
-  supplementUrl: z.string().trim().url().max(500).nullish(),
+  supplementUrl: HttpUrlSchema.nullish(),
   // V02-T06：受控词典模块（服务端对照已发布词典校验）与可选需求级负责人（D-12：人工分配首推通知被分配人）。
   intakeModule: z.string().trim().min(1).max(100).nullish(),
   // PRD-26：聊天粘贴路径的来源标记（落 source_payload，不改 source_type=web_manual）；现值只有这一个，
@@ -163,7 +176,7 @@ export const RequirementIntakeEditSchema = z.strictObject({
   productModel: z.string().trim().max(100).nullish(),
   requirementType: z.enum(REQUIREMENT_INTAKE_TYPES).nullish(),
   constraintNotes: z.string().trim().max(2_000).nullish(),
-  supplementUrl: z.string().trim().url().max(500).nullish(),
+  supplementUrl: HttpUrlSchema.nullish(),
 });
 // V02-T09：人工人群标签保存。多选（含明确空集=已确认空）；期望版本乐观并发。
 export const AUDIENCE_LEVELS = ["L1", "L2", "L3", "L4", "L5", "L6"] as const;
@@ -183,7 +196,7 @@ export const RiceDraftUpdateSchema = z.strictObject({
 // V02-T13：Kano 访谈资料导入（维护者受控入口）。未知字段显式 null/缺省，不补造。
 export const KanoEvidenceImportSchema = z.strictObject({
   title: z.string().trim().min(1).max(200),
-  sourceUrl: z.string().trim().url().max(500).nullish(),
+  sourceUrl: HttpUrlSchema.nullish(),
   sourceSection: z.string().trim().max(200).nullish(),
   summary: z.string().trim().min(1).max(20_000),
   evidenceFragments: z.array(z.strictObject({ ref: z.string().trim().min(1).max(40), text: z.string().trim().min(1).max(2_000) })).max(200),

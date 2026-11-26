@@ -77,21 +77,30 @@ export function PrdPromptSection({ requirementId, assessmentRevision = 0, timeou
   const copyTimer = useRef<number | null>(null);
   // 首次载入历史时把最新版本的调研结论回填到输入框；之后不覆盖用户正在编辑的内容。
   const historyInitialized = useRef(false);
+  const assessRequestVersion = useRef(0);
+  const historyRequestVersion = useRef(0);
+  const generateControllerRef = useRef<AbortController | null>(null);
 
   const loadAssessments = useCallback(async () => {
+    const version = ++assessRequestVersion.current;
     setAssessError(null);
     try {
-      setAssessments(await listRequirementAssessments(requirementId));
+      const list = await listRequirementAssessments(requirementId);
+      if (version !== assessRequestVersion.current) return;
+      setAssessments(list);
     } catch (cause) {
+      if (version !== assessRequestVersion.current) return;
       setAssessments([]);
       setAssessError(errorMessage(cause));
     }
   }, [requirementId]);
 
   const loadHistory = useCallback(async () => {
+    const version = ++historyRequestVersion.current;
     setHistoryError(null);
     try {
       const list = await listPrdPrompts(requirementId);
+      if (version !== historyRequestVersion.current) return;
       setItems(list);
       if (!historyInitialized.current) {
         historyInitialized.current = true;
@@ -99,12 +108,37 @@ export function PrdPromptSection({ requirementId, assessmentRevision = 0, timeou
         if (latest) setNotes((previous) => previous === "" ? investigationNotesOf(latest) : previous);
       }
     } catch (cause) {
+      if (version !== historyRequestVersion.current) return;
       setItems([]);
       setHistoryError(errorMessage(cause));
     }
   }, [requirementId]);
 
-  useEffect(() => { void loadAssessments(); void loadHistory(); }, [loadAssessments, loadHistory]);
+  // 切换需求时重置内部状态并作废在途请求，避免上一条需求的调研结论或结果串到下一条。
+  useEffect(() => {
+    historyInitialized.current = false;
+    generateControllerRef.current?.abort();
+    generateControllerRef.current = null;
+    setAssessments(null);
+    setItems(null);
+    setAssessError(null);
+    setHistoryError(null);
+    setNotes("");
+    setSelectedVersion(null);
+    setBusy(false);
+    setError(null);
+    setNotice(null);
+    setExpanded(false);
+    setCopied(false);
+    void loadAssessments();
+    void loadHistory();
+    return () => {
+      assessRequestVersion.current += 1;
+      historyRequestVersion.current += 1;
+      generateControllerRef.current?.abort();
+      generateControllerRef.current = null;
+    };
+  }, [requirementId, loadAssessments, loadHistory]);
   // 详情页生成评估成功后 revision 递增：只重拉评估列表，解锁生成按钮（历史与输入不动）。
   useEffect(() => { if (assessmentRevision > 0) void loadAssessments(); }, [assessmentRevision, loadAssessments]);
   useEffect(() => () => { if (copyTimer.current !== null) window.clearTimeout(copyTimer.current); }, []);
@@ -131,9 +165,12 @@ export function PrdPromptSection({ requirementId, assessmentRevision = 0, timeou
     if (!latestAssessment || !canGenerate) return;
     setBusy(true); setError(null); setNotice(null); setCopied(false);
     const controller = new AbortController();
-    const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+    generateControllerRef.current = controller;
+    let timedOut = false;
+    const timer = window.setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
     try {
       const created = await createPrdPrompt(requirementId, { assessmentId: latestAssessment.id, investigationNotes: notes }, undefined, controller.signal);
+      if (generateControllerRef.current !== controller) return;
       setItems((previous) => [created, ...(previous ?? []).filter((item) => item.version !== created.version)].sort((a, b) => b.version - a.version));
       setSelectedVersion(created.version);
       setExpanded(false);
@@ -141,12 +178,16 @@ export function PrdPromptSection({ requirementId, assessmentRevision = 0, timeou
       else setError(`生成失败：${ERROR_LABELS[created.errorCode ?? ""] ?? created.errorCode ?? "未知原因"}。可重新生成。`);
       if (created.status !== "succeeded") void loadHistory();
     } catch (cause) {
-      setError(errorMessage(cause, controller.signal.aborted));
+      if (generateControllerRef.current !== controller) return;
+      setError(errorMessage(cause, timedOut));
       // 失败也刷新历史：服务端会落一条 failed 版本，界面要能看到并可重试。
       void loadHistory();
     } finally {
       window.clearTimeout(timer);
-      setBusy(false);
+      if (generateControllerRef.current === controller) {
+        generateControllerRef.current = null;
+        setBusy(false);
+      }
     }
   };
 
@@ -182,7 +223,13 @@ export function PrdPromptSection({ requirementId, assessmentRevision = 0, timeou
 
     {assessError ? <p className="field-error" role="alert">{assessError}</p> : null}
     {noAssessment ? <div className="notice-banner" role="status">
-      <span>先生成一条成功的需求评估，才能生成 PRD 提示词。<a className="link-button" href="#req-assessment-heading">前往需求评估</a></span>
+      <span>先生成一条成功的需求评估，才能生成 PRD 提示词。<ArcoButton type="text" className="link-button" htmlType="button" onClick={() => {
+        const heading = document.getElementById("req-assessment-heading");
+        if (!heading) return;
+        heading.scrollIntoView?.({ behavior: "smooth", block: "start" });
+        if (!heading.hasAttribute("tabindex")) heading.setAttribute("tabindex", "-1");
+        heading.focus?.({ preventScroll: true });
+      }}>前往需求评估</ArcoButton></span>
     </div> : null}
     {latestAssessment ? <div className="prd-prompt-meta">
       <span className="status-chip status-live"><span />评估 v{latestAssessment.version} · {VERDICT_LABELS[latestAssessment.output?.verdict ?? ""] ?? "已生成"}</span>

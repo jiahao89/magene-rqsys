@@ -7,12 +7,13 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import type { AuditEventRepository, PipelineJobRepository } from "../application/repositories.js";
-import type { PipelineJobRecord } from "../domain/persistence.js";
+import type { PipelineJobRecord, SourcePool } from "../domain/persistence.js";
 
 export const OPS_ALERT_EVENT_SENT = "ops.alert_sent";
 export const OPS_ALERT_EVENT_FAILED = "ops.alert_failed";
 const DEFAULT_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 const LIST_LIMIT = 50;
+const ALERT_POOLS: readonly SourcePool[] = ["product", "group"];
 
 export interface OpsAlertConfig {
   /** 飞书自定义机器人 webhook；未配置时整个告警关闭。 */
@@ -118,6 +119,21 @@ export async function sendOpsAlertText(params: {
   return ok ? "sent" : "failed";
 }
 
+function mergePoolJobs(batches: readonly PipelineJobRecord[][], limit: number): PipelineJobRecord[] {
+  const seen = new Set<string>();
+  const merged: PipelineJobRecord[] = [];
+  for (const list of batches) {
+    for (const job of list) {
+      if (seen.has(job.id)) continue;
+      seen.add(job.id);
+      merged.push(job);
+    }
+  }
+  // 稳定按更新时间倒序：同时间戳保留先出现的顺序，新失败作业始终排在首位触发签名变更。
+  merged.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  return merged.slice(0, limit);
+}
+
 export async function runOpsAlert(params: {
   config: OpsAlertConfig;
   jobs: PipelineJobRepository;
@@ -127,10 +143,13 @@ export async function runOpsAlert(params: {
 }): Promise<OpsAlertResult> {
   const { config, jobs, audit, now } = params;
   if (!config.webhookUrl || !jobs.listFailed || !jobs.listExhaustedRunning) return { outcome: "disabled", failed: 0, stuck: 0 };
-  const [failed, stuck] = await Promise.all([
-    jobs.listFailed(LIST_LIMIT),
-    jobs.listExhaustedRunning(now.toISOString(), LIST_LIMIT),
+  const nowIso = now.toISOString();
+  const [failedByPool, stuckByPool] = await Promise.all([
+    Promise.all(ALERT_POOLS.map((pool) => jobs.listFailed!(LIST_LIMIT, pool))),
+    Promise.all(ALERT_POOLS.map((pool) => jobs.listExhaustedRunning!(nowIso, LIST_LIMIT, pool))),
   ]);
+  const failed = mergePoolJobs(failedByPool, LIST_LIMIT);
+  const stuck = mergePoolJobs(stuckByPool, LIST_LIMIT);
   if (failed.length === 0 && stuck.length === 0) return { outcome: "healthy", failed: 0, stuck: 0 };
 
   const signature = buildOpsAlertSignature(failed, stuck);

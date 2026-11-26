@@ -234,6 +234,30 @@ test("不变量5：非法事件被 schema 拒绝", () => {
   );
 });
 
+test("优先级覆盖、补充上下文、重复撤销与手工/Kano 审计键不会被白名单清空", () => {
+  assert.deepEqual(
+    redactSafeDetails({
+      cleared: true,
+      at: "2026-11-26T00:00:00.000Z",
+      previous: "suppressed_duplicate",
+      substantive: true,
+      runVersion: 2,
+      evidenceVersion: 4,
+      assessmentVersion: 3,
+      secret: "drop-me",
+    }),
+    {
+      cleared: true,
+      at: "2026-11-26T00:00:00.000Z",
+      previous: "suppressed_duplicate",
+      substantive: true,
+      runVersion: 2,
+      evidenceVersion: 4,
+      assessmentVersion: 3,
+    },
+  );
+});
+
 test("评估修复事件在审计 action 白名单内且能通过 schema 校验", () => {
   const event = createAuditEvent({
     actor: "actor-1",

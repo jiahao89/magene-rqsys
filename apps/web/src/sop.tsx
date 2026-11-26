@@ -1,5 +1,44 @@
 // SOP 与培训：独立页面，供试点 PM Leader / 执行 PM / 运维直接查阅。
 // 内容为静态作业规范，不读取业务数据，也不写入任何系统。
+import { Table as ArcoTable } from "@arco-design/web-react";
+
+const ROLE_ROWS = [
+  { role: "PM Leader", duties: "分诊与优先级把关、负责人分配、周度质量复盘、需求收集表运营、评估结论抽查、试点节奏", entries: "总览、需求池、需求评估、需求收集表、Base「TB需求池」、上线 Gate", outOfScope: "不代替执行 PM 做逐条 PM 确认；不手工改 TB" },
+  { role: "执行 PM", duties: "逐条确认模块/优先级、处理负责人通知、新来源需求确认、按需生成需求评估、反馈 AI 结论偏差", entries: "需求池详情、「从聊天粘贴」、来源筛选、需求评估、Base", outOfScope: "不改评分规则、不改 Base 系统字段、不重复推送" },
+  { role: "运维", duties: "同步/分析/推送健康、需求收集表同步状态、失败作业、告警、备份与发布", entries: "作业运维、运维指标（含多维表格同步）、告警群、发布记录", outOfScope: "不修改需求内容与 PM 结论" },
+];
+
+const SOURCE_ROWS = [
+  { mode: "Teambition", how: "从 TB 同步", where: "默认来源，需求池不挂徽标" },
+  { mode: "Web 手工", how: "需求池「新建需求」手工填写", where: "需求池徽标「手工·渠道」+ 行首橙色条" },
+  { mode: "聊天粘贴", how: "「从聊天粘贴」整理后创建", where: "需求池徽标「聊天粘贴·渠道」+ 行首紫色条" },
+  { mode: "多维表格", how: "需求收集表同步创建", where: "需求池徽标「多维表格·渠道」+ 行首蓝色条" },
+];
+
+const AGENDA_ROWS = [
+  { time: "0–5 分钟", content: "目标、角色边界、Teambition/RQ-Sys/Base 三方关系", format: "讲解" },
+  { time: "5–10 分钟", content: "总览四项健康度；需求池筛选/详情/证据", format: "演示" },
+  { time: "10–18 分钟", content: "Base 逐条 PM 确认（模块/优先级/PM 状态）；AI 建议只作输入", format: "演示 + 跟做" },
+  { time: "18–23 分钟", content: "负责人分配、通知触发规则、空负责人与待匹配处理", format: "演示 + 跟做" },
+  { time: "23–26 分钟", content: "新增来源入口：聊天粘贴、需求收集表、来源方式", format: "演示 + 跟做" },
+  { time: "26–29 分钟", content: "需求评估：按需生成、结论解读、Investigation 提示词复制", format: "演示 + 跟做" },
+  { time: "29–30 分钟", content: "失败重试、告警（含 AI 额度暂停）与答疑；反馈入口、试点周会节奏", format: "场景演练 + 讨论" },
+];
+
+const ESCALATION_ROWS = [
+  { symptom: "同步连续失败 / 批次卡住", check: "数据源与计划、TB 凭据、队列", escalate: "运维 → 研发" },
+  { symptom: "需求收集表读取 / 写回失败", check: "Base 权限、字段是否存在、收集表是否被删/改名", escalate: "运维 → 研发" },
+  { symptom: "需求收集表行校验失败", check: "同步说明（标题/渠道/链接/必填）", escalate: "填表人修正 → PM Leader；持续失败 → 运维" },
+  { symptom: "聊天粘贴整理失败 / 超时 / 限流", check: "页面错误、AI 状态卡、是否 429", escalate: "手工填写；持续失败 → 运维" },
+  { symptom: "需求评估失败 / 超时 / 429 / 409", check: "AI 状态、错误码、是否已有生成中版本、补充内容是否超长", escalate: "稍后重试/手工判断；持续失败 → 运维" },
+  { symptom: "来源方式缺失 / 与入口不符", check: "记录来源、Base 字段是否配置、回填范围", escalate: "运维" },
+  { symptom: "AI 分析长期失败或额度告警", check: "作业运维错误码、AI 暂停标记", escalate: "运维 → 研发/AI 供应商" },
+  { symptom: "单条 Base 推送失败", check: "详情页失败原因、Base 字段/人员 ID", escalate: "运维" },
+  { symptom: "批量 Base 推送失败", check: "最近发布、Base 权限、告警群", escalate: "运维 → 研发" },
+  { symptom: "优先级/模块结论明显不合理", check: "原文证据、AI 版本、PM 终审", escalate: "执行 PM → PM Leader" },
+  { symptom: "权限/数据治理/合规问题", check: "变更记录、Base 权限", escalate: "PM Leader → 产品/安全" },
+];
+
 export function SopPanel() {
   return <section className="panel requirements-panel guide-panel sop-panel">
     <div className="panel-heading">
@@ -13,14 +52,18 @@ export function SopPanel() {
     <div className="guide-section">
       <h3>一、角色与边界</h3>
       <p className="guide-lead">Teambition 是需求原文唯一来源；RQ-Sys 负责同步、分析和推送；飞书 Base 是 PM 处理与 PM 终审的工作台。系统不覆盖 TB，也不把 PM 的 Base 终审写回 Web。</p>
-      <div className="guide-table"><table>
-        <thead><tr><th>角色</th><th>主要工作</th><th>系统入口</th><th>不负责</th></tr></thead>
-        <tbody>
-          <tr><td><strong>PM Leader</strong></td><td>分诊与优先级把关、负责人分配、周度质量复盘、需求收集表运营、评估结论抽查、试点节奏</td><td>总览、需求池、需求评估、需求收集表、Base「TB需求池」、上线 Gate</td><td>不代替执行 PM 做逐条 PM 确认；不手工改 TB</td></tr>
-          <tr><td><strong>执行 PM</strong></td><td>逐条确认模块/优先级、处理负责人通知、新来源需求确认、按需生成需求评估、反馈 AI 结论偏差</td><td>需求池详情、「从聊天粘贴」、来源筛选、需求评估、Base</td><td>不改评分规则、不改 Base 系统字段、不重复推送</td></tr>
-          <tr><td><strong>运维</strong></td><td>同步/分析/推送健康、需求收集表同步状态、失败作业、告警、备份与发布</td><td>作业运维、运维指标（含多维表格同步）、告警群、发布记录</td><td>不修改需求内容与 PM 结论</td></tr>
-        </tbody>
-      </table></div>
+      <ArcoTable<(typeof ROLE_ROWS)[number]>
+        rowKey="role"
+        data={ROLE_ROWS}
+        pagination={false}
+        border={false}
+        columns={[
+          { title: "角色", dataIndex: "role", width: 120, render: (_value, row) => <strong>{row.role}</strong> },
+          { title: "主要工作", dataIndex: "duties" },
+          { title: "系统入口", dataIndex: "entries" },
+          { title: "不负责", dataIndex: "outOfScope" },
+        ]}
+      />
       <p className="guide-note">当前试点维持“登录即全权限”，角色只用于职责分工，系统不强制权限。正式上线前如需权限矩阵，另立需求。</p>
       <p className="guide-note">新来源（聊天粘贴 / 需求收集表）不改变角色分工；来源只影响入口和标识。需求评估是详情页的按需辅助，AI 建议非结论，也不改变 PM 确认、负责人、推送口径。</p>
     </div>
@@ -82,15 +125,17 @@ export function SopPanel() {
       <p className="guide-note">收集表只负责「进入系统」；后续分析、负责人、推送、通知与其它来源完全一致。提出人只作展示，不参与负责人匹配、不通知。</p>
 
       <h4 style={{ fontSize: "13px", fontWeight: 650, margin: "18px 0 8px" }}>4.3 来源方式（需求池 / Base）</h4>
-      <div className="guide-table"><table>
-        <thead><tr><th>来源方式</th><th>怎么产生</th><th>在哪里看</th></tr></thead>
-        <tbody>
-          <tr><td>Teambition</td><td>从 TB 同步</td><td>默认来源，需求池不挂徽标</td></tr>
-          <tr><td>Web 手工</td><td>需求池「新建需求」手工填写</td><td>需求池徽标「手工·渠道」+ 行首橙色条</td></tr>
-          <tr><td>聊天粘贴</td><td>「从聊天粘贴」整理后创建</td><td>需求池徽标「聊天粘贴·渠道」+ 行首紫色条</td></tr>
-          <tr><td>多维表格</td><td>需求收集表同步创建</td><td>需求池徽标「多维表格·渠道」+ 行首蓝色条</td></tr>
-        </tbody>
-      </table></div>
+      <ArcoTable<(typeof SOURCE_ROWS)[number]>
+        rowKey="mode"
+        data={SOURCE_ROWS}
+        pagination={false}
+        border={false}
+        columns={[
+          { title: "来源方式", dataIndex: "mode", width: 130 },
+          { title: "怎么产生", dataIndex: "how" },
+          { title: "在哪里看", dataIndex: "where" },
+        ]}
+      />
       <ul className="guide-steps">
         <li><strong>筛选：</strong>需求池顶部「来源」Tab 可选全部来源 / Teambition / 多维表格 / 手工 / 聊天粘贴；详情页底部「这条需求怎么来的」显示来源、渠道、提出人、创建时间。</li>
         <li><strong>Base：</strong>「来源方式」是单选字段，由系统在推送时写入，取值同上；不要手工改。字段未配置时系统不写、不报错；看不到这一列就联系 PM Leader/管理员确认。</li>
@@ -128,39 +173,33 @@ export function SopPanel() {
 
     <div className="guide-section">
       <h3>六、30 分钟培训议程</h3>
-      <div className="guide-table"><table>
-        <thead><tr><th>时间</th><th>内容</th><th>形式</th></tr></thead>
-        <tbody>
-          <tr><td>0–5 分钟</td><td>目标、角色边界、Teambition/RQ-Sys/Base 三方关系</td><td>讲解</td></tr>
-          <tr><td>5–10 分钟</td><td>总览四项健康度；需求池筛选/详情/证据</td><td>演示</td></tr>
-          <tr><td>10–18 分钟</td><td>Base 逐条 PM 确认（模块/优先级/PM 状态）；AI 建议只作输入</td><td>演示 + 跟做</td></tr>
-          <tr><td>18–23 分钟</td><td>负责人分配、通知触发规则、空负责人与待匹配处理</td><td>演示 + 跟做</td></tr>
-          <tr><td>23–26 分钟</td><td>新增来源入口：聊天粘贴、需求收集表、来源方式</td><td>演示 + 跟做</td></tr>
-          <tr><td>26–29 分钟</td><td>需求评估：按需生成、结论解读、Investigation 提示词复制</td><td>演示 + 跟做</td></tr>
-          <tr><td>29–30 分钟</td><td>失败重试、告警（含 AI 额度暂停）与答疑；反馈入口、试点周会节奏</td><td>场景演练 + 讨论</td></tr>
-        </tbody>
-      </table></div>
+      <ArcoTable<(typeof AGENDA_ROWS)[number]>
+        rowKey="time"
+        data={AGENDA_ROWS}
+        pagination={false}
+        border={false}
+        columns={[
+          { title: "时间", dataIndex: "time", width: 120 },
+          { title: "内容", dataIndex: "content" },
+          { title: "形式", dataIndex: "format", width: 140 },
+        ]}
+      />
       <p className="guide-note">培训验收：每位角色能独立完成本角色 SOP 的“每日清单”；执行 PM 能在 Base 完成 3 条需求确认，并完成一次聊天粘贴草稿的核对、对一条需求生成评估并复制 Investigation 提示词，能说出 AI 建议非结论；PM Leader 能读出总览四项指标与 Gate 状态，并把一条需求收集表行跑到「已收录」。</p>
     </div>
 
     <div className="guide-section">
       <h3>七、异常升级路径</h3>
-      <div className="guide-table"><table>
-        <thead><tr><th>现象</th><th>先检查</th><th>升级到</th></tr></thead>
-        <tbody>
-          <tr><td>同步连续失败 / 批次卡住</td><td>数据源与计划、TB 凭据、队列</td><td>运维 → 研发</td></tr>
-          <tr><td>需求收集表读取 / 写回失败</td><td>Base 权限、字段是否存在、收集表是否被删/改名</td><td>运维 → 研发</td></tr>
-          <tr><td>需求收集表行校验失败</td><td>同步说明（标题/渠道/链接/必填）</td><td>填表人修正 → PM Leader；持续失败 → 运维</td></tr>
-          <tr><td>聊天粘贴整理失败 / 超时 / 限流</td><td>页面错误、AI 状态卡、是否 429</td><td>手工填写；持续失败 → 运维</td></tr>
-          <tr><td>需求评估失败 / 超时 / 429 / 409</td><td>AI 状态、错误码、是否已有生成中版本、补充内容是否超长</td><td>稍后重试/手工判断；持续失败 → 运维</td></tr>
-          <tr><td>来源方式缺失 / 与入口不符</td><td>记录来源、Base 字段是否配置、回填范围</td><td>运维</td></tr>
-          <tr><td>AI 分析长期失败或额度告警</td><td>作业运维错误码、AI 暂停标记</td><td>运维 → 研发/AI 供应商</td></tr>
-          <tr><td>单条 Base 推送失败</td><td>详情页失败原因、Base 字段/人员 ID</td><td>运维</td></tr>
-          <tr><td>批量 Base 推送失败</td><td>最近发布、Base 权限、告警群</td><td>运维 → 研发</td></tr>
-          <tr><td>优先级/模块结论明显不合理</td><td>原文证据、AI 版本、PM 终审</td><td>执行 PM → PM Leader</td></tr>
-          <tr><td>权限/数据治理/合规问题</td><td>变更记录、Base 权限</td><td>PM Leader → 产品/安全</td></tr>
-        </tbody>
-      </table></div>
+      <ArcoTable<(typeof ESCALATION_ROWS)[number]>
+        rowKey="symptom"
+        data={ESCALATION_ROWS}
+        pagination={false}
+        border={false}
+        columns={[
+          { title: "现象", dataIndex: "symptom", width: 220 },
+          { title: "先检查", dataIndex: "check" },
+          { title: "升级到", dataIndex: "escalate", width: 240 },
+        ]}
+      />
       <p className="guide-note">升级时请附：RQ 编号、发生时间、页面/接口、最近一次 release id、错误码或截图；不要附需求中的个人联系方式。</p>
     </div>
   </section>;

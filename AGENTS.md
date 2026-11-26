@@ -3,9 +3,9 @@
 ## Start here
 
 1. Read `CONTEXT.md`, `specs/rq-sys-mvp/README.md`, the relevant numbered Spec, and `specs/rq-sys-mvp/OPEN-DECISIONS.md` before changing behavior.
-2. Product scope is controlled by the current Feishu MVP PRD revision 60. The technical design is implementation guidance only where it does not conflict with that PRD.
-3. Tickets in `.scratch/rq-sys-mvp/issues/` are local drafts. Respect their dependency/status labels and target-environment evidence requirements.
-4. For approved V0.2 work, additionally read `specs/rq-sys-v0.2/README.md`, its relevant numbered Spec and `DECISIONS-AND-GATES.md`; use `.scratch/rq-sys-v0.2/issues/README.md` and its tickets. These explicit increments extend the MVP baseline; preserve MVP behavior outside that scope and check each ticket's blockers and execution gates.
+2. Product scope is controlled by the current Feishu MVP PRD revision 60 for MVP baseline behavior, together with `docs/2026-10-21-rq-sys-v0.2-prd.md` and `docs/2026-11-06-production-readiness-decisions.md` (PRD-13–PRD-33) for approved V0.2 and post-MVP increments (including multi-pool, chat-paste intake, requirement assessments, PRD prompts, and My Requirements / Recycle Bin). The technical design is implementation guidance only where it does not conflict with those PRDs.
+3. Ticket indexes in `.scratch/rq-sys-mvp/issues/README.md`, `.scratch/rq-sys-v0.2/issues/README.md`, and `.scratch/rq-sys-production/issues/README.md` track historical status; individual ticket drafts were archived/removed from the working tree in commit `98d674c` (see `.scratch/README.md` to inspect archived tickets via `git show 98d674c:...`).
+4. For approved V0.2 and subsequent increments, additionally read `specs/rq-sys-v0.2/README.md`, its relevant numbered Spec, `DECISIONS-AND-GATES.md`, and the corresponding `docs/2026-11-*.md` specification. Preserve MVP invariants outside the explicitly approved increment scope and check target-environment evidence gates.
 
 ## Current project layout
 
@@ -65,13 +65,13 @@ Run the tests relevant to a behavior change, plus the checks under "Safety and v
 
 ## Source repository workflow
 
-The root checkout at `jiahao89/magene-rqsys` is the canonical implementation source; `rq-sys-miaoda/` is a separate app-scoped runtime repo whose changes must be kept behaviorally aligned and released from `sprint/default`. Preserve and inspect uncommitted changes in both repositories before commit/push. Never treat local tests as target Miaoda evidence.
+The root checkout at `jiahao89/magene-rqsys` is the canonical implementation source (current active development branch is `feature/arco-design`, ahead of `main`); `rq-sys-miaoda/` is a separate app-scoped runtime repo whose changes must be kept behaviorally aligned and released from `sprint/default`. Preserve and inspect uncommitted changes in both repositories before commit/push. Never treat local tests as target Miaoda evidence.
 
 ## Agent skills
 
 - Use `.agents/skills`/Hermes-installed Matt Pocock skills selectively: `diagnosing-bugs` for root-cause work, `tdd` for behavior changes and integration tests, `implement` for scoped tickets, and `codebase-design` for module/interface decisions. Read `docs/agents/issue-tracker.md` and `docs/agents/domain.md` first.
-- GitHub actions use `software-development:github`; read the corresponding reference before clone/pull/push/commit/PR operations. The GitHub remote is code source only; local Markdown files under `.scratch/rq-sys-mvp/issues/` are the ticket tracker.
-- Before editing a shared ticket, reread `.scratch/rq-sys-mvp/issues/README.md`; synchronize status evidence between the ticket and README.
+- GitHub actions use `software-development:github`; read the corresponding reference before clone/pull/push/commit/PR operations. The GitHub remote is code source only; local ticket status indexes live under `.scratch/rq-sys-*/issues/README.md` (individual historical ticket drafts were archived in commit `98d674c`; see `.scratch/README.md`).
+- Before editing a shared ticket index, reread its `.scratch/rq-sys-*/issues/README.md` and keep status evidence synchronized.
 
 ## Safety and verification gates
 

@@ -99,10 +99,18 @@ function makeDeps(overrides: { stored?: RequirementRecord; score?: typeof scoreV
       markLastPushedOwner: async () => undefined, assignManualOwner: async () => undefined, clearManualOwner: async () => undefined,
       markManualOwnerPushed: async () => undefined,
       getPipelineCounts: async () => ({ total: 1, pullSynced: 1, analysisAnalyzed: 1, ownerResolved: 1, pushPushed: 0, failed: 0, pushFailed: 0, pushPending: 1, suppressed: 0, priority: { P0: 0, P1: 0, P2: 0, P3: 1, scored: 1, legacy: 0, unscored: 0 } }),
-      decideResolution: async () => ({ outcome: "saved", version: 1 }),
-      clearResolution: async () => ({ outcome: "cleared" }),
-      setPriorityOverride: async (id: string, input: { priority: "P0" | "P1" | "P2" | "P3" | null; reason: string | null; actorId: string; at: string }) => { recorded.priorityCalls.push({ id, ...input }); return { outcome: "saved", override: input.priority === null ? null : { priority: input.priority, reason: input.reason!, actorId: input.actorId, at: input.at } }; },
-      setAnalysisContext: async (id: string, input: { context: string | null; actorId: string; at: string }) => { recorded.contextCalls.push({ id, ...input }); return { outcome: "updated", context: input.context === null ? null : { note: input.context, updatedAt: input.at, updatedBy: input.actorId } }; },
+      decideResolution: async (input: { auditEvent?: Record<string, unknown> }) => { if (input.auditEvent) recorded.auditEvents.push(input.auditEvent); return { outcome: "saved", version: 1 }; },
+      clearResolution: async (input: { auditEvent?: Record<string, unknown> }) => { if (input.auditEvent) recorded.auditEvents.push(input.auditEvent); return { outcome: "cleared" }; },
+      setPriorityOverride: async (id: string, input: { priority: "P0" | "P1" | "P2" | "P3" | null; reason: string | null; actorId: string; at: string; auditEvent?: Record<string, unknown> }) => {
+        recorded.priorityCalls.push({ id, priority: input.priority, reason: input.reason, actorId: input.actorId, at: input.at });
+        if (input.auditEvent) recorded.auditEvents.push(input.auditEvent);
+        return { outcome: "saved", override: input.priority === null ? null : { priority: input.priority, reason: input.reason!, actorId: input.actorId, at: input.at } };
+      },
+      setAnalysisContext: async (id: string, input: { context: string | null; actorId: string; at: string; auditEvent?: Record<string, unknown> }) => {
+        recorded.contextCalls.push({ id, context: input.context, actorId: input.actorId, at: input.at });
+        if (input.auditEvent) recorded.auditEvents.push(input.auditEvent);
+        return { outcome: "updated", context: input.context === null ? null : { note: input.context, updatedAt: input.at, updatedBy: input.actorId } };
+      },
     } as never,
   };
   return { deps: { database: null, repositories, identity: { requireActor: async () => ({ id: "actor-1" }) }, now: () => new Date("2026-11-03T00:00:00.000Z") }, recorded };

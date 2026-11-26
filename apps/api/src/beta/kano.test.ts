@@ -1,7 +1,7 @@
 // V02-T14 接缝测试：Kano 模块公共行为——掩码输入、受控候选类型、证据 ref 校验、提示词形状。
 import test from "node:test";
 import assert from "node:assert/strict";
-import { KANO_PROMPT_VERSION, buildKanoRequest, createDeepSeekKanoProvider, kanoPrompt, validateKanoReport } from "./kano.js";
+import { KANO_PROMPT_VERSION, KanoProviderError, buildKanoRequest, createDeepSeekKanoProvider, kanoPrompt, validateKanoReport } from "./kano.js";
 
 const evidence = {
   version: 2, title: "合成访谈总结", summary: "竞技用户重视训练完成度分析。",
@@ -87,5 +87,31 @@ test("kano provider omits temperature for AI_TEMPERATURE=none and accepts fenced
     assert.equal("temperature" in (captured.body ?? {}), false);
   } finally {
     process.env = saved;
+  }
+});
+
+test("kano provider classifies HTTP 429/401/5xx cleanly with httpStatus and never echoes upstream text", async () => {
+  const cases: Array<[number, string]> = [
+    [429, "rate_limited"],
+    [401, "auth_error"],
+    [503, "provider_error"],
+  ];
+  for (const [status, expectedCode] of cases) {
+    const response = new Response("raw-secret-payload", { status });
+    const provider = createDeepSeekKanoProvider({
+      apiKey: "k",
+      baseUrl: "https://ai.example",
+      timeoutMs: 1_000,
+      fetch: (async () => response) as unknown as typeof fetch,
+    });
+    await assert.rejects(
+      () => provider.run("p"),
+      (error: unknown) =>
+        error instanceof KanoProviderError
+        && error.code === expectedCode
+        && error.httpStatus === status
+        && !error.message.includes("raw-secret-payload"),
+    );
+    assert.equal(response.bodyUsed, true);
   }
 });

@@ -31,7 +31,7 @@ export interface SafeAnalysisRequest extends Omit<AnalysisRequestInput, "piiMark
 
 const EMAIL = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
 const PHONE = /(?<!\d)(?:\+?\d{1,3}[\s-]?)?1[3-9]\d{9}(?!\d)/g;
-const SECRET = /\b(?:sk-[A-Za-z0-9_-]{8,}|(?:api[_-]?key|token|secret)\s*[:=]\s*\S+)/gi;
+const SECRET = /\b(?:sk-[A-Za-z0-9_-]{8,}|Bearer\s+[A-Za-z0-9._~+/=-]{8,}|authorization\s*[:=]\s*(?:(?:Bearer|Basic|Token)\s+)?\S+|(?:api[-_]?key|access[-_]?token|refresh[-_]?token|token|secret|password|credential)s?\s*[:=]\s*\S+)/gi;
 // 身份标识补充（工单 13）：中国大陆 18 位身份证号、24 位 hex 平台用户 ID（Teambition 形态）、@提及。
 const ID_CARD = /\b\d{6}(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:[0-2]\d|3[01])\d{3}[\dXx]\b/g;
 const PLATFORM_USER_ID = /(?<![\w\d])[0-9a-f]{24}(?![\w\d])/gi;
@@ -57,10 +57,20 @@ export function countPiiFindings(text: string): number {
   return count;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 export function maskPii(text: string, markers: string[]): string {
   let masked = text;
-  for (const marker of [...new Set(markers)].filter(Boolean).sort((a, b) => b.length - a.length)) {
-    masked = masked.split(marker).join("（已掩码）");
+  const dedupedMarkers = new Map<string, string>();
+  for (const raw of markers) {
+    if (!raw) continue;
+    const key = raw.toLocaleLowerCase();
+    if (!dedupedMarkers.has(key)) dedupedMarkers.set(key, raw);
+  }
+  for (const marker of [...dedupedMarkers.values()].sort((a, b) => b.length - a.length)) {
+    masked = masked.replace(new RegExp(escapeRegExp(marker), "giu"), "（已掩码）");
   }
   return masked
     .replace(EMAIL, "（邮箱已掩码）")

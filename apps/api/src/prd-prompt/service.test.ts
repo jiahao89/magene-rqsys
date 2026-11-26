@@ -182,3 +182,70 @@ test("validatePrdPromptOutput 接受合规输出并归一化假设前缀", () =>
   assert.equal(result.ok, true);
   assert.deepEqual(result.output?.assumptions, ["假设：地图数据可商用"]);
 });
+
+test("供应商 429/401/403/400 分别分类并保留 httpStatus，不折叠为 provider_error", async () => {
+  const cases: Array<[number, string]> = [
+    [429, "rate_limited"],
+    [401, "auth_error"],
+    [403, "auth_error"],
+    [400, "request_error"],
+  ];
+  for (const [status, code] of cases) {
+    const h = harness({ status });
+    await assert.rejects(
+      () => h.runner.run({ requirement, assessment, investigationNotes: "", actorId: "op" }),
+      (error: unknown) => error instanceof PrdPromptFailure && error.code === code && error.httpStatus === status,
+      `HTTP ${status}`,
+    );
+    assert.equal(h.records[0]!.errorCode, code);
+  }
+});
+
+test("响应体挂死时按 timeout 收尾，不永久阻塞", async () => {
+  const records: RequirementPrdPromptRecord[] = [];
+  const aborting = new AbortController();
+  const runner = createPrdPromptRunner({
+    prdPrompts: {
+      async create(input: {
+        requirementId: string;
+        promptVersion: string;
+        model: string;
+        inputs: RequirementPrdPromptRecord["inputs"];
+        at: string;
+      }) {
+        const rec: RequirementPrdPromptRecord = {
+          id: "prd-stall", requirementId: input.requirementId, version: 1, status: "running",
+          promptVersion: input.promptVersion, model: input.model, inputs: input.inputs, output: null, errorCode: null,
+          createdAt: input.at, completedAt: null,
+        };
+        records.push(rec);
+        return { outcome: "created" as const, record: rec };
+      },
+      async complete() { return null; },
+      async fail(id: string, errorCode: string, at: string) {
+        const rec = records.find((item) => item.id === id)!;
+        rec.status = "failed"; rec.errorCode = errorCode; rec.completedAt = at;
+        return rec;
+      },
+      async list() { return records; },
+      async expireStaleRunning() { return 0; },
+    } as never,
+    config: { apiKey: "test-key", baseUrl: "https://ai.example", model: "stub", timeoutMs: 40, temperature: 0, promptVersion: "rq-prd-prompt-v1" },
+    fetch: async (_url, init) => {
+      init?.signal?.addEventListener("abort", () => aborting.abort());
+      const stream = new ReadableStream({
+        start(controller) {
+          aborting.signal.addEventListener("abort", () =>
+            controller.error(Object.assign(new Error("aborted"), { name: "AbortError" })));
+        },
+      });
+      return new Response(stream, { status: 200, headers: { "content-type": "application/json" } });
+    },
+    now: () => new Date("2026-11-21T00:00:00.000Z"),
+  });
+  await assert.rejects(
+    () => runner.run({ requirement, assessment, investigationNotes: "", actorId: "op" }),
+    (error: unknown) => error instanceof PrdPromptFailure && error.code === "timeout",
+  );
+  assert.equal(records[0]!.errorCode, "timeout");
+});

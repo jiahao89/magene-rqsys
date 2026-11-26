@@ -2004,7 +2004,7 @@ describe("团队字典维护", () => {
 
     // Publishing an empty dictionary would retire the taxonomy in favour of nothing,
     // so the last module must not be removable from the workbench either.
-    expect(within(row).getByRole("button", { name: "删除" })).toHaveAttribute("aria-disabled", "true");
+    expect(within(row).getByRole("button", { name: "删除" })).toBeDisabled();
   });
 });
 
@@ -3150,5 +3150,177 @@ describe("My requirements and recycle bin (PRD §4.13)", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     await waitFor(() => expect(screen.queryByText("被删除的需求")).not.toBeInTheDocument());
     expect(listCalls).toBeGreaterThanOrEqual(2);
+  });
+
+  it("loads a deleted requirement detail immediately on a direct recycle-bin deep link", async () => {
+    window.history.replaceState(null, "", "/?stage=recycle&requirement=req-del-1#recycle-bin");
+    const deletedDetail = { ...deletedRow, deletedBy: "u-1", canRestore: true, analysis: null, analyses: [], source: {} };
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path.startsWith("/api/requirements?deleted=true")) return jsonOk({ items: [deletedRow], nextCursor: null, identityResolved: true });
+      if (path === "/api/requirements/req-del-1") return jsonOk(deletedDetail);
+      return jsonOk({ items: [], nextCursor: null });
+    });
+    try {
+      render(<RecycleBinPanel onRefresh={() => undefined} />);
+      expect(await screen.findByRole("heading", { level: 2, name: /被删除的需求/ })).toBeInTheDocument();
+      expect(screen.getByText("已删除")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "还原需求" })).toBeInTheDocument();
+    } finally {
+      window.history.replaceState(null, "", "/");
+    }
+  });
+});
+
+describe("Wave 1 frontend hardening regressions", () => {
+  it("appends a new module instead of overwriting an inline-edited module and clears the add form", async () => {
+    let savedItems: Array<{ name: string; personName: string | null }> = [];
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/people") return jsonOk({ items: [{ name: "贾浩", feishuUserId: null, feishuIdType: null, boundAt: null, bindingConflict: false }] });
+      if (path === "/api/modules" && init?.method === "PUT") {
+        const body = JSON.parse(String(init.body)) as { items: Array<{ name: string; personName: string | null }> };
+        savedItems = body.items;
+        return jsonOk({ version: 4, items: body.items });
+      }
+      if (path === "/api/modules") return jsonOk({ version: 3, items: [{ name: "地图", personName: "贾浩" }, { name: "导航", personName: null }] });
+      if (path === "/api/rules/dictionary") return jsonOk({ items: [] });
+      return jsonOk({ items: [] });
+    });
+    render(<ModulesPanel />);
+    const mapRow = (await screen.findByText("地图")).closest("tr")!;
+    // 开启行内编辑「地图」，再点顶部「新增模块」
+    fireEvent.click(within(mapRow).getByRole("button", { name: "编辑" }));
+    const addInput = screen.getByLabelText("功能模块名称") as HTMLInputElement;
+    fireEvent.change(addInput, { target: { value: "语音播报" } });
+    fireEvent.click(screen.getByRole("button", { name: "新增模块" }));
+
+    await waitFor(() => expect(savedItems.map((i) => i.name)).toEqual(["地图", "导航", "语音播报"]));
+    await waitFor(() => expect(addInput.value).toBe(""));
+  });
+
+  it("blocks unsafe javascript:/data: URLs in detail links and scrolls in-page without mutating hash", async () => {
+    window.history.replaceState(null, "", "/?requirement=req-sec#group-requirements");
+    const detail = {
+      id: "req-sec",
+      platformRequirementId: "RQ-000099",
+      sourceRequirementId: "tb-sec",
+      sourceType: "teambition" as const,
+      sourceChannel: null,
+      productModel: null,
+      requirementType: null,
+      constraintNotes: null,
+      supplementUrl: "javascript:alert(1)",
+      intakeModule: null,
+      audience: { tags: [], confirmed: false, version: 0 },
+      title: "安全测试需求",
+      description: "测试链接协议过滤与页内跳转",
+      sourceVersion: 1,
+      pool: "group" as const,
+      pipeline: { pull: "synced", analysis: "analyzed", owner: "auto_mapped" as const, push: "pushed" },
+      processingState: "suppressed_ignored" as const,
+      resolution: { decision: "ignored" as const, reviewState: "confirmed" as const, reason: "测试压制", version: 1 },
+      sourceUrl: "javascript:alert(2)",
+      baseRecordId: "rec123",
+      baseRecordUrl: "data:text/html,boom",
+      source: {},
+      analysis: null,
+      analyses: [],
+      scoring: {
+        current: {
+          id: "s1", requirementId: "req-sec", version: 1, status: "current" as const, origin: "manual" as const,
+          sourceVersion: 1, analysisVersion: null, ruleVersionId: null,
+          inputs: { user: { pain: 3, frequency: 3 }, market: { sellingPoint: 2, competitor: 2 }, strategy: { roadmap: 2, dependency: 2 }, cost: { workload: 2, technicalRisk: 2, resource: 2 } },
+          alpha: 1, score: 30, priority: "P1" as const, scoreConfidence: "高" as const, scoreConfidenceReason: null,
+          safetyFlag: false, basis: {}, rationale: null, actorId: null, changeReason: null, createdAt: "2026-11-20T00:00:00Z",
+        },
+        aiSuggestion: null,
+        history: [],
+        formula: { text: "formula", thresholds: { p0: 45, p1: 25, p2: 10 } },
+      },
+    };
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/requirements/req-sec") return jsonOk(detail);
+      if (path.endsWith("/assessments")) return jsonOk({ items: [] });
+      if (path.endsWith("/prd-prompts")) return jsonOk({ items: [] });
+      return jsonOk({ items: [], nextCursor: null });
+    });
+    try {
+      render(<RequirementsPanel scope="group" onRefresh={() => undefined} />);
+      expect(await screen.findByRole("heading", { level: 2, name: /安全测试需求/ })).toBeInTheDocument();
+      // 所有不安全协议均不得渲染为 <a href>
+      const anchors = Array.from(document.querySelectorAll("a[href]"));
+      expect(anchors.some((a) => /^(javascript|data):/i.test(a.getAttribute("href") ?? ""))).toBe(false);
+
+      // 页内跳转按钮不改写 location.hash
+      fireEvent.click(screen.getByRole("button", { name: "查看评分与依据" }));
+      fireEvent.click(screen.getByRole("button", { name: "前往撤销判定" }));
+      expect(window.location.hash).toBe("#group-requirements");
+    } finally {
+      window.history.replaceState(null, "", "/");
+    }
+  });
+
+  it("disables scoring save when alpha is cleared instead of submitting 0", async () => {
+    const scoreVersion = {
+      id: "s-clear", requirementId: "req-1", version: 1, status: "current" as const, origin: "manual" as const,
+      sourceVersion: 1, analysisVersion: null, ruleVersionId: null,
+      inputs: { user: { pain: 3, frequency: 3 }, market: { sellingPoint: 2, competitor: 2 }, strategy: { roadmap: 2, dependency: 2 }, cost: { workload: 2, technicalRisk: 2, resource: 2 } },
+      alpha: 0.8, score: 24, priority: "P2" as const, scoreConfidence: "高" as const, scoreConfidenceReason: null,
+      safetyFlag: false, basis: {}, rationale: null, actorId: null, changeReason: null, createdAt: "2026-11-20T00:00:00Z",
+    };
+    render(<ScoringPanel requirementId="req-1" scoring={{ current: scoreVersion, aiSuggestion: null, history: [scoreVersion], formula: { text: "formula", thresholds: { p0: 45, p1: 25, p2: 10 } } }} onSaved={() => undefined} />);
+    fireEvent.click(screen.getByRole("button", { name: "编辑评分" }));
+    fireEvent.change(screen.getByLabelText("评分修改理由"), { target: { value: "清空校验" } });
+    fireEvent.change(screen.getByLabelText("评分 alpha"), { target: { value: "" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "保存评分" })).toBeDisabled());
+  });
+
+  it("preserves unsaved ManualEditSection input on detail refresh and shows notice after saving", async () => {
+    const { ManualEditSection } = await import("./intake-form");
+    const baseDetail = {
+      id: "req-edit-1",
+      sourceVersion: 1,
+      sourceType: "web_manual" as const,
+      title: "原标题",
+      description: "原描述",
+      sourceChannel: "销售",
+      productModel: null,
+      requirementType: null,
+      constraintNotes: null,
+      supplementUrl: null,
+    };
+    fetchMock.mockImplementation(async (_input, init) => {
+      if (init?.method === "PATCH") return jsonOk({ requirementId: "req-edit-1", outcome: "updated", sourceVersion: 2, substantiveChanged: true });
+      return jsonOk({});
+    });
+
+    const { rerender } = render(<ManualEditSection detail={baseDetail} onSaved={() => undefined} />);
+    fireEvent.click(screen.getByRole("button", { name: "编辑需求" }));
+    const titleInput = screen.getByLabelText("编辑需求标题") as HTMLInputElement;
+    fireEvent.change(titleInput, { target: { value: "用户正在编辑的标题" } });
+
+    // 模拟父级静默刷新传入新对象引用：不得清空未保存输入
+    rerender(<ManualEditSection detail={{ ...baseDetail }} onSaved={() => undefined} />);
+    expect((screen.getByLabelText("编辑需求标题") as HTMLInputElement).value).toBe("用户正在编辑的标题");
+
+    // 校验不安全链接在本地被拦截
+    fireEvent.change(screen.getByLabelText("编辑来源链接"), { target: { value: "javascript:alert(1)" } });
+    fireEvent.click(screen.getByRole("button", { name: /保存（基于 v1）/ }));
+    expect(await screen.findByText(/来源链接需以 http:\/\/ 或 https:\/\/ 开头/)).toBeInTheDocument();
+
+    // 清除非法链接并保存：表单关闭后成功提示仍可见
+    fireEvent.change(screen.getByLabelText("编辑来源链接"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: /保存（基于 v1）/ }));
+    expect(await screen.findByText(/已保存到源版本 v2/)).toBeInTheDocument();
+  });
+
+  it("renders SopPanel with Arco Tables and no raw guide-table wrappers", async () => {
+    const { SopPanel } = await import("./sop");
+    const { container } = render(<SopPanel />);
+    expect(screen.getByRole("heading", { name: "SOP 与培训" })).toBeInTheDocument();
+    expect(container.querySelectorAll(".arco-table").length).toBe(4);
+    expect(container.querySelectorAll(".guide-table").length).toBe(0);
   });
 });

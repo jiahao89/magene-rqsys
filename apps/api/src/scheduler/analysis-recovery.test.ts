@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { encodeRequirementCursor } from "../application/requirement-cursor.js";
 import { redactSafeDetails } from "../audit/event.js";
 import type { AuditEventRecord, PipelineJobRecord, RequirementRecord } from "../domain/persistence.js";
 import type { RequirementQueryRepository } from "../application/repositories.js";
@@ -105,9 +106,21 @@ function harness(input: {
             ? (group ? state.groupPending : state.pending)
             : (group ? state.groupFailed : state.failed);
         const items = source.filter((item) =>
-          !query.pullState || item.pipeline.pull === query.pullState,
+          (!query.pullState || item.pipeline.pull === query.pullState)
+          && (!query.processingState || (query.processingState === "active"
+            ? (item.processingState ?? "active") === "active"
+            : (item.processingState ?? "active") !== "active")),
         );
-        return { items: items.slice(0, query.limit), nextCursor: null };
+        const start = query.cursor
+          ? items.findIndex((item) => item.id === query.cursor!.id) + 1
+          : 0;
+        const sliced = items.slice(start, start + query.limit);
+        const hasMore = start + query.limit < items.length;
+        const last = sliced.at(-1);
+        const nextCursor = hasMore && last
+          ? encodeRequirementCursor({ createdAt: last.createdAt, id: last.id })
+          : null;
+        return { items: sliced, nextCursor };
       },
       async updateAnalysisState(requirementId: string, to: string) {
         state.stateUpdates.push({ id: requirementId, to });
@@ -213,9 +226,9 @@ test("failed_retryable 需求会被自动补排分析作业并写系统审计", 
   // 审计脱敏白名单必须保留这些键，否则线上落库后调度重试预算无法累计
   assert.deepEqual(redactSafeDetails(retryAudit.safeDetails), retryAudit.safeDetails);
 
-  // 扫描查询按 pull=synced + analysis=failed_retryable 过滤，并带单轮上限
+  // 扫描查询按 analysis=failed_retryable + processingState=active 过滤（放行 synced 与 collected），并带单轮上限
   const failedQuery = h.state.searchQueries.find((query) => query.analysisState === "failed_retryable");
-  assert.deepEqual(failedQuery, { pullState: "synced", analysisState: "failed_retryable", pool: "product", limit: ANALYSIS_RECOVERY_SCAN_LIMIT });
+  assert.deepEqual(failedQuery, { analysisState: "failed_retryable", processingState: "active", pool: "product", limit: ANALYSIS_RECOVERY_SCAN_LIMIT });
 });
 
 test("已有 queued/running 作业时不重复入队", async () => {
@@ -535,4 +548,44 @@ test("补排 pending 分析时两池都扫，集团池的 pending 需求也能�
   assert.equal(report.enqueued, 2);
   assert.ok(h.state.enqueueCalls.some((call) => call.dedupeKey === "analysis:req-g:v3"));
   assert.ok(h.state.searchQueries.some((query) => query.analysisState === "pending" && query.pool === "group"));
+});
+
+test("手工/收集表（pull=collected）失败需求也会被自动重试，且已压制需求被排除", async () => {
+  const h = harness({
+    failed: [
+      requirement({ id: "req-manual", sourceType: "web_manual", sourceConfigId: null, teambitionRequirementId: null, pipeline: { pull: "collected", analysis: "failed_retryable", owner: "not_required", push: "pending" } }),
+      requirement({ id: "req-suppressed", processingState: "suppressed_duplicate", pipeline: { pull: "synced", analysis: "failed_retryable", owner: "pending_mapping", push: "pending" } }),
+      requirement({ id: "req-unpulled", pipeline: { pull: "pending", analysis: "failed_retryable", owner: "pending_mapping", push: "pending" } }),
+    ],
+    latestAnalysisVersion: { "req-manual": 1 },
+  });
+  const report = await h.run();
+  assert.deepEqual(report.retried.map((r) => [r.requirementId, r.action]), [["req-manual", "enqueued"]]);
+  assert.equal(h.state.enqueueCalls.length, 1);
+  assert.equal(h.state.enqueueCalls[0]?.dedupeKey, "analysis:req-manual:sv3:after1");
+});
+
+test("超过单页上限的已耗尽预算需求不会饿死后续活跃需求（游标分页推进）", async () => {
+  const exhaustedRows = Array.from({ length: 3 }, (_, idx) =>
+    requirement({
+      id: `11111111-1111-4111-8111-00000000000${idx + 1}`,
+      createdAt: `2026-10-20T10:00:0${idx}.000Z`,
+    }),
+  );
+  const freshRow = requirement({
+    id: "11111111-1111-4111-8111-000000000099",
+    createdAt: "2026-10-20T09:59:00.000Z",
+  });
+  const events = exhaustedRows.flatMap((row) => [
+    auditEvent({ entityId: row.id, safeDetails: { source: "scheduler", sourceVersion: 3, priorAnalysisVersion: 1 } }),
+    auditEvent({ entityId: row.id, safeDetails: { source: "scheduler", sourceVersion: 3, priorAnalysisVersion: 2 } }),
+    auditEvent({ entityId: row.id, safeDetails: { source: "scheduler", sourceVersion: 3, priorAnalysisVersion: 3 } }),
+  ]);
+  const h = harness({
+    failed: [...exhaustedRows, freshRow],
+    events,
+  });
+  const report = await h.run({ limit: 2 });
+  const enqueued = report.retried.filter((row) => row.action === "enqueued");
+  assert.deepEqual(enqueued.map((row) => row.requirementId), [freshRow.id]);
 });

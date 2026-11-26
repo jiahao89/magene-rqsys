@@ -17,11 +17,15 @@ rq-sys-miaoda/
 __pycache__/
 *.py[cod]
 
-# Local scratch artifacts (source drops, exports, generated manifests) must not be committed.
+# Local scratch artifacts (source drops, exports, generated manifests, Base dumps, screenshots) must not be committed.
 # Ticket Markdown under .scratch/*/issues/ stays trackable.
+*.manifest.json
+*.ndjson
 .scratch/*.zip
 .scratch/*.ndjson
 .scratch/*.manifest.json
+.scratch/**/base-*.json
+.scratch/**/*.png
 .scratch/dsh-*.md
 # Raw verification logs are local evidence; conclusions belong in specs/ or VERIFICATION-REPORT.md.
 .scratch/**/*.log

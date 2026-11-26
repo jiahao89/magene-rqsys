@@ -86,7 +86,21 @@ describe("PrdPromptSection (S2)", () => {
 
     expect(await screen.findByRole("heading", { name: "PRD 提示词" })).toBeInTheDocument();
     expect(await screen.findByText(/先生成一条成功的需求评估/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "前往需求评估" })).toHaveAttribute("href", "#req-assessment-heading");
+    window.history.replaceState(null, "", "/?requirement=req-1#group-requirements");
+    const targetHeading = document.createElement("h3");
+    targetHeading.id = "req-assessment-heading";
+    const scrollIntoView = vi.fn();
+    targetHeading.scrollIntoView = scrollIntoView;
+    document.body.appendChild(targetHeading);
+    try {
+      const jumpBtn = screen.getByRole("button", { name: "前往需求评估" });
+      fireEvent.click(jumpBtn);
+      expect(scrollIntoView).toHaveBeenCalled();
+      expect(window.location.hash).toBe("#group-requirements");
+    } finally {
+      targetHeading.remove();
+      window.history.replaceState(null, "", "/");
+    }
     expect(screen.getByLabelText("调研结论")).toBeDisabled();
     expect(screen.getByRole("button", { name: "生成 PRD 提示词" })).toBeDisabled();
     expect(fetchMock.mock.calls.some((call) => String(call[0]).endsWith("/prd-prompts") && (call[1] as RequestInit | undefined)?.method === "POST")).toBe(false);
@@ -203,5 +217,31 @@ describe("PrdPromptSection (S2)", () => {
     render(<PrdPromptSection requirementId="req-1" />);
     expect(await screen.findByText("还没有 PRD 提示词")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "生成 PRD 提示词" })).toBeEnabled();
+  });
+
+  it("resets notes and ignores stale responses when requirementId changes", async () => {
+    let resolveReq1: ((response: Response) => void) | undefined;
+    fetchMock.mockImplementation((input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path.includes("/req-1/prd-prompts")) {
+        return new Promise<Response>((resolve) => { resolveReq1 = resolve; });
+      }
+      if (path.includes("/req-2/prd-prompts")) {
+        return Promise.resolve(jsonOk({ items: [prdVersion(1, { notes: "需求2的调研结论", prompt: "## 角色与任务\nreq2" })] }));
+      }
+      if (path.endsWith("/assessments")) return Promise.resolve(jsonOk({ items: [assessment] }));
+      return Promise.resolve(jsonOk({}));
+    });
+
+    const { rerender } = render(<PrdPromptSection requirementId="req-1" />);
+    rerender(<PrdPromptSection requirementId="req-2" />);
+
+    expect(await screen.findByLabelText("PRD 提示词内容")).toHaveTextContent("req2");
+    expect(screen.getByLabelText("调研结论")).toHaveValue("需求2的调研结论");
+
+    // 迟到的 req-1 响应不得覆盖 req-2 的状态。
+    resolveReq1?.(jsonOk({ items: [prdVersion(9, { notes: "过期req1", prompt: "## 角色与任务\nreq1-stale" })] }));
+    await waitFor(() => expect(screen.getByLabelText("PRD 提示词内容")).toHaveTextContent("req2"));
+    expect(screen.getByLabelText("调研结论")).toHaveValue("需求2的调研结论");
   });
 });

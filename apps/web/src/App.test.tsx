@@ -19,7 +19,7 @@ describe("RQ-Sys local workbench", () => {
   it("shows the AI status block from the overview metrics payload", async () => {
     fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
       const path = typeof input === "string" ? input : new Request(input).url;
-      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/health/ready") return Response.json({ status: "ok", service: "rq-sys-api" });
       if (path === "/api/sources") return Response.json({ items: [] });
       if (path.startsWith("/api/batches")) return Response.json({ items: [] });
       if (path.startsWith("/api/requirements")) return Response.json({ items: [] });
@@ -42,7 +42,7 @@ describe("RQ-Sys local workbench", () => {
   it("degrades only the AI card when the stats aggregation is unavailable", async () => {
     fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
       const path = typeof input === "string" ? input : new Request(input).url;
-      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/health/ready") return Response.json({ status: "ok", service: "rq-sys-api" });
       if (path === "/api/sources") return Response.json({ items: [] });
       if (path.startsWith("/api/batches")) return Response.json({ items: [] });
       if (path === "/api/overview/metrics") return Response.json({
@@ -61,7 +61,7 @@ describe("RQ-Sys local workbench", () => {
   it("degrades only the AI card when the payload has no ai block", async () => {
     fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
       const path = typeof input === "string" ? input : new Request(input).url;
-      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/health/ready") return Response.json({ status: "ok", service: "rq-sys-api" });
       if (path === "/api/sources") return Response.json({ items: [] });
       if (path.startsWith("/api/batches")) return Response.json({ items: [] });
       if (path === "/api/overview/metrics") return Response.json({ counts: { total: 311, pullSynced: 311, analysisAnalyzed: 0, ownerResolved: 0, pushPushed: 0, failed: 0 } });
@@ -77,7 +77,7 @@ describe("RQ-Sys local workbench", () => {
   it("keeps the overview rendered when the metrics request fails", async () => {
     fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
       const path = typeof input === "string" ? input : new Request(input).url;
-      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/health/ready") return Response.json({ status: "ok", service: "rq-sys-api" });
       if (path === "/api/overview/metrics") return Response.json({ error: { code: "UNAVAILABLE", message: "temporarily unavailable" } }, { status: 503 });
       return Response.json({ items: [], nextCursor: null });
     });
@@ -91,7 +91,7 @@ describe("RQ-Sys local workbench", () => {
   it("uses full-dataset metrics instead of the current requirement page size", async () => {
     fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
       const path = typeof input === "string" ? input : new Request(input).url;
-      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/health/ready") return Response.json({ status: "ok", service: "rq-sys-api" });
       if (path === "/api/sources") return Response.json({ items: [] });
       if (path.startsWith("/api/batches")) return Response.json({ items: [] });
       if (path.startsWith("/api/requirements")) return Response.json({ items: [{ id: "req-1", sourceRequirementId: "tb-1", title: "One visible row", sourceVersion: 1, pipeline: { pull: "synced", analysis: "pending", owner: "pending_mapping", push: "pending" } }] });
@@ -108,7 +108,7 @@ describe("RQ-Sys local workbench", () => {
   it("shows priority grade counts and scoring ranges on the overview", async () => {
     fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
       const path = typeof input === "string" ? input : new Request(input).url;
-      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/health/ready") return Response.json({ status: "ok", service: "rq-sys-api" });
       if (path === "/api/sources") return Response.json({ items: [] });
       if (path.startsWith("/api/batches")) return Response.json({ items: [] });
       if (path.startsWith("/api/requirements")) return Response.json({ items: [] });
@@ -134,7 +134,7 @@ describe("RQ-Sys local workbench", () => {
   it("drills a priority card down into the requirement pool triage view", async () => {
     fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
       const path = typeof input === "string" ? input : new Request(input).url;
-      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/health/ready") return Response.json({ status: "ok", service: "rq-sys-api" });
       if (path === "/api/sources") return Response.json({ items: [] });
       if (path.startsWith("/api/batches")) return Response.json({ items: [] });
       if (path === "/api/overview/metrics") return Response.json({ counts: { total: 315, pullSynced: 315, analysisAnalyzed: 315, ownerResolved: 315, pushPushed: 312, pushFailed: 0, pushPending: 3, failed: 0, priority: { P0: 2, P1: 3, P2: 4, P3: 5, scored: 6, legacy: 8, unscored: 301 }, priorityRule: { version: 2, thresholds: { p0: 45, p1: 25, p2: 10 }, formulaText: "U=pain×frequency; ..." } } });
@@ -156,7 +156,7 @@ describe("RQ-Sys local workbench", () => {
   it("does not render priority cards as links when grade statistics are unavailable", async () => {
     fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
       const path = typeof input === "string" ? input : new Request(input).url;
-      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/health/ready") return Response.json({ status: "ok", service: "rq-sys-api" });
       if (path === "/api/sources") return Response.json({ items: [] });
       if (path.startsWith("/api/batches")) return Response.json({ items: [] });
       if (path === "/api/overview/metrics") return Response.json({ counts: { total: 12, pullSynced: 12, analysisAnalyzed: 8, ownerResolved: 9, pushPushed: 6, failed: 2 } });
@@ -180,7 +180,7 @@ describe("RQ-Sys local workbench", () => {
   it("opens the SOP page from the left menu and renders role checklists", async () => {
     fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
       const path = typeof input === "string" ? input : new Request(input).url;
-      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/health/ready") return Response.json({ status: "ok", service: "rq-sys-api" });
       if (path === "/api/overview/metrics") return Response.json({ counts: { total: 0, pullSynced: 0, analysisAnalyzed: 0, ownerResolved: 0, pushPushed: 0, failed: 0 } });
       return Response.json({ items: [], nextCursor: null });
     });
@@ -197,7 +197,7 @@ describe("RQ-Sys local workbench", () => {
   it("loads source configuration from the API and can request a manual sync", async () => {
     fetchMock.mockImplementation(async (input) => {
       const path = typeof input === "string" ? input : new Request(input).url;
-      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/health/ready") return Response.json({ status: "ok", service: "rq-sys-api" });
       if (path === "/api/sources") return Response.json({ items: [{
         id: "source-1", projectId: "project-1", projectName: "产品需求", requirementTypeId: "req-type",
         enabled: true, schedule: { enabled: false, weekday: null, time: null, timezone: null },
@@ -233,7 +233,7 @@ describe("RQ-Sys local workbench", () => {
   it("surfaces the server rejection on source save without inventing a local role model", async () => {
     fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
       const path = typeof input === "string" ? input : new Request(input).url;
-      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/health/ready") return Response.json({ status: "ok", service: "rq-sys-api" });
       if (path === "/api/sources") {
         if (init?.method === "POST") return Response.json({ error: { code: "FORBIDDEN", message: "Denied." } }, { status: 403 });
         return Response.json({ items: [] });
@@ -253,7 +253,7 @@ describe("RQ-Sys local workbench", () => {
   it("shows the configured plan and its next planned time from the source schedule", async () => {
     fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
       const path = typeof input === "string" ? input : new Request(input).url;
-      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/health/ready") return Response.json({ status: "ok", service: "rq-sys-api" });
       if (path === "/api/sources") return Response.json({ items: [{
         id: "source-1", projectName: "产品需求", enabled: true,
         schedule: { enabled: true, weekday: 1, time: "09:00", timezone: "Asia/Shanghai" },
@@ -273,7 +273,7 @@ describe("RQ-Sys local workbench", () => {
   it("reports why a saved schedule cannot produce a next run instead of guessing one", async () => {
     fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
       const path = typeof input === "string" ? input : new Request(input).url;
-      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/health/ready") return Response.json({ status: "ok", service: "rq-sys-api" });
       if (path === "/api/sources") return Response.json({ items: [{
         id: "source-1", projectName: "产品需求", enabled: true,
         schedule: { enabled: true, weekday: 1, time: "09:00", timezone: "Not/AZone" },
@@ -290,7 +290,7 @@ describe("RQ-Sys local workbench", () => {
   it("opens the function module directory and shows its current owners", async () => {
     fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
       const path = typeof input === "string" ? input : new Request(input).url;
-      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/health/ready") return Response.json({ status: "ok", service: "rq-sys-api" });
       if (path === "/api/sources" || path === "/api/batches" || path === "/api/requirements" || path === "/api/rules/priority" || path === "/api/rules/dictionary") return Response.json({ items: [] });
       if (path === "/api/modules") return Response.json({ version: 4, items: [{ name: "地图", personName: "盛永帮" }] });
       if (path === "/api/people") return Response.json({ items: [{ name: "盛永帮" }] });
@@ -311,7 +311,7 @@ describe("RQ-Sys local workbench", () => {
     const row = { id: "req-1", sourceRequirementId: "tb-1", title: "需要报表", sourceVersion: 2, pipeline: { pull: "synced", analysis: "analyzed", owner: "auto_mapped", push: "pushed" } };
     fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
       const path = typeof input === "string" ? input : new Request(input).url;
-      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/health/ready") return Response.json({ status: "ok", service: "rq-sys-api" });
       if (path === "/api/sources" || path.startsWith("/api/batches")) return Response.json({ items: [] });
       if (path === "/api/requirements/req-1") return Response.json({ ...row, analysis: null, analyses: [] });
       if (path.startsWith("/api/requirements")) return Response.json({ items: [row], nextCursor: null });
@@ -334,7 +334,7 @@ describe("RQ-Sys local workbench", () => {
     const row = { id: "group-req-1", sourceRequirementId: "tb-9", title: "集团需求", sourceVersion: 1, pipeline: { pull: "synced", analysis: "analyzed", owner: "auto_mapped", push: "pushed" }, pool: "group" };
     fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
       const path = typeof input === "string" ? input : new Request(input).url;
-      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/health/ready") return Response.json({ status: "ok", service: "rq-sys-api" });
       if (path === "/api/sources" || path.startsWith("/api/batches")) return Response.json({ items: [] });
       if (path.startsWith("/api/requirements/source-counts")) return Response.json({ counts: { all: 191 } });
       if (path === "/api/requirements/group-req-1") return Response.json({ ...row, analysis: null, analyses: [] });
@@ -396,7 +396,7 @@ describe("RQ-Sys local workbench", () => {
   it("consolidates people and owner mappings into one team page with tabs", async () => {
     fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
       const path = typeof input === "string" ? input : new Request(input).url;
-      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/health/ready") return Response.json({ status: "ok", service: "rq-sys-api" });
       if (path === "/api/people") return Response.json({ items: [{ name: "贾浩", feishuUserId: null, feishuIdType: null, boundAt: null, bindingConflict: false }] });
       if (path === "/api/mappings") return Response.json({ items: [] });
       if (path.startsWith("/api/requirements")) return Response.json({ items: [], nextCursor: null });
@@ -427,7 +427,7 @@ describe("RQ-Sys local workbench", () => {
   it("keeps batches and audit under one sync records page with tabs", async () => {
     fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
       const path = typeof input === "string" ? input : new Request(input).url;
-      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/health/ready") return Response.json({ status: "ok", service: "rq-sys-api" });
       return Response.json({ items: [], nextCursor: null });
     });
 
@@ -443,7 +443,7 @@ describe("RQ-Sys local workbench", () => {
   it("keeps the advanced sync item disabled and inert while the API is unavailable", async () => {
     fetchMock.mockImplementation(async (input) => {
       const path = typeof input === "string" ? input : new Request(input).url;
-      if (path === "/api/health") return new Response("{}", { status: 500 });
+      if (path === "/api/health/ready") return new Response("{}", { status: 500 });
       return Response.json({ items: [] });
     });
     render(<App />);
@@ -489,7 +489,7 @@ describe("RQ-Sys local workbench", () => {
   it("opens the requirement pool with the matching owner filter from its dashboard todo", async () => {
     fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
       const path = typeof input === "string" ? input : new Request(input).url;
-      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/health/ready") return Response.json({ status: "ok", service: "rq-sys-api" });
       if (path === "/api/sources") return Response.json({ items: [] });
       if (path.startsWith("/api/batches")) return Response.json({ items: [] });
       if (path === "/api/overview/metrics") return Response.json({ counts: { total: 12, pullSynced: 12, analysisAnalyzed: 8, ownerResolved: 9, pushPushed: 6, failed: 2 } });
@@ -507,7 +507,7 @@ describe("RQ-Sys local workbench", () => {
   it("opens the failed push filter from its dashboard todo", async () => {
     fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
       const path = typeof input === "string" ? input : new Request(input).url;
-      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/health/ready") return Response.json({ status: "ok", service: "rq-sys-api" });
       if (path === "/api/sources") return Response.json({ items: [] });
       if (path.startsWith("/api/batches")) return Response.json({ items: [] });
       if (path === "/api/overview/metrics") return Response.json({ counts: { total: 12, pullSynced: 12, analysisAnalyzed: 8, ownerResolved: 9, pushPushed: 6, failed: 2 } });
@@ -524,7 +524,7 @@ describe("RQ-Sys local workbench", () => {
   it("opens the group requirements pool from the sidebar with its own scope and count", async () => {
     fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
       const path = typeof input === "string" ? input : new Request(input).url;
-      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/health/ready") return Response.json({ status: "ok", service: "rq-sys-api" });
       if (path === "/api/sources") return Response.json({ items: [] });
       if (path.startsWith("/api/batches")) return Response.json({ items: [] });
       if (path === "/api/overview/metrics") return Response.json({ counts: { total: 12, pullSynced: 12, analysisAnalyzed: 8, ownerResolved: 9, pushPushed: 6, failed: 2 } });
@@ -548,7 +548,7 @@ describe("RQ-Sys local workbench", () => {
     const row = { id: "req-1", sourceRequirementId: "tb-1", title: "产品池需求标题", sourceVersion: 2, pipeline: { pull: "synced", analysis: "analyzed", owner: "auto_mapped", push: "pushed" }, ownerName: "Ada", updatedAt: "2026-10-09T00:00:00.000Z", source: { created: "2026-10-08T00:00:00.000Z" } };
     fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
       const path = typeof input === "string" ? input : new Request(input).url;
-      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/health/ready") return Response.json({ status: "ok", service: "rq-sys-api" });
       if (path === "/api/sources") return Response.json({ items: [] });
       if (path.startsWith("/api/batches")) return Response.json({ items: [] });
       if (path === "/api/overview/metrics") return Response.json({ counts: { total: 1, pullSynced: 1, analysisAnalyzed: 1, ownerResolved: 1, pushPushed: 1, failed: 0 } });
@@ -574,7 +574,7 @@ describe("RQ-Sys local workbench", () => {
   it("does not present unavailable dashboard counts as zero", async () => {
     fetchMock.mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
       const path = typeof input === "string" ? input : new Request(input).url;
-      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/health/ready") return Response.json({ status: "ok", service: "rq-sys-api" });
       if (path === "/api/overview/metrics") return Response.json({ error: { code: "UNAVAILABLE", message: "temporarily unavailable" } }, { status: 503 });
       return Response.json({ items: [], nextCursor: null });
     });
@@ -589,7 +589,7 @@ describe("RQ-Sys local workbench", () => {
   it("shows the my-requirements card with pool counts, links it to the same route as the menu, and opens the page", async () => {
     fetchMock.mockImplementation(async (input) => {
       const path = typeof input === "string" ? input : new Request(input).url;
-      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/health/ready") return Response.json({ status: "ok", service: "rq-sys-api" });
       if (path === "/api/requirements/mine/counts") return Response.json({ identityResolved: true, product: 8, group: 4, total: 12, suppressed: 2 });
       if (path.startsWith("/api/requirements/mine?")) return Response.json({ items: [], nextCursor: null, identityResolved: true });
       return Response.json({ items: [], nextCursor: null });
@@ -613,7 +613,7 @@ describe("RQ-Sys local workbench", () => {
     window.history.replaceState(null, "", "/?stage=mine&pool=group#my-requirements");
     fetchMock.mockImplementation(async (input) => {
       const path = typeof input === "string" ? input : new Request(input).url;
-      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/health/ready") return Response.json({ status: "ok", service: "rq-sys-api" });
       if (path === "/api/requirements/mine/counts") return Response.json({ error: { code: "DEPENDENCY_UNAVAILABLE", message: "upstream" } }, { status: 503 });
       if (path.startsWith("/api/requirements/mine?")) return Response.json({ items: [], nextCursor: null, identityResolved: false });
       return Response.json({ items: [], nextCursor: null });
@@ -631,7 +631,7 @@ describe("RQ-Sys local workbench", () => {
   it("opens the recycle bin route with the deleted=true list payload", async () => {
     fetchMock.mockImplementation(async (input) => {
       const path = typeof input === "string" ? input : new Request(input).url;
-      if (path === "/api/health") return Response.json({ status: "ok", service: "rq-sys-api" });
+      if (path === "/api/health/ready") return Response.json({ status: "ok", service: "rq-sys-api" });
       if (path.startsWith("/api/requirements?deleted=true")) return Response.json({ items: [], nextCursor: null, identityResolved: true });
       if (path === "/api/requirements/mine/counts") return Response.json({ identityResolved: true, product: 0, group: 0, total: 0, suppressed: 0 });
       return Response.json({ items: [], nextCursor: null });
@@ -644,5 +644,36 @@ describe("RQ-Sys local workbench", () => {
     expect(window.location.hash).toBe("#recycle-bin");
     expect(await screen.findByText("回收站是空的")).toBeInTheDocument();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/api/requirements?deleted=true&limit=25"), expect.anything()));
+  });
+
+  it("keeps the current hash route when clicking the skip-link", async () => {
+    window.history.replaceState(null, "", "/#sources");
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/health/ready") return Response.json({ status: "ready" });
+      if (path === "/api/overview/metrics") return Response.json({ counts: { total: 0, pullSynced: 0, analysisAnalyzed: 0, ownerResolved: 0, pushPushed: 0, failed: 0, pushFailed: 0, pushPending: 0 } });
+      return Response.json({ items: [], nextCursor: null });
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { level: 1, name: "数据源与计划" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("link", { name: "跳到主要内容" }));
+    expect(window.location.hash).toBe("#sources");
+    expect(screen.getByRole("heading", { level: 1, name: "数据源与计划" })).toBeInTheDocument();
+  });
+
+  it("uses pushFailed (not overall failed) for the push-failed todo card danger tone", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/health/ready") return Response.json({ status: "ready" });
+      if (path === "/api/overview/metrics") return Response.json({
+        counts: { total: 10, pullSynced: 10, analysisAnalyzed: 7, ownerResolved: 10, pushPushed: 10, failed: 3, pushFailed: 0, pushPending: 0, suppressed: 0 },
+      });
+      return Response.json({ items: [], nextCursor: null });
+    });
+    render(<App />);
+    const pushFailedCard = await screen.findByRole("button", { name: /推送失败/ });
+    expect(pushFailedCard.className).toContain("is-ok");
+    expect(pushFailedCard.className).not.toContain("is-danger");
   });
 });

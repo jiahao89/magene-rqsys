@@ -254,8 +254,11 @@ server.listen(port, "0.0.0.0", () => {
 // 本地开发轮询循环：WORKER_POLL_MS 未设置时不启动（不作为生产调度证据；目标环境定时触发由妙搭 automation 承担）
 const workerPollMs = Number(process.env.WORKER_POLL_MS ?? 0);
 let workerTimer: NodeJS.Timeout | undefined;
+let workerTickInFlight = false;
 if (worker && repositories && workerPollMs > 0) {
   workerTimer = setInterval(() => {
+    if (workerTickInFlight) return;
+    workerTickInFlight = true;
     void (async () => {
       const now = new Date();
       // 先回收孤儿批次再建新批次：历史遗留的 running 批次会让并发守卫持续拒绝，
@@ -375,7 +378,9 @@ if (worker && repositories && workerPollMs > 0) {
         process.stderr.write(`ops alert failed: ${String(error)}\n`);
       }
       await worker.runOnce();
-    })().catch((error) => process.stderr.write(`worker tick failed: ${String(error)}\n`));
+    })()
+      .catch((error) => process.stderr.write(`worker tick failed: ${String(error)}\n`))
+      .finally(() => { workerTickInFlight = false; });
   }, workerPollMs);
   process.stdout.write(`Pipeline worker polling every ${workerPollMs}ms\n`);
 }

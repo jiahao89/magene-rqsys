@@ -6,9 +6,30 @@
 
 import { randomUUID } from "node:crypto";
 import type { RequirementQueryRepository, PersonMappingRepository, PipelineJobRepository, AuditEventRepository } from "../application/repositories.js";
+import type { PersonMappingRecord, RequirementRecord } from "../domain/persistence.js";
 import { normalizeOwnerName } from "../owner/mapping.js";
 import { isIntakeComplete } from "../domain/workflow.js";
 import { basePushIdempotencyKey } from "../application/idempotency-keys.js";
+
+/**
+ * 负责人映射解析：有 TB user_id 时优先按 ID 匹配；未命中且有执行人姓名时回落按规范化姓名匹配
+ * （人员页绑定的映射以 unique_name 落库且 teambition_user_id 为 NULL，必须能命中）。
+ */
+async function resolveExecutorMapping(
+  people: Pick<PersonMappingRepository, "resolveActive">,
+  requirement: Pick<RequirementRecord, "sourceConfigId" | "executorUserId" | "executorName">,
+): Promise<PersonMappingRecord | null> {
+  if (!requirement.sourceConfigId) return null;
+  if (requirement.executorUserId) {
+    const byId = await people.resolveActive(requirement.sourceConfigId, { tbUserId: requirement.executorUserId });
+    if (byId) return byId;
+  }
+  if (requirement.executorName?.trim()) {
+    const normalizedName = normalizeOwnerName(requirement.executorName);
+    if (normalizedName) return people.resolveActive(requirement.sourceConfigId, { normalizedName });
+  }
+  return null;
+}
 
 export interface AdvanceDeps {
   requirements: RequirementQueryRepository;
@@ -40,8 +61,7 @@ export function createAnalysisAdvancer(deps: AdvanceDeps) {
       // 没有人工指定、也没有 TB 执行人：可空负责人推送。
       if (req.pipeline.owner === "pending_mapping") await deps.requirements.setOwner(req.id, null, "not_required");
     } else {
-      const ownerLookup = req.executorUserId ? { tbUserId: req.executorUserId } : { normalizedName: normalizeOwnerName(req.executorName!) };
-      const mapping = req.sourceConfigId ? await deps.people.resolveActive(req.sourceConfigId, ownerLookup) : null;
+      const mapping = await resolveExecutorMapping(deps.people, req);
       if (mapping) {
         if (req.pipeline.owner === "pending_mapping") await deps.requirements.setOwner(req.id, mapping.feishuUserId, "auto_mapped");
       } else {
@@ -81,11 +101,7 @@ export function createSourceMetadataAdvancer(deps: AdvanceDeps, options: { now?:
     if (req.deletedAt) return "not_eligible";
 
     let ownerState = req.pipeline.owner;
-    const ownerLookup = req.executorUserId
-      ? { tbUserId: req.executorUserId }
-      : req.executorName
-        ? { normalizedName: normalizeOwnerName(req.executorName) }
-        : null;
+    const hasTbOwner = Boolean(req.executorUserId || req.executorName?.trim());
 
     if (req.manualOwner) {
       // 单条人工负责人优先：TB 执行人及其映射都不能覆盖这一条需求的人工指定。
@@ -93,7 +109,7 @@ export function createSourceMetadataAdvancer(deps: AdvanceDeps, options: { now?:
         await deps.requirements.setOwner(req.id, req.manualOwner.feishuUserId, "manually_mapped");
         ownerState = "manually_mapped";
       }
-    } else if (!ownerLookup) {
+    } else if (!hasTbOwner) {
       if (ownerState !== "not_required") {
         if (ownerState !== "pending_mapping") {
           await deps.requirements.setOwner(req.id, null, "pending_mapping");
@@ -103,7 +119,7 @@ export function createSourceMetadataAdvancer(deps: AdvanceDeps, options: { now?:
         ownerState = "not_required";
       }
     } else if (ownerState !== "manually_mapped") {
-      const mapping = req.sourceConfigId ? await deps.people.resolveActive(req.sourceConfigId, ownerLookup) : null;
+      const mapping = await resolveExecutorMapping(deps.people, req);
       if (!mapping) {
         if (ownerState !== "pending_mapping") {
           await deps.requirements.setOwner(req.id, null, "pending_mapping");

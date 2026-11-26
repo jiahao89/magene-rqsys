@@ -85,12 +85,15 @@ jobs:
 
       - name: Create release
         id: create
+        env:
+          INPUT_BRANCH: ${{ inputs.branch }}
+          INPUT_REASON: ${{ inputs.reason }}
         run: |
           set -euo pipefail
           out=$(lark-cli apps +release-create \
             --app-id "$APP_ID" \
-            --branch "${{ inputs.branch }}" \
-            --apply-reason "${{ inputs.reason }}")
+            --branch "$INPUT_BRANCH" \
+            --apply-reason "$INPUT_REASON")
           echo "$out"
           id=$(printf '%s' "$out" | python3 -c 'import sys,json;print(json.load(sys.stdin)["data"]["release_id"])')
           echo "release_id=$id" >> "$GITHUB_OUTPUT"

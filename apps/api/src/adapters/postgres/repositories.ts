@@ -81,6 +81,31 @@ const priorityRule=(r:any):PriorityRuleVersionRecord=>({id:r.id,version:r.versio
 async function appendAuditInTransaction(client:PoolClient,event:AuditEventInput,entityId:string){
 	await client.query("INSERT INTO audit_events(id,actor_id,event_type,entity_type,entity_id,result,safe_details,occurred_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)",[event.id,event.actorId,event.eventType,event.entityType,entityId,event.result,redactSafeDetails(event.safeDetails),event.occurredAt]);
 }
+// 0034：我的需求 / 删除权限的负责人归属判定（search / mineCounts / markDeleted 共用）：
+// 1. 人工负责人优先（manual_owner_feishu_user_id IS NOT NULL）；
+// 2. 否则按 TB 执行人 user_id 查活跃 person_mappings（存在活跃行时以此为准，要求目标唯一）；
+// 3. 按 TB user_id 无活跃行（如仅在人员页通过 unique_name 绑定）时回落规范化执行人姓名匹配。
+function ownerMatchSql(ownerParam:string):string{
+	const normExpr="lower(regexp_replace(btrim(r.executor_name),'\\s+',' ','g'))";
+	const tbActive="pm.source_config_id=r.source_config_id AND pm.active AND r.executor_user_id IS NOT NULL AND pm.teambition_user_id=r.executor_user_id";
+	const nameActive=`pm.source_config_id=r.source_config_id AND pm.active AND r.executor_name IS NOT NULL AND pm.normalized_name=${normExpr}`;
+	const uniqueTarget=(cond:string)=>`(EXISTS (SELECT 1 FROM person_mappings pm WHERE ${cond} AND pm.feishu_user_id=${ownerParam}::text AND pm.feishu_id_type='user_id') AND (SELECT count(DISTINCT pm.feishu_user_id||'|'||pm.feishu_id_type) FROM person_mappings pm WHERE ${cond})=1)`;
+	return `CASE WHEN r.manual_owner_feishu_user_id IS NOT NULL THEN (r.manual_owner_feishu_user_id=${ownerParam}::text AND r.manual_owner_feishu_id_type='user_id') WHEN EXISTS (SELECT 1 FROM person_mappings pm WHERE ${tbActive}) THEN ${uniqueTarget(tbActive)} ELSE ${uniqueTarget(nameActive)} END`;
+}
+function isPgUniqueViolation(error:unknown,constraint?:string):boolean{
+	let current=error;
+	const seen=new Set<object>();
+	for(let depth=0;depth<6&&typeof current==="object"&&current!==null&&!seen.has(current);depth+=1){
+		seen.add(current);
+		const candidate=current as{code?:unknown;constraint?:unknown;cause?:unknown;originalError?:unknown};
+		if(candidate.code==="23505"&&(!constraint||!candidate.constraint||candidate.constraint===constraint))return true;
+		current=candidate.cause??candidate.originalError;
+	}
+	return false;
+}
+const REQUIREMENT_LOCK_TTL_MS=60_000;
+const REQUIREMENT_LOCK_RENEW_MS=20_000;
+const REQUIREMENT_LOCK_WAIT_TIMEOUT_MS=30_000;
 // 0034/M7：审计 safeDetails 的 pool 与 HTTP 层同口径（无来源=产品池）。
 async function sourcePoolInTransaction(client:PoolClient,sourceConfigId:string|null):Promise<"product"|"group">{
 	if(!sourceConfigId)return "product";
@@ -129,11 +154,11 @@ export class PostgresSyncBatchRepository implements SyncBatchRepository{construc
       return rows[0]?batch(rows[0]):null;
     }catch(error){try{await c.query("ROLLBACK");}catch{/* 连接失效由 release 兜底 */}throw error;}finally{c.release();}
   }
-  async create(p:{sourceConfigId:string;triggerType:SyncTrigger;actorId:string|null;idempotencyKey:string;startedAt:string}){const c=await this.pool.connect();try{await c.query("BEGIN");await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0)) IS NULL AS lock_acquired",[p.sourceConfigId]);const existing=await c.query("SELECT * FROM sync_batches WHERE source_config_id=$1 AND idempotency_key=$2",[p.sourceConfigId,p.idempotencyKey]);if(existing.rows[0]){await c.query("COMMIT");return batch(existing.rows[0]);}const active=await c.query("SELECT 1 FROM sync_batches WHERE source_config_id=$1 AND status='running' LIMIT 1",[p.sourceConfigId]);if(active.rowCount)throw new ActiveBatchConflict();const{rows}=await c.query("INSERT INTO sync_batches(id,source_config_id,trigger_type,actor_id,idempotency_key,started_at) VALUES($1,$2,$3,$4,$5,$6) RETURNING *",[randomUUID(),p.sourceConfigId,p.triggerType,p.actorId,p.idempotencyKey,p.startedAt]);await c.query("COMMIT");return batch(rows[0]);}catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}}async get(id:string){const{rows}=await this.pool.query("SELECT * FROM sync_batches WHERE id=$1",[id]);return rows[0]?batch(rows[0]):null;}async findByIdempotencyKey(s:string,k:string){const{rows}=await this.pool.query("SELECT * FROM sync_batches WHERE source_config_id=$1 AND idempotency_key=$2",[s,k]);return rows[0]?batch(rows[0]):null;}async list(q:{status?:BatchState;pool?:SourcePool;since?:string;until?:string;limit:number;cursor?:{startedAt:string;id:string}}){const{rows}=await this.pool.query("SELECT b.* FROM sync_batches b WHERE ($1::text IS NULL OR b.status=$1) AND ($2::timestamptz IS NULL OR b.started_at >= $2) AND ($3::timestamptz IS NULL OR b.started_at <= $3) AND ($4::timestamptz IS NULL OR (b.started_at,b.id)<($4::timestamptz,$5::uuid)) AND EXISTS (SELECT 1 FROM source_configs sc WHERE sc.id=b.source_config_id AND sc.pool=$7::text) ORDER BY b.started_at DESC,b.id DESC LIMIT $6",[q.status??null,q.since??null,q.until??null,q.cursor?.startedAt??null,q.cursor?.id??null,q.limit+1,q.pool??"product"]);const more=rows.length>q.limit,page=rows.slice(0,q.limit);return{items:page.map(batch),nextCursor:more?encodeBatchCursor({startedAt:asDate(page.at(-1)!.started_at)!,id:String(page.at(-1)!.id)}):null};}async complete(id:string,r:{status:BatchState;totalCount:number;succeededCount:number;failedCount:number;filteredCount?:number;errorSummary:string|null;completedAt:string}){const{rows}=await this.pool.query("UPDATE sync_batches SET status=$2,total_count=$3,succeeded_count=$4,failed_count=$5,error_summary=$6,completed_at=$7,filtered_count=$8 WHERE id=$1 RETURNING *",[id,r.status,r.totalCount,r.succeededCount,r.failedCount,r.errorSummary,r.completedAt,r.filteredCount??0]);return rows[0]?batch(rows[0]):null;}
+  async create(p:{sourceConfigId:string;triggerType:SyncTrigger;actorId:string|null;idempotencyKey:string;startedAt:string}){const c=await this.pool.connect();try{await c.query("BEGIN");await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0)) IS NULL AS lock_acquired",[p.sourceConfigId]);const existing=await c.query("SELECT * FROM sync_batches WHERE source_config_id=$1 AND idempotency_key=$2",[p.sourceConfigId,p.idempotencyKey]);if(existing.rows[0]){await c.query("COMMIT");return batch(existing.rows[0]);}const active=await c.query("SELECT 1 FROM sync_batches WHERE source_config_id=$1 AND status='running' LIMIT 1",[p.sourceConfigId]);if(active.rowCount)throw new ActiveBatchConflict();const{rows}=await c.query("INSERT INTO sync_batches(id,source_config_id,trigger_type,actor_id,idempotency_key,started_at) VALUES($1,$2,$3,$4,$5,$6) RETURNING *",[randomUUID(),p.sourceConfigId,p.triggerType,p.actorId,p.idempotencyKey,p.startedAt]);await c.query("COMMIT");return batch(rows[0]);}catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}}async get(id:string){const{rows}=await this.pool.query("SELECT * FROM sync_batches WHERE id=$1",[id]);return rows[0]?batch(rows[0]):null;}async findByIdempotencyKey(s:string,k:string){const{rows}=await this.pool.query("SELECT * FROM sync_batches WHERE source_config_id=$1 AND idempotency_key=$2",[s,k]);return rows[0]?batch(rows[0]):null;}async list(q:{status?:BatchState;pool?:SourcePool;since?:string;until?:string;limit:number;cursor?:{startedAt:string;id:string}}){const{rows}=await this.pool.query("SELECT b.* FROM sync_batches b WHERE ($1::text IS NULL OR b.status=$1) AND ($2::timestamptz IS NULL OR b.started_at >= $2) AND ($3::timestamptz IS NULL OR b.started_at <= $3) AND ($4::timestamptz IS NULL OR (date_trunc('milliseconds', b.started_at AT TIME ZONE 'UTC'),b.id)<(date_trunc('milliseconds',$4::timestamptz AT TIME ZONE 'UTC'),$5::uuid)) AND EXISTS (SELECT 1 FROM source_configs sc WHERE sc.id=b.source_config_id AND sc.pool=$7::text) ORDER BY date_trunc('milliseconds', b.started_at AT TIME ZONE 'UTC') DESC,b.id DESC LIMIT $6",[q.status??null,q.since??null,q.until??null,q.cursor?.startedAt??null,q.cursor?.id??null,q.limit+1,q.pool??"product"]);const more=rows.length>q.limit,page=rows.slice(0,q.limit);return{items:page.map(batch),nextCursor:more?encodeBatchCursor({startedAt:asDate(page.at(-1)!.started_at)!,id:String(page.at(-1)!.id)}):null};}async complete(id:string,r:{status:BatchState;totalCount:number;succeededCount:number;failedCount:number;filteredCount?:number;errorSummary:string|null;completedAt:string}){const{rows}=await this.pool.query("UPDATE sync_batches SET status=$2,total_count=$3,succeeded_count=$4,failed_count=$5,error_summary=$6,completed_at=$7,filtered_count=$8 WHERE id=$1 RETURNING *",[id,r.status,r.totalCount,r.succeededCount,r.failedCount,r.errorSummary,r.completedAt,r.filteredCount??0]);return rows[0]?batch(rows[0]):null;}
 }
 export class PostgresSyncItemRepository implements SyncItemRepository{constructor(private readonly pool:Pool){}async upsert(p:{batchId:string;requirementId:string|null;teambitionRequirementId:string;action:SyncItemAction;status:"succeeded"|"failed";errorCode?:string;errorDetail?:string;startedAt:string;completedAt:string}){const{rows}=await this.pool.query("INSERT INTO sync_items(id,batch_id,requirement_id,teambition_requirement_id,action,status,error_code,error_detail,started_at,completed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(batch_id,teambition_requirement_id) DO UPDATE SET requirement_id=excluded.requirement_id,action=excluded.action,status=excluded.status,error_code=excluded.error_code,error_detail=excluded.error_detail,started_at=excluded.started_at,completed_at=excluded.completed_at /* A retry records its most recent orchestrator-measured start. */ RETURNING *",[randomUUID(),p.batchId,p.requirementId,p.teambitionRequirementId,p.action,p.status,p.errorCode??null,p.errorDetail??null,p.startedAt,p.completedAt]);return item(rows[0]);}async get(id:string){const{rows}=await this.pool.query("SELECT * FROM sync_items WHERE id=$1",[id]);return rows[0]?item(rows[0]):null;}async listByBatch(id:string){const{rows}=await this.pool.query("SELECT * FROM sync_items WHERE batch_id=$1 ORDER BY started_at,id",[id]);return rows.map(item);}}
 export class PostgresSourceSnapshotRepository implements SourceSnapshotRepository{constructor(private readonly pool:Pool){}async append(p:{requirementId:string;sourceVersion:number;sourceHash:string;substantiveHash:string;payload:Record<string,unknown>;isSubstantiveChange:boolean;capturedAt:string}){const{rows}=await this.pool.query("INSERT INTO source_snapshots(id,requirement_id,source_version,source_hash,substantive_hash,payload,is_substantive_change,captured_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(requirement_id,source_version) DO NOTHING RETURNING *",[randomUUID(),p.requirementId,p.sourceVersion,p.sourceHash,p.substantiveHash,p.payload,p.isSubstantiveChange,p.capturedAt]);if(rows[0])return snapshot(rows[0]);const q=await this.pool.query("SELECT * FROM source_snapshots WHERE requirement_id=$1 AND source_version=$2",[p.requirementId,p.sourceVersion]);return snapshot(q.rows[0]);}async latest(id:string){const{rows}=await this.pool.query("SELECT * FROM source_snapshots WHERE requirement_id=$1 ORDER BY source_version DESC LIMIT 1",[id]);return rows[0]?snapshot(rows[0]):null;}async getAtVersion(id:string,version:number){const{rows}=await this.pool.query("SELECT * FROM source_snapshots WHERE requirement_id=$1 AND source_version=$2",[id,version]);return rows[0]?snapshot(rows[0]):null;}}
-export class PostgresRequirementRepository implements RequirementQueryRepository{constructor(private readonly pool:Pool){}async upsertRequirement(sourceConfigId:string,externalId:string,d:RequirementRowWrite){
+export class PostgresRequirementRepository implements RequirementQueryRepository{private readonly localLocks=new Map<string,Promise<void>>();constructor(private readonly pool:Pool){}async upsertRequirement(sourceConfigId:string,externalId:string,d:RequirementRowWrite){
   const c=await this.pool.connect();
   try{
     await c.query("BEGIN");
@@ -159,7 +184,7 @@ export class PostgresRequirementRepository implements RequirementQueryRepository
     }
     const sourceChanged=created||old.source_hash!==hash;
     const values=[id,sourceConfigId,externalId,d.uniqueId,d.title,d.description,d.scope,d.acceptanceCriteria,d.proposerUserId,d.proposerName,d.executorUserId,d.executorName,d.statusId,d.createdAt,d.updatedAt,d.sourceUrl,JSON.stringify(d.attachmentRefs),JSON.stringify(d.customFields),JSON.stringify(d.payload),hash,d.substantiveHash,version,d.latestBatchId,platformRequirementId,d.productModel??null];
-    const saved=await c.query("INSERT INTO requirements(id,source_config_id,teambition_requirement_id,teambition_unique_id,title,description,scope,acceptance_criteria,proposer_user_id,proposer_name,executor_user_id,executor_name,source_status_id,source_created_at,source_updated_at,source_url,attachment_refs,source_custom_fields,source_payload,source_hash,substantive_hash,source_version,latest_batch_id,platform_requirement_id,product_model,pull_state,analysis_state,owner_state,push_state) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,'synced','pending','pending_mapping','pending') ON CONFLICT(source_config_id,teambition_requirement_id) DO UPDATE SET teambition_unique_id=excluded.teambition_unique_id,title=excluded.title,description=excluded.description,scope=excluded.scope,acceptance_criteria=excluded.acceptance_criteria,proposer_user_id=excluded.proposer_user_id,proposer_name=excluded.proposer_name,executor_user_id=excluded.executor_user_id,executor_name=excluded.executor_name,source_status_id=excluded.source_status_id,source_created_at=excluded.source_created_at,source_updated_at=excluded.source_updated_at,source_url=excluded.source_url,attachment_refs=excluded.attachment_refs,source_custom_fields=excluded.source_custom_fields,source_payload=excluded.source_payload,source_hash=excluded.source_hash,substantive_hash=excluded.substantive_hash,source_version=excluded.source_version,latest_batch_id=excluded.latest_batch_id,product_model=excluded.product_model,pull_state='synced',analysis_state=CASE WHEN requirements.substantive_hash IS DISTINCT FROM excluded.substantive_hash THEN 'pending' ELSE requirements.analysis_state END,owner_state=CASE WHEN requirements.executor_user_id IS DISTINCT FROM excluded.executor_user_id OR (requirements.executor_user_id IS NULL AND excluded.executor_user_id IS NULL AND requirements.executor_name IS DISTINCT FROM excluded.executor_name) THEN 'pending_mapping' ELSE requirements.owner_state END,push_state=CASE WHEN requirements.source_hash IS DISTINCT FROM excluded.source_hash THEN 'pending' ELSE requirements.push_state END,source_missing_since=NULL,last_seen_at=now(),updated_at=now() RETURNING id",values);
+    const saved=await c.query("INSERT INTO requirements(id,source_config_id,teambition_requirement_id,teambition_unique_id,title,description,scope,acceptance_criteria,proposer_user_id,proposer_name,executor_user_id,executor_name,source_status_id,source_created_at,source_updated_at,source_url,attachment_refs,source_custom_fields,source_payload,source_hash,substantive_hash,source_version,latest_batch_id,platform_requirement_id,product_model,pull_state,analysis_state,owner_state,push_state) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,'synced','pending','pending_mapping','pending') ON CONFLICT(source_config_id,teambition_requirement_id) DO UPDATE SET teambition_unique_id=excluded.teambition_unique_id,title=excluded.title,description=excluded.description,scope=excluded.scope,acceptance_criteria=excluded.acceptance_criteria,proposer_user_id=excluded.proposer_user_id,proposer_name=excluded.proposer_name,executor_user_id=excluded.executor_user_id,executor_name=excluded.executor_name,source_status_id=excluded.source_status_id,source_created_at=excluded.source_created_at,source_updated_at=excluded.source_updated_at,source_url=excluded.source_url,attachment_refs=excluded.attachment_refs,source_custom_fields=excluded.source_custom_fields,source_payload=excluded.source_payload,source_hash=excluded.source_hash,substantive_hash=excluded.substantive_hash,source_version=excluded.source_version,latest_batch_id=excluded.latest_batch_id,product_model=excluded.product_model,pull_state='synced',analysis_state=CASE WHEN requirements.substantive_hash IS DISTINCT FROM excluded.substantive_hash THEN 'pending' ELSE requirements.analysis_state END,owner_state=CASE WHEN requirements.owner_state='manually_mapped' THEN 'manually_mapped' WHEN requirements.executor_user_id IS DISTINCT FROM excluded.executor_user_id OR (requirements.executor_user_id IS NULL AND excluded.executor_user_id IS NULL AND requirements.executor_name IS DISTINCT FROM excluded.executor_name) THEN 'pending_mapping' ELSE requirements.owner_state END,push_state=CASE WHEN requirements.source_hash IS DISTINCT FROM excluded.source_hash THEN 'pending' ELSE requirements.push_state END,source_missing_since=NULL,last_seen_at=now(),updated_at=now() RETURNING id",values);
     const savedId=String(saved.rows[0].id);
     if(sourceChanged&&d.snapshot){
       await c.query("INSERT INTO source_snapshots(id,requirement_id,source_version,source_hash,substantive_hash,payload,is_substantive_change,captured_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(requirement_id,source_version) DO NOTHING",[randomUUID(),savedId,version,hash,d.substantiveHash,JSON.stringify(d.snapshot.payload),d.snapshot.isSubstantiveChange,d.snapshot.capturedAt]);
@@ -178,7 +203,14 @@ async updateManualRequirement(p:{requirementId:string;expectedSourceVersion:numb
   const c=await this.pool.connect();
   try{
     await c.query("BEGIN");
-    // 行锁先行：并发同键编辑在行锁上串行，之后回执检查才能正确重放/冲突（与 create 同理）。
+    // 先查回执：同键跨需求复用立即返回 key_conflict，不先抢无关需求的行锁；并发竞态由下方 23505 兜底。
+    const preReceipt=await c.query("SELECT requirement_id,request_hash,outcome,substantive_changed,source_version FROM requirement_edit_receipts WHERE idempotency_key=$1",[p.idempotencyKey]);
+    if(preReceipt.rows[0]){
+      const hit=preReceipt.rows[0];
+      await c.query("COMMIT");
+      if(String(hit.requirement_id)!==p.requirementId||String(hit.request_hash)!==p.requestHash) return{outcome:"key_conflict" as const};
+      return{outcome:"replay" as const,sourceVersion:Number(hit.source_version),substantiveChanged:Boolean(hit.substantive_changed)};
+    }
     const row=(await c.query("SELECT id,source_type,source_version,title,description,source_channel,product_model,requirement_type,constraint_notes,supplement_url,intake_module,source_payload,proposer_name,source_hash,substantive_hash FROM requirements WHERE id=$1 FOR UPDATE",[p.requirementId])).rows[0];
     const receipt=await c.query("SELECT requirement_id,request_hash,outcome,substantive_changed,source_version FROM requirement_edit_receipts WHERE idempotency_key=$1",[p.idempotencyKey]);
     if(receipt.rows[0]){
@@ -231,11 +263,23 @@ async updateManualRequirement(p:{requirementId:string;expectedSourceVersion:numb
       // 的同键作业重新排队（排队中/执行中的保持去重），既挡住重复入队又不丢最后一次改动。
       await c.query("INSERT INTO pipeline_jobs(id,job_type,dedupe_key,payload,available_at,max_attempts) VALUES($1,'base_push',$2,$3,now(),5) ON CONFLICT(dedupe_key) DO UPDATE SET status='queued',attempt_count=0,available_at=now(),locked_until=NULL,last_error_code=NULL,last_error_summary=NULL,payload=EXCLUDED.payload,updated_at=now() WHERE pipeline_jobs.status IN ('succeeded','failed','cancelled')",[randomUUID(),`base-push:${p.requirementId}:sv${currentVersion}:av${analysisVersion}:meta:${p.requestHash.slice(0,16)}`,JSON.stringify({requirementId:p.requirementId,actorId:p.actorId,sourceVersion:currentVersion,analysisVersion})]);
     }
-    await c.query("INSERT INTO audit_events(id,actor_id,event_type,entity_type,entity_id,result,safe_details,occurred_at) VALUES($1,$2,'intake.updated','requirement',$3,'succeeded',$4,now())",[randomUUID(),p.actorId,p.requirementId,JSON.stringify({sourceVersion:newVersion,substantive:definitionChanged,sourceType})]);
+    await c.query("INSERT INTO audit_events(id,actor_id,event_type,entity_type,entity_id,result,safe_details,occurred_at) VALUES($1,$2,'intake.updated','requirement',$3,'succeeded',$4,now())",[randomUUID(),p.actorId,p.requirementId,JSON.stringify(redactSafeDetails({sourceVersion:newVersion,substantive:definitionChanged,sourceType}))]);
     await c.query("INSERT INTO requirement_edit_receipts(idempotency_key,actor_id,request_hash,requirement_id,outcome,substantive_changed,source_version) VALUES($1,$2,$3,$4,'updated',$5,$6)",[p.idempotencyKey,p.actorId,p.requestHash,p.requirementId,definitionChanged,newVersion]);
     await c.query("COMMIT");
     return{outcome:"updated" as const,sourceVersion:newVersion,substantiveChanged:definitionChanged,replay:false as const};
-  }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}
+  }catch(error){
+    try{await c.query("ROLLBACK");}catch{/* 连接失效由 release 兜底 */}
+    if(isPgUniqueViolation(error,"requirement_edit_receipts_pkey")){
+      const raced=await this.pool.query("SELECT requirement_id,request_hash,outcome,substantive_changed,source_version FROM requirement_edit_receipts WHERE idempotency_key=$1",[p.idempotencyKey]);
+      const hit=raced.rows[0];
+      if(hit){
+        if(String(hit.requirement_id)!==p.requirementId||String(hit.request_hash)!==p.requestHash)return{outcome:"key_conflict" as const};
+        return{outcome:"replay" as const,sourceVersion:Number(hit.source_version),substantiveChanged:Boolean(hit.substantive_changed)};
+      }
+      return{outcome:"key_conflict" as const};
+    }
+    throw error;
+  }finally{c.release();}
 }
 // V02-T09：人工人群标签保存。多选（含明确空集）→ confirmed=true、版本递增；不改优先级/PM 状态、
 // 不触发 AI/推送/通知（调用方仅落库与审计）。期望版本不匹配返回冲突供前端恢复。
@@ -249,7 +293,7 @@ async setAudienceTags(requirementId:string,p:{tags:("L1"|"L2"|"L3"|"L4"|"L5"|"L6
     if(current!==p.expectedVersion){await c.query("COMMIT");return{outcome:"version_conflict" as const,currentVersion:current};}
     const next=current+1;
     await c.query("UPDATE requirements SET audience_tags=$2,audience_confirmed=true,audience_version=$3,updated_at=now() WHERE id=$1",[requirementId,JSON.stringify([...new Set(p.tags)]),next]);
-    await c.query("INSERT INTO audit_events(id,actor_id,event_type,entity_type,entity_id,result,safe_details,occurred_at) VALUES($1,$2,'audience.updated','requirement',$3,'succeeded',$4,now())",[randomUUID(),p.actorId,requirementId,JSON.stringify({fromVersion:current,toVersion:next,tags:[...new Set(p.tags)]})]);
+    await c.query("INSERT INTO audit_events(id,actor_id,event_type,entity_type,entity_id,result,safe_details,occurred_at) VALUES($1,$2,'audience.updated','requirement',$3,'succeeded',$4,now())",[randomUUID(),p.actorId,requirementId,JSON.stringify(redactSafeDetails({fromVersion:current,toVersion:next,tags:[...new Set(p.tags)]}))]);
     await c.query("COMMIT");
     return{outcome:"updated" as const,version:next};
   }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}
@@ -326,10 +370,14 @@ async createKanoRun(p:{requirementId:string;sourceVersion:number;audienceSnapsho
     const id=randomUUID();
     const inserted=(await c.query("INSERT INTO kano_runs(id,requirement_id,run_version,source_version,audience_snapshot,evidence_version,prompt_version,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *",[id,p.requirementId,next,p.sourceVersion,JSON.stringify(p.audienceSnapshot),p.evidenceVersion,p.promptVersion,p.createdBy])).rows[0];
     await c.query("INSERT INTO pipeline_jobs(id,job_type,dedupe_key,payload,available_at,max_attempts) VALUES($1,'kano_run',$2,$3,now(),1) ON CONFLICT(dedupe_key) DO NOTHING",[randomUUID(),`kano:${p.requirementId}:rv${next}`,JSON.stringify({kanoRunId:id,requirementId:p.requirementId})]);
-    await c.query("INSERT INTO audit_events(id,actor_id,event_type,entity_type,entity_id,result,safe_details,occurred_at) VALUES($1,$2,'kano.run_requested','requirement',$3,'succeeded',$4,now())",[randomUUID(),p.createdBy,p.requirementId,JSON.stringify({runVersion:next,evidenceVersion:p.evidenceVersion,sourceVersion:p.sourceVersion})]);
+    await c.query("INSERT INTO audit_events(id,actor_id,event_type,entity_type,entity_id,result,safe_details,occurred_at) VALUES($1,$2,'kano.run_requested','requirement',$3,'succeeded',$4,now())",[randomUUID(),p.createdBy,p.requirementId,JSON.stringify(redactSafeDetails({runVersion:next,evidenceVersion:p.evidenceVersion,sourceVersion:p.sourceVersion}))]);
     await c.query("COMMIT");
     return{outcome:"created" as const,run:kanoRun(inserted)};
-  }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}
+  }catch(error){
+    try{await c.query("ROLLBACK");}catch{/* 连接失效由 release 兜底 */}
+    if(isPgUniqueViolation(error,"kano_runs_single_running"))return{outcome:"active_run_exists" as const};
+    throw error;
+  }finally{c.release();}
 }
 async completeKanoRun(id:string,result:unknown,model:string|null){const{rows}=await this.pool.query("UPDATE kano_runs SET status='succeeded',result=$2,model=$3,completed_at=now() WHERE id=$1 AND status='running' RETURNING *",[id,JSON.stringify(result),model]);return rows[0]?kanoRun(rows[0]):null;}
 async failKanoRun(id:string,safeErrorCode:string,safeErrorSummary:string){const{rows}=await this.pool.query("UPDATE kano_runs SET status='failed',safe_error_code=$2,safe_error_summary=$3,completed_at=now() WHERE id=$1 AND status='running' RETURNING *",[id,safeErrorCode,safeErrorSummary]);return rows[0]?kanoRun(rows[0]):null;}
@@ -354,12 +402,12 @@ async createManualRequirement(p:{idempotencyKey:string;actorId:string;requestHas
     const sub=substantiveHash({title:p.title,description:p.description,scope:null,acceptanceCriteria:null,attachmentRefs:[]});
     const id=randomUUID();
     const ownerState=p.owner?"manually_mapped":"not_required";
-    await c.query("INSERT INTO requirements(id,source_type,source_channel,source_config_id,teambition_requirement_id,title,description,product_model,requirement_type,constraint_notes,supplement_url,intake_module,proposer_name,source_hash,substantive_hash,source_version,platform_requirement_id,pull_state,analysis_state,owner_state,push_state,manual_owner_feishu_user_id,manual_owner_feishu_id_type,manual_owner_name,manual_owner_assigned_by,manual_owner_assigned_at,source_payload) VALUES($1,'web_manual',$2,NULL,NULL,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,1,$13,'collected','pending',$14,'pending',$15,$16,$17,$18,$19,$20)",[id,p.sourceChannel,p.title,p.description,p.productModel??null,p.requirementType??null,p.constraintNotes??null,p.supplementUrl??null,p.intakeModule??null,p.proposerName??null,hash,sub,platformRequirementId,ownerState,p.owner?.feishuUserId??null,p.owner?.feishuIdType??null,p.owner?.name??null,p.actorId,p.owner?new Date().toISOString():null,JSON.stringify(payload)]);
+    await c.query("INSERT INTO requirements(id,source_type,source_channel,source_config_id,teambition_requirement_id,title,description,product_model,requirement_type,constraint_notes,supplement_url,intake_module,proposer_name,source_hash,substantive_hash,source_version,platform_requirement_id,pull_state,analysis_state,owner_state,push_state,manual_owner_feishu_user_id,manual_owner_feishu_id_type,manual_owner_name,manual_owner_assigned_by,manual_owner_assigned_at,source_payload) VALUES($1,'web_manual',$2,NULL,NULL,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,1,$13,'collected','pending',$14,'pending',$15,$16,$17,$18,$19,$20)",[id,p.sourceChannel,p.title,p.description,p.productModel??null,p.requirementType??null,p.constraintNotes??null,p.supplementUrl??null,p.intakeModule??null,p.proposerName??null,hash,sub,platformRequirementId,ownerState,p.owner?.feishuUserId??null,p.owner?.feishuIdType??null,p.owner?.name??null,p.owner?p.actorId:null,p.owner?new Date().toISOString():null,JSON.stringify(payload)]);
     await c.query("INSERT INTO source_snapshots(id,requirement_id,source_version,source_hash,substantive_hash,payload,is_substantive_change,captured_at) VALUES($1,$2,1,$3,$4,$5,true,now())",[randomUUID(),id,hash,sub,JSON.stringify(payload)]);
     await c.query("INSERT INTO requirement_intake_receipts(idempotency_key,actor_id,request_hash,requirement_id) VALUES($1,$2,$3,$4)",[p.idempotencyKey,p.actorId,p.requestHash,id]);
     await c.query("INSERT INTO pipeline_jobs(id,job_type,dedupe_key,payload,available_at,max_attempts) VALUES($1,'analysis',$2,$3,now(),5) ON CONFLICT(dedupe_key) DO NOTHING",[randomUUID(),`analysis:${id}:v1`,JSON.stringify({requirementId:id,sourceVersion:1,substantiveHash:sub,actorId:p.actorId})]);
     // 审计与需求同事务提交（V02-T04-AC04）：入库失败时整笔回滚，不留无审计的收录。
-    await c.query("INSERT INTO audit_events(id,actor_id,event_type,entity_type,entity_id,result,safe_details,occurred_at) VALUES($1,$2,'intake.created','requirement',$3,'succeeded',$4,now())",[randomUUID(),p.actorId,id,JSON.stringify({sourceType:"web_manual",sourceChannel:p.sourceChannel,...(p.intakeOrigin?{intakeOrigin:p.intakeOrigin}:{})})]);
+    await c.query("INSERT INTO audit_events(id,actor_id,event_type,entity_type,entity_id,result,safe_details,occurred_at) VALUES($1,$2,'intake.created','requirement',$3,'succeeded',$4,now())",[randomUUID(),p.actorId,id,JSON.stringify(redactSafeDetails({sourceType:"web_manual",sourceChannel:p.sourceChannel,...(p.intakeOrigin?{intakeOrigin:p.intakeOrigin}:{})}))]);
     await c.query("COMMIT");
     return{requirementId:id,platformRequirementId,replay:false};
   }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}
@@ -397,7 +445,7 @@ async createBaseFormRequirement(p:BaseFormRequirementInput){
     const savedId=String(inserted.rows[0].id);
     await c.query("INSERT INTO source_snapshots(id,requirement_id,source_version,source_hash,substantive_hash,payload,is_substantive_change,captured_at) VALUES($1,$2,1,$3,$4,$5,true,$6)",[randomUUID(),savedId,hash,sub,JSON.stringify(payload),p.capturedAt]);
     await c.query("INSERT INTO pipeline_jobs(id,job_type,dedupe_key,payload,available_at,max_attempts) VALUES($1,'analysis',$2,$3,$4,5) ON CONFLICT(dedupe_key) DO NOTHING",[randomUUID(),`analysis:${savedId}:v1`,JSON.stringify({requirementId:savedId,sourceVersion:1,substantiveHash:sub,actorId:null}),p.capturedAt]);
-    await c.query("INSERT INTO audit_events(id,actor_id,event_type,entity_type,entity_id,result,safe_details,occurred_at) VALUES($1,NULL,'intake.created','requirement',$2,'succeeded',$3,$4)",[randomUUID(),savedId,JSON.stringify({sourceType:"base_form",sourceChannel:p.sourceChannel,sourceExternalId:p.sourceExternalId}),p.capturedAt]);
+    await c.query("INSERT INTO audit_events(id,actor_id,event_type,entity_type,entity_id,result,safe_details,occurred_at) VALUES($1,NULL,'intake.created','requirement',$2,'succeeded',$3,$4)",[randomUUID(),savedId,JSON.stringify(redactSafeDetails({sourceType:"base_form",sourceChannel:p.sourceChannel,sourceExternalId:p.sourceExternalId})),p.capturedAt]);
     await c.query("COMMIT");
     return{requirementId:savedId,platformRequirementId,created:true};
   }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}
@@ -458,17 +506,17 @@ async search(q:{q?:string;executorName?:string;pullState?:PullState;analysisStat
 const recycle=q.deleted===true,prioritySort=!recycle&&q.sort==='priority_asc',limit=prioritySort?Math.min(q.limit,100):q.limit,cursor=prioritySort||recycle?undefined:q.cursor;const values:unknown[]=[q.q===undefined?null:escapeIlikePattern(q.q),q.executorName??null,q.pullState??null,q.analysisState??null,q.ownerState??null,q.pushState??null,q.batchId??null,q.since??null,q.until??null,cursor?.createdAt??null,cursor?.id??null,limit+1,q.processingState??null,q.priority??null,...(recycle?[]:[prioritySort?"priority_asc":null])];let sourceFilter="";
 if(q.source!==undefined){values.push(q.source);const n=values.length;sourceFilter=` AND (($${n}::text='teambition' AND r.source_type='teambition') OR ($${n}::text='web_manual' AND r.source_type='web_manual' AND COALESCE(r.source_payload->>'intakeOrigin','')<>'chat_paste') OR ($${n}::text='base_form' AND r.source_type='base_form') OR ($${n}::text='chat_paste' AND r.source_type='web_manual' AND r.source_payload->>'intakeOrigin'='chat_paste'))`;}// pool="all" 时整段不追加参数：SQL 里没有占位符的绑定参数会让 PostgreSQL 报 could not determine data type。
 let poolFilter="";if(q.pool!=="all"){values.push(q.pool??"product");const poolParam=values.length;poolFilter=` AND (($${poolParam}::text='product' AND (r.source_config_id IS NULL OR sc.pool='product')) OR ($${poolParam}::text='group' AND sc.pool='group'))`;}
-// 0034：我的需求（人工负责人优先；否则 TB 执行人经活跃映射指向该飞书 user_id）/ 回收站（只看本人删除，deleted_by=妙搭 userId）。
-let ownerFilter="";if(q.ownerFeishuUserId!==undefined){values.push(q.ownerFeishuUserId);const ownerParam=values.length;ownerFilter=` AND (CASE WHEN r.manual_owner_feishu_user_id IS NOT NULL THEN (r.manual_owner_feishu_user_id=$${ownerParam}::text AND r.manual_owner_feishu_id_type='user_id') ELSE (EXISTS (SELECT 1 FROM person_mappings pmx WHERE pmx.source_config_id=r.source_config_id AND pmx.teambition_user_id=r.executor_user_id AND pmx.active AND pmx.feishu_user_id=$${ownerParam}::text AND pmx.feishu_id_type='user_id') AND (SELECT count(DISTINCT pmo.feishu_user_id||'|'||pmo.feishu_id_type) FROM person_mappings pmo WHERE pmo.source_config_id=r.source_config_id AND pmo.teambition_user_id=r.executor_user_id AND pmo.active)=1) END)`;}
+// 0034：我的需求（人工负责人优先；否则 TB 执行人映射，无 TB 映射时回落规范化姓名）/ 回收站（只看本人删除，deleted_by=妙搭 userId）。
+let ownerFilter="";if(q.ownerFeishuUserId!==undefined){values.push(q.ownerFeishuUserId);const ownerParam=values.length;ownerFilter=` AND (${ownerMatchSql(`$${ownerParam}`)})`;}
 values.push(q.deleted===true);const deletedParam=values.length;const deletedFilter=` AND (($${deletedParam}::boolean AND r.deleted_at IS NOT NULL) OR (NOT $${deletedParam}::boolean AND r.deleted_at IS NULL))`;
 values.push(q.deletedBy??null);const deletedByParam=values.length;const deletedByFilter=` AND ($${deletedByParam}::text IS NULL OR r.deleted_by=$${deletedByParam}::text)`;
-// 回收站游标：与 ORDER BY (deleted_at DESC,id DESC) 同一组键，避免同毫秒跨页重复/漏行。
-values.push(q.deletedCursor?.deletedAt??null);const deletedCursorAt=values.length;values.push(q.deletedCursor?.id??null);const deletedCursorId=values.length;const deletedCursorFilter=` AND ($${deletedCursorAt}::timestamptz IS NULL OR (r.deleted_at,r.id)<($${deletedCursorAt}::timestamptz,$${deletedCursorId}::uuid))`;
-const{rows}=await this.pool.query("SELECT r.*, sv.priority AS current_score_priority FROM requirements r LEFT JOIN requirement_score_versions sv ON sv.id=r.current_score_version_id LEFT JOIN source_configs sc ON sc.id=r.source_config_id WHERE ($1::text IS NULL OR r.title ILIKE '%'||$1||'%') AND ($2::text IS NULL OR lower(btrim(r.executor_name))=lower(btrim($2))) AND ($3::text IS NULL OR r.pull_state=$3) AND ($4::text IS NULL OR r.analysis_state=$4) AND ($5::text IS NULL OR r.owner_state=$5) AND ($6::text IS NULL OR r.push_state=$6) AND ($7::uuid IS NULL OR r.latest_batch_id=$7) AND ($8::timestamptz IS NULL OR r.last_seen_at >= $8) AND ($9::timestamptz IS NULL OR r.last_seen_at <= $9) AND ($10::timestamptz IS NULL OR (date_trunc('milliseconds', r.created_at AT TIME ZONE 'UTC'),r.id)<(date_trunc('milliseconds',$10::timestamptz AT TIME ZONE 'UTC'),$11::uuid)) AND ($13::text IS NULL OR ($13::text='active' AND r.processing_state='active') OR ($13::text='suppressed' AND r.processing_state<>'active') OR r.processing_state=$13::text) AND ($14::text IS NULL OR COALESCE(r.priority_override, sv.priority)=$14::text)"+sourceFilter+poolFilter+ownerFilter+deletedFilter+deletedByFilter+deletedCursorFilter+(recycle?" ORDER BY r.deleted_at DESC,r.id DESC LIMIT $12":" ORDER BY CASE WHEN $15::text='priority_asc' THEN CASE COALESCE(r.priority_override, sv.priority) WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 WHEN 'P3' THEN 3 ELSE 4 END ELSE 0 END, date_trunc('milliseconds', r.created_at AT TIME ZONE 'UTC') DESC,r.id DESC LIMIT $12"),values);const more=rows.length>limit,page=rows.slice(0,limit);const last=page.at(-1);return{items:page.map(requirement),nextCursor:!more||!last||prioritySort?null:(recycle?encodeDeletedRequirementCursor({deletedAt:asDate(last.deleted_at)!,id:String(last.id)}):encodeRequirementCursor({createdAt:asDate(last.created_at)!,id:String(last.id)}))};}
-// 0034：我的需求计数（含已压制、不含已删除），按池拆分；owner=人工负责人或 TB 执行人映射。
+// 回收站游标：与 ORDER BY (date_trunc('milliseconds', deleted_at AT TIME ZONE 'UTC') DESC,id DESC) 同一组键，避免微秒截断导致跨页重复/漏行。
+values.push(q.deletedCursor?.deletedAt??null);const deletedCursorAt=values.length;values.push(q.deletedCursor?.id??null);const deletedCursorId=values.length;const deletedCursorFilter=` AND ($${deletedCursorAt}::timestamptz IS NULL OR (date_trunc('milliseconds', r.deleted_at AT TIME ZONE 'UTC'),r.id)<(date_trunc('milliseconds',$${deletedCursorAt}::timestamptz AT TIME ZONE 'UTC'),$${deletedCursorId}::uuid))`;
+const{rows}=await this.pool.query("SELECT r.*, sv.priority AS current_score_priority FROM requirements r LEFT JOIN requirement_score_versions sv ON sv.id=r.current_score_version_id LEFT JOIN source_configs sc ON sc.id=r.source_config_id WHERE ($1::text IS NULL OR r.title ILIKE '%'||$1||'%') AND ($2::text IS NULL OR lower(btrim(r.executor_name))=lower(btrim($2))) AND ($3::text IS NULL OR r.pull_state=$3) AND ($4::text IS NULL OR r.analysis_state=$4) AND ($5::text IS NULL OR r.owner_state=$5) AND ($6::text IS NULL OR r.push_state=$6) AND ($7::uuid IS NULL OR r.latest_batch_id=$7) AND ($8::timestamptz IS NULL OR r.last_seen_at >= $8) AND ($9::timestamptz IS NULL OR r.last_seen_at <= $9) AND ($10::timestamptz IS NULL OR (date_trunc('milliseconds', r.created_at AT TIME ZONE 'UTC'),r.id)<(date_trunc('milliseconds',$10::timestamptz AT TIME ZONE 'UTC'),$11::uuid)) AND ($13::text IS NULL OR ($13::text='active' AND r.processing_state='active') OR ($13::text='suppressed' AND r.processing_state<>'active') OR r.processing_state=$13::text) AND ($14::text IS NULL OR COALESCE(r.priority_override, sv.priority)=$14::text)"+sourceFilter+poolFilter+ownerFilter+deletedFilter+deletedByFilter+deletedCursorFilter+(recycle?" ORDER BY date_trunc('milliseconds', r.deleted_at AT TIME ZONE 'UTC') DESC,r.id DESC LIMIT $12":" ORDER BY CASE WHEN $15::text='priority_asc' THEN CASE COALESCE(r.priority_override, sv.priority) WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 WHEN 'P3' THEN 3 ELSE 4 END ELSE 0 END, date_trunc('milliseconds', r.created_at AT TIME ZONE 'UTC') DESC,r.id DESC LIMIT $12"),values);const more=rows.length>limit,page=rows.slice(0,limit);const last=page.at(-1);return{items:page.map(requirement),nextCursor:!more||!last||prioritySort?null:(recycle?encodeDeletedRequirementCursor({deletedAt:asDate(last.deleted_at)!,id:String(last.id)}):encodeRequirementCursor({createdAt:asDate(last.created_at)!,id:String(last.id)}))};}
+// 0034：我的需求计数（含已压制、不含已删除），按池拆分；owner=人工负责人或 TB 执行人映射（含姓名回落）。
 async mineCounts(ownerFeishuUserId:string){
-  // 口径：人工负责人优先；没有人工负责人时要求唯一活跃的 TB 执行人映射；已压制计入、已删除不计。
-  const owner=`CASE WHEN r.manual_owner_feishu_user_id IS NOT NULL THEN (r.manual_owner_feishu_user_id=$1 AND r.manual_owner_feishu_id_type='user_id') ELSE (EXISTS (SELECT 1 FROM person_mappings pmx WHERE pmx.source_config_id=r.source_config_id AND pmx.teambition_user_id=r.executor_user_id AND pmx.active AND pmx.feishu_user_id=$1 AND pmx.feishu_id_type='user_id') AND (SELECT count(DISTINCT pmo.feishu_user_id||'|'||pmo.feishu_id_type) FROM person_mappings pmo WHERE pmo.source_config_id=r.source_config_id AND pmo.teambition_user_id=r.executor_user_id AND pmo.active)=1) END`;
+  // 口径：人工负责人优先；否则按 TB 执行人 user_id 或规范化姓名要求唯一活跃映射；已压制计入、已删除不计。
+  const owner=ownerMatchSql("$1");
   const{rows}=await this.pool.query(`SELECT COUNT(*) FILTER (WHERE r.source_config_id IS NULL OR sc.pool='product')::int AS product,COUNT(*) FILTER (WHERE sc.pool='group')::int AS group_pool,COUNT(*) FILTER (WHERE r.processing_state<>'active')::int AS suppressed FROM requirements r LEFT JOIN source_configs sc ON sc.id=r.source_config_id WHERE r.deleted_at IS NULL AND (${owner})`,[ownerFeishuUserId]);
   const product=Number(rows[0]?.product??0),group=Number(rows[0]?.group_pool??0);
   return{product,group,total:product+group,suppressed:Number(rows[0]?.suppressed??0)};
@@ -476,7 +524,7 @@ async mineCounts(ownerFeishuUserId:string){
 // 0034/M7：删除与审计必须在同一事务；审计写失败整体回滚，不留半套状态。
 // M8：重放（同一个人重复删除/还原本来就没删）不产生新审计。
 async markDeleted(p:{requirementId:string;ownerFeishuUserId:string;deletedBy:string;at:string;audit?:{actorId:string;occurredAt:string}}){
-  const owner=`CASE WHEN r.manual_owner_feishu_user_id IS NOT NULL THEN (r.manual_owner_feishu_user_id=$3 AND r.manual_owner_feishu_id_type='user_id') ELSE (EXISTS (SELECT 1 FROM person_mappings pmx WHERE pmx.source_config_id=r.source_config_id AND pmx.teambition_user_id=r.executor_user_id AND pmx.active AND pmx.feishu_user_id=$3 AND pmx.feishu_id_type='user_id') AND (SELECT count(DISTINCT pmo.feishu_user_id||'|'||pmo.feishu_id_type) FROM person_mappings pmo WHERE pmo.source_config_id=r.source_config_id AND pmo.teambition_user_id=r.executor_user_id AND pmo.active)=1) END`;
+  const owner=ownerMatchSql("$3");
   const c=await this.pool.connect();
   try{
     await c.query("BEGIN");
@@ -540,7 +588,7 @@ async setOwner(requirementId:string,feishuUserId:string|null,state:OwnerState){
     }
     throw new Error("Requirement owner state changed concurrently; retry the operation.");
   }
-async assignManualOwner(requirementId:string,owner:Omit<RequirementManualOwner,"pushedFeishuUserId"|"assignmentVersion">){
+async assignManualOwner(requirementId:string,owner:Omit<RequirementManualOwner,"pushedFeishuUserId"|"assignmentVersion">,auditEvent?:AuditEventInput){
   const c=await this.pool.connect();
   try{
     await c.query("BEGIN");
@@ -550,18 +598,19 @@ async assignManualOwner(requirementId:string,owner:Omit<RequirementManualOwner,"
     // 重复分配同一负责人（同一 id 类型）是幂等操作：不递增 assignmentVersion，也不产生新的推送事件。
     const unchanged=rows[0].manual_owner_feishu_user_id===owner.feishuUserId&&rows[0].manual_owner_feishu_id_type===owner.feishuIdType;
     await c.query("UPDATE requirements SET owner_state='manually_mapped',manual_owner_feishu_user_id=$2,manual_owner_feishu_id_type=$3,manual_owner_name=$4,manual_owner_assigned_by=$5,manual_owner_assigned_at=$6,manual_owner_assignment_version=manual_owner_assignment_version+$7,updated_at=now() WHERE id=$1",[requirementId,owner.feishuUserId,owner.feishuIdType,owner.name,owner.assignedBy,owner.assignedAt,unchanged?0:1]);
+    if(auditEvent)await appendAuditInTransaction(c,auditEvent,requirementId);
     await c.query("COMMIT");
   }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}
 }
 async markManualOwnerPushed(requirementId:string,feishuUserId:string){await this.pool.query("UPDATE requirements SET manual_owner_pushed_feishu_user_id=$2,updated_at=now() WHERE id=$1 AND manual_owner_feishu_user_id=$2",[requirementId,feishuUserId]);}
-async releaseManualOwner(requirementId:string,state:OwnerState){const c=await this.pool.connect();try{await c.query("BEGIN");const{rows}=await c.query("SELECT owner_state FROM requirements WHERE id=$1 FOR UPDATE",[requirementId]);if(!rows[0])throw new Error(`Requirement not found: ${requirementId}`);const from=String(rows[0].owner_state) as OwnerState;if(from!==state&&!canTransition("owner",from,state)){assertTransition("owner",from,"pending_mapping");assertTransition("owner","pending_mapping",state);}await c.query("UPDATE requirements SET owner_state=$2,manual_owner_feishu_user_id=NULL,manual_owner_feishu_id_type=NULL,manual_owner_name=NULL,manual_owner_assigned_by=NULL,manual_owner_assigned_at=NULL,manual_owner_pushed_feishu_user_id=NULL,updated_at=now() WHERE id=$1",[requirementId,state]);await c.query("COMMIT");}catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}}
+async releaseManualOwner(requirementId:string,state:OwnerState,auditEvent?:AuditEventInput){const c=await this.pool.connect();try{await c.query("BEGIN");const{rows}=await c.query("SELECT owner_state FROM requirements WHERE id=$1 FOR UPDATE",[requirementId]);if(!rows[0])throw new Error(`Requirement not found: ${requirementId}`);const from=String(rows[0].owner_state) as OwnerState;if(from!==state&&!canTransition("owner",from,state)){assertTransition("owner",from,"pending_mapping");assertTransition("owner","pending_mapping",state);}await c.query("UPDATE requirements SET owner_state=$2,manual_owner_feishu_user_id=NULL,manual_owner_feishu_id_type=NULL,manual_owner_name=NULL,manual_owner_assigned_by=NULL,manual_owner_assigned_at=NULL,manual_owner_pushed_feishu_user_id=NULL,updated_at=now() WHERE id=$1",[requirementId,state]);if(auditEvent)await appendAuditInTransaction(c,auditEvent,requirementId);await c.query("COMMIT");}catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}}
 async clearManualOwner(requirementId:string){await this.pool.query("UPDATE requirements SET manual_owner_feishu_user_id=NULL,manual_owner_feishu_id_type=NULL,manual_owner_name=NULL,manual_owner_assigned_by=NULL,manual_owner_assigned_at=NULL,manual_owner_pushed_feishu_user_id=NULL,updated_at=now() WHERE id=$1",[requirementId]);}
 async markLastPushedOwner(requirementId:string,owner:{feishuUserId:string;feishuIdType:"open_id"|"user_id"|"union_id"}|null){await this.pool.query("UPDATE requirements SET last_pushed_owner_feishu_user_id=$2,last_pushed_owner_feishu_id_type=$3,updated_at=now() WHERE id=$1",[requirementId,owner?.feishuUserId??null,owner?.feishuIdType??null]);}
 async getResolution(requirementId:string){
     const{rows}=await this.pool.query("SELECT rr.decision,rr.review_state,rr.canonical_requirement_id,cr.platform_requirement_id AS canonical_platform_requirement_id,rr.canonical_tb_requirement_id,rr.reason,rr.version,rr.decided_by,rr.decided_at FROM requirement_resolutions rr JOIN requirements r ON r.source_config_id=rr.source_config_id AND r.teambition_requirement_id=rr.teambition_requirement_id LEFT JOIN requirements cr ON cr.id=rr.canonical_requirement_id WHERE r.id=$1",[requirementId]);
     return rows[0]?resolution(rows[0]):null;
   }
-  async decideResolution(p:{requirementId:string;decision:"duplicate"|"ignored"|"confirmed_unique";canonicalRequirementId:string|null;reason:string|null;actorId:string;expectedVersion:number;now:string}){
+  async decideResolution(p:{requirementId:string;decision:"duplicate"|"ignored"|"confirmed_unique";canonicalRequirementId:string|null;reason:string|null;actorId:string;expectedVersion:number;now:string;auditEvent?:AuditEventInput}){
     const c=await this.pool.connect();
     try{
       await c.query("BEGIN");
@@ -574,13 +623,15 @@ async getResolution(requirementId:string){
       const currentVersion=current.rows[0]?Number(current.rows[0].version):0;
       if(currentVersion!==p.expectedVersion){await c.query("ROLLBACK");return{outcome:"version_conflict" as const,version:currentVersion};}
       const{rows}=await c.query("INSERT INTO requirement_resolutions(id,source_config_id,teambition_requirement_id,decision,canonical_requirement_id,canonical_tb_requirement_id,review_state,reason,decided_by,decided_at,version) VALUES($1,$2,$3,$4,$5,$6,'confirmed',$7,$8,$9,1) ON CONFLICT(source_config_id,teambition_requirement_id) DO UPDATE SET decision=EXCLUDED.decision,canonical_requirement_id=EXCLUDED.canonical_requirement_id,canonical_tb_requirement_id=EXCLUDED.canonical_tb_requirement_id,review_state='confirmed',reason=EXCLUDED.reason,decided_by=EXCLUDED.decided_by,decided_at=EXCLUDED.decided_at,version=requirement_resolutions.version+1,updated_at=now() RETURNING version",[randomUUID(),sourceConfigId,tbId,p.decision,p.canonicalRequirementId??null,canonicalTbId,p.reason,p.actorId,p.now]);
+      const nextVersion=Number(rows[0].version);
       // 触发 BEFORE UPDATE 触发器，按决策表重算 processing_state（单一事实源）。
       await c.query("UPDATE requirements SET updated_at=now() WHERE id=$1",[p.requirementId]);
+      if(p.auditEvent)await appendAuditInTransaction(c,{...p.auditEvent,safeDetails:{...p.auditEvent.safeDetails,version:nextVersion}},p.requirementId);
       await c.query("COMMIT");
-      return{outcome:"saved" as const,version:Number(rows[0].version)};
+      return{outcome:"saved" as const,version:nextVersion};
     }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}
   }
-  async clearResolution(p:{requirementId:string;expectedVersion:number}){
+  async clearResolution(p:{requirementId:string;expectedVersion:number;auditEvent?:AuditEventInput}){
     const c=await this.pool.connect();
     try{
       await c.query("BEGIN");
@@ -592,25 +643,52 @@ async getResolution(requirementId:string){
       if(Number(current.rows[0].version)!==p.expectedVersion){await c.query("ROLLBACK");return{outcome:"version_conflict" as const,version:Number(current.rows[0].version)};}
       await c.query("DELETE FROM requirement_resolutions WHERE source_config_id=$1 AND teambition_requirement_id=$2",[sourceConfigId,tbId]);
       await c.query("UPDATE requirements SET updated_at=now() WHERE id=$1",[p.requirementId]);
+      if(p.auditEvent)await appendAuditInTransaction(c,p.auditEvent,p.requirementId);
       await c.query("COMMIT");
       return{outcome:"cleared" as const};
     }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}
   }
-  // V02-T26：人工优先级覆盖。null=清除（四列一起置空，CHECK 约束保证完整性）。
-  async setPriorityOverride(requirementId:string,p:{priority:PriorityLevel|null;reason:string|null;actorId:string;at:string}){
-    const{rows}=p.priority===null
-      ?await this.pool.query("UPDATE requirements SET priority_override=NULL,priority_override_reason=NULL,priority_override_actor_id=NULL,priority_override_at=NULL,updated_at=now() WHERE id=$1 RETURNING *",[requirementId])
-      :await this.pool.query("UPDATE requirements SET priority_override=$2,priority_override_reason=$3,priority_override_actor_id=$4,priority_override_at=$5,updated_at=now() WHERE id=$1 RETURNING *",[requirementId,p.priority,p.reason,p.actorId,p.at]);
-    if(!rows[0])return{outcome:"not_found" as const};
-    return{outcome:"saved" as const,override:requirement(rows[0]).priorityOverride??null};
+  // V02-T26：人工优先级覆盖。null=清除（四列一起置空，CHECK 约束保证完整性）；带 auditEvent 时同事务落审计。
+  async setPriorityOverride(requirementId:string,p:{priority:PriorityLevel|null;reason:string|null;actorId:string;at:string;auditEvent?:AuditEventInput}){
+    if(!p.auditEvent){
+      const{rows}=p.priority===null
+        ?await this.pool.query("UPDATE requirements SET priority_override=NULL,priority_override_reason=NULL,priority_override_actor_id=NULL,priority_override_at=NULL,updated_at=now() WHERE id=$1 RETURNING *",[requirementId])
+        :await this.pool.query("UPDATE requirements SET priority_override=$2,priority_override_reason=$3,priority_override_actor_id=$4,priority_override_at=$5,updated_at=now() WHERE id=$1 RETURNING *",[requirementId,p.priority,p.reason,p.actorId,p.at]);
+      if(!rows[0])return{outcome:"not_found" as const};
+      return{outcome:"saved" as const,override:requirement(rows[0]).priorityOverride??null};
+    }
+    const c=await this.pool.connect();
+    try{
+      await c.query("BEGIN");
+      const{rows}=p.priority===null
+        ?await c.query("UPDATE requirements SET priority_override=NULL,priority_override_reason=NULL,priority_override_actor_id=NULL,priority_override_at=NULL,updated_at=now() WHERE id=$1 RETURNING *",[requirementId])
+        :await c.query("UPDATE requirements SET priority_override=$2,priority_override_reason=$3,priority_override_actor_id=$4,priority_override_at=$5,updated_at=now() WHERE id=$1 RETURNING *",[requirementId,p.priority,p.reason,p.actorId,p.at]);
+      if(!rows[0]){await c.query("COMMIT");return{outcome:"not_found" as const};}
+      await appendAuditInTransaction(c,p.auditEvent,requirementId);
+      await c.query("COMMIT");
+      return{outcome:"saved" as const,override:requirement(rows[0]).priorityOverride??null};
+    }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}
   }
-  // V02-T26：分析补充上下文。null=清除（三列一起置空）。
-  async setAnalysisContext(requirementId:string,p:{context:string|null;actorId:string;at:string}){
-    const{rows}=p.context===null
-      ?await this.pool.query("UPDATE requirements SET analysis_context_note=NULL,analysis_context_updated_at=NULL,analysis_context_updated_by=NULL,updated_at=now() WHERE id=$1 RETURNING *",[requirementId])
-      :await this.pool.query("UPDATE requirements SET analysis_context_note=$2,analysis_context_updated_at=$3,analysis_context_updated_by=$4,updated_at=now() WHERE id=$1 RETURNING *",[requirementId,p.context,p.at,p.actorId]);
-    if(!rows[0])return{outcome:"not_found" as const};
-    return{outcome:"updated" as const,context:requirement(rows[0]).analysisContext??null};
+  // V02-T26：分析补充上下文。null=清除（三列一起置空）；带 auditEvent 时同事务落审计。
+  async setAnalysisContext(requirementId:string,p:{context:string|null;actorId:string;at:string;auditEvent?:AuditEventInput}){
+    if(!p.auditEvent){
+      const{rows}=p.context===null
+        ?await this.pool.query("UPDATE requirements SET analysis_context_note=NULL,analysis_context_updated_at=NULL,analysis_context_updated_by=NULL,updated_at=now() WHERE id=$1 RETURNING *",[requirementId])
+        :await this.pool.query("UPDATE requirements SET analysis_context_note=$2,analysis_context_updated_at=$3,analysis_context_updated_by=$4,updated_at=now() WHERE id=$1 RETURNING *",[requirementId,p.context,p.at,p.actorId]);
+      if(!rows[0])return{outcome:"not_found" as const};
+      return{outcome:"updated" as const,context:requirement(rows[0]).analysisContext??null};
+    }
+    const c=await this.pool.connect();
+    try{
+      await c.query("BEGIN");
+      const{rows}=p.context===null
+        ?await c.query("UPDATE requirements SET analysis_context_note=NULL,analysis_context_updated_at=NULL,analysis_context_updated_by=NULL,updated_at=now() WHERE id=$1 RETURNING *",[requirementId])
+        :await c.query("UPDATE requirements SET analysis_context_note=$2,analysis_context_updated_at=$3,analysis_context_updated_by=$4,updated_at=now() WHERE id=$1 RETURNING *",[requirementId,p.context,p.at,p.actorId]);
+      if(!rows[0]){await c.query("COMMIT");return{outcome:"not_found" as const};}
+      await appendAuditInTransaction(c,p.auditEvent,requirementId);
+      await c.query("COMMIT");
+      return{outcome:"updated" as const,context:requirement(rows[0]).analysisContext??null};
+    }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}
   }
   async markSourceMissing(p:{sourceConfigId:string;seenTeambitionIds:string[];now:string}){
     // 已标记的行不覆盖首次缺失时间；JSON 数组参数在妙搭 Drizzle 传输下与 pg 行为一致。
@@ -635,23 +713,58 @@ async setPushState(requirementId:string,state:PushState){
     }
     throw new Error("Requirement push state changed concurrently; retry the operation.");
   }
-// 同一需求的推送串行化：advisory lock 必须与事务在同一连接上取得，随 COMMIT/ROLLBACK 自动释放。
-// 事务保持打开期间，外层 fn 的普通查询仍由连接池执行；第二个调用会在取锁处等待第一个事务结束。
+// 同一需求的推送串行化（无连接池自死锁）：
+// 1. 进程内按 requirementId 串行队列，避免同进程重复轮询 DB；
+// 2. 跨实例使用 system_flags 原子租约（单条短 SQL 抢占 + 心跳续约 + finally 释放），
+//    外部 HTTP I/O 与 fn() 内部查询期间不占用任何连接池事务连接，兼容 pg.Pool 与妙搭 DrizzlePool。
+private async withLocalRequirementLock<T>(requirementId:string,fn:()=>Promise<T>):Promise<T>{
+  const previous=this.localLocks.get(requirementId)??Promise.resolve();
+  let release!:()=>void;
+  const current=new Promise<void>((resolve)=>{release=resolve;});
+  const tail=previous.then(()=>current);
+  this.localLocks.set(requirementId,tail);
+  await previous;
+  try{return await fn();}
+  finally{
+    release();
+    if(this.localLocks.get(requirementId)===tail)this.localLocks.delete(requirementId);
+  }
+}
 async withRequirementLock<T>(requirementId:string,fn:()=>Promise<T>):Promise<T>{
-  const c=await this.pool.connect();
-  try{
-    await c.query("BEGIN");
-    // pg_advisory_xact_lock 返回 void 列；妙搭的池包装层会对结果做 JSON 解析，
-    // 遇到无值的 void 列会抛 "Unexpected end of JSON input"，导致取锁失败、推送直接报错。
-    // 显式转成 text 让列有确定值（空串），既保持阻塞语义也不会被解析器噎住。
-    await c.query("SELECT pg_advisory_xact_lock(hashtext($1))::text AS locked",[requirementId]);
-    const result=await fn();
-    await c.query("COMMIT");
-    return result;
-  }catch(error){
-    try{await c.query("ROLLBACK");}catch{/* 连接已失效时由 release 兜底，不掩盖原始错误 */}
-    throw error;
-  }finally{c.release();}
+  return this.withLocalRequirementLock(requirementId,async()=>{
+    const lockName=`lock:requirement:${requirementId}`;
+    const owner=randomUUID();
+    const deadline=Date.now()+REQUIREMENT_LOCK_WAIT_TIMEOUT_MS;
+    let acquired=false;
+    while(!acquired){
+      const nowMs=Date.now();
+      const nowIso=new Date(nowMs).toISOString();
+      const expiresAt=new Date(nowMs+REQUIREMENT_LOCK_TTL_MS).toISOString();
+      const{rows}=await this.pool.query(
+        "INSERT INTO system_flags(name,value,updated_at) VALUES($1,$2::jsonb,$3::timestamptz) ON CONFLICT(name) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at WHERE (system_flags.value->>'expiresAt') IS NULL OR (system_flags.value->>'expiresAt')::timestamptz <= $3::timestamptz RETURNING name",
+        [lockName,JSON.stringify({owner,expiresAt}),nowIso],
+      );
+      if(rows.length>0){acquired=true;break;}
+      if(Date.now()>=deadline)throw new Error(`Requirement lock wait timed out for ${requirementId}`);
+      await new Promise((resolve)=>setTimeout(resolve,50));
+    }
+    const renewTimer=setInterval(()=>{
+      const nowMs=Date.now();
+      const nowIso=new Date(nowMs).toISOString();
+      const expiresAt=new Date(nowMs+REQUIREMENT_LOCK_TTL_MS).toISOString();
+      void this.pool.query(
+        "UPDATE system_flags SET value=$3::jsonb,updated_at=$4::timestamptz WHERE name=$1 AND value->>'owner'=$2",
+        [lockName,owner,JSON.stringify({owner,expiresAt}),nowIso],
+      ).catch(()=>{/* 续约失败由租约过期与调用方兜底 */});
+    },REQUIREMENT_LOCK_RENEW_MS);
+    renewTimer.unref?.();
+    try{return await fn();}
+    finally{
+      clearInterval(renewTimer);
+      try{await this.pool.query("DELETE FROM system_flags WHERE name=$1 AND value->>'owner'=$2",[lockName,owner]);}
+      catch{/* 释放失败不掩盖原始错误，租约 TTL 自动回收 */}
+    }
+  });
 }}
 export { PostgresAnalysisRunRepository };
 import { PostgresAnalysisRunRepository } from "./analysis-run-repository.js";
@@ -774,7 +887,7 @@ export class TeamDirectoryConflict extends Error {
 export class PostgresTeamDirectoryRepository implements TeamDirectoryRepository {
   constructor(private readonly pool: Pool) {}
   async listPeople(): Promise<TeamPersonRecord[]> {
-    const { rows } = await this.pool.query("SELECT id,owner_names,EXISTS(SELECT 1 FROM module_dictionary_versions WHERE status='published') AS has_dictionary FROM source_configs ORDER BY created_at,id LIMIT 1");
+    const { rows } = await this.pool.query("SELECT id,owner_names,EXISTS(SELECT 1 FROM module_dictionary_versions WHERE status='published') AS has_dictionary FROM source_configs WHERE pool='product' ORDER BY created_at,id LIMIT 1");
     if (!rows[0]) return [];
     return this.peopleWithBindings(this.pool, String(rows[0].id), this.effectiveRoster(rows[0]!));
   }
@@ -907,7 +1020,7 @@ export class PostgresTeamDirectoryRepository implements TeamDirectoryRepository 
     try {
       await client.query("BEGIN");
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended('module_dictionary_versions',0)) IS NULL AS lock_acquired");
-      const source = await client.query("SELECT id,owner_names FROM source_configs ORDER BY created_at,id LIMIT 1 FOR UPDATE");
+      const source = await client.query("SELECT id,owner_names FROM source_configs WHERE pool='product' ORDER BY created_at,id LIMIT 1 FOR UPDATE");
       if (!source.rows[0]) throw new TeamDirectoryConflict("请先配置 Teambition 数据源。");
       const dictionary = await client.query("SELECT version FROM module_dictionary_versions WHERE status='published' ORDER BY version DESC LIMIT 1 FOR UPDATE");
       const currentVersion = dictionary.rows[0] ? Number(dictionary.rows[0].version) : 0;
@@ -937,7 +1050,7 @@ export class PostgresTeamDirectoryRepository implements TeamDirectoryRepository 
     return names.length || row.has_dictionary ? names : [...DEFAULT_TEAM_MEMBERS];
   }
   private async lockSource(client: PoolClient) {
-    const { rows } = await client.query("SELECT id,owner_names FROM source_configs ORDER BY created_at,id LIMIT 1 FOR UPDATE");
+    const { rows } = await client.query("SELECT id,owner_names FROM source_configs WHERE pool='product' ORDER BY created_at,id LIMIT 1 FOR UPDATE");
     if (!rows[0]) throw new TeamDirectoryConflict("请先配置 Teambition 数据源。");
     return { id: String(rows[0].id), people: await this.effectivePeople(client, rows[0].owner_names) };
   }
@@ -1135,7 +1248,7 @@ async getOpsMetrics(p:{days:number;now:string;pool?:SourcePool}){
     (SELECT count(*) FROM requirement_score_versions v, w WHERE v.created_at>=w.since AND v.origin='ai' AND v.requirement_id IN (SELECT id FROM scoped_req))::int AS score_ai,
     (SELECT count(*) FROM requirement_score_versions v, w WHERE v.created_at>=w.since AND v.origin='manual' AND v.requirement_id IN (SELECT id FROM scoped_req))::int AS score_manual,
     (SELECT count(*) FROM requirement_score_versions v, w WHERE v.created_at>=w.since AND v.origin='ai_applied' AND v.requirement_id IN (SELECT id FROM scoped_req))::int AS score_ai_applied`,[since,pool]);
-  const failures=await this.pool.query("SELECT COALESCE(r.safe_error_code,'unknown') AS code,count(*)::int AS count FROM analysis_runs r WHERE r.started_at>=$1::timestamptz AND r.status='failed_retryable' AND EXISTS (SELECT 1 FROM requirements rq LEFT JOIN source_configs sc ON sc.id=rq.source_config_id WHERE rq.id=r.requirement_id AND (($2::text='product' AND (rq.source_config_id IS NULL OR sc.pool='product')) OR ($2::text='group' AND sc.pool='group'))) GROUP BY 1 ORDER BY 2 DESC,1 LIMIT 5",[since,pool]);
+  const failures=await this.pool.query("SELECT COALESCE(r.safe_error_code,'unknown') AS code,count(*)::int AS count FROM analysis_runs r WHERE r.started_at>=$1::timestamptz AND r.status='failed_retryable' AND EXISTS (SELECT 1 FROM requirements rq LEFT JOIN source_configs sc ON sc.id=rq.source_config_id WHERE rq.id=r.requirement_id AND rq.deleted_at IS NULL AND (($2::text='product' AND (rq.source_config_id IS NULL OR sc.pool='product')) OR ($2::text='group' AND sc.pool='group'))) GROUP BY 1 ORDER BY 2 DESC,1 LIMIT 5",[since,pool]);
   const row=rows[0]??{};const n=(v:unknown)=>Number(v??0);
   const rate=(num:number,den:number)=>den>0?Math.round((num/den)*1000)/10:null;
   const syncTotal=n(row.sync_total),analysisTotal=n(row.analysis_total),pushTotal=n(row.push_total);

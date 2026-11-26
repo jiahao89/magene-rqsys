@@ -66,7 +66,7 @@ export async function evaluateGates(params: {
   const counts = requirements ? await requirements.getPipelineCounts().catch(() => null) : null;
   const pushed = counts?.pushPushed ?? 0;
   const unpublishedMapping = requirements
-    ? await requirements.search({ ownerState: "pending_mapping", pushState: "pending", limit: 1 }).then((page) => page.items.length > 0).catch(() => true)
+    ? await requirements.search({ ownerState: "pending_mapping", pushState: "pending", processingState: "active", limit: 1 }).then((page) => page.items.length > 0).catch(() => true)
     : true;
   const rule = priorityRules ? await priorityRules.getPublished().catch(() => null) : null;
   const formulaType = rule ? (rule.rules as { formulaType?: unknown }).formulaType : null;

@@ -142,6 +142,14 @@ const ALLOWED_DETAIL_KEYS: readonly string[] = [
   // 0033：评估修复层触发记录（修复类型与模型名，不含模型输出内容）
   "repairs",
   "model",
+  // 优先级覆盖、补充上下文、重复撤销、手工编辑、Kano/PRD 提示词版本元数据（均为非 PII 原始类型）
+  "cleared",
+  "at",
+  "previous",
+  "substantive",
+  "runVersion",
+  "evidenceVersion",
+  "assessmentVersion",
 ];
 
 // 判断 safeDetails 键是否命中禁止模式。

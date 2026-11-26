@@ -76,3 +76,15 @@ test("拒绝确认非人工项与未知 Gate", async () => {
   assert.equal((await confirmGate({ flags: h.flags as never, audit: h.audit as never, id: "G3", confirmed: true, evidence: "x", actorId: "a", now: NOW })).outcome, "invalid");
   assert.equal((await confirmGate({ flags: h.flags as never, audit: h.audit as never, id: "G9", confirmed: true, evidence: "x", actorId: "a", now: NOW })).outcome, "invalid");
 });
+
+test("G3 只统计活跃（processingState=active）待匹配且未推送需求，已压制重复项不阻断 Gate", async () => {
+  const queries: Array<Record<string, unknown>> = [];
+  const h = harness();
+  h.requirements.search = async (query?: Record<string, unknown>) => {
+    queries.push(query ?? {});
+    return { items: [], nextCursor: null };
+  };
+  const result = await evaluate(h);
+  assert.equal(result.gates.find((g) => g.id === "G3")?.auto.status, "pass");
+  assert.deepEqual(queries, [{ ownerState: "pending_mapping", pushState: "pending", processingState: "active", limit: 1 }]);
+});

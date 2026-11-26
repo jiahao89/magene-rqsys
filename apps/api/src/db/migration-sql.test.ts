@@ -61,6 +61,22 @@ test("注释开头的迁移也能剥离：0008 起的迁移都是先写注释再
   assert.equal(/COMMIT\s*;\s*$/.test(sql), false);
 });
 
+test("COMMIT 后带行尾注释或尾随注释行时同样能正确剥离", () => {
+  const input = [
+    "-- header",
+    "BEGIN;",
+    "CREATE INDEX IF NOT EXISTS t_idx ON t (id);",
+    "COMMIT; -- end of migration",
+    "-- trailing note",
+    "  ",
+  ].join("\n");
+  const { sql, stripped } = stripTransactionWrapper(input);
+  assert.equal(stripped, true);
+  assert.match(sql, /CREATE INDEX IF NOT EXISTS t_idx/);
+  assert.equal(/\bBEGIN\s*;/i.test(sql), false);
+  assert.equal(/\bCOMMIT\s*;/i.test(sql), false);
+});
+
 test("仓库内每个带事务包装的迁移都能被剥离", async () => {
   const { readdir, readFile } = await import("node:fs/promises");
   const { resolve } = await import("node:path");

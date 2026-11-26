@@ -193,6 +193,13 @@ export class FeishuBitableClient implements BaseClient {
     throw new FeishuApiError("invalid_response", "field schema");
   }
 
+  /** 同时返回 TB 键与平台键字段，确保 resolveExisting 的跨键冲突检查（V02-T03-AC02）在生产环境生效。 */
+  private lookupFieldNames(): string[] {
+    const names = [this.config.keyFields.requirementId, this.config.keyFields.platformRequirementId]
+      .filter((name): name is string => typeof name === "string" && name.length > 0);
+    return [...new Set(names)];
+  }
+
   async findByRequirementKey(key: BaseRequirementKey): Promise<BaseRecord | null> {
     // Use the public Bitable v1 records endpoint. base/v3 is a web-client route:
     // it can work under a user session but returns access denied with the app token.
@@ -200,7 +207,7 @@ export class FeishuBitableClient implements BaseClient {
     const filter = `CurrentValue.[${this.config.keyFields.requirementId}] = ${JSON.stringify(key.requirementId)}`;
     const query = new URLSearchParams({
       filter,
-      field_names: JSON.stringify([this.config.keyFields.requirementId]),
+      field_names: JSON.stringify(this.lookupFieldNames()),
       page_size: "2",
     });
     const res = await this.authed(
@@ -226,7 +233,7 @@ export class FeishuBitableClient implements BaseClient {
     const filter = `CurrentValue.[${field}] = ${JSON.stringify(platformRequirementId)}`;
     const query = new URLSearchParams({
       filter,
-      field_names: JSON.stringify([field]),
+      field_names: JSON.stringify(this.lookupFieldNames()),
       page_size: "2",
     });
     const res = await this.authed(

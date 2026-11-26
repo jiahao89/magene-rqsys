@@ -227,3 +227,47 @@ test("仓储未实现该查询（内存桩）→ 直接跳过，不抛错", asyn
   const reaped = await reapExhaustedJobs({ jobs: {} as never, now: NOW });
   assert.deepEqual(reaped, []);
 });
+
+test("0031：reapOrphanedBatches 与 reapExhaustedJobs 同时扫描产品池与集团池", async () => {
+  const seenBatchPools: string[] = [];
+  const settledBatches: string[] = [];
+  const groupBatch = batch({ id: "batch-group", sourceConfigId: "src-group" });
+  const reapedBatches = await reapOrphanedBatches({
+    batches: {
+      async list(query: { pool?: string }) {
+        seenBatchPools.push(query.pool ?? "default");
+        return { items: query.pool === "group" ? [groupBatch] : [], nextCursor: null };
+      },
+      async complete(id: string) { settledBatches.push(id); return groupBatch; },
+    } as never,
+    jobs: {
+      async findByDedupeKey() { return null; },
+      async complete() { return null; },
+    } as never,
+    now: NOW,
+  });
+  assert.deepEqual(seenBatchPools, ["product", "group"]);
+  assert.deepEqual(settledBatches, ["batch-group"]);
+  assert.equal(reapedBatches.length, 1);
+
+  const seenJobPools: string[] = [];
+  const completedJobIds: string[] = [];
+  const groupJob = job({
+    id: "job-group-push", jobType: "base_push", dedupeKey: "base-push:req-g:sv1:av1",
+    payload: { requirementId: "req-g" }, status: "running", attemptCount: 5, maxAttempts: 5,
+    lockedUntil: "2026-01-01T11:30:00.000Z",
+  });
+  const reapedJobs = await reapExhaustedJobs({
+    jobs: {
+      async listExhaustedRunning(_now: string, _limit: number, pool?: string) {
+        seenJobPools.push(pool ?? "default");
+        return pool === "group" ? [groupJob] : [];
+      },
+      async complete(id: string) { completedJobIds.push(id); return groupJob; },
+    } as never,
+    now: NOW,
+  });
+  assert.deepEqual(seenJobPools, ["product", "group"]);
+  assert.deepEqual(completedJobIds, ["job-group-push"]);
+  assert.equal(reapedJobs.length, 1);
+});

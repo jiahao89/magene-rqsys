@@ -19,7 +19,7 @@ function deps() {
     audit: { append: async (row: unknown) => { audited = row; }, search: async () => [] },
     jobs: { enqueue: async (row: unknown) => { queued = row; return {} as never; }, claimNext: async () => null, complete: async () => null },
     people: { upsertManual: async (p: unknown) => { savedMapping = p; return { id: "map-1", sourceConfigId: "source-1", teambitionUserId: "tb-user", teambitionDisplayName: "Ada", normalizedName: "ada", feishuUserId: "ou-user", feishuIdType: "open_id", matchMethod: "manual", active: true, createdBy: "operator", createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z" } satisfies PersonMappingRecord; }, resolveActive: async () => ({ id: "map-1", sourceConfigId: "source-1", teambitionUserId: "tb-user", teambitionDisplayName: "Ada", normalizedName: "ada", feishuUserId: "ou-user", feishuIdType: "open_id" as const, matchMethod: "manual" as const, active: true, createdBy: "operator", createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z" } satisfies PersonMappingRecord) },
-    requirements: { get: async () => requirement, listDuplicates: async () => [], assignManualOwner: async (id: string, owner: unknown) => { assigned = { id, owner }; }, setOwner: async (_id: string, owner: string | null, state: RequirementRecord["pipeline"]["owner"]) => { actions.push(`owner:${owner}:${state}`); return { ...requirement, pipeline: { ...requirement.pipeline, owner: state } }; }, setBaseRecord: async () => undefined, setPushState: async (_id: string, state: string) => { actions.push(`push:${state}`); } },
+    requirements: { get: async () => requirement, listDuplicates: async () => [], assignManualOwner: async (id: string, owner: unknown, auditEvent?: unknown) => { assigned = { id, owner }; if (auditEvent) audited = auditEvent; }, setOwner: async (_id: string, owner: string | null, state: RequirementRecord["pipeline"]["owner"]) => { actions.push(`owner:${owner}:${state}`); return { ...requirement, pipeline: { ...requirement.pipeline, owner: state } }; }, setBaseRecord: async () => undefined, setPushState: async (_id: string, state: string) => { actions.push(`push:${state}`); } },
     basePushes: { findByIdempotencyKey: async () => null, append: async (row: unknown) => { actions.push("push-run"); return { id: "run-1", ...(row as object), status: "running", baseRecordId: null, safeErrorCode: null, safeErrorSummary: null, completedAt: null }; }, restart: async () => null, updateResult: async (_id: string, result: { status: string }) => { actions.push(`run:${result.status}`); return null; }, latest: async () => null, latestSuccessful: async () => null },
     sourceSnapshots: { getAtVersion: async () => null },
   } as unknown as ApiRepositories & { people: { upsertManual: (p: unknown) => Promise<PersonMappingRecord> }; requirements: { get: (id: string) => Promise<RequirementRecord | null>; setOwner: (id: string, owner: string | null, state: RequirementRecord["pipeline"]["owner"]) => Promise<RequirementRecord>; setBaseRecord: (id: string, record: string, pushedAt: string) => Promise<void>; setPushState: (id: string, state: string) => Promise<void> }; basePushes: { findByIdempotencyKey: (key: string) => Promise<null>; append: (row: unknown) => Promise<{ id: string }>; restart: (id: string, startedAt: string) => Promise<null>; latestSuccessful: () => Promise<null>; updateResult: (id: string, row: { status: string; baseRecordId?: string; completedAt: string }) => Promise<unknown> } };
@@ -102,15 +102,16 @@ function unownedDeps(ownerState: RequirementRecord["pipeline"]["owner"] = "not_r
   const h = deps();
   const row: RequirementRecord = { ...requirement, executorUserId: null, executorName: null, pipeline: { ...requirement.pipeline, owner: ownerState } };
   let assigned: unknown = null;
+  let assignedAudit: unknown = null;
   let mappingWrites = 0;
   const repositories = h.dependencies.repositories as unknown as {
     requirements: Record<string, unknown>;
     people: { upsertManual: (p: unknown) => Promise<PersonMappingRecord> };
   };
   repositories.requirements.get = async () => row;
-  repositories.requirements.assignManualOwner = async (id: string, owner: unknown) => { assigned = { id, owner }; };
+  repositories.requirements.assignManualOwner = async (id: string, owner: unknown, auditEvent?: unknown) => { assigned = { id, owner }; assignedAudit = auditEvent ?? null; };
   repositories.people.upsertManual = async () => { mappingWrites += 1; throw new Error("no-owner assignment must not write person mappings"); };
-  return { ...h, assigned: () => assigned, mappingWrites: () => mappingWrites };
+  return { ...h, assigned: () => assigned, audited: () => assignedAudit ?? h.audited(), mappingWrites: () => mappingWrites };
 }
 const ownerPut = (body: unknown) => new Request("http://localhost/api/requirements/req-1/owner", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 
@@ -220,4 +221,14 @@ test("撤销人工负责人的推送作业带 clearOwner，分配作业不带", 
   const assigned = await handleApiRequest(new Request("http://localhost/api/requirements/req-1/owner", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ feishuUserId: "ou-user", feishuIdType: "open_id" }) }), assign.dependencies);
   assert.equal(assigned.status, 200);
   assert.equal((assign.queued() as { payload: Record<string, unknown> }).payload.clearOwner, undefined);
+});
+
+test("push API permits Q1 empty-owner push when owner state is pending_mapping", async () => {
+  const h = deps();
+  const response = await handleApiRequest(new Request("http://localhost/api/requirements/req-1/push", {
+    method: "POST", headers: { "Idempotency-Key": "req-1:pending-owner" },
+  }), h.dependencies);
+  assert.equal(response.status, 202);
+  assert.deepEqual(await response.json(), { requirementId: "req-1", status: "queued" });
+  assert.equal((h.queued() as { jobType: string }).jobType, "base_push");
 });

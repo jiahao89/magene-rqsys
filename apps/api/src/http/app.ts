@@ -13,7 +13,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { ApplyAiScoringSchema, ManualScoringUpdateSchema, SCORING_FORMULA_TEXT, SCORING_THRESHOLDS, computeUmcScore } from "../analysis/scoring.js";
 import { maskPii } from "../analysis/contract.js";
 import { confirmGate, evaluateGates } from "../ops/gates.js";
-import { priorityRuleThresholds } from "../analysis/priority-rule.js";
+import { buildPriorityRule, priorityRuleThresholds } from "../analysis/priority-rule.js";
 import { toCsv } from "../application/csv.js";
 import { SourceConfigUpdateSchema, normalizeSourceSchedule, normalizeExecutorAllowlistNames, MAX_EXECUTOR_ALLOWLIST_SIZE, type ResolvedSourceConfigUpdate } from "../contracts/source.js";
 import { DictionaryCreateSchema, PriorityRuleCreateSchema, TeamModulesSaveSchema, TeamPersonCreateSchema, TeamPersonFeishuBindSchema, TeamPersonRenameSchema } from "../contracts/rules.js";
@@ -24,6 +24,7 @@ import { EXPECTED_LATEST_MIGRATION } from "../db/expected-migration.js";
 import { jsonError, redactSecrets } from "./errors.js";
 import { CHAT_PROMPT_VERSION, ChatDraftRequestSchema, createDraftRateLimiter, type ChatIntakeExtractor, type DraftRateLimit } from "../intake/chat-extract.js";
 import { ASSESSMENT_RUNNING_STALE_MS, AssessmentContractError, type AssessmentRunner } from "../assessment/service.js";
+import { createAssessmentRateLimiter, type AssessmentRateLimit } from "../assessment/rate-limit.js";
 import { PRD_PROMPT_RUNNING_STALE_MS, PrdPromptFailure, type PrdPromptRunner } from "../prd-prompt/service.js";
 import { createPrdPromptRateLimiter, type PrdPromptRateLimit } from "../prd-prompt/rate-limit.js";
 import { analysisPiiMarkers, loadDirectoryRosterNames } from "../requirements/processing.js";
@@ -69,6 +70,8 @@ export interface ApiDependencies {
   chatIntake?: { extractor: ChatIntakeExtractor; limit?: DraftRateLimit };
   /** 0030：按需需求评估；未注入时接口返回 503，详情页不可用。 */
   assessments?: AssessmentRunner;
+  /** 2026-11-26：按需需求评估每用户限流覆盖；缺省使用 DEFAULT_ASSESSMENT_RATE_LIMIT。 */
+  assessmentRateLimit?: AssessmentRateLimit;
   /** 2026-11-21：按需 PRD 提示词生成；未注入时接口返回 503。 */
   prdPrompt?: { runner: PrdPromptRunner; limit?: PrdPromptRateLimit };
   /** 目标环境的脱敏诊断通道；未注入时诊断落 stderr。只写错误类、SQLSTATE、状态码、字符数与请求号，不写 SQL、参数或聊天正文。 */
@@ -94,6 +97,42 @@ function prdPromptRateLimiterFor(dep: NonNullable<ApiDependencies["prdPrompt"]>)
   let limiter = prdPromptRateLimiters.get(dep);
   if (!limiter) { limiter = createPrdPromptRateLimiter(dep.limit); prdPromptRateLimiters.set(dep, limiter); }
   return limiter;
+}
+// 2026-11-26：需求评估限流器随 assessments runner 对象缓存，防单用户高频触发评估耗尽额度。
+const assessmentRateLimiters = new WeakMap<object, ReturnType<typeof createAssessmentRateLimiter>>();
+function assessmentRateLimiterFor(runner: NonNullable<ApiDependencies["assessments"]>, limit?: AssessmentRateLimit) {
+  let limiter = assessmentRateLimiters.get(runner);
+  if (!limiter) { limiter = createAssessmentRateLimiter(limit); assessmentRateLimiters.set(runner, limiter); }
+  return limiter;
+}
+const CALIBRATED_SCORING_FORMULAS = new Set(["umsc_weighted_v2", "umsc_weighted_v3"]);
+const TRANSIENT_NODE_ERROR_CODES = new Set([
+  "ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EPIPE", "ENOTFOUND", "EAI_AGAIN",
+  "CONNECTION_ENDED", "CONNECTION_CLOSED", "CONNECTION_DESTROYED",
+]);
+function isTransientDatabaseError(error: unknown): boolean {
+  const sqlState = safeDatabaseCode(error);
+  if (sqlState !== "unknown") {
+    if (
+      sqlState.startsWith("08")
+      || sqlState === "40001"
+      || sqlState === "40P01"
+      || sqlState.startsWith("53")
+      || sqlState.startsWith("57")
+    ) return true;
+  }
+  let current = error;
+  const seen = new Set<object>();
+  for (let depth = 0; depth < 6 && typeof current === "object" && current !== null && !seen.has(current); depth += 1) {
+    seen.add(current);
+    const candidate = current as { code?: unknown; message?: unknown; cause?: unknown; originalError?: unknown };
+    if (typeof candidate.code === "string" && TRANSIENT_NODE_ERROR_CODES.has(candidate.code)) return true;
+    if (typeof candidate.message === "string" && /connection terminated|too many clients|timeout expired|cannot connect|client has encountered a connection error|connection closed/i.test(candidate.message)) {
+      return true;
+    }
+    current = candidate.cause ?? candidate.originalError;
+  }
+  return false;
 }
 function json(body: unknown, status = 200): Response { return Response.json(body, { status }); }
 // 供应商限流时没有下发可用的 Retry-After 就按 60 秒提示；宁可多等，也不要让用户连点消耗额度。
@@ -433,6 +472,21 @@ async function requirementListPayload(repositories: ApiRepositories, page: { ite
   const pageSourceIds = [...new Set(page.items.map((item) => item.sourceConfigId).filter((id): id is string => Boolean(id)))];
   const mappings = repositories.people ? (await Promise.all(pageSourceIds.map((id) => repositories.people!.listActive(id)))).flat() : [];
   const nameByTbUser = new Map(mappings.filter((m) => m.teambitionUserId && m.teambitionDisplayName).map((m) => [`${m.sourceConfigId}:${m.teambitionUserId}`, m.teambitionDisplayName as string]));
+  // 按规范化姓名回落（人员页 unique_name 绑定）：只对目标唯一的姓名生效，歧义留空。
+  const targetsByName = new Map<string, Set<string>>();
+  const displayByName = new Map<string, string>();
+  for (const m of mappings) {
+    if (!m.normalizedName || !m.teambitionDisplayName) continue;
+    const key = `${m.sourceConfigId}:${m.normalizedName}`;
+    const set = targetsByName.get(key) ?? new Set<string>();
+    set.add(`${m.feishuUserId}|${m.feishuIdType}`);
+    targetsByName.set(key, set);
+    if (!displayByName.has(key)) displayByName.set(key, m.teambitionDisplayName);
+  }
+  const nameByNormalized = new Map<string, string>();
+  for (const [key, set] of targetsByName.entries()) {
+    if (set.size === 1) nameByNormalized.set(key, displayByName.get(key)!);
+  }
   // 回收站聚合两池后每行要能显示池标签；按来源一次性取，解析失败只影响标签不失败整个列表。
   const poolBySource = new Map<string, SourcePool>();
   try { for (const source of await repositories.sources.list()) poolBySource.set(source.id, source.pool ?? "product"); } catch { /* 标签是展示增强 */ }
@@ -440,7 +494,12 @@ async function requirementListPayload(repositories: ApiRepositories, page: { ite
   return {
     items: page.items.map((item) => {
       const itemPool = (item.sourceConfigId ? poolBySource.get(item.sourceConfigId) : undefined) ?? fallbackPool;
-      return { ...requirementSearchDto(item), baseRecordUrl: baseRecordUrl(item.baseRecordId, itemPool), ownerName: manualOwnerName(item) ?? (item.executorUserId && item.sourceConfigId ? nameByTbUser.get(`${item.sourceConfigId}:${item.executorUserId}`) ?? null : null), pool: itemPool };
+      const mappedName = item.sourceConfigId
+        ? (item.executorUserId ? nameByTbUser.get(`${item.sourceConfigId}:${item.executorUserId}`) : undefined)
+          ?? (item.executorName ? nameByNormalized.get(`${item.sourceConfigId}:${normalizeOwnerName(item.executorName)}`) : undefined)
+          ?? null
+        : null;
+      return { ...requirementSearchDto(item), baseRecordUrl: baseRecordUrl(item.baseRecordId, itemPool), ownerName: manualOwnerName(item) ?? mappedName, pool: itemPool };
     }),
     nextCursor: page.nextCursor,
   };
@@ -615,7 +674,7 @@ async function duplicateMarkerFor(
 }
 
 // 集合/导出接口的路径段不是需求 ID；详情与写接口才是 UUID 推导作用域的对象。
-const REQUIREMENT_COLLECTION_SEGMENTS = new Set(["export", "source-counts", "intake-draft"]);
+const REQUIREMENT_COLLECTION_SEGMENTS = new Set(["export", "source-counts", "intake-draft", "mine"]);
 /**
  * 详情/写接口显式带 pool 时的跨池守卫：与 UUID 归属不符固定 404（不返回 200 空数据/对方数据），
  * 不带 pool 时不拦截——服务端按 UUID 推导，返回只读 pool 供页面守卫。
@@ -632,8 +691,10 @@ async function requirementPoolGuard(request: Request, url: URL, dependencies: Ap
   const auth = await actorFor(request, dependencies);
   if ("response" in auth) return auth.response;
   if (explicit !== "product" && explicit !== "group") return jsonError("VALIDATION_FAILED");
+  const requirementId = pathUuid(segment, dependencies);
+  if (!requirementId) return null;
   let requirement: RequirementRecord | null;
-  try { requirement = await repositories.requirements.get(segment); } catch { return null; }
+  try { requirement = await repositories.requirements.get(requirementId); } catch { return null; }
   // 不存在时交给原处理器返回 404，避免守卫与业务路径给出不同错误体。
   if (!requirement) return null;
   return (await requirementPoolOf(repositories, requirement)) === explicit ? null : jsonError("NOT_FOUND");
@@ -672,6 +733,8 @@ export async function handleApiRequest(request: Request, dependencies: ApiDepend
   catch (error) {
     // 请求体超限是客户端可控的输入问题，回 413，不要漏成 500。
     if (error instanceof PayloadTooLargeError) return jsonError("PAYLOAD_TOO_LARGE", "请求体过大，请缩短后重试。");
+    // 瞬态数据库/网络故障统一收敛为 503，不漏成未处理的 500 堆栈。
+    if (isTransientDatabaseError(error)) return jsonError("DEPENDENCY_UNAVAILABLE");
     throw error;
   }
 }
@@ -773,7 +836,7 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
       if (auditFailure) return auditFailure;
       return json({ batchId: previous.id, status: previous.status }, 202);
     }
-    const active = await repositories.batches.list({ status: "running", limit: 100 });
+    const active = await repositories.batches.list({ status: "running", pool: sourcePool(source), limit: 100 });
     if (active.items.some((batch) => batch.sourceConfigId === source.id)) return jsonError("CONFLICT");
     let created: SyncBatchRecord;
     try { created = await repositories.batches.create({ sourceConfigId: source.id, triggerType: "manual", actorId: auth.actor.id, idempotencyKey, startedAt }); }
@@ -995,13 +1058,16 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     const existing = await repositories.priorityRules.get(id);
     if (!existing) return jsonError("NOT_FOUND");
     if (existing.status !== "draft") return jsonError("CONFLICT");
-    // V02-S06：v2 是用户已确认的固定公式（0019 迁移写入并退休旧规则），而本端点请求契约仍只接受 v1 形态。
-    // v2 生效期间发布 v1 规则会让优先级回退到未校准的四维求和，因此拒绝发布（沿用已有冲突码 409）。
+    // V02-S06：v2/v3 是用户已确认的校准公式，而本端点请求契约仍只接受 v1 形态。
+    // v2/v3 生效期间发布 v1 规则会让优先级回退到未校准的四维求和，因此拒绝发布（沿用已有冲突码 409）。
     const activeRule = await repositories.priorityRules.getPublished();
     const activeFormula = (activeRule?.rules as { formulaType?: unknown } | null | undefined)?.formulaType;
     const draftFormula = (existing.rules as { formulaType?: unknown } | null | undefined)?.formulaType;
-    if (activeFormula === "umsc_weighted_v2" && draftFormula !== "umsc_weighted_v2") {
-      return jsonError("CONFLICT", "A confirmed v2 scoring rule is published; legacy v1 rules cannot be published over it.");
+    if (
+      typeof activeFormula === "string" && CALIBRATED_SCORING_FORMULAS.has(activeFormula)
+      && !(typeof draftFormula === "string" && CALIBRATED_SCORING_FORMULAS.has(draftFormula))
+    ) {
+      return jsonError("CONFLICT", "A confirmed v2/v3 scoring rule is published; legacy v1 rules cannot be published over it.");
     }
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
     const published = await repositories.priorityRules.publish(id, now, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "priority_rule.published", entityType: "priority_rule", result: "succeeded", safeDetails: {}, occurredAt: now });
@@ -1010,8 +1076,10 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
   if (method === "GET" && url.pathname === "/api/mappings") {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.people || !repositories.sources) return jsonError("DEPENDENCY_UNAVAILABLE");
-    // 单一来源（D-09）：返回当前来源的活跃映射；来源未配置时为空列表
-    const source = (await repositories.sources.list())[0] ?? null;
+    const poolParam = url.searchParams.get("pool");
+    if (poolParam !== null && poolParam !== "product" && poolParam !== "group") return jsonError("VALIDATION_FAILED");
+    const targetPool: SourcePool = (poolParam ?? "product") as SourcePool;
+    const source = (await repositories.sources.list()).find((s) => sourcePool(s) === targetPool) ?? null;
     const items = source ? await repositories.people.listActive(source.id) : [];
     return json({ items: items.map(mappingDto) });
   }
@@ -1204,7 +1272,7 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     const header = ["平台ID", "TB需求ID", "标题", "负责人", "生效优先级", "处理状态", "拉取", "分析", "负责人状态", "推送", "来源类型", "源版本", "Base记录ID", "来源已移除", "创建时间", "更新时间"];
     const body = rows.map((item) => [
       item.platformRequirementId, item.teambitionRequirementId ?? "", item.title,
-      item.executorName ?? item.manualOwner?.name ?? "",
+      item.manualOwner?.name ?? item.executorName ?? "",
       item.priorityOverride?.priority ?? item.currentScorePriority ?? "",
       item.processingState ?? "active",
       item.pipeline.pull, item.pipeline.analysis, item.pipeline.owner, item.pipeline.push,
@@ -1383,10 +1451,15 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     const parsed = ManualScoringUpdateSchema.safeParse(await readJson(request)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
     const requirement = await repositories.requirements.get(requirementId); if (!requirement) return jsonError("NOT_FOUND");
     const rule = await repositories.priorityRules.getPublished();
-    if (!rule || (rule.rules as Record<string, unknown>).formulaType !== "umsc_weighted_v2") return jsonError("CONFLICT", "评分规则未发布");
+    const compiledRule = rule ? buildPriorityRule(rule) : null;
+    const ruleFormula = (rule?.rules as Record<string, unknown> | null | undefined)?.formulaType;
+    if (!rule || typeof ruleFormula !== "string" || !CALIBRATED_SCORING_FORMULAS.has(ruleFormula) || !compiledRule?.computeScore) {
+      return jsonError("CONFLICT", "评分规则未发布");
+    }
     const latest = await repositories.analyses?.latest(requirement.id) ?? null;
-    let computed: ReturnType<typeof computeUmcScore>;
-    try { computed = computeUmcScore(parsed.data.inputs, parsed.data.alpha); } catch { return jsonError("VALIDATION_FAILED"); }
+    let computed: ReturnType<typeof computeUmcScore> | null;
+    try { computed = compiledRule.computeScore(parsed.data.inputs, parsed.data.alpha); } catch { return jsonError("VALIDATION_FAILED"); }
+    if (!computed) return jsonError("VALIDATION_FAILED");
     const current = await repositories.scoring.current(requirement.id);
     const aiSuggestion = await repositories.scoring.aiSuggestion(requirement.id);
     const sourceScore = current ?? aiSuggestion;
@@ -1439,10 +1512,11 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     if ((req.processingState ?? "active") !== "active") return jsonError("CONFLICT", "该需求已被压制，请先撤销判定再设置人工优先级。");
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
     const cleared = parsed.data.priority === null;
-    const result = await repositories.requirements.setPriorityOverride(req.id, { priority: parsed.data.priority, reason: cleared ? null : parsed.data.reason, actorId: auth.actor.id, at: now });
+    const auditEvent = { id: randomUUID(), actorId: auth.actor.id, eventType: cleared ? "requirement.priority_override_cleared" : "requirement.priority_override_set", entityType: "requirement", result: "succeeded" as const, safeDetails: { priority: parsed.data.priority, at: now }, occurredAt: now };
+    let result: Awaited<ReturnType<RequirementQueryRepository["setPriorityOverride"]>>;
+    try { result = await repositories.requirements.setPriorityOverride(req.id, { priority: parsed.data.priority, reason: cleared ? null : parsed.data.reason, actorId: auth.actor.id, at: now, auditEvent }); }
+    catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
     if (result.outcome === "not_found") return jsonError("NOT_FOUND");
-    const auditFailure = await appendAudit(repositories, { id: randomUUID(), actorId: auth.actor.id, eventType: cleared ? "requirement.priority_override_cleared" : "requirement.priority_override_set", entityType: "requirement", entityId: req.id, result: "succeeded", safeDetails: { priority: parsed.data.priority, at: now }, occurredAt: now });
-    if (auditFailure) return auditFailure;
     const currentScore = repositories.scoring ? await repositories.scoring.current(req.id) : null;
     return json({ requirementId: req.id, priorityOverride: result.override, effectivePriority: result.override?.priority ?? currentScore?.priority ?? null });
   }
@@ -1456,10 +1530,11 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     const req = await repositories.requirements.get(requirementId); if (!req) return jsonError("NOT_FOUND");
     if ((req.processingState ?? "active") !== "active") return jsonError("CONFLICT", "该需求已被压制，请先撤销判定再补充上下文。");
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
-    const result = await repositories.requirements.setAnalysisContext(req.id, { context: parsed.data.context, actorId: auth.actor.id, at: now });
+    const auditEvent = { id: randomUUID(), actorId: auth.actor.id, eventType: "requirement.analysis_context_updated", entityType: "requirement", result: "succeeded" as const, safeDetails: { cleared: parsed.data.context === null, at: now }, occurredAt: now };
+    let result: Awaited<ReturnType<RequirementQueryRepository["setAnalysisContext"]>>;
+    try { result = await repositories.requirements.setAnalysisContext(req.id, { context: parsed.data.context, actorId: auth.actor.id, at: now, auditEvent }); }
+    catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
     if (result.outcome === "not_found") return jsonError("NOT_FOUND");
-    const auditFailure = await appendAudit(repositories, { id: randomUUID(), actorId: auth.actor.id, eventType: "requirement.analysis_context_updated", entityType: "requirement", entityId: req.id, result: "succeeded", safeDetails: { cleared: parsed.data.context === null, at: now }, occurredAt: now });
-    if (auditFailure) return auditFailure;
     return json({ requirementId: req.id, analysisContext: result.context });
   }
   // 0030：需求评估（按需生成）。GET 列历史版本；POST 生成一条新版本（同步调用模型，失败也保留 failed 版本）。
@@ -1482,6 +1557,10 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     }
     if (!dependencies.assessments) return jsonError("DEPENDENCY_UNAVAILABLE");
     const parsedAssessmentBody = RequirementAssessmentInputSchema.safeParse(await readJson(request)); if (!parsedAssessmentBody.success) return jsonError("VALIDATION_FAILED");
+    const assessNow = (dependencies.now ?? (() => new Date()))();
+    if ((await readAiPause(repositories.flags, assessNow)).paused) return jsonError("DEPENDENCY_UNAVAILABLE", "AI 额度暂时受限，请稍后再试。");
+    const assessLimit = assessmentRateLimiterFor(dependencies.assessments, dependencies.assessmentRateLimit).check(auth.actor.id, assessNow.getTime());
+    if (!assessLimit.ok) return rateLimited(assessLimit.retryAfterSeconds ?? 60, "需求评估请求太频繁，请稍后再试。");
     const inputs = {
       ...(typeof parsedAssessmentBody.data.background === "string" && parsedAssessmentBody.data.background !== "" ? { background: parsedAssessmentBody.data.background } : {}),
       ...(typeof parsedAssessmentBody.data.goal === "string" && parsedAssessmentBody.data.goal !== "" ? { goal: parsedAssessmentBody.data.goal } : {}),
@@ -1523,7 +1602,8 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     try { prdRequirement = await repositories.requirements.get(prdRequirementId); } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
     if (!prdRequirement) return jsonError("NOT_FOUND");
     if (!repositories.prdPrompts) return jsonError("DEPENDENCY_UNAVAILABLE");
-    const prdNow = (dependencies.now ?? (() => new Date()))().toISOString();
+    const prdNowDate = (dependencies.now ?? (() => new Date()))();
+    const prdNow = prdNowDate.toISOString();
     if (method === "GET") {
       try {
         // 规格 §4：running 超过 2 分钟不允许永久停在「生成中」，读取时兜底转 failed/timeout。
@@ -1533,6 +1613,7 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     }
     if (!dependencies.prdPrompt) return jsonError("DEPENDENCY_UNAVAILABLE");
     const parsedPrdBody = PrdPromptRequestSchema.safeParse(await readJson(request)); if (!parsedPrdBody.success) return jsonError("VALIDATION_FAILED");
+    if ((await readAiPause(repositories.flags, prdNowDate)).paused) return jsonError("DEPENDENCY_UNAVAILABLE", "AI 额度暂时受限，请稍后再试。");
     if (!repositories.assessments) return jsonError("DEPENDENCY_UNAVAILABLE");
     let prdAssessment: RequirementAssessmentRecord | null;
     try {
@@ -1548,6 +1629,17 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     // 限流先于创建版本：超限不落库、不调模型。
     const prdLimit = prdPromptRateLimiterFor(dependencies.prdPrompt).check(auth.actor.id);
     if (!prdLimit.ok) return rateLimited(prdLimit.retryAfterSeconds ?? 60, "PRD 提示词生成太频繁，请稍后再试。");
+    const auditPrdPrompt = async (result: "succeeded" | "failed", details: Record<string, unknown>) => {
+      try {
+        await repositories.audit.append({
+          id: randomUUID(), actorId: auth.actor.id,
+          eventType: result === "succeeded" ? "prd_prompt.generated" : "prd_prompt.failed",
+          entityType: "requirement", entityId: prdRequirement.id, result,
+          safeDetails: { assessmentVersion: prdAssessment.version, ...details },
+          occurredAt: (dependencies.now ?? (() => new Date()))().toISOString(),
+        });
+      } catch { /* best effort：审计失败不丢弃已生成的提示词版本 */ }
+    };
     try {
       const prdAnalysis = repositories.analyses
         ? await repositories.analyses.latest(prdRequirementId).catch(() => null)
@@ -1568,12 +1660,18 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
         analysis: prdAnalysis,
         piiMarkers: prdMarkers,
       });
+      await auditPrdPrompt("succeeded", { version: record.version, promptVersion: record.promptVersion, ...(record.model ? { model: record.model } : {}) });
       return json(prdPromptDto(record), 201);
     } catch (cause) {
       const errorClass = String((cause as { code?: unknown })?.code ?? "unknown");
+      const rawStatus = (cause as { httpStatus?: unknown })?.httpStatus;
+      const httpStatus = typeof rawStatus === "number" ? rawStatus : undefined;
       if (errorClass === "prd_prompt_in_progress") return jsonError("PRD_PROMPT_IN_PROGRESS");
+      await auditPrdPrompt("failed", { errorClass, ...(httpStatus === undefined ? {} : { httpStatus }) });
       if (cause instanceof PrdPromptFailure) {
-        // 失败版本已落库（timeout / provider_error / invalid_output）；这里只回稳定错误码，不回显模型输出。
+        // 失败版本已落库；只回稳定错误码，不回显模型输出。
+        if (errorClass === "rate_limited") return rateLimited(PROVIDER_RATE_LIMIT_RETRY_AFTER_SECONDS, "AI 服务当前限流，请稍后再试。");
+        if (errorClass === "auth_error" || errorClass === "request_error") return jsonError("INTERNAL", "PRD 提示词服务异常，请稍后重试。");
         if (errorClass === "timeout") return jsonError("DEPENDENCY_UNAVAILABLE", "PRD 提示词生成超时，请重试。");
         if (errorClass === "invalid_output") return jsonError("DEPENDENCY_UNAVAILABLE", "AI 返回的提示词不合规，请重试。");
         return jsonError("DEPENDENCY_UNAVAILABLE", "AI 暂时不可用，请稍后重试。");
@@ -1591,11 +1689,16 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     const detailPool = await requirementPoolOf(repositories, req);
     const latest = await repositories.analyses?.latest(req.id) ?? null;
     const history = await repositories.analyses?.listByRequirement(req.id) ?? [];
-    // 负责人姓名：详情单条解析一次，解析不到返回 null；前端会退回只显示映射状态。
+    // 负责人姓名：逐条人工负责人优先于 TB 执行人映射；两者都没有时返回 null。
     let ownerName: string | null = manualOwnerName(req);
-    if (req.sourceConfigId && (req.executorUserId || req.executorName)) {
+    if (!ownerName && req.sourceConfigId && (req.executorUserId || req.executorName)) {
       try {
-        const mapping = await repositories.people?.resolveActive(req.sourceConfigId, req.executorUserId ? { tbUserId: req.executorUserId } : { normalizedName: normalizeOwnerName(req.executorName!) });
+        let mapping = req.executorUserId
+          ? await repositories.people?.resolveActive(req.sourceConfigId, { tbUserId: req.executorUserId })
+          : null;
+        if (!mapping && req.executorName) {
+          mapping = await repositories.people?.resolveActive(req.sourceConfigId, { normalizedName: normalizeOwnerName(req.executorName) });
+        }
         ownerName = mapping?.teambitionDisplayName ?? null;
       } catch { /* 姓名是展示增强，解析失败不影响详情返回 */ }
     }
@@ -1736,7 +1839,7 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     // handler 的同源版本幂等守卫：只入队、不调模型，UI 却提示「已入队」，看起来成功实则什么都没跑。
     // 现在缺省强制重跑一版新分析（唯一 dedupe key + payload.force）；只有显式 { force: false }
     // 才保留旧的轻量重试语义。显式读 body 以区分「无 body」和「非法 JSON」：非法 JSON 返回 400。
-    const retryText = await request.text().catch(() => "");
+    const retryText = await readBodyText(request);
     let force = true;
     if (retryText.trim().length > 0) {
       let retryBody: unknown;
@@ -1799,12 +1902,16 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
       // 这里不能再用 409 把它永远挡住：状态仍是 manually_mapped 时允许继续，借此自愈。
       if (!req.manualOwner && req.pipeline.owner !== "manually_mapped") return jsonError("CONFLICT", "该需求没有单独指定的负责人。");
       const hasTbOwner = Boolean(req.executorUserId || req.executorName);
-      const mapping = req.sourceConfigId && req.executorUserId
+      let mapping = req.sourceConfigId && req.executorUserId
         ? await repositories.people.resolveActive(req.sourceConfigId, { tbUserId: req.executorUserId })
-        : req.sourceConfigId && req.executorName ? await repositories.people.resolveActive(req.sourceConfigId, { normalizedName: normalizeOwnerName(req.executorName) }) : null;
+        : null;
+      if (!mapping && req.sourceConfigId && req.executorName) {
+        mapping = await repositories.people.resolveActive(req.sourceConfigId, { normalizedName: normalizeOwnerName(req.executorName) });
+      }
       const targetState = mapping ? "auto_mapped" : hasTbOwner ? "pending_mapping" : "not_required";
+      const clearAuditEvent = { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "owner.manual_cleared", entityType: "requirement", result: "succeeded" as const, safeDetails: { sourceVersion: req.sourceVersion }, occurredAt: now };
       try {
-        await repositories.requirements.releaseManualOwner(req.id, targetState);
+        await repositories.requirements.releaseManualOwner(req.id, targetState, clearAuditEvent);
       } catch (cause) {
         return (cause as Error)?.name === "InvalidTransitionError" ? jsonError("CONFLICT") : jsonError("DEPENDENCY_UNAVAILABLE");
       }
@@ -1815,14 +1922,13 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
         // clearOwner：撤销人工负责人后 Base「执行人」必须清空，不能继续挂着旧负责人和旧收件人。
         await repositories.jobs.enqueue({ jobType: "base_push", dedupeKey: idempotencyKey, payload: { requirementId: req.id, sourceVersion: req.sourceVersion, analysisVersion, idempotencyKey, actorId: auth.actor.id, clearOwner: true }, availableAt: now });
       } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
-      const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "owner.manual_cleared", entityType: "requirement", entityId: req.id, result: "succeeded", safeDetails: { sourceVersion: req.sourceVersion }, occurredAt: now });
-      if (auditFailure) return auditFailure;
       return json({ requirementId: req.id, ownerState: targetState, status: "queued" });
     }
     const body = OwnerMappingUpdateSchema.safeParse(await readJson(request)); if (!body.success) return jsonError("VALIDATION_FAILED");
-    // 逐条负责人：只写需求本身，绝不改写 person_mappings（否则会改掉同 TB 执行人名下全部需求）。
+    // 逐条负责人：只写需求本身，绝不改写 person_mappings（否则会改掉同 TB 执行人名下全部需求）；审计与状态同事务提交。
+    const assignAuditEvent = { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "owner.manually_mapped", entityType: "requirement", result: "succeeded" as const, safeDetails: { reason: "per_requirement", sourceVersion: req.sourceVersion }, occurredAt: now };
     try {
-      await repositories.requirements.assignManualOwner(req.id, { feishuUserId: body.data.feishuUserId, feishuIdType: body.data.feishuIdType, name: body.data.tbDisplayName ?? null, assignedBy: auth.actor.id, assignedAt: now });
+      await repositories.requirements.assignManualOwner(req.id, { feishuUserId: body.data.feishuUserId, feishuIdType: body.data.feishuIdType, name: body.data.tbDisplayName ?? null, assignedBy: auth.actor.id, assignedAt: now }, assignAuditEvent);
     } catch (cause) {
       return (cause as Error)?.name === "InvalidTransitionError" ? jsonError("CONFLICT") : jsonError("DEPENDENCY_UNAVAILABLE");
     }
@@ -1832,8 +1938,6 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     try {
       await repositories.jobs.enqueue({ jobType: "base_push", dedupeKey: idempotencyKey, payload: { requirementId: req.id, sourceVersion: req.sourceVersion, analysisVersion, idempotencyKey, actorId: auth.actor.id }, availableAt: now });
     } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
-    const auditFailure = await appendAudit(repositories, { id: crypto.randomUUID(), actorId: auth.actor.id, eventType: "owner.manually_mapped", entityType: "requirement", entityId: req.id, result: "succeeded", safeDetails: { reason: "per_requirement", sourceVersion: req.sourceVersion }, occurredAt: now });
-    if (auditFailure) return auditFailure;
     return json({ requirementId: req.id, ownerState: "manually_mapped", status: "queued" });
   }
   const pushMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/push$/);
@@ -1843,7 +1947,8 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     const pushRequirementId = pathUuid(pushMatch[1]!, dependencies); if (!pushRequirementId) return jsonError("NOT_FOUND");
     const key = SyncIdempotencyHeaderSchema.safeParse(request.headers.get("Idempotency-Key")); if (!key.success) return jsonError("VALIDATION_FAILED");
     const req = await repositories.requirements.get(pushRequirementId); if (!req) return jsonError("NOT_FOUND");
-    if (!isIntakeComplete(req.pipeline.pull) || req.pipeline.owner === "pending_mapping" || !["pending", "failed"].includes(req.pipeline.push)) return jsonError("CONFLICT");
+    // Q1：未映射负责人（pending_mapping）允许空负责人推送，不再返回 409。
+    if (!isIntakeComplete(req.pipeline.pull) || !["pending", "failed"].includes(req.pipeline.push)) return jsonError("CONFLICT");
     const latestAnalysis = await repositories.analyses?.latest(req.id) ?? null;
     const analysisVersion = latestAnalysis?.analysisVersion ?? 0;
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
@@ -1865,11 +1970,12 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     if (method === "DELETE") {
       const parsed = ClearDuplicateDecisionSchema.safeParse(await readJson(request).catch(() => null));
       if (!parsed.success) return jsonError("VALIDATION_FAILED");
-      const result = await repositories.requirements.clearResolution({ requirementId: req.id, expectedVersion: parsed.data.expectedVersion });
+      const revokeAudit = { id: randomUUID(), actorId: auth.actor.id, eventType: "duplicate.revoked", entityType: "requirement", result: "succeeded" as const, safeDetails: { previous: req.processingState ?? "active" }, occurredAt: nowIso };
+      let result: Awaited<ReturnType<NonNullable<RequirementQueryRepository["clearResolution"]>>>;
+      try { result = await repositories.requirements.clearResolution({ requirementId: req.id, expectedVersion: parsed.data.expectedVersion, auditEvent: revokeAudit }); }
+      catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
       if (result.outcome === "version_conflict") return jsonError("CONFLICT", `决策版本冲突，当前版本 ${result.version}`);
       if (result.outcome === "not_found") return jsonError("NOT_FOUND");
-      const auditFailure = await appendAudit(repositories, { id: randomUUID(), actorId: auth.actor.id, eventType: "duplicate.revoked", entityType: "requirement", result: "succeeded", entityId: req.id, safeDetails: { previous: req.processingState ?? "active" }, occurredAt: nowIso });
-      if (auditFailure) return auditFailure;
       const updated = await repositories.requirements.get(req.id);
       // Q2：撤销判定后清除 Base 标记；失败只留审计，不影响撤销结果。
       const clearMarker = await duplicateMarkerFor(dependencies, repositories, req);
@@ -1892,16 +1998,19 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
       canonicalRecord = await repositories.requirements.get(parsed.data.canonicalRequirementId);
       if (!canonicalRecord || canonicalRecord.id === req.id) return jsonError("NOT_FOUND");
     }
-    const result = await repositories.requirements.decideResolution({
-      requirementId: req.id, decision: parsed.data.decision,
-      canonicalRequirementId: parsed.data.canonicalRequirementId ?? null,
-      reason: parsed.data.reason, actorId: auth.actor.id,
-      expectedVersion: parsed.data.expectedVersion, now: nowIso,
-    });
+    const decideAudit = { id: randomUUID(), actorId: auth.actor.id, eventType: parsed.data.decision === "duplicate" ? "duplicate.confirmed" : "duplicate.reviewed", entityType: "requirement", result: "succeeded" as const, safeDetails: { decision: parsed.data.decision }, occurredAt: nowIso };
+    let result: Awaited<ReturnType<NonNullable<RequirementQueryRepository["decideResolution"]>>>;
+    try {
+      result = await repositories.requirements.decideResolution({
+        requirementId: req.id, decision: parsed.data.decision,
+        canonicalRequirementId: parsed.data.canonicalRequirementId ?? null,
+        reason: parsed.data.reason, actorId: auth.actor.id,
+        expectedVersion: parsed.data.expectedVersion, now: nowIso,
+        auditEvent: decideAudit,
+      });
+    } catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
     if (result.outcome === "version_conflict") return jsonError("CONFLICT", `决策版本冲突，当前版本 ${result.version}`);
     if (result.outcome === "not_found") return jsonError("NOT_FOUND");
-    const auditFailure = await appendAudit(repositories, { id: randomUUID(), actorId: auth.actor.id, eventType: parsed.data.decision === "duplicate" ? "duplicate.confirmed" : "duplicate.reviewed", entityType: "requirement", result: "succeeded", entityId: req.id, safeDetails: { decision: parsed.data.decision, version: result.version }, occurredAt: nowIso });
-    if (auditFailure) return auditFailure;
     // Q2：把判定写进 Base 的专用标记字段（不通知）；失败只留审计，不影响判定结果。
     const setMarker = await duplicateMarkerFor(dependencies, repositories, req);
     if (setMarker) {

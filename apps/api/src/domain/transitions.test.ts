@@ -123,19 +123,34 @@ test("不变量：低置信/缺优先级/首轮 AI 失败不阻塞合格推送",
     ),
     true,
   );
+  // Q1：TB 执行人映射未建立（pending_mapping）不阻塞空负责人推送
+  assert.equal(
+    isPushEligible(
+      pipeline({ pull: "synced", owner: "pending_mapping", push: "pending" }),
+    ),
+    true,
+  );
+  // V02-T02/T04：手工/多维表格已收录（collected）同样具备推送资格
+  assert.equal(
+    isPushEligible(
+      pipeline({ pull: "collected", owner: "not_required", push: "pending" }),
+    ),
+    true,
+  );
 });
 
 test("不变量：未完成前置阶段的推送不合格", () => {
-  // pull 未同步
+  // pull 未完成收录
   assert.equal(
     isPushEligible(
       pipeline({ pull: "running", owner: "auto_mapped", push: "pending" }),
     ),
     false,
   );
-  // owner 映射处理未完成
   assert.equal(
-    isPushEligible(pipeline({ pull: "synced", owner: "pending_mapping", push: "pending" })),
+    isPushEligible(
+      pipeline({ pull: "failed", owner: "auto_mapped", push: "pending" }),
+    ),
     false,
   );
   // push 已在运行或已推送

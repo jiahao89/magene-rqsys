@@ -23,7 +23,7 @@
 // 退出码：任何 FAIL → 1；仅 SKIP/WARN → 0。
 
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readFile, unlink } from "node:fs/promises";
 import { promisify } from "node:util";
 import { dirname, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -112,16 +112,20 @@ async function checkTargetPlatformKey() {
   if (field.type !== "text") return fail(B, "目标正式 Base 平台键", `「${TARGET_PLATFORM_FIELD}」类型为 ${field.type}，代码按文本写入`);
   pass(B, "目标正式 Base 平台键字段", `${TARGET_PLATFORM_FIELD} / text`);
 
-  const ndjsonPath = resolve("/tmp", `rqsys-contract-target-platform-${process.pid}.ndjson`);
-  const listRes = await lark(["base", "+record-list", "--base-token", TARGET_BASE_TOKEN, "--table-id", TARGET_TABLE_ID,
-    "--field-id", TARGET_PLATFORM_FIELD, "--format", "ndjson", "--output", ndjsonPath, "--overwrite", "--limit", "2000"]);
-  if (!listRes.ok) return fail(B, "目标正式 Base 平台键覆盖", `记录读取失败（${listRes.error}）`);
+  const ndjsonPath = resolve(tmpdir(), `rqsys-contract-target-platform-${process.pid}.ndjson`);
   let rows;
   try {
-    const text = await readFile(ndjsonPath, "utf8");
-    rows = text.trim() ? text.trim().split("\n").map((line) => JSON.parse(line)) : [];
-  } catch (error) {
-    return fail(B, "目标正式 Base 平台键覆盖", `记录解析失败（${String(error?.message ?? error).slice(0, 120)}）`);
+    const listRes = await lark(["base", "+record-list", "--base-token", TARGET_BASE_TOKEN, "--table-id", TARGET_TABLE_ID,
+      "--field-id", TARGET_PLATFORM_FIELD, "--format", "ndjson", "--output", ndjsonPath, "--overwrite", "--limit", "2000"]);
+    if (!listRes.ok) return fail(B, "目标正式 Base 平台键覆盖", `记录读取失败（${listRes.error}）`);
+    try {
+      const text = await readFile(ndjsonPath, "utf8");
+      rows = text.trim() ? text.trim().split("\n").map((line) => JSON.parse(line)) : [];
+    } catch (error) {
+      return fail(B, "目标正式 Base 平台键覆盖", `记录解析失败（${String(error?.message ?? error).slice(0, 120)}）`);
+    }
+  } finally {
+    await unlink(ndjsonPath).catch(() => undefined);
   }
   if (!rows.length) return fail(B, "目标正式 Base 平台键覆盖", "表内 0 行");
   const values = rows.map((row) => row[TARGET_PLATFORM_FIELD]);
@@ -220,17 +224,21 @@ async function checkBase() {
   if (!created) return fail(B, "写入往返", "写入成功但未返回 record id");
   // 读回：record-list 的 ndjson 形态才带字段名（record-get 返回的是列矩阵，无字段名）
   const ndjsonPath = resolve(tmpdir(), `rqsys-contract-probe-${process.pid}.ndjson`);
-  const listed = await lark(["base", "+record-list", "--base-token", POC_BASE_TOKEN, "--table-id", POC_TABLE_ID,
-    "--field-id", DEFAULT_FIELDS.requirementId, "--field-id", DEFAULT_FIELDS.metadata.pushState,
-    "--field-id", DEFAULT_FIELDS.metadata.sourceVersion, "--field-id", DEFAULT_FIELDS.pm[0],
-    "--format", "ndjson", "--output", ndjsonPath, "--overwrite", "--limit", "200"]);
   let row = null;
-  if (listed.ok) {
-    try {
-      const text = await readFile(ndjsonPath, "utf8");
-      row = text.trim().split("\n").map((line) => { try { return JSON.parse(line); } catch { return null; } })
-        .find((r) => r && r[DEFAULT_FIELDS.requirementId] === stamp) ?? null;
-    } catch { /* 文件不可读按读回失败处理 */ }
+  try {
+    const listed = await lark(["base", "+record-list", "--base-token", POC_BASE_TOKEN, "--table-id", POC_TABLE_ID,
+      "--field-id", DEFAULT_FIELDS.requirementId, "--field-id", DEFAULT_FIELDS.metadata.pushState,
+      "--field-id", DEFAULT_FIELDS.metadata.sourceVersion, "--field-id", DEFAULT_FIELDS.pm[0],
+      "--format", "ndjson", "--output", ndjsonPath, "--overwrite", "--limit", "200"]);
+    if (listed.ok) {
+      try {
+        const text = await readFile(ndjsonPath, "utf8");
+        row = text.trim().split("\n").map((line) => { try { return JSON.parse(line); } catch { return null; } })
+          .find((r) => r && r[DEFAULT_FIELDS.requirementId] === stamp) ?? null;
+      } catch { /* 文件不可读按读回失败处理 */ }
+    }
+  } finally {
+    await unlink(ndjsonPath).catch(() => undefined);
   }
   const cleanup = await lark(["base", "+record-delete", "--base-token", POC_BASE_TOKEN, "--table-id", POC_TABLE_ID,
     "--record-id", created, "--yes", "--format", "json"]);
@@ -276,10 +284,18 @@ async function checkDb() {
   const q = async (sql, params) => (await pool.query(sql, params)).rows;
   try {
     const tables = (await q("SELECT table_name FROM information_schema.tables WHERE table_schema='public'")).map((r) => r.table_name);
-    const expected = ["requirements", "source_configs", "source_snapshots", "analysis_runs", "person_mappings", "base_push_runs", "pm_snapshots", "sync_batches", "sync_items", "pipeline_jobs", "audit_events", "module_dictionary_versions", "priority_rule_versions"];
+    const expected = [
+      "requirements", "source_configs", "source_snapshots", "analysis_runs",
+      "person_mappings", "base_push_runs", "pm_snapshots", "sync_batches",
+      "sync_items", "pipeline_jobs", "audit_events", "module_dictionary_versions",
+      "priority_rule_versions", "requirement_intake_receipts", "requirement_edit_receipts",
+      "rice_drafts", "rice_draft_history", "kano_evidence_versions", "kano_runs",
+      "requirement_score_versions", "requirement_resolutions", "system_flags",
+      "requirement_assessments", "requirement_prd_prompts",
+    ];
     const missing = expected.filter((t) => !tables.includes(t));
     if (missing.length) fail(B, "必需表存在", `缺少 ${missing.join("、")}`);
-    else pass(B, "必需表存在", `${expected.length} 张`);
+    else pass(B, "必需表存在", `${expected.length} 张（截至 0035）`);
 
     // B1 的契约：PM 快照外键必须是 uuid（代码必须传 requirements.id）
     const pmType = (await q("SELECT data_type FROM information_schema.columns WHERE table_name='pm_snapshots' AND column_name='requirement_id'"))[0]?.data_type;
@@ -302,10 +318,16 @@ async function checkDb() {
     if (/source_config_id/.test(reqIdx) && /teambition_requirement_id/.test(reqIdx)) pass(B, "需求身份唯一键 (source_config_id, teambition_requirement_id)", "重复同步不会产生重复需求");
     else fail(B, "需求身份唯一键", `索引：${reqIdx.slice(0, 160)}`);
 
-    // 来源配置单例
-    const sources = (await q("SELECT count(*)::int AS n FROM source_configs"))[0]?.n ?? 0;
-    if (sources <= 1) pass(B, "source_configs 单例", `${sources} 行`);
-    else warn(B, "source_configs 单例", `${sources} 行（代码假定单例）`);
+    // 来源配置双池唯一（0031：product / group 各至多一条）
+    const sourcePools = await q("SELECT pool, count(*)::int AS n FROM source_configs GROUP BY pool ORDER BY pool");
+    const invalidPools = sourcePools.filter((row) => row.pool !== "product" && row.pool !== "group");
+    const dupPools = sourcePools.filter((row) => row.n > 1);
+    const totalSources = sourcePools.reduce((sum, row) => sum + row.n, 0);
+    if (invalidPools.length || dupPools.length) {
+      fail(B, "source_configs 双池唯一 (provider, pool)", `异常池分布：${JSON.stringify(sourcePools)}`);
+    } else {
+      pass(B, "source_configs 双池唯一 (provider, pool)", `${totalSources} 行（${sourcePools.map((r) => `${r.pool}=${r.n}`).join(", ") || "空"}）`);
+    }
   } finally {
     await pool.end();
   }
@@ -369,6 +391,8 @@ async function checkAi() {
 async function checkPlatform() {
   const B = "platform";
   const required = ["AI_API_KEY", "BASE_APP_TOKEN", "BASE_FIELDS_JSON", "BASE_TABLE_ID", "FEISHU_APP_ID", "FEISHU_APP_SECRET", "GATEWAY_API_KEY", "TEAMBITION_GATEWAY_URL"];
+  const groupPoolVars = ["GROUP_BASE_APP_TOKEN", "GROUP_BASE_TABLE_ID", "GROUP_BASE_FIELDS_JSON", "RQSYS_GROUP_BASE_RECORD_URL_TEMPLATE"];
+  const intakeFormVars = ["BASE_INTAKE_TABLE_ID", "BASE_INTAKE_FIELDS_JSON", "BASE_FORM_SHARE_URL"];
   for (const envName of ["dev", "online"]) {
     const r = await lark(["apps", "+env-list", "--app-id", "app_17fqkjwyx1u", "--environment", envName, "--json"]);
     if (!r.ok) { skip(B, `[${envName}] 必需环境变量齐全`, `无法读取（${r.error}）`); continue; }
@@ -376,6 +400,14 @@ async function checkPlatform() {
     const missing = required.filter((k) => !keys.has(k));
     if (missing.length) fail(B, `[${envName}] 必需环境变量齐全`, `缺少 ${missing.join("、")}`);
     else pass(B, `[${envName}] 必需环境变量齐全`, `${required.length} 个`);
+
+    const missingGroup = groupPoolVars.filter((k) => !keys.has(k));
+    if (missingGroup.length === 0) pass(B, `[${envName}] 集团池环境变量`, `${groupPoolVars.length}/${groupPoolVars.length} 已配置`);
+    else warn(B, `[${envName}] 集团池环境变量`, `未配置 ${missingGroup.join("、")}（启用集团池同步前须补齐）`);
+
+    const presentIntake = intakeFormVars.filter((k) => keys.has(k));
+    if (presentIntake.length === intakeFormVars.length) pass(B, `[${envName}] 收集表环境变量（5b）`, `${presentIntake.length}/${intakeFormVars.length} 已配置`);
+    else warn(B, `[${envName}] 收集表环境变量（5b）`, `已配 ${presentIntake.length}/${intakeFormVars.length}（5b 当前冻结，未配置属预期）`);
   }
   // 触发器状态：只报告，不判定（开/关取决于当前验收阶段）
   const t = await lark(["apps", "+automation-list", "--app-id", "app_17fqkjwyx1u", "--all", "--json"]);

@@ -6,6 +6,7 @@ import { Button as ArcoButton, Input, Select } from "@arco-design/web-react";
 import { ApiError, AUDIENCE_LEVELS, AUDIENCE_LEVEL_NAMES, REQUIREMENT_INTAKE_CHANNELS, REQUIREMENT_INTAKE_TYPES, createRequirement, extractIntakeDraft, getFunctionModules, getRiceDraft, listKanoEvidence, listKanoRuns, listRequirements, saveRiceDraft, setAudienceTags, triggerKanoRun, updateRequirement, type ChatIntakeDraft, type KanoEvidenceVersionDto, type KanoRunDto, type RequirementSummary, type RiceDraft } from "./api";
 import { ConfirmModal } from "./confirm-modal";
 import { requirementSourceName } from "./requirement-view";
+import { safeHttpUrl } from "./safe-url";
 
 /** PRD-26 5a 补丁：服务端与客户端共用同一组上限，提交前拦截，避免落到英文通用校验错误。 */
 const INTAKE_LIMITS = { title: 200, description: 20_000, productModel: 100, constraintNotes: 2_000, supplementUrl: 500, proposerName: 100 } as const;
@@ -181,7 +182,7 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
     if (productModel.trim().length > INTAKE_LIMITS.productModel) return `产品/型号不能超过 ${INTAKE_LIMITS.productModel} 字。`;
     if (constraintNotes.trim().length > INTAKE_LIMITS.constraintNotes) return `边界/限制不能超过 ${INTAKE_LIMITS.constraintNotes.toLocaleString("zh-CN")} 字。`;
     const link = supplementUrl.trim();
-    if (link && !/^https?:\/\/\S+$/i.test(link)) return "来源链接需以 http:// 或 https:// 开头。";
+    if (link && !safeHttpUrl(link)) return "来源链接需以 http:// 或 https:// 开头，且不能包含账号密码。";
     if (link.length > INTAKE_LIMITS.supplementUrl) return `来源链接不能超过 ${INTAKE_LIMITS.supplementUrl} 字。`;
     return null;
   };
@@ -346,19 +347,49 @@ export function ManualEditSection({ detail, onSaved }: { detail: ManualEditSourc
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const idempotencyKey = useRef<string>(crypto.randomUUID());
-  // 展开时以当前详情为基准：期望版本与预填值一致，避免拿旧内容比对新版本。
+  const wasOpenRef = useRef(false);
+  const lastDetailIdRef = useRef(detail.id);
+  // 只在展开表单（false → true）或切换需求时以当前详情预填；父级后台刷新不冲掉正在编辑的草稿。
   useEffect(() => {
-    if (!open) return;
-    setTitle(detail.title); setDescription(detail.description ?? ""); setChannel(detail.sourceChannel ?? "");
-    setProductModel(detail.productModel ?? ""); setRequirementType(detail.requirementType ?? "");
-    setConstraintNotes(detail.constraintNotes ?? ""); setSupplementUrl(detail.supplementUrl ?? "");
-    setError(null); setNotice(null); idempotencyKey.current = crypto.randomUUID();
+    const idChanged = lastDetailIdRef.current !== detail.id;
+    lastDetailIdRef.current = detail.id;
+    if (idChanged) {
+      setOpen(false);
+      setNotice(null);
+      setError(null);
+      wasOpenRef.current = false;
+      return;
+    }
+    if (open && !wasOpenRef.current) {
+      setTitle(detail.title); setDescription(detail.description ?? ""); setChannel(detail.sourceChannel ?? "");
+      setProductModel(detail.productModel ?? ""); setRequirementType(detail.requirementType ?? "");
+      setConstraintNotes(detail.constraintNotes ?? ""); setSupplementUrl(detail.supplementUrl ?? "");
+      setError(null); setNotice(null); idempotencyKey.current = crypto.randomUUID();
+    }
+    wasOpenRef.current = open;
   }, [open, detail]);
   // 手工与多维表格来源都可编辑；聊天粘贴属 web_manual，沿用同一入口；Teambition 只读。
   if (detail.sourceType !== "web_manual" && detail.sourceType !== "base_form") return null;
-  if (!open) return <ArcoButton size="small" htmlType="button" onClick={() => setOpen(true)}>编辑需求</ArcoButton>;
+  if (!open) {
+    return <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+      <ArcoButton size="small" htmlType="button" onClick={() => setOpen(true)}>编辑需求</ArcoButton>
+      {notice && <span className="status-hint" role="status">{notice}</span>}
+    </div>;
+  }
+  const validateEdit = (): string | null => {
+    if (!title.trim() || !description.trim() || !channel) return "标题、需求描述与来源渠道不能为空。";
+    if (title.trim().length > INTAKE_LIMITS.title) return `标题不能超过 ${INTAKE_LIMITS.title} 字，当前 ${title.trim().length} 字。`;
+    if (description.trim().length > INTAKE_LIMITS.description) return `需求描述不能超过 20,000 字，当前 ${description.trim().length.toLocaleString("zh-CN")} 字。`;
+    if (productModel.trim().length > INTAKE_LIMITS.productModel) return `产品/型号不能超过 ${INTAKE_LIMITS.productModel} 字。`;
+    if (constraintNotes.trim().length > INTAKE_LIMITS.constraintNotes) return `边界/限制不能超过 ${INTAKE_LIMITS.constraintNotes.toLocaleString("zh-CN")} 字。`;
+    const link = supplementUrl.trim();
+    if (link && !safeHttpUrl(link)) return "来源链接需以 http:// 或 https:// 开头，且不能包含账号密码。";
+    if (link.length > INTAKE_LIMITS.supplementUrl) return `来源链接不能超过 ${INTAKE_LIMITS.supplementUrl} 字。`;
+    return null;
+  };
   const submit = async () => {
-    if (!title.trim() || !description.trim() || !channel) { setError("标题、需求描述与来源渠道不能为空。"); return; }
+    const problem = validateEdit();
+    if (problem) { setError(problem); return; }
     setBusy(true); setError(null); setNotice(null);
     try {
       const result = await updateRequirement(detail.id, {
@@ -473,21 +504,32 @@ export function BetaPanel({ requirementId }: { requirementId: string }) {
   const [kanoBusy, setKanoBusy] = useState(false);
   const [kanoError, setKanoError] = useState<string | null>(null);
   useEffect(() => {
+    setOpen(false);
+    setDraft(null);
+    setReach(""); setImpact(""); setConfidence(""); setEffort(""); setNotes("");
+    setRuns([]); setError(null); setNotice(null); setKanoError(null);
+  }, [requirementId]);
+  useEffect(() => {
     if (!open) return;
+    let cancelled = false;
+    const controller = new AbortController();
     // V02-T13：只读列出已批准资料；打开面板不运行任何模型。
-    void listKanoEvidence().then((result) => {
+    void listKanoEvidence(undefined, controller.signal).then((result) => {
+      if (cancelled) return;
       const approved = result.items.filter((item) => item.status === "approved" && !item.piiFlagged);
       setEvidence(approved);
       setSelectedEvidence(approved[0] ? String(approved[0].version) : "");
-    }).catch(() => setEvidence([]));
-    void listKanoRuns(requirementId).then((result) => setRuns(result.items)).catch(() => setRuns([]));
-    void getRiceDraft(requirementId).then((loaded) => {
+    }).catch(() => { if (!cancelled) setEvidence([]); });
+    void listKanoRuns(requirementId, undefined, controller.signal).then((result) => { if (!cancelled) setRuns(result.items); }).catch(() => { if (!cancelled) setRuns([]); });
+    void getRiceDraft(requirementId, undefined, controller.signal).then((loaded) => {
+      if (cancelled) return;
       setDraft(loaded);
       setReach(loaded.inputs.reach ?? ""); setImpact(loaded.inputs.impact ?? "");
       setConfidence(loaded.inputs.confidence ?? ""); setEffort(loaded.inputs.effort ?? "");
       setNotes(loaded.notes ?? "");
       setError(null); setNotice(null);
-    }).catch(() => { setError("草稿读取失败，请重试。"); });
+    }).catch(() => { if (!cancelled) setError("草稿读取失败，请重试。"); });
+    return () => { cancelled = true; controller.abort(); };
   }, [open, requirementId]);
   if (!open) return <ArcoButton size="small" htmlType="button" onClick={() => setOpen(true)}>Beta 分析</ArcoButton>;
   const save = async () => {
@@ -524,7 +566,10 @@ export function BetaPanel({ requirementId }: { requirementId: string }) {
     <div className="req-field" style={{ flexBasis: "100%", marginTop: 8 }}>
       <strong>Kano 资料（已批准快照 · 只读）</strong>
       {evidence.length === 0 ? <p className="status-hint">暂无已批准的访谈资料。</p> : <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
-        {evidence.map((item) => <li key={item.id}>v{item.version} · {item.title}{item.coverageNotes ? `（覆盖限制：${item.coverageNotes}）` : ""}{item.sourceUrl ? <> · <a href={item.sourceUrl} target="_blank" rel="noreferrer">来源</a></> : null}</li>)}
+        {evidence.map((item) => {
+          const safeUrl = safeHttpUrl(item.sourceUrl);
+          return <li key={item.id}>v{item.version} · {item.title}{item.coverageNotes ? `（覆盖限制：${item.coverageNotes}）` : ""}{safeUrl ? <> · <a href={safeUrl} target="_blank" rel="noreferrer">来源</a></> : null}</li>;
+        })}
       </ul>}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 8 }}>
         <Select aria-label="Kano 资料版本" value={selectedEvidence} onChange={(value: string) => setSelectedEvidence(value)} disabled={kanoBusy || evidence.length === 0} placeholder="选择资料版本" style={{ minWidth: 200 }} options={[{ label: "选择资料版本", value: "" }, ...evidence.map((item) => ({ label: `v${item.version} · ${item.title}`, value: String(item.version) }))]} />

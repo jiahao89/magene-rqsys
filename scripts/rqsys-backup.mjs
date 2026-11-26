@@ -8,13 +8,15 @@
 //   node scripts/rqsys-backup.mjs export --out backups/rq-sys-20261112
 //       # 默认通过 lark-cli 读取目标环境（RQSYS_APP_ID / RQSYS_ENV）
 //   node scripts/rqsys-backup.mjs export --database-url postgres://... --out /tmp/rq-backup
-//       # 本地/dev 直连
+//       # 本地/dev 直连（单事务 REPEATABLE READ READ ONLY 强一致快照）
 //   node scripts/rqsys-backup.mjs verify --in backups/rq-sys-20261112
 //
 // 说明：
 // - 审计表默认不导出（量大）；确需完整留痕时加 --include-audit。
+// - 分页统一按主键做 keyset 游标分页（避免 OFFSET 在并发写入下漏行/重行）。
+//   - --database-url 模式：整个导出包裹在 REPEATABLE READ READ ONLY 事务内，跨表强一致。
+//   - lark-cli 模式：单次 +db-execute 相互独立，单表 keyset 不重不漏，但跨表不具备事务一致性（manifest 明确标注）。
 // - 快照含业务数据（需求标题/描述等），保存位置按数据治理要求控制，不要提交仓库。
-// - manifest.json 记录生成时间、来源（不含凭据）、每表行数与 SHA-256、已应用迁移。
 
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -39,6 +41,8 @@ const TABLES = [
   "requirement_resolutions",
   "analysis_runs",
   "requirement_score_versions",
+  "requirement_assessments",
+  "requirement_prd_prompts",
   "kano_evidence_versions",
   "kano_runs",
   "person_mappings",
@@ -53,6 +57,36 @@ const TABLES = [
   "system_flags",
 ];
 
+/** 每张表的主键列及 SQL 类型，用于稳定 keyset 分页。 */
+const TABLE_PRIMARY_KEY = {
+  source_configs: { column: "id", type: "uuid" },
+  priority_rule_versions: { column: "id", type: "uuid" },
+  module_dictionary_versions: { column: "version", type: "integer" },
+  sync_batches: { column: "id", type: "uuid" },
+  requirements: { column: "id", type: "uuid" },
+  source_snapshots: { column: "id", type: "uuid" },
+  requirement_resolutions: { column: "id", type: "uuid" },
+  analysis_runs: { column: "id", type: "uuid" },
+  requirement_score_versions: { column: "id", type: "uuid" },
+  requirement_assessments: { column: "id", type: "uuid" },
+  requirement_prd_prompts: { column: "id", type: "uuid" },
+  kano_evidence_versions: { column: "id", type: "uuid" },
+  kano_runs: { column: "id", type: "uuid" },
+  person_mappings: { column: "id", type: "uuid" },
+  rice_drafts: { column: "requirement_id", type: "uuid" },
+  rice_draft_history: { column: "id", type: "uuid" },
+  requirement_intake_receipts: { column: "idempotency_key", type: "text" },
+  requirement_edit_receipts: { column: "idempotency_key", type: "text" },
+  pm_snapshots: { column: "id", type: "uuid" },
+  base_push_runs: { column: "id", type: "uuid" },
+  sync_items: { column: "id", type: "uuid" },
+  pipeline_jobs: { column: "id", type: "uuid" },
+  system_flags: { column: "name", type: "text" },
+  audit_events: { column: "id", type: "uuid" },
+};
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function arg(name) {
   const index = process.argv.indexOf(name);
   return index === -1 ? null : process.argv[index + 1] ?? null;
@@ -62,22 +96,54 @@ function shellSafe(statement) {
   return statement.replace(/\s+/g, " ").trim();
 }
 
+function formatKeysetLiteral(value, type) {
+  if (type === "integer") {
+    const n = Number(value);
+    if (!Number.isInteger(n)) throw new Error(`非法整数主键值：${value}`);
+    return String(n);
+  }
+  const text = String(value);
+  if (type === "uuid") {
+    if (!UUID_RE.test(text)) throw new Error(`非法 UUID 主键值：${text}`);
+    return `'${text}'::uuid`;
+  }
+  return `'${text.replace(/'/g, "''")}'`;
+}
+
 async function createReader() {
   const databaseUrl = arg("--database-url") ?? process.env.RQ_BACKUP_DATABASE_URL;
   if (databaseUrl) {
     const { default: pg } = await import("pg");
     const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+    const client = await pool.connect();
+    await client.query("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
     return {
       source: "database-url",
-      async rows(sql) {
-        const result = await pool.query(sql);
+      consistency: "repeatable-read",
+      async rows(sql, params = []) {
+        const result = await client.query(sql, params);
         return result.rows;
       },
-      async close() { await pool.end(); },
+      async page(table, pk, lastKey) {
+        if (lastKey === null) {
+          return this.rows(`SELECT * FROM "${table}" ORDER BY "${pk.column}" ASC LIMIT $1`, [PAGE_SIZE]);
+        }
+        const cast = pk.type === "uuid" ? "::uuid" : pk.type === "integer" ? "::integer" : "";
+        return this.rows(
+          `SELECT * FROM "${table}" WHERE "${pk.column}" > $1${cast} ORDER BY "${pk.column}" ASC LIMIT $2`,
+          [lastKey, PAGE_SIZE],
+        );
+      },
+      async close() {
+        await client.query("COMMIT").catch(() => undefined);
+        client.release();
+        await pool.end();
+      },
     };
   }
   return {
     source: `lark-cli:${APP_ID}/${ENVIRONMENT}`,
+    consistency: "per-query-keyset",
     async rows(sql) {
       const env = { ...process.env };
       for (const key of ["LARKSUITE_CLI_APP_ID", "LARKSUITE_CLI_USER_ACCESS_TOKEN", "LARKSUITE_CLI_BRAND"]) delete env[key];
@@ -87,16 +153,26 @@ async function createReader() {
       const data = parsed.data;
       return Array.isArray(data) ? data : (data?.rows ?? []);
     },
+    async page(table, pk, lastKey) {
+      if (lastKey === null) {
+        return this.rows(shellSafe(`SELECT * FROM "${table}" ORDER BY "${pk.column}" ASC LIMIT ${PAGE_SIZE}`));
+      }
+      const literal = formatKeysetLiteral(lastKey, pk.type);
+      return this.rows(shellSafe(`SELECT * FROM "${table}" WHERE "${pk.column}" > ${literal} ORDER BY "${pk.column}" ASC LIMIT ${PAGE_SIZE}`));
+    },
     async close() {},
   };
 }
 
 async function exportTable(reader, dir, table) {
+  const pk = TABLE_PRIMARY_KEY[table];
+  if (!pk) throw new Error(`未配置主键定义的表：${table}`);
   const hash = createHash("sha256");
   const chunks = [];
   let count = 0;
-  for (let offset = 0; ; offset += PAGE_SIZE) {
-    const rows = await reader.rows(shellSafe(`SELECT * FROM ${table} ORDER BY 1 LIMIT ${PAGE_SIZE} OFFSET ${offset}`));
+  let lastKey = null;
+  for (;;) {
+    const rows = await reader.page(table, pk, lastKey);
     for (const row of rows) {
       const line = `${JSON.stringify(row)}\n`;
       chunks.push(line);
@@ -104,6 +180,10 @@ async function exportTable(reader, dir, table) {
       count += 1;
     }
     if (rows.length < PAGE_SIZE) break;
+    lastKey = rows[rows.length - 1][pk.column];
+    if (lastKey === undefined || lastKey === null) {
+      throw new Error(`表 ${table} 最后一行缺少主键列 ${pk.column}`);
+    }
   }
   const content = chunks.join("");
   await writeFile(resolve(dir, `${table}.jsonl`), content, "utf8");
@@ -122,6 +202,10 @@ async function exportSnapshot() {
     format: "rq-sys-jsonl-v1",
     generatedAt: new Date().toISOString(),
     source: reader.source,
+    snapshotConsistency: reader.consistency,
+    ...(reader.consistency === "per-query-keyset"
+      ? { snapshotNote: "Exported via independent lark-cli keyset queries; single-table pagination is keyset-stable, but cross-table writes during export are not transactionally isolated." }
+      : {}),
     tables: [],
     migrations: null,
   };
@@ -141,7 +225,7 @@ async function exportSnapshot() {
       process.stdout.write(`${entry.rows} rows\n`);
     }
     await writeFile(resolve(dir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
-    process.stdout.write(`\nSnapshot written to ${basename(dir)}/ (${manifest.tables.reduce((sum, item) => sum + item.rows, 0)} rows, migrations ${manifest.migrations ?? "unknown"})\n`);
+    process.stdout.write(`\nSnapshot written to ${basename(dir)}/ (${manifest.tables.reduce((sum, item) => sum + item.rows, 0)} rows, consistency=${reader.consistency}, migrations ${manifest.migrations ?? "unknown"})\n`);
     process.stdout.write("WARNING: snapshot contains business data; store it under the data-governance policy and never commit it.\n");
   } finally {
     await reader.close();

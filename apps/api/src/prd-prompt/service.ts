@@ -3,12 +3,12 @@
 // 不做模板降级——失败落 failed 版本、保留 PM 输入、返回稳定错误码，供下次重试生成新版本。
 import { z } from "zod";
 import { maskPii } from "../analysis/contract.js";
-import { AI_BASE_URL_MISSING_MESSAGE, AiProviderError, getAiProviderConfig, parseModelJson, type AiProviderConfig, type FetchLike } from "../analysis/provider.js";
+import { AI_BASE_URL_MISSING_MESSAGE, getAiProviderConfig, parseModelJson, type AiProviderConfig, type FetchLike } from "../analysis/provider.js";
+import { OpenAiHttpError, requestOpenAiChatContent } from "../analysis/openai-http.js";
 import type { RequirementPrdPromptRepository } from "../application/repositories.js";
 import type { AnalysisRunRecord, RequirementAssessmentRecord, RequirementPrdPromptRecord, RequirementRecord } from "../domain/persistence.js";
 import { PRD_PROMPT_SECTIONS, PRD_PROMPT_VERSION, buildPrdPromptMessages } from "./prompt.js";
 
-const ENDPOINT = "/chat/completions";
 const DEFAULT_TIMEOUT_MS = 90_000;
 const MAX_INVESTIGATION_NOTES = 8_000;
 
@@ -24,9 +24,21 @@ export class PrdPromptInProgressError extends Error {
   }
 }
 
-/** 生成失败：只带稳定错误码与字段路径，不含模型正文。 */
+export type PrdPromptFailureCode =
+  | "timeout"
+  | "rate_limited"
+  | "auth_error"
+  | "request_error"
+  | "provider_error"
+  | "invalid_output";
+
+/** 生成失败：只带稳定错误码、状态码与字段路径，不含模型正文。 */
 export class PrdPromptFailure extends Error {
-  constructor(public readonly code: "timeout" | "provider_error" | "invalid_output", message: string) {
+  constructor(
+    public readonly code: PrdPromptFailureCode,
+    message: string,
+    public readonly httpStatus?: number,
+  ) {
     super(message);
     this.name = "PrdPromptFailure";
   }
@@ -38,9 +50,14 @@ const OutputSchema = z.object({
   openQuestions: z.array(z.string().min(1).max(300)).max(8),
 }).strict();
 
-const EnvelopeSchema = z.object({
-  choices: z.array(z.object({ message: z.object({ content: z.string().nullable().optional() }).passthrough() }).passthrough()).min(1),
-}).passthrough();
+function mapOpenAiError(error: OpenAiHttpError): PrdPromptFailure {
+  if (error.kind === "timeout") return new PrdPromptFailure("timeout", error.message);
+  if (error.kind === "rate_limited") return new PrdPromptFailure("rate_limited", error.message, error.httpStatus);
+  if (error.kind === "auth_error") return new PrdPromptFailure("auth_error", error.message, error.httpStatus);
+  if (error.kind === "request_error") return new PrdPromptFailure("request_error", error.message, error.httpStatus);
+  if (error.kind === "envelope" || error.kind === "empty_content") return new PrdPromptFailure("invalid_output", error.message);
+  return new PrdPromptFailure("provider_error", error.message, error.httpStatus);
+}
 
 /** 输出禁止项（规格 §3/§7 PP7）：只用于判定，不把命中内容写日志。 */
 const FORBIDDEN: Array<{ name: string; pattern: RegExp }> = [
@@ -114,14 +131,15 @@ export function createPrdPromptRunner(options: {
   now?: () => Date;
 }): PrdPromptRunner {
   const config = { ...getAiProviderConfig(), ...options.config };
-  const timeoutMs = Number(process.env.PRD_PROMPT_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS);
+  const configuredTimeout = options.config?.timeoutMs ?? Number(process.env.PRD_PROMPT_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS);
+  const timeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : DEFAULT_TIMEOUT_MS;
   const fetcher = options.fetch ?? globalThis.fetch;
   const now = options.now ?? (() => new Date());
 
   return {
-    async run({ requirement, assessment, investigationNotes, actorId: _actorId, analysis, piiMarkers }) {
-      if (!config.apiKey) throw new PrdPromptFailure("provider_error", "AI provider credential is not configured.");
-      if (!config.baseUrl) throw new PrdPromptFailure("provider_error", AI_BASE_URL_MISSING_MESSAGE);
+    async run({ requirement, assessment, investigationNotes, actorId, analysis, piiMarkers }) {
+      if (!config.apiKey) throw new PrdPromptFailure("auth_error", "AI provider credential is not configured.");
+      if (!config.baseUrl) throw new PrdPromptFailure("request_error", AI_BASE_URL_MISSING_MESSAGE);
       const notes = investigationNotes.trim();
       if (notes.length > MAX_INVESTIGATION_NOTES) throw new PrdPromptFailure("invalid_output", "investigation_notes_too_long");
       const startedAt = now().toISOString();
@@ -149,6 +167,7 @@ export function createPrdPromptRunner(options: {
         promptVersion: PRD_PROMPT_VERSION,
         model: config.model,
         inputs: storedInputs,
+        createdBy: actorId,
         at: startedAt,
         staleAfterMs: PRD_PROMPT_RUNNING_STALE_MS,
       });
@@ -159,33 +178,24 @@ export function createPrdPromptRunner(options: {
         const messages = buildPrdPromptMessages({ requirement, assessment, investigationNotes: notes, analysis });
         // 与评估/主分析同口径：需求事实与调研结论都过 PII 掩码，名单来自来源与团队目录。
         const maskedUser = maskPii(messages.user, piiMarkers ?? []);
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : DEFAULT_TIMEOUT_MS);
-        let response: Response;
+        let content: string;
         try {
-          response = await fetcher(`${config.baseUrl}${ENDPOINT}`, {
-            method: "POST",
-            headers: { authorization: `Bearer ${config.apiKey}`, "content-type": "application/json" },
-            body: JSON.stringify({
-              model: config.model,
-              ...(config.temperature === null ? {} : { temperature: config.temperature }),
-              response_format: { type: "json_object" },
-              messages: [
-                { role: "system", content: messages.system },
-                { role: "user", content: maskedUser },
-              ],
-            }),
-            signal: controller.signal,
+          content = await requestOpenAiChatContent({
+            baseUrl: config.baseUrl,
+            apiKey: config.apiKey,
+            model: config.model,
+            temperature: config.temperature,
+            timeoutMs,
+            messages: [
+              { role: "system", content: messages.system },
+              { role: "user", content: maskedUser },
+            ],
+            fetch: fetcher,
           });
         } catch (error) {
-          if (error instanceof Error && error.name === "AbortError") throw new PrdPromptFailure("timeout", "AI provider request timed out.");
-          throw new PrdPromptFailure("provider_error", "AI provider is unavailable.");
-        } finally {
-          clearTimeout(timer);
+          if (error instanceof OpenAiHttpError) throw mapOpenAiError(error);
+          throw error;
         }
-        if (!response.ok) throw new PrdPromptFailure("provider_error", `AI provider request failed (HTTP ${response.status}).`);
-        const content = EnvelopeSchema.parse(await response.json()).choices[0]?.message.content;
-        if (!content?.trim()) throw new PrdPromptFailure("invalid_output", "AI provider returned empty content.");
         let raw: unknown;
         try {
           raw = parseModelJson(content);

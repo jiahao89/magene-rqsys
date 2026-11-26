@@ -181,6 +181,7 @@ export interface RequirementPrdPromptRepository {
     promptVersion: string;
     model: string | null;
     inputs: Record<string, unknown>;
+    createdBy?: string | null;
     at: string;
     staleAfterMs: number;
   }): Promise<RequirementPrdPromptCreateResult>;
@@ -471,18 +472,18 @@ export interface RequirementQueryRepository {
   decideResolution?(input: {
     requirementId: string; decision: "duplicate" | "ignored" | "confirmed_unique";
     canonicalRequirementId: string | null; reason: string | null; actorId: string;
-    expectedVersion: number; now: string;
+    expectedVersion: number; now: string; auditEvent?: AuditEventInput;
   }): Promise<{ outcome: "saved"; version: number } | { outcome: "version_conflict"; version: number } | { outcome: "not_found" }>;
-  clearResolution?(input: { requirementId: string; expectedVersion: number }):
+  clearResolution?(input: { requirementId: string; expectedVersion: number; auditEvent?: AuditEventInput }):
     Promise<{ outcome: "cleared" } | { outcome: "version_conflict"; version: number } | { outcome: "not_found" }>;
 
   // V02-T26：人工优先级覆盖（null=清除）。优先于当前评分版本 priority；只影响应用内展示/统计，不回写 Base。
   setPriorityOverride(requirementId: string, input: {
-    priority: PriorityLevel | null; reason: string | null; actorId: string; at: string;
+    priority: PriorityLevel | null; reason: string | null; actorId: string; at: string; auditEvent?: AuditEventInput;
   }): Promise<{ outcome: "saved"; override: RequirementPriorityOverride | null } | { outcome: "not_found" }>;
   // V02-T26：分析补充上下文（null=清除）。只进入下一次分析请求，不写 Base。
   setAnalysisContext(requirementId: string, input: {
-    context: string | null; actorId: string; at: string;
+    context: string | null; actorId: string; at: string; auditEvent?: AuditEventInput;
   }): Promise<{ outcome: "updated"; context: RequirementAnalysisContext | null } | { outcome: "not_found" }>;
 
 
@@ -591,6 +592,8 @@ export interface RequirementQueryRepository {
     analysisState?: AnalysisState;
     ownerState?: OwnerState;
     pushState?: PushState;
+    /** 处理状态筛选（active / suppressed / suppressed_duplicate / suppressed_ignored）。 */
+    processingState?: string;
     /** 生效优先级筛选：人工覆盖优先于当前评分版本。 */
     priority?: PriorityLevel;
     /** 5c-1 来源筛选：chat_paste 由 web_manual + source_payload.intakeOrigin 判定。 */
@@ -643,7 +646,7 @@ export interface RequirementQueryRepository {
   setOwner(requirementId: string, feishuUserId: string | null, state: OwnerState): Promise<void>;
   // 逐条人工负责人：写入需求本身并迁移到 manually_mapped（非法迁移抛 InvalidTransitionError）。
   // 适用于所有需求（无论 TB 是否有执行人）；绝不再写 person_mappings。
-  assignManualOwner(requirementId: string, owner: Omit<RequirementManualOwner, "pushedFeishuUserId" | "assignmentVersion">): Promise<void>;
+  assignManualOwner(requirementId: string, owner: Omit<RequirementManualOwner, "pushedFeishuUserId" | "assignmentVersion">, auditEvent?: AuditEventInput): Promise<void>;
   // 推送成功写入了人工负责人后记账；只在仍是同一负责人时生效，避免覆盖推送期间发生的改派。
   markManualOwnerPushed(requirementId: string, feishuUserId: string): Promise<void>;
   // 清除逐条人工负责人（恢复 TB 默认负责人/空负责人）。
@@ -654,7 +657,7 @@ export interface RequirementQueryRepository {
    * 重试又被"没有单独指定的负责人"挡住。manually_mapped 到 auto_mapped/not_required 没有直接迁移，
    * 实现需在事务内经 pending_mapping 中转。
    */
-  releaseManualOwner(requirementId: string, state: OwnerState): Promise<void>;
+  releaseManualOwner(requirementId: string, state: OwnerState, auditEvent?: AuditEventInput): Promise<void>;
   // 记录最近一次成功推送写入 Base 的负责人，用于下一次"负责人变更"判断。
   markLastPushedOwner(requirementId: string, owner: { feishuUserId: string; feishuIdType: FeishuIdType } | null): Promise<void>;
   // 疑似重复：查询同标题链接（仅详情使用）。

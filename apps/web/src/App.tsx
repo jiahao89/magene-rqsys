@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { Activity, ArrowDownToLine, ArrowRight, Blocks, BookOpen, Building2, Check, CircleAlert, CircleHelp, Clock3, Database, FolderSync, Gauge, GitBranch, Layers3, ListChecks, LoaderCircle, Menu, Moon, Play, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Sun, Trash2, UserRoundCheck, Users, X } from "lucide-react";
-import { ApiError, createPriorityRuleDraft, getHealth, getMyRequirementCounts, getRequirement, getOverviewMetrics, listPriorityRules, listSources, publishPriorityRule, runSync, type MyRequirementCounts, type OverviewMetrics, type PriorityRuleVersion, type RequirementPool, type RequirementSummary, type SourceConfig, type SyncExecutionMode } from "./api";
+import { ApiError, createPriorityRuleDraft, getHealth, getMyRequirementCounts, getRequirement, getOverviewMetrics, listBatches, listPriorityRules, listRequirements, listSources, publishPriorityRule, runSync, type BatchSummary, type MyRequirementCounts, type OverviewMetrics, type PriorityRuleVersion, type RequirementSummary, type SourceConfig, type SyncExecutionMode } from "./api";
 import { GuidePanel, ModulesPanel, MyRequirementsPanel, OpsPanel, PanelErrorBoundary, PublishStatusChip, RecycleBinPanel, RequirementsPanel, SourcesPanel, SyncRecordsPanel, TeamPanel } from "./panels";
 import { SopPanel } from "./sop";
 import { SkeletonBlock, SkeletonCards, SkeletonTableRows } from "./skeleton";
@@ -13,7 +13,7 @@ import { requirementDisplayId } from "./requirement-view";
 import { stateLabel } from "./state-labels";
 import { checkScheduleHealth, describeCountdown, formatInZone, nextRunAt, type WeeklySchedule } from "./schedule";
 
-type Batch = { id: string; status: string; totalCount: number; succeededCount: number; failedCount: number; startedAt?: string; completedAt?: string; errorSummary?: string };
+type Batch = BatchSummary;
 // 与列表接口的 DTO 保持同一类型：此前这里复制了一份更窄的本地结构，字段一旦分叉就会在运行时才暴露。
 type Requirement = RequirementSummary;
 type Page = WorkbenchPage;
@@ -58,17 +58,6 @@ function formatApiError(cause: unknown): string {
     return API_ERROR_TEXT[cause.code] ?? `操作失败（${cause.code}）。`;
   }
   return "服务暂不可用，请稍后重试。";
-}
-
-async function apiJson<T>(path: string): Promise<T> {
-  const response = await fetch(path, { headers: { accept: "application/json" } });
-  const body: unknown = await response.json().catch(() => null);
-  if (!response.ok) {
-    const envelope = body && typeof body === "object" && "error" in body ? body.error : undefined;
-    const detail = envelope && typeof envelope === "object" ? envelope as { code?: string; message?: string } : {};
-    throw new ApiError(detail.message ?? `Request failed (${response.status})`, response.status, detail.code ?? "REQUEST_FAILED");
-  }
-  return body as T;
 }
 
 const stageLabels = { pull: "拉取", analysis: "AI 分析", owner: "负责人", push: "推送" } as const;
@@ -290,19 +279,25 @@ function App() {
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
   };
 
+  const loadVersionRef = useRef(0);
+  const batchesVersionRef = useRef(0);
   const loadData = useCallback(async () => {
+    const version = ++loadVersionRef.current;
     // 轮询刷新时保留已加载状态：每 5 秒闪回“正在检查 API”只会让按钮禁用、数字抖动。
     setHealth((prev) => (prev === "ready" ? "ready" : "loading")); setError(null);
     try {
       await getHealth();
+      if (version !== loadVersionRef.current) return;
       setHealth("ready");
       const sourceRows = await listSources();
+      if (version !== loadVersionRef.current) return;
       // 各端点独立容错：个别端点未实现（501）时不拖垮整页
       const [batchPage, requirementPage, metricsResult] = await Promise.allSettled([
-        apiJson<{ items: Batch[] }>("/api/batches?limit=10"),
-        apiJson<{ items: Requirement[] }>("/api/requirements?limit=25"),
+        listBatches({ limit: 10 }),
+        listRequirements({ limit: 25 }),
         getOverviewMetrics(),
       ]);
+      if (version !== loadVersionRef.current) return;
       setSources(sourceRows);
       setBatches(batchPage.status === "fulfilled" ? batchPage.value.items : []);
       setRequirements(requirementPage.status === "fulfilled" ? requirementPage.value.items : []);
@@ -311,6 +306,7 @@ function App() {
         throw batchPage.reason instanceof ApiError ? batchPage.reason : new Error("API request failed");
       }
     } catch (cause) {
+      if (version !== loadVersionRef.current) return;
       setHealth("error");
       setError(formatApiError(cause));
     }
@@ -324,8 +320,10 @@ function App() {
   }, []);
   // 局部刷新：批次列表单独拉取。同步提交/运行中轮询只更新批次，需求与统计保持稳定，避免整页刷新。
   const refreshBatches = useCallback(async () => {
+    const version = ++batchesVersionRef.current;
     try {
-      const page = await apiJson<{ items: Batch[] }>("/api/batches?limit=10");
+      const page = await listBatches({ limit: 10 });
+      if (version !== batchesVersionRef.current) return;
       setBatches(page.items);
     } catch { /* 局部刷新失败保留旧数据，下一轮轮询或手动刷新恢复 */ }
   }, []);
@@ -377,15 +375,22 @@ function App() {
     { key: "P3", tone: "p3", value: priority?.P3 ?? 0, range: priorityRule?.thresholds ? `< ${priorityRule.thresholds.p2}` : "规则未发布" },
   ] as const;
   const priorityGraded = priority ? priority.P0 + priority.P1 + priority.P2 + priority.P3 : null;
+  // 服务端 ownerResolved 已包含 auto_mapped / manually_mapped / not_required，因此 total - counts.owner 精确对应 pending_mapping。
   const todoItems = [
     { key: "unassigned", label: "待分配负责人", value: metrics ? Math.max(0, total - counts.owner) : null, hint: "没有对应飞书账号，分配后会自动推送并通知", tone: "warn", filters: { ownerState: "pending_mapping" } },
-    { key: "failed", label: "推送失败", value: metrics ? counts.pushFailed : null, hint: "可在需求详情页查看原因并重试", tone: metrics && counts.failed > 0 ? "danger" : "ok", filters: { push: "failed" } },
+    { key: "failed", label: "推送失败", value: metrics ? counts.pushFailed : null, hint: "可在需求详情页查看原因并重试", tone: metrics && counts.pushFailed > 0 ? "danger" : "ok", filters: { push: "failed" } },
     { key: "pending", label: "待推送", value: metrics ? counts.pushPending : null, hint: "等待推送到多维表格", tone: "info", filters: { push: "pending" } },
   ] as const;
 
   return (
     <div className="app-shell">
-      <a className="skip-link" href="#main-content">跳到主要内容</a>
+      <a className="skip-link" href="#main-content" onClick={(event) => {
+        // 避免改写 location.hash 触发 hash 路由 popstate 把当前页重置回总览。
+        event.preventDefault();
+        const main = document.getElementById("main-content");
+        main?.focus();
+        main?.scrollIntoView?.({ block: "start" });
+      }}>跳到主要内容</a>
       {mobileNavOpen && <ArcoButton type="text" className="sidebar-backdrop" aria-label="关闭主导航" onClick={() => setMobileNavOpen(false)} htmlType="button" />}
       <aside ref={sidebarRef} id="main-navigation" className={`sidebar ${mobileNavOpen ? "is-mobile-open" : ""}`} aria-label="主导航" aria-hidden={isMobileViewport && !mobileNavOpen || undefined} aria-modal={mobileNavOpen || undefined} inert={isMobileViewport && !mobileNavOpen || undefined} role={mobileNavOpen ? "dialog" : undefined} onKeyDown={handleSidebarKeyDown}>
         <a className="brand" href={pageHref("Overview")} onClick={(event) => navigateLink(event, "Overview")}><span className="brand-mark"><Layers3 size={19} strokeWidth={2.2} /></span><span className="brand-name">rq<span>·</span>sys</span><span className="brand-edition">WORKSPACE</span></a>
@@ -586,7 +591,7 @@ function RulesPanel() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [thresholds, setThresholds] = useState({ p0: 4, p1: 3, p2: 2 });
+  const [thresholds, setThresholds] = useState<{ p0: number | undefined; p1: number | undefined; p2: number | undefined }>({ p0: 4, p1: 3, p2: 2 });
   const [scoringInput, setScoringInput] = useState("user:强=3\nuser:中=2\nuser:弱=1\nmarket:强=3\nmarket:中=2\nmarket:弱=1\nbusiness:强=3\nbusiness:中=2\nbusiness:弱=1\ntechnology:强=3\ntechnology:中=2\ntechnology:弱=1");
   const [evidenceInput, setEvidenceInput] = useState("");
   // ARCO-05：高级设置由 details/summary 改为受控按钮 + 条件渲染。
@@ -608,13 +613,16 @@ function RulesPanel() {
     finally { setBusy(false); }
   };
   const handleCreateRule = () => withFeedback(async () => {
+    if (thresholds.p0 === undefined || thresholds.p1 === undefined || thresholds.p2 === undefined) {
+      throw new ApiError("请填写完整的 P0 / P1 / P2 阈值。", 400, "INVALID_THRESHOLDS");
+    }
     if (!(thresholds.p0 >= thresholds.p1 && thresholds.p1 >= thresholds.p2)) throw new ApiError("阈值需满足 P0 ≥ P1 ≥ P2。", 400, "INVALID_THRESHOLDS");
     const scoring = parseScoringInput(scoringInput);
     if (Object.values(scoring).some((map) => Object.keys(map).length === 0)) throw new ApiError("每个维度至少需要一条「取值=分数」的已批准评分。", 400, "INVALID_SCORING");
     let validationEvidence: unknown[] = [];
     try { validationEvidence = evidenceInput.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => JSON.parse(line) as unknown); }
     catch { throw new ApiError("校准证据每行必须是一个合法 JSON 对象。", 400, "INVALID_EVIDENCE"); }
-    const created = await createPriorityRuleDraft({ scoring, thresholds }, undefined, validationEvidence);
+    const created = await createPriorityRuleDraft({ scoring, thresholds: { p0: thresholds.p0, p1: thresholds.p1, p2: thresholds.p2 } }, undefined, validationEvidence);
     return `规则 v${created.version} 草稿已创建`;
   });
 
@@ -630,7 +638,7 @@ function RulesPanel() {
         <p className="advanced-settings-hint">这些输入直接决定规则 JSON；未校准证据的规则发布后不会用于优先级计算。</p>
         <div className="rules-form">
           <div className="rules-thresholds">
-            {(["p0", "p1", "p2"] as const).map((key) => <label key={key} className="rules-threshold"><span>{key.toUpperCase()} 阈值</span><ArcoInputNumber min={0} max={4} step={1} precision={0} value={thresholds[key]} aria-label={`${key.toUpperCase()} 阈值`} onChange={(value: number | undefined) => setThresholds((prev) => ({ ...prev, [key]: typeof value === "number" ? value : 0 }))} /></label>)}
+            {(["p0", "p1", "p2"] as const).map((key) => <label key={key} className="rules-threshold"><span>{key.toUpperCase()} 阈值</span><ArcoInputNumber min={0} max={4} step={1} precision={0} value={thresholds[key]} aria-label={`${key.toUpperCase()} 阈值`} onChange={(value: number | undefined) => setThresholds((prev) => ({ ...prev, [key]: typeof value === "number" && Number.isFinite(value) ? value : undefined }))} /></label>)}
           </div>
           <ArcoButton type="primary" htmlType="button" size="small" onClick={() => void handleCreateRule()} disabled={busy || activeV2} title={activeV2 ? "v2 公式生效期间不能发布 v1 规则" : undefined}>创建草稿</ArcoButton>
         </div>

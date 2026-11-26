@@ -136,23 +136,39 @@ function safeBaseFailure(error: unknown): { code: string; summary: string; retry
  */
 interface SnapshotOwnerLookup {
   answered: boolean;
-  lookup: { tbUserId?: string; normalizedName?: string } | null;
+  tbUserId: string | null;
+  normalizedName: string | null;
 }
 
 function snapshotOwnerLookup(payload: Record<string, unknown> | null | undefined): SnapshotOwnerLookup {
-  if (!payload || typeof payload !== "object") return { answered: false, lookup: null };
+  if (!payload || typeof payload !== "object") return { answered: false, tbUserId: null, normalizedName: null };
   const mapped = payload.mappedFields;
   const mappedRecord = mapped && typeof mapped === "object" ? mapped as Record<string, unknown> : null;
   const hasExecutorIdField = "sourceExecutorId" in payload;
   const hasExecutorNameField = Boolean(mappedRecord && "executorName" in mappedRecord);
-  if (!hasExecutorIdField && !hasExecutorNameField) return { answered: false, lookup: null };
+  if (!hasExecutorIdField && !hasExecutorNameField) return { answered: false, tbUserId: null, normalizedName: null };
   const rawId = payload.sourceExecutorId;
   const rawName = mappedRecord?.executorName;
   const tbUserId = typeof rawId === "string" && rawId.trim() ? rawId.trim() : null;
-  const executorName = typeof rawName === "string" && rawName.trim() ? rawName.trim() : null;
-  if (tbUserId) return { answered: true, lookup: { tbUserId } };
-  if (executorName) return { answered: true, lookup: { normalizedName: normalizeOwnerName(executorName) } };
-  return { answered: true, lookup: null };
+  const executorName = typeof rawName === "string" && rawName.trim() ? normalizeOwnerName(rawName) || null : null;
+  return { answered: true, tbUserId, normalizedName: executorName };
+}
+
+/** 负责人映射解析：优先按 TB user_id 匹配，未命中时回落按规范化姓名匹配（覆盖人员页 unique_name 绑定）。 */
+async function resolveOwnerMappingWithFallback(
+  people: Pick<PersonMappingRepository, "resolveActive">,
+  sourceConfigId: string | null,
+  lookup: { tbUserId: string | null; normalizedName: string | null },
+): Promise<PersonMappingRecord | null> {
+  if (!sourceConfigId) return null;
+  if (lookup.tbUserId) {
+    const byId = await people.resolveActive(sourceConfigId, { tbUserId: lookup.tbUserId });
+    if (byId) return byId;
+  }
+  if (lookup.normalizedName) {
+    return people.resolveActive(sourceConfigId, { normalizedName: lookup.normalizedName });
+  }
+  return null;
 }
 
 /** 正式 Web 工作台地址：通知按钮需求深链的默认 base。 */
@@ -209,9 +225,9 @@ export function createBasePushService(deps: BasePushServiceDeps) {
     if (!previousSource) return { kind: "unknown" };
     const snapshot = snapshotOwnerLookup(previousSource.payload);
     if (!snapshot.answered) return { kind: "unknown" };
-    if (!snapshot.lookup) return { kind: "none" };
+    if (!snapshot.tbUserId && !snapshot.normalizedName) return { kind: "none" };
     // 手工来源没有 sourceConfigId；旧负责人快照推导仅对 TB 行有效（V02-T02 起可空）。
-    const previousMapping = req.sourceConfigId ? await deps.people.resolveActive(req.sourceConfigId, snapshot.lookup) : null;
+    const previousMapping = await resolveOwnerMappingWithFallback(deps.people, req.sourceConfigId, snapshot);
     // 旧负责人映射已不存在时得不到稳定的 fromUserId：不断言 A→B，避免发出错误事件。
     return previousMapping ? { kind: "known", userId: previousMapping.feishuUserId } : { kind: "unknown" };
   };
@@ -370,11 +386,11 @@ export function createBasePushService(deps: BasePushServiceDeps) {
       return { kind: "pushed", status: "pushed", baseRecordId: previous.baseRecordId, created: false, omittedFields: [] };
     }
 
-    const ownerLookup = req.executorUserId
-      ? { tbUserId: req.executorUserId }
-      : (req.executorName ? { normalizedName: normalizeOwnerName(req.executorName) } : {});
-    const hasTbOwner = Boolean(ownerLookup.tbUserId || ownerLookup.normalizedName);
-    const mapping = hasTbOwner && req.sourceConfigId ? await deps.people.resolveActive(req.sourceConfigId, ownerLookup) : null;
+    const normalizedExecutorName = req.executorName?.trim() ? normalizeOwnerName(req.executorName) || null : null;
+    const hasTbOwner = Boolean(req.executorUserId || normalizedExecutorName);
+    const mapping = hasTbOwner
+      ? await resolveOwnerMappingWithFallback(deps.people, req.sourceConfigId, { tbUserId: req.executorUserId, normalizedName: normalizedExecutorName })
+      : null;
     // 逐条人工负责人优先：单条改派只影响这一条，不影响同 TB 执行人的其他需求；
     // TB 执行人映射保留为"默认负责人"，供恢复时使用。
     const manualOwner = req.manualOwner ?? null;

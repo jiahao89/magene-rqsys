@@ -16,7 +16,7 @@
 /** 开头允许的注释：整行 -- 注释与空行。块注释原样保留，不参与剥离判断。 */
 const LEADING_COMMENTS = /^(?:[ \t]*(?:--[^\n]*)?\r?\n)*/;
 const LEADING_BEGIN = /^\s*BEGIN\s*;\s*/i;
-const TRAILING_COMMIT = /\s*COMMIT\s*;\s*$/i;
+const TRAILING_COMMIT = /\s*COMMIT\s*;(?:[ \t]*--[^\n]*)?(?:[ \t]*\r?\n[ \t]*(?:--[^\n]*)?)*[ \t]*$/i;
 
 export function stripTransactionWrapper(sql: string): { sql: string; stripped: boolean } {
   // 注释与空行既不算语句，也不该阻止识别文件首个语句是不是 BEGIN;。

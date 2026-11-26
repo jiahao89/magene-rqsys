@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { NormalizedTeambitionRequirement } from "../../domain/workflow.js";
 import type { SourcePool } from "../../domain/persistence.js";
+import { stableJson } from "../../sync/hashes.js";
 import type {
   TeambitionCustomField,
   TeambitionFieldMap,
@@ -33,6 +34,13 @@ function rtfHtml(value: unknown): string | null {
   return typeof html === "string" ? html : null;
 }
 
+function safeCodePoint(codePoint: number, fallback: string): string {
+  if (!Number.isInteger(codePoint) || codePoint < 0 || codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff)) {
+    return fallback;
+  }
+  return String.fromCodePoint(codePoint);
+}
+
 function htmlToText(html: string): string {
   return html
     .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/giu, " ")
@@ -45,8 +53,8 @@ function htmlToText(html: string): string {
     .replace(/&gt;/giu, ">")
     .replace(/&quot;/giu, '"')
     .replace(/&#39;|&apos;/giu, "'")
-    .replace(/&#(\d+);/gu, (_, decimal: string) => String.fromCodePoint(Number(decimal)))
-    .replace(/&#x([\da-f]+);/giu, (_, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16)))
+    .replace(/&#(\d+);/gu, (match, decimal: string) => safeCodePoint(Number(decimal), match))
+    .replace(/&#x([\da-f]+);/giu, (match, hex: string) => safeCodePoint(Number.parseInt(hex, 16), match))
     .replace(/[ \t]+\n/gu, "\n")
     .replace(/\n[ \t]+/gu, "\n")
     .replace(/\n{3,}/gu, "\n\n")
@@ -67,16 +75,6 @@ function lookupValues(value: unknown): { names: string[]; userIds: string[] } {
     return typeof entry.userid === "string" ? [entry.userid] : [];
   });
   return { names: names.filter(Boolean), userIds };
-}
-
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
-  if (value && typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right));
-    return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`).join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "null";
 }
 
 function allowlistedSourcePayload(

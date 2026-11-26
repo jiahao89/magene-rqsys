@@ -6,13 +6,12 @@ import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { maskPii } from "../analysis/contract.js";
 import { AiProviderError, assertAiBaseUrlConfigured, getAiProviderConfig, parseModelJson, type AiProviderConfig, type FetchLike } from "../analysis/provider.js";
+import { OpenAiHttpError, requestOpenAiChatContent } from "../analysis/openai-http.js";
 import type { AuditEventRepository, RequirementAssessmentRepository } from "../application/repositories.js";
 import type { AnalysisRunRecord, RequirementAssessmentRecord, RequirementRecord } from "../domain/persistence.js";
 import type { RequirementAssessmentInput } from "../contracts/pipeline.js";
 import { ASSESSMENT_PROMPT_VERSION, buildAssessmentMessages } from "./prompt.js";
 import { repairAssessmentOutput } from "./repair.js";
-
-const ENDPOINT = "/chat/completions";
 
 /** PRD §4.10.5：2×默认 60s 模型超时；超过它的 running 视为卡死。 */
 export const ASSESSMENT_RUNNING_STALE_MS = 120_000;
@@ -92,15 +91,10 @@ export interface AssessmentRunner {
   }): Promise<RequirementAssessmentRecord>;
 }
 
-const EnvelopeSchema = z.object({
-  choices: z.array(z.object({ message: z.object({ content: z.string().nullable().optional() }).passthrough() }).passthrough()).min(1),
-}).passthrough();
-
-function providerError(status: number): AiProviderError {
-  if (status === 401 || status === 403) return new AiProviderError("auth_error", `AI provider authentication failed (HTTP ${status}).`, status);
-  if (status === 429) return new AiProviderError("rate_limited", `AI provider rate limit reached (HTTP ${status}).`, status);
-  if (status >= 500) return new AiProviderError("provider_error", `AI provider request failed (HTTP ${status}).`, status);
-  return new AiProviderError("request_error", `AI provider rejected the request (HTTP ${status}).`, status);
+function mapOpenAiError(error: OpenAiHttpError): AiProviderError {
+  if (error.kind === "envelope") return new AssessmentOutputError("envelope", error.message);
+  if (error.kind === "empty_content") return new AssessmentOutputError("empty_content", error.message);
+  return new AiProviderError(error.kind, error.message, error.httpStatus);
 }
 
 export function createAssessmentRunner(options: {
@@ -156,40 +150,24 @@ export function createAssessmentRunner(options: {
         });
         // 与主分析路径同口径：花名册姓名也进掩码，不能只靠需求字段本身。
         const maskedUser = maskPii(messages.user, piiMarkers ?? []);
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), config.timeoutMs);
-        let response: Response;
+        let content: string;
         try {
-          response = await fetcher(`${config.baseUrl}${ENDPOINT}`, {
-            method: "POST",
-            headers: { authorization: `Bearer ${config.apiKey}`, "content-type": "application/json" },
-            body: JSON.stringify({
-              model: config.model,
-              ...(config.temperature === null ? {} : { temperature: config.temperature }),
-              response_format: { type: "json_object" },
-              messages: [
-                { role: "system", content: messages.system },
-                { role: "user", content: maskedUser },
-              ],
-            }),
-            signal: controller.signal,
+          content = await requestOpenAiChatContent({
+            baseUrl: config.baseUrl,
+            apiKey: config.apiKey,
+            model: config.model,
+            temperature: config.temperature,
+            timeoutMs: config.timeoutMs,
+            messages: [
+              { role: "system", content: messages.system },
+              { role: "user", content: maskedUser },
+            ],
+            fetch: fetcher,
           });
         } catch (error) {
-          if (error instanceof Error && error.name === "AbortError") throw new AiProviderError("timeout", "AI provider request timed out.");
-          throw new AiProviderError("network_error", "AI provider is unavailable.");
-        } finally {
-          clearTimeout(timer);
+          if (error instanceof OpenAiHttpError) throw mapOpenAiError(error);
+          throw error;
         }
-        if (!response.ok) throw providerError(response.status);
-        // 供应商返回的非标准响应包单独归类：此前和真正的模型输出失败共用一个笼统错误。
-        let envelope: z.infer<typeof EnvelopeSchema>;
-        try {
-          envelope = EnvelopeSchema.parse(await response.json());
-        } catch {
-          throw new AssessmentOutputError("envelope", "AI provider returned an invalid response.");
-        }
-        const content = envelope.choices[0]?.message.content;
-        if (!content?.trim()) throw new AssessmentOutputError("empty_content", "AI provider returned empty content.");
         // 0033：deepseek-flash 偶发尾随逗号/提前闭合/中文键名；只做确定性修复，且必须通过完整契约。
         const repaired = repairAssessmentOutput(content, {
           parse: parseModelJson,

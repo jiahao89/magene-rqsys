@@ -59,11 +59,25 @@ export interface OwnerRecheckReport {
   errors: string[];
 }
 
-/** 需求执行人 → resolveActive 查询参数；无执行人时没有可解析的映射。 */
-function ownerLookup(requirement: RequirementRecord): { tbUserId?: string; normalizedName?: string } | null {
-  if (requirement.executorUserId) return { tbUserId: requirement.executorUserId };
-  if (requirement.executorName) return { normalizedName: normalizeOwnerName(requirement.executorName) };
+/** 需求执行人 → 活跃人员映射；优先按 TB user_id，未命中时回落按规范化姓名（覆盖人员页 unique_name 绑定）。 */
+async function resolveOwnerMapping(
+  people: Pick<PersonMappingRepository, "resolveActive">,
+  requirement: RequirementRecord,
+): Promise<PersonMappingRecord | null> {
+  if (!requirement.sourceConfigId) return null;
+  if (requirement.executorUserId) {
+    const byId = await people.resolveActive(requirement.sourceConfigId, { tbUserId: requirement.executorUserId });
+    if (byId) return byId;
+  }
+  if (requirement.executorName?.trim()) {
+    const normalizedName = normalizeOwnerName(requirement.executorName);
+    if (normalizedName) return people.resolveActive(requirement.sourceConfigId, { normalizedName });
+  }
   return null;
+}
+
+function hasExecutor(requirement: RequirementRecord): boolean {
+  return Boolean(requirement.executorUserId || requirement.executorName?.trim());
 }
 
 /** 映射来源决定目标 owner 状态：人工映射保留 manually_mapped 语义，其余为 auto_mapped。 */
@@ -93,10 +107,11 @@ export async function recheckOwnerMappings(
   for (const pool of ["product", "group"] as const satisfies readonly SourcePool[]) {
     try {
       // analyzed 与 failed_retryable 都可推送：AI 首次失败/可重试失败不得阻断负责人处理与推送。
-      const analyzed = await params.requirements.search({ pullState: "synced", analysisState: "analyzed", pushState: "pending", pool, limit });
-      const retryable = await params.requirements.search({ pullState: "synced", analysisState: "failed_retryable", pushState: "pending", pool, limit });
+      // 只扫描 active 需求：已压制（重复/忽略）需求不参与推送，且避免占满本轮扫描上限饿死活跃需求。
+      const analyzed = await params.requirements.search({ pullState: "synced", analysisState: "analyzed", pushState: "pending", processingState: "active", pool, limit });
+      const retryable = await params.requirements.search({ pullState: "synced", analysisState: "failed_retryable", pushState: "pending", processingState: "active", pool, limit });
       // Q1：已按空负责人推送、但 TB 执行人仍未映射的需求；映射补齐后需要重推一次补上负责人。
-      const remap = await params.requirements.search({ pullState: "synced", pushState: "pushed", ownerState: "pending_mapping", pool, limit });
+      const remap = await params.requirements.search({ pullState: "synced", pushState: "pushed", ownerState: "pending_mapping", processingState: "active", pool, limit });
       const seen = new Set<string>();
       candidates.push(...[...analyzed.items, ...retryable.items, ...remap.items].filter((row) => (seen.has(row.id) ? false : (seen.add(row.id), true))).slice(0, limit));
     } catch (error) {
@@ -108,13 +123,12 @@ export async function recheckOwnerMappings(
 
   for (const requirement of candidates) {
     try {
-      const lookup = ownerLookup(requirement);
-      if (!lookup) {
+      if (!hasExecutor(requirement)) {
         report.skipped += 1;
         continue;
       }
 
-      const mapping = requirement.sourceConfigId ? await params.people.resolveActive(requirement.sourceConfigId, lookup) : null;
+      const mapping = await resolveOwnerMapping(params.people, requirement);
       // Q1（PRD-21）：TB 有执行人但映射未建立时，不再等待映射，直接以空负责人推送一次，
       // 让 PM 在 Base 看到全集；owner_state 保持 pending_mapping，映射补齐后由下方 remap 分支重推补负责人。
       // 空负责人首推在 push-service 中属于 first_push 静默路径，不会产生通知。

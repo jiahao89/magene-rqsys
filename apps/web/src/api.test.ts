@@ -9,10 +9,10 @@ const source: SourceConfig = {
 afterEach(() => vi.restoreAllMocks());
 
 describe("workbench API client", () => {
-  it("reads liveness from the local API route", async () => {
-    const fetcher = vi.fn().mockResolvedValue(Response.json({ status: "ok", service: "rq-sys-api" }));
-    await expect(getHealth(fetcher)).resolves.toEqual({ status: "ok", service: "rq-sys-api" });
-    expect(fetcher).toHaveBeenCalledWith("/api/health", expect.objectContaining({ headers: { accept: "application/json" } }));
+  it("reads readiness from the health/ready API route", async () => {
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ status: "ready", service: "rq-sys-api" }));
+    await expect(getHealth(fetcher)).resolves.toEqual({ status: "ready", service: "rq-sys-api" });
+    expect(fetcher).toHaveBeenCalledWith("/api/health/ready", expect.objectContaining({ headers: { accept: "application/json" } }));
   });
 
   it("loads all-record overview counts from the aggregate endpoint", async () => {

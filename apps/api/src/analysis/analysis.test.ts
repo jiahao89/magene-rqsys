@@ -326,3 +326,22 @@ test("a response body that stalls until the deadline fails as a timeout, not a h
     (error: unknown) => error instanceof Error && /timed out/.test(error.message),
   );
 });
+
+test("provider HTTP errors preserve httpStatus and never echo raw upstream response text", async () => {
+  const response = new Response("upstream internal detail Bearer super-secret-token-xyz", { status: 429 });
+  const provider = createDeepSeekProvider({
+    baseUrl: "https://api.deepseek.com",
+    apiKey: "k",
+    fetch: async () => response,
+  });
+  await assert.rejects(
+    () => provider.analyze({ title: "支持查询", description: "支持查询和筛选", context: "", piiMarkers: [], dictionary, priorityRule: null }),
+    (error: unknown) =>
+      error instanceof AiProviderError
+      && error.code === "rate_limited"
+      && error.httpStatus === 429
+      && !error.message.includes("super-secret-token")
+      && !error.message.includes("upstream internal detail"),
+  );
+  assert.equal(response.bodyUsed, true);
+});

@@ -59,6 +59,59 @@ jobs:
       - name: Migration filename check
         run: npm run check:migrations
 
+      - name: OpenAPI contract syntax and path-param check
+        run: |
+          python3 - <<'PY'
+          import re, sys, yaml
+          with open("specs/rq-sys-mvp/openapi.yaml", "r", encoding="utf-8") as f:
+              raw = f.read()
+          doc = yaml.safe_load(raw)
+          assert isinstance(doc, dict) and "paths" in doc, "OpenAPI document missing paths"
+          errors = []
+          # 1. Path parameter consistency
+          for path, item in doc["paths"].items():
+              url_vars = set(re.findall(r"\{([^}]+)\}", path))
+              item_params = item.get("parameters", []) if isinstance(item, dict) else []
+              for method, op in (item.items() if isinstance(item, dict) else []):
+                  if method not in ("get", "post", "put", "patch", "delete", "options", "head"):
+                      continue
+                  declared = set()
+                  for p in list(item_params) + list(op.get("parameters", [])):
+                      if "$ref" in p:
+                          ref_name = p["$ref"].split("/")[-1]
+                          p = doc.get("components", {}).get("parameters", {}).get(ref_name, {})
+                      if p.get("in") == "path":
+                          declared.add(p.get("name"))
+                  if url_vars != declared:
+                      errors.append(f"{method.upper()} {path}: url_vars={sorted(url_vars)} != declared={sorted(declared)}")
+          # 2. Internal $ref resolution
+          def check_refs(node):
+              if isinstance(node, dict):
+                  ref = node.get("$ref")
+                  if isinstance(ref, str) and ref.startswith("#/"):
+                      cur = doc
+                      for part in ref[2:].split("/"):
+                          if not isinstance(cur, dict) or part not in cur:
+                              errors.append(f"unresolved $ref: {ref}")
+                              break
+                          cur = cur[part]
+                  for v in node.values():
+                      check_refs(v)
+              elif isinstance(node, list):
+                  for v in node:
+                      check_refs(v)
+          check_refs(doc)
+          # 3. OpenAPI 3.1 should not mix legacy OpenAPI 3.0 nullable: true
+          if str(doc.get("openapi", "")).startswith("3.1") and re.search(r"\bnullable:\s*true\b", raw):
+              errors.append("OpenAPI 3.1 spec contains legacy OpenAPI 3.0 'nullable: true'")
+          if errors:
+              print("OpenAPI validation failed:", file=sys.stderr)
+              for err in errors:
+                  print(f"  - {err}", file=sys.stderr)
+              sys.exit(1)
+          print(f"OpenAPI OK: {doc.get('openapi')} v{doc.get('info', {}).get('version')}, {len(doc['paths'])} paths")
+          PY
+
       # 假绿守卫（2026-11-25）：一个测试文件被覆盖成实现代码后，node --test 会把它当成
       # 一个"通过"的文件级用例，CI 依然绿。这里要求每个测试文件真的注册用例；
       # API 用例总数下限在 npm test 的 runner（scripts/run-api-tests.mjs）里守。
@@ -105,11 +158,21 @@ jobs:
         run: npm run check:contract
 
       - name: Two-repository alignment
+        env:
+          RQSYS_REQUIRE_ALIGNMENT: ${{ vars.RQSYS_REQUIRE_ALIGNMENT }}
         run: |
           if [ -d rq-sys-miaoda ]; then
             npm run check:alignment
           else
-            echo "::warning title=Alignment gate NOT run::rq-sys-miaoda/ was not checked out (missing repository secrets). Shared-module drift is unchecked in this run."
+            msg="rq-sys-miaoda/ was not checked out (missing RQSYS_MIAODA_REPO_URL / RQSYS_MIAODA_TOKEN secrets). Shared-module drift is UNCHECKED in this run."
+            echo "::warning title=Alignment gate NOT run::${msg}"
+            if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+              printf '### ⚠️ Two-repository alignment gate NOT run\n\n%s\n\nConfigure `RQSYS_MIAODA_REPO_URL` + `RQSYS_MIAODA_TOKEN` secrets (and optionally repository variable `RQSYS_REQUIRE_ALIGNMENT=true` to hard-fail on missing secrets).\n' "$msg" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            if [ "${RQSYS_REQUIRE_ALIGNMENT:-}" = "true" ]; then
+              echo "::error title=Alignment gate required::RQSYS_REQUIRE_ALIGNMENT=true but rq-sys-miaoda/ checkout is unavailable."
+              exit 1
+            fi
           fi
 
       - name: Whitespace check
