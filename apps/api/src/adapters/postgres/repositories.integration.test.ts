@@ -260,6 +260,18 @@ test("changed source upsert snapshots and resets analysis/push, keeps a manual o
     const batch4=await ctx.repos.batches.create({sourceConfigId:source.id,triggerType:"manual",actorId:null,idempotencyKey:"source-version-0004",startedAt:"2026-10-11T00:00:00Z"});
     await ctx.repos.requirements.upsertRequirement(source.id,"task-owner-auto",requirementWrite(source.id,batch4.id,{teambitionRequirementId:"task-owner-auto",executorUserId:"tb-auto-2",executorName:"Di",sourceHash:"g".repeat(64),substantiveHash:"f".repeat(64),sourceVersion:2}));
     assert.equal((await ctx.repos.requirements.get(auto.id))?.pipeline.owner,"pending_mapping","非人工负责人在执行人变更后回到 pending_mapping");
+
+    // 历史状态对照：线上 478 条 manually_mapped 里 475 条没有人工负责人列（集团池 191 条全在内）。
+    // 这类行必须按非人工处理，执行人变更后回到 pending_mapping，不能被"人工负责人保留"的分支冻住。
+    const batch5=await ctx.repos.batches.create({sourceConfigId:source.id,triggerType:"manual",actorId:null,idempotencyKey:"source-version-0005",startedAt:"2026-10-12T00:00:00Z"});
+    const legacy=await ctx.repos.requirements.upsertRequirement(source.id,"task-owner-legacy",requirementWrite(source.id,batch5.id,{teambitionRequirementId:"task-owner-legacy",executorUserId:"tb-legacy-1",executorName:"Ed",sourceHash:"h".repeat(64),substantiveHash:"h".repeat(64),sourceVersion:1}));
+    await ctx.repos.requirements.setOwner(legacy.id,null,"manually_mapped");
+    const legacyBefore=await ctx.repos.requirements.get(legacy.id);
+    assert.equal(legacyBefore?.pipeline.owner,"manually_mapped");
+    assert.equal(legacyBefore?.manualOwner,null,"这条历史行没有人工负责人列");
+    const batch6=await ctx.repos.batches.create({sourceConfigId:source.id,triggerType:"manual",actorId:null,idempotencyKey:"source-version-0006",startedAt:"2026-10-13T00:00:00Z"});
+    await ctx.repos.requirements.upsertRequirement(source.id,"task-owner-legacy",requirementWrite(source.id,batch6.id,{teambitionRequirementId:"task-owner-legacy",executorUserId:"tb-legacy-2",executorName:"Fay",sourceHash:"i".repeat(64),substantiveHash:"h".repeat(64),sourceVersion:2}));
+    assert.equal((await ctx.repos.requirements.get(legacy.id))?.pipeline.owner,"pending_mapping","只有状态、没有负责人列时按非人工处理");
   }finally{await cleanup(ctx);}
 });
 test("sync item persists orchestrator started time",async()=>{const ctx=await setup();try{const source=await ctx.repos.sources.create(config);const batch=await ctx.repos.batches.create({sourceConfigId:source.id,triggerType:"manual",actorId:null,idempotencyKey:"item-start-0001",startedAt:"2026-10-08T00:00:00Z"});const wrote=await ctx.repos.items.upsert({batchId:batch.id,requirementId:null,teambitionRequirementId:"task-start",action:"created",status:"succeeded",startedAt:"2026-10-08T00:00:05Z",completedAt:"2026-10-08T00:00:10Z"});assert.equal(wrote.startedAt,"2026-10-08T00:00:05.000Z");}finally{await cleanup(ctx);}});

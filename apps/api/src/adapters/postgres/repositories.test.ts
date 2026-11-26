@@ -801,7 +801,9 @@ test("Wave 2: upsertRequirement preserves manually_mapped owner_state when TB ex
     sourceVersion: 2, latestBatchId: "b1",
   });
   const upsert = calls.find((c) => c.sql.startsWith("INSERT INTO requirements"))!;
-  assert.match(upsert.sql, /WHEN requirements\.owner_state='manually_mapped' THEN 'manually_mapped'/);
+  // 2026-11-26：分支必须同时要求人工负责人列非空。线上 478 条 manually_mapped 里只有 3 条真有负责人，
+  // 少了这个条件会冻住 475 条历史行（集团池 191 条全在里），执行人换人后不再重新解析。
+  assert.match(upsert.sql, /WHEN requirements\.owner_state='manually_mapped' AND requirements\.manual_owner_feishu_user_id IS NOT NULL THEN 'manually_mapped'/);
 });
 
 test("Wave 2: ownerMatchSql falls back from tb_user_id to normalized_name across search, mineCounts, and markDeleted", async () => {
