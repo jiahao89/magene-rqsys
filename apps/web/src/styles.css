@@ -5,10 +5,18 @@
  * 3. 本文件只负责应用级布局、网格密度与业务专属视觉标识（如需求来源色条）。
  */
 
-:root {
+*, *::before, *::after { box-sizing: border-box; }
+
+html {
+  margin: 0;
+  padding: 0;
+}
+
+/* Arco 把所有 --color-* / --primary-* / --border-radius-* token 声明在 body 上（而非 :root），
+ * 所以 --rq-* 别名必须声明在 body 上；声明在 :root 会取不到值、整条声明解析为空。 */
+body {
   --rq-sidebar-w: 215px;
   --rq-topbar-h: 56px;
-  --rq-canvas: var(--color-fill-2);
   --rq-surface: var(--color-bg-2);
   --rq-surface-subtle: var(--color-fill-1);
   --rq-border: var(--color-border-2);
@@ -26,20 +34,22 @@
   --rq-source-base-form: rgb(var(--arcoblue-6));
   --rq-source-manual: rgb(var(--orange-6));
   --rq-source-chat-paste: rgb(var(--purple-6));
-}
 
-*, *::before, *::after { box-sizing: border-box; }
-
-html, body {
   margin: 0;
   padding: 0;
   overflow-x: hidden;
-  background: var(--rq-canvas);
+  background: var(--color-fill-2); /* 亮色画布：Arco --color-fill-2 的浅灰 */
   color: var(--rq-text);
   font-family: Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   font-size: 14px;
   line-height: 1.5715;
   -webkit-font-smoothing: antialiased;
+}
+
+/* 暗色画布用 Arco 的 --color-bg-1（深色底）：暗色下的 --color-fill-2 是半透明白，
+ * 直接当画布会在白底上叠出一片灰白，就是「白底 + 黑表格」的根因。 */
+body[arco-theme="dark"] {
+  background: var(--color-bg-1);
 }
 
 .todo-card-button {
@@ -109,7 +119,6 @@ h1, h2, h3, h4, h5, h6 {
 /* ---------- Shell Layout (Arco Layout / Sider / Header / Menu / Breadcrumb) ---------- */
 .app-shell {
   min-height: 100vh;
-  background: var(--rq-canvas);
 }
 
 .sidebar {
@@ -212,7 +221,6 @@ h1, h2, h3, h4, h5, h6 {
   margin-left: var(--rq-sidebar-w);
   min-width: 0;
   min-height: 100vh;
-  background: var(--rq-canvas);
 }
 
 .topbar {
@@ -928,4 +936,15 @@ h1, h2, h3, h4, h5, h6 {
 .skeleton-table td { padding: 12px 14px; border-bottom: 1px solid var(--rq-border); }
 .req-detail-skeleton { display: flex; flex-direction: column; gap: 16px; }
 
-.table-scroll { width: 100%; overflow-x: auto; }
+/* 需求列表在窄屏（如 1000px）要能横向滚到「更新时间 / 操作」列。
+ * 表格带 scroll.x 时，横向滚动实际由 Arco 的 .arco-table-content-inner 负责；外层只做宽度约束
+ * （绝不限制父级宽度，否则 100% 也随内容变宽、右侧列被裁掉）。macOS 的覆盖式滚动条默认不显示，
+ * 用户会以为右侧列被裁掉，所以给内层一条常驻可见的横向滚动条。 */
+.table-scroll { width: 100%; max-width: 100%; min-width: 0; overflow-x: auto; }
+.table-scroll .arco-table-content-inner {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-fill-3) transparent;
+}
+.table-scroll .arco-table-content-inner::-webkit-scrollbar { height: 8px; }
+.table-scroll .arco-table-content-inner::-webkit-scrollbar-thumb { background: var(--color-fill-3); border-radius: 4px; }
+.table-scroll .arco-table-content-inner::-webkit-scrollbar-track { background: transparent; }

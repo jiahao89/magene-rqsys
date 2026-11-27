@@ -77,12 +77,18 @@ describe("左侧菜单与 Arco Target B 样式", () => {
     expect(labelBox / 14).toBeGreaterThanOrEqual(6);
   });
 
-  it("遵循 Arco Design Target B 样式约束（无硬编码 hex、无 html[data-theme] 覆盖、无 !important）", () => {
+  it("遵循 Arco Design Target B 样式约束（无硬编码 hex、无 html[data-theme] 覆盖、无 !important、--rq-* 声明在 body 而非 :root）", () => {
     expect(styles).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
     expect(styles).not.toMatch(/html\[data-theme=/);
     expect(styles).not.toMatch(/!important/);
-    expect(styles).toMatch(/--rq-canvas:\s*var\(--color-fill-2\)/);
-    expect(styles).toMatch(/--rq-surface:\s*var\(--color-bg-2\)/);
-    expect(styles).toMatch(/--rq-primary:\s*rgb\(var\(--primary-6\)\)/);
+    // Arco 把 --color-* / --primary-* / --border-radius-* 声明在 body 上，写在 :root 会解析为空。
+    expect(styles).not.toMatch(/:root\s*\{[^}]*var\(--(?:color-|primary-|border-radius-)/);
+    expect(styles).toMatch(/(?:^|\n)body\s*\{[^}]*--rq-surface:\s*var\(--color-bg-2\)/);
+    expect(styles).toMatch(/(?:^|\n)body\s*\{[^}]*--rq-primary:\s*rgb\(var\(--primary-6\)\)/);
+    expect(styles).toMatch(/(?:^|\n)body\s*\{[^}]*background:\s*var\(--color-fill-2\)/);
+    expect(styles).toMatch(/body\[arco-theme="dark"\]\s*\{\s*background:\s*var\(--color-bg-1\);\s*\}/);
+    // 窄屏（1000px）表格不撑破内容区：外层只做宽度约束，横向滚动交给表格自身的滚动容器。
+    expect(styles).toMatch(/\.table-scroll\s*\{[^}]*max-width:\s*100%/);
+    expect(styles).toMatch(/\.table-scroll\s*\{[^}]*min-width:\s*0/);
   });
 });
