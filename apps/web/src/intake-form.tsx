@@ -3,10 +3,11 @@
 // 幂等键在同一次提交意图内复用（失败重试不换键），成功或重新展开表单后重置。
 import { useEffect, useRef, useState } from "react";
 import { Alert as ArcoAlert, Button as ArcoButton, Card as ArcoCard, Divider as ArcoDivider, Form as ArcoForm, Grid as ArcoGrid, Input, Select, Space as ArcoSpace, Tag as ArcoTag, Typography as ArcoTypography } from "@arco-design/web-react";
-import { ApiError, AUDIENCE_LEVELS, AUDIENCE_LEVEL_NAMES, REQUIREMENT_INTAKE_CHANNELS, REQUIREMENT_INTAKE_TYPES, createRequirement, extractIntakeDraft, getFunctionModules, getRiceDraft, listKanoEvidence, listKanoRuns, listRequirements, saveRiceDraft, setAudienceTags, triggerKanoRun, updateRequirement, type ChatIntakeDraft, type KanoEvidenceVersionDto, type KanoRunDto, type RequirementSummary, type RiceDraft } from "./api";
+import { ApiError, AUDIENCE_LEVELS, AUDIENCE_LEVEL_NAMES, REQUIREMENT_INTAKE_CHANNELS, REQUIREMENT_INTAKE_TYPES, createRequirement, extractIntakeDraft, getFunctionModules, getRiceDraft, isAbortError, listKanoEvidence, listKanoRuns, listRequirements, saveRiceDraft, setAudienceTags, triggerKanoRun, updateRequirement, type ChatIntakeDraft, type KanoEvidenceVersionDto, type KanoRunDto, type RequirementSummary, type RiceDraft } from "./api";
 import { ConfirmModal } from "./confirm-modal";
 import { requirementSourceName } from "./requirement-view";
 import { safeHttpUrl } from "./safe-url";
+import { useUnsavedGuard } from "./unsaved-guard";
 
 /** PRD-26 5a 补丁：服务端与客户端共用同一组上限，提交前拦截，避免落到英文通用校验错误。 */
 const INTAKE_LIMITS = { title: 200, description: 20_000, productModel: 100, constraintNotes: 2_000, supplementUrl: 500, proposerName: 100 } as const;
@@ -27,6 +28,8 @@ function waitLabel(seconds: number): string {
 /** 按错误码给出可执行提示：429 读 Retry-After 说明还需等多久，500/503 说明可以先手工填写。 */
 function intakeErrorMessage(cause: unknown, action: "整理" | "提交", fallback: string): string {
   if (!(cause instanceof ApiError)) return fallback;
+  if (cause.status === 401) return "登录已失效，请重新登录。";
+  if (cause.status === 413) return "提交内容过大，请精简后重试。";
   if (cause.status === 429) {
     if (!cause.retryAfterSeconds) return cause.message;
     const daily = cause.retryAfterSeconds >= 3600 ? "；可能是今日次数已用完，可先手工填写" : "";
@@ -50,7 +53,9 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
   const [error, setError] = useState<string | null>(null);
   const idempotencyKey = useRef<string>(crypto.randomUUID());
   const [modules, setModules] = useState<Array<{ name: string; personName: string | null }>>([]);
+  const [modulesError, setModulesError] = useState(false);
   const [intakeModule, setIntakeModule] = useState("");
+  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
   // PRD-26：聊天粘贴。草稿只填表单，AI 填充的字段带标记，用户确认后才提交。
   const [chatText, setChatText] = useState("");
   const [chatOpen, setChatOpen] = useState(false);
@@ -70,10 +75,17 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
   const [pendingDraft, setPendingDraft] = useState<{ draft: ChatIntakeDraft; conflicts: string[] } | null>(null);
   // 409：同一幂等键已用于不同内容（多半是上一次实际已创建、响应丢了）。给一个换新键重提的出口。
   const [conflict, setConflict] = useState(false);
+  const hasUnsavedInput = open && Boolean(title.trim() || description.trim() || chatText.trim() || constraintNotes.trim() || productModel.trim() || supplementUrl.trim());
+  useUnsavedGuard(hasUnsavedInput);
   // 受控词典模块（G-MODULE）：只提供已发布选项；模块责任人仅作候选提示，不自动分配。
   useEffect(() => {
     if (!open) return;
-    void getFunctionModules().then((directory) => setModules(directory.items)).catch(() => setModules([]));
+    const controller = new AbortController();
+    setModulesError(false);
+    void getFunctionModules(undefined, controller.signal)
+      .then((directory) => { if (!controller.signal.aborted) { setModules(directory.items); setModulesError(false); } })
+      .catch((cause) => { if (!controller.signal.aborted && !isAbortError(cause)) { setModules([]); setModulesError(true); } });
+    return () => { controller.abort(); };
   }, [open]);
   const moduleCandidate = modules.find((item) => item.name === intakeModule)?.personName ?? null;
 
@@ -314,6 +326,7 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
             }
           />
         )}
+        {modulesError && <ArcoAlert className="rq-inline-alert" type="warning" showIcon role="status" content="功能模块词典暂时加载失败，仍可继续提交需求，稍后在详情页补选模块。" />}
         {moduleCandidate && <ArcoTypography.Paragraph type="secondary" className="detail-note">该模块责任人：{moduleCandidate}（候选提示；负责人在创建后的详情里确认分配）</ArcoTypography.Paragraph>}
 
         <ArcoForm.Item label={<ArcoSpace size={6}><span>边界/限制</span>{aiMark("constraintNotes")}</ArcoSpace>}>
@@ -325,7 +338,7 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
 
         <ArcoSpace size={8} wrap className="rq-action-bar">
           <ArcoButton type="primary" size="small" htmlType="button" onClick={() => void submit()} disabled={busy}>提交并进入分析</ArcoButton>
-          <ArcoButton type="secondary" size="small" htmlType="button" onClick={() => { setOpen(false); reset(); }} disabled={busy}>取消</ArcoButton>
+          <ArcoButton type="secondary" size="small" htmlType="button" onClick={() => { if (hasUnsavedInput) setDiscardConfirmOpen(true); else { setOpen(false); reset(); } }} disabled={busy}>取消</ArcoButton>
           {busy && <ArcoTypography.Text type="secondary" role="status">正在提交…</ArcoTypography.Text>}
         </ArcoSpace>
         {error && <ArcoAlert className="rq-inline-alert" type="error" showIcon role="alert" content={error} />}
@@ -345,6 +358,15 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
       cancelText="只补空白字段"
       onOk={() => { if (pendingDraft) { applyDraft(pendingDraft.draft, "overwrite"); void lookupSimilar(pendingDraft.draft.title); } setPendingDraft(null); }}
       onCancel={() => { if (pendingDraft) { applyDraft(pendingDraft.draft, "merge"); void lookupSimilar(pendingDraft.draft.title); } setPendingDraft(null); }}
+    />
+    <ConfirmModal
+      visible={discardConfirmOpen}
+      title="放弃未保存的草稿？"
+      description="当前表单有尚未提交的内容，关闭后会清空已填写的字段。"
+      okText="放弃并关闭"
+      cancelText="继续编辑"
+      onOk={() => { setDiscardConfirmOpen(false); setOpen(false); reset(); }}
+      onCancel={() => setDiscardConfirmOpen(false)}
     />
   </>;
 }
@@ -374,10 +396,22 @@ export function ManualEditSection({ detail, onSaved }: { detail: ManualEditSourc
   const [supplementUrl, setSupplementUrl] = useState(detail.supplementUrl ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [conflict, setConflict] = useState(false);
+  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const idempotencyKey = useRef<string>(crypto.randomUUID());
   const wasOpenRef = useRef(false);
   const lastDetailIdRef = useRef(detail.id);
+  const isDirty = open && (
+    title !== detail.title
+    || description !== (detail.description ?? "")
+    || channel !== (detail.sourceChannel ?? "")
+    || productModel !== (detail.productModel ?? "")
+    || requirementType !== (detail.requirementType ?? "")
+    || constraintNotes !== (detail.constraintNotes ?? "")
+    || supplementUrl !== (detail.supplementUrl ?? "")
+  );
+  useUnsavedGuard(isDirty);
   // 只在展开表单（false → true）或切换需求时以当前详情预填；父级后台刷新不冲掉正在编辑的草稿。
   useEffect(() => {
     const idChanged = lastDetailIdRef.current !== detail.id;
@@ -421,7 +455,7 @@ export function ManualEditSection({ detail, onSaved }: { detail: ManualEditSourc
   const submit = async () => {
     const problem = validateEdit();
     if (problem) { setError(problem); return; }
-    setBusy(true); setError(null); setNotice(null);
+    setBusy(true); setError(null); setConflict(false); setNotice(null);
     try {
       const result = await updateRequirement(detail.id, {
         expectedSourceVersion: detail.sourceVersion,
@@ -436,6 +470,7 @@ export function ManualEditSection({ detail, onSaved }: { detail: ManualEditSourc
       onSaved();
     } catch (cause) {
       // 版本冲突/依赖失败：保留表单内容，用户刷新后可基于新版本重填（AC02）。
+      setConflict(cause instanceof ApiError && cause.status === 409);
       setError(cause instanceof ApiError ? cause.message : "保存失败，请重试；同一保存重试不会产生第二个版本。");
     } finally { setBusy(false); }
   };
@@ -463,12 +498,30 @@ export function ManualEditSection({ detail, onSaved }: { detail: ManualEditSourc
         <ArcoForm.Item label="来源链接"><Input aria-label="编辑来源链接" type="url" value={supplementUrl} onChange={(value: string) => setSupplementUrl(value)} disabled={busy} /></ArcoForm.Item>
         <ArcoSpace size={8} wrap className="rq-action-bar">
           <ArcoButton type="primary" size="small" htmlType="button" onClick={() => void submit()} disabled={busy}>保存（基于 v{detail.sourceVersion}）</ArcoButton>
-          <ArcoButton type="secondary" size="small" htmlType="button" onClick={() => setOpen(false)} disabled={busy}>取消</ArcoButton>
+          <ArcoButton type="secondary" size="small" htmlType="button" onClick={() => { if (isDirty) setDiscardConfirmOpen(true); else setOpen(false); }} disabled={busy}>取消</ArcoButton>
           {busy && <ArcoTypography.Text type="secondary" role="status">正在保存…</ArcoTypography.Text>}
           {notice && <ArcoTypography.Text type="secondary" role="status">{notice}</ArcoTypography.Text>}
         </ArcoSpace>
-        {error && <ArcoAlert className="rq-inline-alert" type="error" showIcon role="alert" content={error} />}
+        {error && (
+          <ArcoAlert
+            className="rq-inline-alert"
+            type="error"
+            showIcon
+            role="alert"
+            content={error}
+            action={conflict ? <ArcoButton type="secondary" size="mini" htmlType="button" onClick={() => { setConflict(false); setError(null); onSaved(); }}>刷新最新版本</ArcoButton> : undefined}
+          />
+        )}
       </ArcoForm>
+      <ConfirmModal
+        visible={discardConfirmOpen}
+        title="放弃未保存的修改？"
+        description="当前需求编辑有未保存的改动，关闭后会丢弃这些修改。"
+        okText="放弃修改"
+        cancelText="继续编辑"
+        onOk={() => { setDiscardConfirmOpen(false); setOpen(false); }}
+        onCancel={() => setDiscardConfirmOpen(false)}
+      />
     </div>
   );
 }
@@ -489,19 +542,22 @@ export function AudienceEditor({ requirementId, audience, suggestedTags = [], on
   const [selected, setSelected] = useState<string[]>(defaultSelection);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [conflict, setConflict] = useState(false);
   // 确认版本变化或 AI 建议变化时重算草稿；普通详情刷新不覆盖用户未保存的多选。
   const confirmedTags = audience.confirmed ? audience.tags.join(",") : "";
   useEffect(() => {
     setSelected(audience.confirmed ? audience.tags : suggestedTags.length > 0 ? [suggestedTags[0]] : []);
     setError(null);
+    setConflict(false);
   }, [audience.version, confirmedTags, suggestedKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const toggle = (level: string) => setSelected((prev) => prev.includes(level) ? prev.filter((item) => item !== level) : [...prev, level]);
   const save = async () => {
-    setBusy(true); setError(null);
+    setBusy(true); setError(null); setConflict(false);
     try {
       await setAudienceTags(requirementId, { tags: selected, expectedVersion: audience.version });
       onSaved();
     } catch (cause) {
+      setConflict(cause instanceof ApiError && cause.status === 409);
       setError(cause instanceof ApiError ? cause.message : "保存失败，请重试。");
     } finally { setBusy(false); }
   };
@@ -557,6 +613,7 @@ export function AudienceEditor({ requirementId, audience, suggestedTags = [], on
         {audience.confirmed && audience.tags.length === 0 && <ArcoTypography.Text type="secondary">已确认为空（不再默认采用 AI 建议）</ArcoTypography.Text>}
         {!audience.confirmed && <ArcoTypography.Text type="secondary">尚未确认；当前选择是草稿，保存后才成为 PM 确认值</ArcoTypography.Text>}
         {error && <ArcoTypography.Text type="error" role="alert">{error}</ArcoTypography.Text>}
+        {conflict && <ArcoButton type="secondary" size="mini" htmlType="button" onClick={() => { setConflict(false); setError(null); onSaved(); }}>刷新最新版本</ArcoButton>}
       </ArcoSpace>
     </div>
   );
@@ -572,6 +629,7 @@ export function BetaPanel({ requirementId }: { requirementId: string }) {
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [conflict, setConflict] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [evidence, setEvidence] = useState<KanoEvidenceVersionDto[]>([]);
   const [runs, setRuns] = useState<KanoRunDto[]>([]);
@@ -607,9 +665,19 @@ export function BetaPanel({ requirementId }: { requirementId: string }) {
     return () => { cancelled = true; controller.abort(); };
   }, [open, requirementId]);
   if (!open) return <ArcoButton type="secondary" size="small" htmlType="button" onClick={() => setOpen(true)}>Beta 分析</ArcoButton>;
+  const reloadDraft = async () => {
+    setConflict(false); setError(null);
+    try {
+      const loaded = await getRiceDraft(requirementId);
+      setDraft(loaded);
+      setReach(loaded.inputs.reach ?? ""); setImpact(loaded.inputs.impact ?? "");
+      setConfidence(loaded.inputs.confidence ?? ""); setEffort(loaded.inputs.effort ?? "");
+      setNotes(loaded.notes ?? "");
+    } catch { setError("草稿读取失败，请重试。"); }
+  };
   const save = async () => {
     if (!draft) return;
-    setBusy(true); setError(null); setNotice(null);
+    setBusy(true); setError(null); setConflict(false); setNotice(null);
     try {
       const result = await saveRiceDraft(requirementId, {
         reach: reach || null, impact: impact || null, confidence: confidence || null, effort: effort || null,
@@ -622,6 +690,7 @@ export function BetaPanel({ requirementId }: { requirementId: string }) {
       setDraft(reloaded);
       setNotice(`草稿已保存（v${result.editVersion}）${reloaded.score !== null ? ` · RICE = ${reloaded.score}` : " · 分数待补充完整输入"}。`);
     } catch (cause) {
+      setConflict(cause instanceof ApiError && cause.status === 409);
       setError(cause instanceof ApiError ? cause.message : "保存失败，请重试。");
     } finally { setBusy(false); }
   };
@@ -695,7 +764,16 @@ export function BetaPanel({ requirementId }: { requirementId: string }) {
           </div>
         )}
       </div>
-      {error && <ArcoAlert className="rq-inline-alert" type="error" showIcon role="alert" content={error} />}
+      {error && (
+        <ArcoAlert
+          className="rq-inline-alert"
+          type="error"
+          showIcon
+          role="alert"
+          content={error}
+          action={conflict ? <ArcoButton type="secondary" size="mini" htmlType="button" onClick={() => void reloadDraft()}>刷新最新版本</ArcoButton> : undefined}
+        />
+      )}
     </div>
   );
 }

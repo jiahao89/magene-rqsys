@@ -34,7 +34,7 @@ interface FeishuEnvelope {
 }
 
 export type FeishuAction = "token endpoint" | "token request" | "field schema" | "records filter" | "records list" | "record read" | "record create" | "record update";
-export type FeishuFailureKind = "http" | "api" | "invalid_response" | "ambiguous_response";
+export type FeishuFailureKind = "http" | "api" | "invalid_response" | "ambiguous_response" | "timeout" | "network";
 
 /** Structured safe error metadata; callers should use fields, never parse message text. */
 /**
@@ -62,11 +62,18 @@ export class FeishuApiError extends Error {
       ? "Feishu records filter returned multiple records for the configured requirement key"
       : kind === "invalid_response"
         ? `Feishu ${action} returned an invalid response`
-        : `Feishu ${action} failed (${detail})`;
+        : kind === "timeout"
+          ? `Feishu ${action} timed out`
+          : kind === "network"
+            ? `Feishu ${action} network request failed`
+            : `Feishu ${action} failed (${detail})`;
     super(message);
     this.name = "FeishuApiError";
   }
 }
+
+/** 飞书 tenant_access_token 失效/过期业务码：清空缓存并刷新令牌重试 1 次。 */
+export const FEISHU_TOKEN_EXPIRED_CODES = new Set([99991663, 99991661]);
 
 /** 飞书 bitable 字段/权限类错误：重试不会改变结果，必须人工修正配置。 */
 export const FEISHU_PERMANENT_CODES = new Set([
@@ -81,7 +88,7 @@ export const FEISHU_PERMANENT_CODES = new Set([
 
 /**
  * 判断一次 Base 失败能否安全地交给作业重试。
- * 只有「请求确定没有生效」的瞬时故障才可重试：网络错误、429、5xx、非永久业务码。
+ * 只有「请求确定没有生效」的瞬时故障才可重试：网络错误、超时、429、5xx、非永久业务码。
  * 响应内容无效/语义模糊（写入可能已生效）以及 401/403/其它 4xx 不可重试，
  * 避免重复写 Base，也避免把配置错误伪装成偶发失败。
  */
@@ -89,6 +96,7 @@ export function isRetryableFeishuFailure(error: FeishuApiError): boolean {
   // 1254607：飞书 bitable 记录过滤接口的已知瞬时失败（同一请求稍后重试可成功），
   // 不能按普通 4xx 判永久失败，否则批量推送会留下大量可自愈的失败行。
   if (error.apiCode === 1254607) return true;
+  if (error.kind === "timeout" || error.kind === "network") return true;
   if (error.kind === "api" && error.apiCode !== undefined) return !FEISHU_PERMANENT_CODES.has(error.apiCode);
   if (error.kind === "invalid_response" || error.kind === "ambiguous_response") return false;
   const status = error.httpStatus;
@@ -97,6 +105,12 @@ export function isRetryableFeishuFailure(error: FeishuApiError): boolean {
   if (status !== undefined && status >= 500) return true;
   if (status !== undefined) return false;
   return true;
+}
+
+function isAbortOrTimeoutError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null || !("name" in error)) return false;
+  const name = (error as { name?: unknown }).name;
+  return name === "TimeoutError" || name === "AbortError";
 }
 
 async function feishuHttpFailure(response: Response, action: FeishuAction): Promise<FeishuApiError> {
@@ -130,15 +144,33 @@ export class FeishuBitableClient implements BaseClient {
     return { ...init, signal: AbortSignal.timeout(this.timeoutMs) };
   }
 
+  private async performFetch(url: string, init: RequestInit, action: FeishuAction): Promise<Response> {
+    try {
+      return await this.fetcher(url, this.withTimeout(init));
+    } catch (error) {
+      if (isAbortOrTimeoutError(error)) throw new FeishuApiError("timeout", action);
+      throw new FeishuApiError("network", action);
+    }
+  }
+
+  private async readJson<T>(res: Response, action: FeishuAction): Promise<T> {
+    try {
+      return (await res.json()) as T;
+    } catch (error) {
+      if (isAbortOrTimeoutError(error)) throw new FeishuApiError("timeout", action);
+      throw new FeishuApiError("invalid_response", action);
+    }
+  }
+
   private async tenantToken(): Promise<string> {
     if (this.cachedToken && Date.now() < this.cachedToken.expiresAtMs) return this.cachedToken.value;
-    const res = await this.fetcher(`${this.baseUrl}/open-apis/auth/v3/tenant_access_token/internal`, this.withTimeout({
+    const res = await this.performFetch(`${this.baseUrl}/open-apis/auth/v3/tenant_access_token/internal`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ app_id: this.config.appId, app_secret: this.config.appSecret }),
-    }));
+    }, "token endpoint");
     if (!res.ok) throw await feishuHttpFailure(res, "token endpoint");
-    const payload = (await res.json()) as FeishuEnvelope;
+    const payload = await this.readJson<FeishuEnvelope>(res, "token request");
     if (payload.code !== 0) throw new FeishuApiError("api", "token request", undefined, payload.code);
     if (!payload.tenant_access_token) throw new FeishuApiError("invalid_response", "token request");
     const expireMs = (payload.expire ?? 3600) * 1000;
@@ -146,14 +178,39 @@ export class FeishuBitableClient implements BaseClient {
     return payload.tenant_access_token;
   }
 
-  private async authed(url: string, init: RequestInit): Promise<Response> {
+  private async authed(url: string, init: RequestInit, action: FeishuAction): Promise<Response> {
     const token = await this.tenantToken();
     const headers = { ...(init.headers ?? {}), authorization: `Bearer ${token}`, "content-type": "application/json" };
-    return this.fetcher(url, this.withTimeout({ ...init, headers }));
+    return this.performFetch(url, { ...init, headers }, action);
   }
 
-  private assertOk(payload: Pick<FeishuEnvelope, "code">, action: FeishuAction): void {
-    if (payload.code !== 0) throw new FeishuApiError("api", action, undefined, payload.code);
+  /**
+   * 统一执行带鉴权的飞书 JSON 请求：
+   * - 命中令牌失效/过期业务码（99991663 / 99991661，无论 HTTP 200 还是非 2xx）时清空 cachedToken 并刷新令牌重试 1 次；
+   * - 将 AbortError / TimeoutError 归一化为 FeishuApiError("timeout")，避免向调用方泄漏原始 DOMException。
+   */
+  private async authedJson<T extends FeishuEnvelope>(url: string, init: RequestInit, action: FeishuAction): Promise<T> {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const res = await this.authed(url, init, action);
+      if (!res.ok) {
+        const failure = await feishuHttpFailure(res, action);
+        if (attempt === 0 && failure.apiCode !== undefined && FEISHU_TOKEN_EXPIRED_CODES.has(failure.apiCode)) {
+          this.cachedToken = null;
+          continue;
+        }
+        throw failure;
+      }
+      const payload = await this.readJson<T>(res, action);
+      if (payload.code !== 0) {
+        if (attempt === 0 && payload.code !== undefined && FEISHU_TOKEN_EXPIRED_CODES.has(payload.code)) {
+          this.cachedToken = null;
+          continue;
+        }
+        throw new FeishuApiError("api", action, undefined, payload.code);
+      }
+      return payload;
+    }
+    throw new FeishuApiError("api", action);
   }
 
   async readFieldType(fieldName: string): Promise<number> {
@@ -167,10 +224,11 @@ export class FeishuBitableClient implements BaseClient {
     let pageToken: string | undefined;
     for (let page = 0; page < 20; page++) {
       const query = new URLSearchParams({ page_size: "100", ...(pageToken ? { page_token: pageToken } : {}) });
-      const res = await this.authed(`${this.baseUrl}/open-apis/bitable/v1/apps/${this.config.appToken}/tables/${this.config.tableId}/fields?${query}`, { method: "GET" });
-      if (!res.ok) throw await feishuHttpFailure(res, "field schema");
-      const payload = await res.json() as { code?: number; data?: { items?: Array<{ field_name?: unknown; type?: unknown }>; has_more?: boolean; page_token?: unknown } };
-      this.assertOk(payload, "field schema");
+      const payload = await this.authedJson<FeishuEnvelope & { data?: { items?: Array<{ field_name?: unknown; type?: unknown }>; has_more?: boolean; page_token?: unknown } }>(
+        `${this.baseUrl}/open-apis/bitable/v1/apps/${this.config.appToken}/tables/${this.config.tableId}/fields?${query}`,
+        { method: "GET" },
+        "field schema",
+      );
       if (!Array.isArray(payload.data?.items)) throw new FeishuApiError("invalid_response", "field schema");
       for (const field of payload.data.items) {
         if (typeof field.field_name !== "string" || typeof field.type !== "number" || !Number.isSafeInteger(field.type) || types.has(field.field_name)) {
@@ -210,13 +268,11 @@ export class FeishuBitableClient implements BaseClient {
       field_names: JSON.stringify(this.lookupFieldNames()),
       page_size: "2",
     });
-    const res = await this.authed(
+    const payload = await this.authedJson<FeishuEnvelope>(
       `${this.baseUrl}/open-apis/bitable/v1/apps/${this.config.appToken}/tables/${this.config.tableId}/records?${query.toString()}`,
       { method: "GET" },
+      "records filter",
     );
-    if (!res.ok) throw await feishuHttpFailure(res, "records filter");
-    const payload = (await res.json()) as FeishuEnvelope;
-    this.assertOk(payload, "records filter");
     const items = payload.data?.items ?? [];
     if (items.length > 1) throw new BaseKeyConflictError(`Base TB id lookup matched ${items.length} rows for requirement ${key.requirementId}`);
     const record = items[0];
@@ -236,13 +292,11 @@ export class FeishuBitableClient implements BaseClient {
       field_names: JSON.stringify(this.lookupFieldNames()),
       page_size: "2",
     });
-    const res = await this.authed(
+    const payload = await this.authedJson<FeishuEnvelope>(
       `${this.baseUrl}/open-apis/bitable/v1/apps/${this.config.appToken}/tables/${this.config.tableId}/records?${query.toString()}`,
       { method: "GET" },
+      "records filter",
     );
-    if (!res.ok) throw await feishuHttpFailure(res, "records filter");
-    const payload = (await res.json()) as FeishuEnvelope;
-    this.assertOk(payload, "records filter");
     const items = payload.data?.items ?? [];
     if (items.length > 1) throw new BaseKeyConflictError(`Base platform id lookup matched ${items.length} rows for ${platformRequirementId}`);
     const record = items[0];
@@ -257,13 +311,11 @@ export class FeishuBitableClient implements BaseClient {
     const pageSize = Math.min(Math.max(options?.pageSize ?? 100, 1), 500);
     const query = new URLSearchParams({ page_size: String(pageSize) });
     if (options?.pageToken) query.set("page_token", options.pageToken);
-    const res = await this.authed(
+    const payload = await this.authedJson<FeishuEnvelope & { data?: { items?: unknown; has_more?: unknown; page_token?: unknown } }>(
       `${this.baseUrl}/open-apis/bitable/v1/apps/${this.config.appToken}/tables/${this.config.tableId}/records?${query.toString()}`,
       { method: "GET" },
+      "records list",
     );
-    if (!res.ok) throw await feishuHttpFailure(res, "records list");
-    const payload = (await res.json()) as FeishuEnvelope & { data?: { items?: unknown; has_more?: unknown; page_token?: unknown } };
-    this.assertOk(payload, "records list");
     const rawItems = payload.data?.items;
     if (rawItems !== undefined && !Array.isArray(rawItems)) throw new FeishuApiError("invalid_response", "records list");
     const items = (rawItems ?? []).map((item) => {
@@ -285,13 +337,11 @@ export class FeishuBitableClient implements BaseClient {
     const query = new URLSearchParams();
     if (options?.userIdType) query.set("user_id_type", options.userIdType);
     const suffix = query.size ? `?${query.toString()}` : "";
-    const res = await this.authed(
+    const payload = await this.authedJson<FeishuEnvelope>(
       `${this.baseUrl}/open-apis/bitable/v1/apps/${this.config.appToken}/tables/${this.config.tableId}/records${suffix}`,
       { method: "POST", body: JSON.stringify({ fields }) },
+      "record create",
     );
-    if (!res.ok) throw await feishuHttpFailure(res, "record create");
-    const payload = (await res.json()) as FeishuEnvelope;
-    this.assertOk(payload, "record create");
     if (!payload.data?.record) throw new FeishuApiError("invalid_response", "record create");
     return { recordId: payload.data.record.record_id, fields: payload.data.record.fields ?? {} };
   }
@@ -300,13 +350,11 @@ export class FeishuBitableClient implements BaseClient {
     const query = new URLSearchParams();
     if (options?.userIdType) query.set("user_id_type", options.userIdType);
     const suffix = query.size ? `?${query.toString()}` : "";
-    const res = await this.authed(
+    const payload = await this.authedJson<FeishuEnvelope>(
       `${this.baseUrl}/open-apis/bitable/v1/apps/${this.config.appToken}/tables/${this.config.tableId}/records/${recordId}${suffix}`,
       { method: "PUT", body: JSON.stringify({ fields }) },
+      "record update",
     );
-    if (!res.ok) throw await feishuHttpFailure(res, "record update");
-    const payload = (await res.json()) as FeishuEnvelope;
-    this.assertOk(payload, "record update");
     if (!payload.data?.record) throw new FeishuApiError("invalid_response", "record update");
     return { recordId: payload.data.record.record_id, fields: payload.data.record.fields ?? {} };
   }
@@ -316,13 +364,11 @@ export class FeishuBitableClient implements BaseClient {
   }
 
   private async readRecord(recordId: string): Promise<BaseRecord> {
-    const res = await this.authed(
+    const payload = await this.authedJson<FeishuEnvelope>(
       `${this.baseUrl}/open-apis/bitable/v1/apps/${this.config.appToken}/tables/${this.config.tableId}/records/${recordId}`,
       { method: "GET" },
+      "record read",
     );
-    if (!res.ok) throw await feishuHttpFailure(res, "record read");
-    const payload = (await res.json()) as FeishuEnvelope;
-    this.assertOk(payload, "record read");
     if (!payload.data?.record) throw new FeishuApiError("invalid_response", "record read");
     return { recordId: payload.data.record.record_id, fields: payload.data.record.fields ?? {} };
   }

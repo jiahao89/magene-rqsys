@@ -162,10 +162,20 @@ const PARITY_INVARIANTS = {
 // 前端共用文件：apps/web/src 与 rq-sys-miaoda/client/src/rqsys 必须逐字一致（忽略扩展名差异）。
 const WEB_SHARED = [
   "arco-styles.ts",
+  "cache.ts",
   "confirm-modal.tsx",
   "deep-link.ts",
   "intake-form.tsx",
   "overview-ai.tsx",
+  "pages/guide-page.tsx",
+  "pages/modules-page.tsx",
+  "pages/ops-page.tsx",
+  "pages/requirements-page.tsx",
+  "pages/sop-page.tsx",
+  "pages/sources-page.tsx",
+  "pages/sync-records-page.tsx",
+  "panel-shared.tsx",
+  "panels.tsx",
   "prd-prompt.tsx",
   "safe-url.ts",
   "schedule.ts",
@@ -173,13 +183,14 @@ const WEB_SHARED = [
   "sop.tsx",
   "state-labels.ts",
   "styles.css",
+  "unsaved-guard.ts",
 ];
 
 // 前端平台适配文件：允许存在宿主差异，但必须登记理由，且不得缺少任一侧文件。
 const WEB_DECLARED = {
   "App.tsx": "宿主壳层差异（独立 Vite 壳 vs 妙搭 Layout/路由）",
   "api.ts": "请求传输层差异（原生 fetch vs 妙搭 backendFetch/axios）",
-  "panels.tsx": "妙搭平台选人与应用前缀接线差异（platform-people / backendFetch）",
+  "pages/team-page.tsx": "妙搭平台选人组件接线差异（PlatformFeishuBinder / platform-people）",
   "requirement-view.ts": "注释差异",
   "requirements-url.ts": "查询参数 trim 与注释差异",
   "workbench-routing.ts": "路由注释差异",

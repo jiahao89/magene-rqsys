@@ -1312,8 +1312,6 @@ h1, h2, h3, h4, h5, h6 {
 .beta-kano-runs { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
 
 /* ---------- Sources, People, Modules, Ops, Guide & SOP ---------- */
-.source-card-wrap { height: 100%; }
-.source-card { height: 100%; }
 
 .weekday-grid {
   display: grid;
@@ -1419,3 +1417,20 @@ h1, h2, h3, h4, h5, h6 {
 .req-detail-skeleton { display: flex; flex-direction: column; gap: 16px; }
 
 .table-scroll { width: 100%; max-width: 100%; min-width: 0; overflow-x: auto; }
+.table-scroll .arco-table-content-inner {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-fill-4) transparent;
+}
+.table-scroll .arco-table-content-inner::-webkit-scrollbar {
+  height: 6px;
+}
+.table-scroll .arco-table-content-inner::-webkit-scrollbar-track {
+  background: transparent;
+}
+.table-scroll .arco-table-content-inner::-webkit-scrollbar-thumb {
+  background: var(--color-fill-4);
+  border-radius: 3px;
+}
+.table-scroll .arco-table-content-inner::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-4);
+}

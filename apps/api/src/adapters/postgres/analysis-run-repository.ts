@@ -23,23 +23,36 @@ export class PostgresAnalysisRunRepository implements AnalysisRunRepository{
     return rows[0]?from(rows[0]):null;
   }
   async countRecentFailures(code:string,since:string){const{rows}=await this.pool.query("SELECT count(*)::int AS count FROM analysis_runs WHERE status='failed_retryable' AND safe_error_code=$1 AND started_at>=$2::timestamptz",[code,since]);return Number(rows[0]?.count??0);}
-  // 总览 AI 区：拆成三条最简查询（全量/今日/最近一次）。不用 FILTER、标量子查询或数组参数——
-  // 妙搭的 Drizzle 传输层会把数组参数按 chunk 展开（ANY(($2,$3)::text[]) 报 42809，2026-11-18 线上事故）。
-  // analysis_runs 没有 started_at 索引（加索引要迁移，暂不做），当前量级下 count(*) 是全表扫描，可接受。
+  // 总览 AI 区：合并为单条 CTE 查询（全量/今日/最近一次），减少 3× 全表扫描；
+  // 不使用 FILTER 或数组参数，兼容妙搭 Drizzle 传输层。
   async aiCallStats(since:string,pool?:SourcePool){
     // 0031：总览固定产品池，AI 调用统计也按池作用域，集团池的分析调用不进入总览。
-    const scoped=(param:number)=>`r.requirement_id IN (SELECT req.id FROM requirements req LEFT JOIN source_configs sc ON sc.id=req.source_config_id WHERE ($${param}::text='product' AND (req.source_config_id IS NULL OR sc.pool='product')) OR ($${param}::text='group' AND sc.pool='group'))`;
     const target=pool??"product";
-    const[total,today,last]=await Promise.all([
-      this.pool.query(`SELECT count(*)::int AS total FROM analysis_runs r WHERE ${scoped(1)}`,[target]),
-      this.pool.query(`SELECT count(*)::int AS today FROM analysis_runs r WHERE r.started_at>=$1::timestamptz AND ${scoped(2)}`,[since,target]),
-      this.pool.query(`SELECT r.status,r.started_at FROM analysis_runs r WHERE ${scoped(1)} ORDER BY r.started_at DESC,r.id DESC LIMIT 1`,[target]),
-    ]);
-    const lastRow=last.rows[0];
-    return{total:Number(total.rows[0]?.total??0),today:Number(today.rows[0]?.today??0),lastAt:lastRow?.started_at?new Date(lastRow.started_at).toISOString():null,lastStatus:lastRow?.status===null||lastRow?.status===undefined?null:String(lastRow.status)};
+    const{rows}=await this.pool.query(
+      `WITH scoped AS (
+        SELECT r.started_at,r.status,r.id FROM analysis_runs r
+        WHERE r.requirement_id IN (
+          SELECT req.id FROM requirements req LEFT JOIN source_configs sc ON sc.id=req.source_config_id
+          WHERE ($2::text='product' AND (req.source_config_id IS NULL OR sc.pool='product')) OR ($2::text='group' AND sc.pool='group')
+        )
+      ), agg AS (
+        SELECT count(*)::int AS total,COALESCE(SUM(CASE WHEN started_at>=$1::timestamptz THEN 1 ELSE 0 END),0)::int AS today FROM scoped
+      ), latest AS (
+        SELECT status,started_at FROM scoped ORDER BY started_at DESC,id DESC LIMIT 1
+      )
+      SELECT agg.total,agg.today,latest.status AS last_status,latest.started_at AS last_at FROM agg LEFT JOIN latest ON true`,
+      [since,target],
+    );
+    const row=rows[0];
+    return{total:Number(row?.total??0),today:Number(row?.today??0),lastAt:row?.last_at?new Date(row.last_at).toISOString():null,lastStatus:row?.last_status===null||row?.last_status===undefined?null:String(row.last_status)};
   }
   async listByRequirement(id:string){
-    const{rows}=await this.pool.query("SELECT * FROM analysis_runs WHERE requirement_id=$1 ORDER BY analysis_version",[id]);
+    // 详情页只展示最新版本的 structured_result，历史版本仅需摘要元数据；
+    // 仅对最大 analysis_version 返回 structured_result，避免拉取历史大 JSONB。
+    const{rows}=await this.pool.query(
+      "SELECT id,requirement_id,source_version,analysis_version,status,module_suggestion,confidence,confidence_reason,priority,CASE WHEN analysis_version=MAX(analysis_version) OVER () THEN structured_result ELSE NULL END AS structured_result,provider,model,prompt_version,module_dictionary_version,priority_rule_version_id,safe_error_code,safe_error_summary,started_at,completed_at FROM analysis_runs WHERE requirement_id=$1 ORDER BY analysis_version",
+      [id],
+    );
     return rows.map(from);
   }
   // 2026-11-24：旧 running 行被更高版本的成功分析取代后永远不会收尾（线上集团池 4 条）。

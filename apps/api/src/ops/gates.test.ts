@@ -88,3 +88,53 @@ test("G3 只统计活跃（processingState=active）待匹配且未推送需求�
   assert.equal(result.gates.find((g) => g.id === "G3")?.auto.status, "pass");
   assert.deepEqual(queries, [{ ownerState: "pending_mapping", pushState: "pending", processingState: "active", limit: 1 }]);
 });
+
+test("evaluateGates 并行发起所有查询（消除串行 N+1 往返），优先使用 listByPrefix", async () => {
+  const h = harness({
+    formulaType: "umsc_weighted_v3",
+    flags: { "gate:G1": { confirmed: true, evidence: "ok", by: "u1", at: NOW.toISOString() } },
+  });
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const track = async <T>(fn: () => Promise<T>): Promise<T> => {
+    inFlight += 1;
+    maxInFlight = Math.max(maxInFlight, inFlight);
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    try { return await fn(); } finally { inFlight -= 1; }
+  };
+  const origCounts = h.requirements.getPipelineCounts;
+  const origSearch = h.requirements.search;
+  const origRule = h.priorityRules.getPublished;
+  const origGet = h.flags.get;
+  h.requirements.getPipelineCounts = () => track(() => origCounts());
+  h.requirements.search = () => track(() => origSearch());
+  h.priorityRules.getPublished = () => track(() => origRule());
+  h.flags.get = (name: string) => track(() => origGet(name));
+
+  const parallelResult = await evaluate(h);
+  // 3 个主查询 + 7 个人工 Gate 标志查询应在同一并行波次发出（10 个并发）
+  assert.equal(maxInFlight, 10);
+  assert.equal(parallelResult.gates.find((g) => g.id === "G1")?.status, "pass");
+
+  // 提供 listByPrefix 时只调用一次前缀查询，不再逐条调 flags.get
+  let getCalls = 0;
+  const prefixCalls: string[] = [];
+  const prefixedFlags = {
+    async get() { getCalls += 1; return null; },
+    async set() {},
+    async listByPrefix(prefix: string) {
+      prefixCalls.push(prefix);
+      return [{ name: "gate:G1", value: { confirmed: true, evidence: "prefixed" }, updatedAt: NOW.toISOString() }];
+    },
+  };
+  const prefixResult = await evaluateGates({
+    flags: prefixedFlags as never,
+    requirements: h.requirements as never,
+    priorityRules: h.priorityRules as never,
+    env: h.env,
+    now: NOW,
+  });
+  assert.deepEqual(prefixCalls, ["gate:"]);
+  assert.equal(getCalls, 0);
+  assert.equal(prefixResult.gates.find((g) => g.id === "G1")?.manual.evidence, "prefixed");
+});

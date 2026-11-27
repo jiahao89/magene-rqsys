@@ -53,8 +53,35 @@ export function isGateId(value: string): value is GateId {
   return findDefinition(value) !== null;
 }
 
+type GateFlagRow = { value: Record<string, unknown>; updatedAt: string };
+type GateFlagsReader = SystemFlagRepository & {
+  listByPrefix?(prefix: string): Promise<Array<{ name: string; value: Record<string, unknown>; updatedAt: string }>>;
+};
+
+async function loadGateFlagMap(flags: GateFlagsReader | undefined): Promise<Map<string, GateFlagRow>> {
+  const byName = new Map<string, GateFlagRow>();
+  if (!flags) return byName;
+  if (flags.listByPrefix) {
+    const rows = await flags.listByPrefix(GATE_FLAG_PREFIX).catch(() => []);
+    for (const row of rows) byName.set(row.name, { value: row.value, updatedAt: row.updatedAt });
+    return byName;
+  }
+  const manualGates = GATE_DEFINITIONS.filter((definition) => definition.manual);
+  const rows = await Promise.all(
+    manualGates.map(async (definition) => {
+      const name = `${GATE_FLAG_PREFIX}${definition.id}`;
+      const row = await flags.get(name).catch(() => null);
+      return [name, row] as const;
+    }),
+  );
+  for (const [name, row] of rows) {
+    if (row) byName.set(name, row);
+  }
+  return byName;
+}
+
 export async function evaluateGates(params: {
-  flags: SystemFlagRepository | undefined;
+  flags: GateFlagsReader | undefined;
   requirements: Pick<RequirementQueryRepository, "search" | "getPipelineCounts"> | undefined;
   priorityRules: Pick<PriorityRuleRepository, "getPublished"> | undefined;
   env: Record<string, string | undefined>;
@@ -63,12 +90,15 @@ export async function evaluateGates(params: {
   const { flags, requirements, priorityRules, env } = params;
 
   const baseConfigured = Boolean(env.BASE_APP_TOKEN && env.BASE_TABLE_ID);
-  const counts = requirements ? await requirements.getPipelineCounts().catch(() => null) : null;
+  const [counts, unpublishedMapping, rule, flagMap] = await Promise.all([
+    requirements ? requirements.getPipelineCounts().catch(() => null) : Promise.resolve(null),
+    requirements
+      ? requirements.search({ ownerState: "pending_mapping", pushState: "pending", processingState: "active", limit: 1 }).then((page) => page.items.length > 0).catch(() => true)
+      : Promise.resolve(true),
+    priorityRules ? priorityRules.getPublished().catch(() => null) : Promise.resolve(null),
+    loadGateFlagMap(flags),
+  ]);
   const pushed = counts?.pushPushed ?? 0;
-  const unpublishedMapping = requirements
-    ? await requirements.search({ ownerState: "pending_mapping", pushState: "pending", processingState: "active", limit: 1 }).then((page) => page.items.length > 0).catch(() => true)
-    : true;
-  const rule = priorityRules ? await priorityRules.getPublished().catch(() => null) : null;
   const formulaType = rule ? (rule.rules as { formulaType?: unknown }).formulaType : null;
   const webhookConfigured = typeof env.RQSYS_ALERT_WEBHOOK_URL === "string" && env.RQSYS_ALERT_WEBHOOK_URL.startsWith("https://");
 
@@ -98,8 +128,8 @@ export async function evaluateGates(params: {
   const gates: GateStatus[] = [];
   for (const definition of GATE_DEFINITIONS) {
     let confirmation: { confirmed: boolean; evidence?: string; by?: string; at?: string } = { confirmed: false };
-    if (definition.manual && flags) {
-      const row = await flags.get(`${GATE_FLAG_PREFIX}${definition.id}`).catch(() => null);
+    if (definition.manual) {
+      const row = flagMap.get(`${GATE_FLAG_PREFIX}${definition.id}`) ?? null;
       if (row && row.value.confirmed === true) {
         confirmation = {
           confirmed: true,

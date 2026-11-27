@@ -20,6 +20,8 @@ export interface TeambitionClientOptions {
   baseUrl?: string;
   apiKey?: string;
   timeoutMs?: number;
+  /** 读接口遇到 5xx / 网络瞬时故障时最多重试 1 次的退避时长（毫秒）；默认 150ms。 */
+  retryDelayMs?: number;
 }
 
 interface NamedTeambitionEntity { id: string; name: string }
@@ -65,36 +67,59 @@ export class TeambitionClient implements TeambitionSourceProjectResolver, Teambi
   private readonly baseUrl: string;
   private readonly apiKey: string;
   private readonly timeoutMs: number;
+  private readonly retryDelayMs: number;
 
   constructor(options: TeambitionClientOptions = {}) {
     this.baseUrl = (options.baseUrl ?? process.env.TEAMBITION_GATEWAY_URL ?? SKILL_GATEWAY_URL).replace(/\/$/, "");
     this.apiKey = options.apiKey ?? process.env.GATEWAY_API_KEY ?? DEFAULT_GATEWAY_API_KEY;
     this.timeoutMs = options.timeoutMs ?? 30_000;
+    this.retryDelayMs = Math.max(0, options.retryDelayMs ?? 150);
     // Fail closed at construction: a missing gateway URL/key must never produce an outbound request
     // with an empty credential. The message names the env var key so the failure is actionable.
     if (!this.baseUrl) throw new Error("Teambition gateway URL is not configured; set TEAMBITION_GATEWAY_URL");
     if (!this.apiKey) throw new Error("Teambition gateway API key is not configured; set GATEWAY_API_KEY");
   }
 
+  private async waitBeforeRetry(): Promise<void> {
+    if (this.retryDelayMs <= 0) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, this.retryDelayMs));
+  }
+
   private async getJson(path: string, params: Record<string, string> = {}): Promise<unknown> {
     const url = new URL(`${this.baseUrl}/${path}`);
     for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
-    let response: Response;
-    try {
-      response = await fetch(url, {
-        method: "GET",
-        headers: { Authorization: `Bearer ${this.apiKey}` },
-        signal: AbortSignal.timeout(this.timeoutMs),
-      });
-    } catch {
-      throw new TeambitionApiError("Teambition gateway is unreachable or timed out", null);
+    // 所有 Teambition 网关请求都是只读 GET：对瞬时网络错误或 5xx 有界重试 1 次；
+    // 4xx 与非 JSON 立即失败，且任何非 2xx 响应都取消 body 释放 keep-alive 连接。
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          method: "GET",
+          headers: { Authorization: `Bearer ${this.apiKey}` },
+          signal: AbortSignal.timeout(this.timeoutMs),
+        });
+      } catch {
+        if (attempt === 0) {
+          await this.waitBeforeRetry();
+          continue;
+        }
+        throw new TeambitionApiError("Teambition gateway is unreachable or timed out", null);
+      }
+      if (!response.ok) {
+        await response.body?.cancel().catch(() => undefined);
+        if (response.status >= 500 && attempt === 0) {
+          await this.waitBeforeRetry();
+          continue;
+        }
+        throw new TeambitionApiError(`Teambition gateway returned HTTP ${response.status}`, response.status);
+      }
+      try {
+        return await response.json();
+      } catch {
+        throw new TeambitionApiError("Teambition gateway returned invalid JSON", response.status);
+      }
     }
-    if (!response.ok) throw new TeambitionApiError(`Teambition gateway returned HTTP ${response.status}`, response.status);
-    try {
-      return await response.json();
-    } catch {
-      throw new TeambitionApiError("Teambition gateway returned invalid JSON", response.status);
-    }
+    throw new TeambitionApiError("Teambition gateway is unreachable or timed out", null);
   }
 
   async resolveProject(projectName: string, options?: { pool?: SourcePool }): Promise<{ projectId: string; requirementTypeId: string }> {

@@ -4,9 +4,11 @@ import "@arco-design/web-react/lib/_util/react-19-adapter";
 import { Message } from "@arco-design/web-react";
 import { cleanup } from "@testing-library/react";
 import { afterEach } from "vitest";
+import { clearQueryCache } from "./cache";
 
 afterEach(() => {
   cleanup();
+  clearQueryCache();
   Message.clear();
   document.querySelectorAll(".arco-message-wrapper").forEach((node) => node.remove());
 });

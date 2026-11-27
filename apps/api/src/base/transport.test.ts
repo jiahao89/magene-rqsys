@@ -262,3 +262,95 @@ test("records-filter 1254607 is treated as transient, not a permanent validation
   assert.equal(isRetryableFeishuFailure(error), true);
   assert.equal(isRetryableFeishuFailure(new FeishuApiError("http", "records filter", 400, 1254045)), false);
 });
+
+test("invalidates cached tenant token and retries once on Feishu token-expired codes 99991663 / 99991661", async () => {
+  for (const [expiredCode, httpStatus] of [[99991663, 200], [99991661, 400]] as const) {
+    let tokenCalls = 0;
+    let recordCalls = 0;
+    const seenAuthHeaders: string[] = [];
+    const client = new FeishuBitableClient({
+      ...CONFIG,
+      fetch: (async (url: string | URL, init?: RequestInit) => {
+        const path = String(url);
+        if (path.includes("/tenant_access_token")) {
+          tokenCalls += 1;
+          return jsonResponse({ code: 0, tenant_access_token: `token-${tokenCalls}`, expire: 3600 });
+        }
+        recordCalls += 1;
+        seenAuthHeaders.push(new Headers(init?.headers).get("authorization") ?? "");
+        if (recordCalls === 1) {
+          return new Response(JSON.stringify({ code: expiredCode, msg: "token expired" }), {
+            status: httpStatus,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return jsonResponse({ code: 0, data: { items: [{ record_id: "rec-ok", fields: { TB需求ID: "r1" } }] } });
+      }) as typeof fetch,
+    });
+
+    const found = await client.findByRequirementKey({ projectId: "p1", requirementId: "r1" });
+    assert.equal(found?.recordId, "rec-ok");
+    assert.equal(tokenCalls, 2);
+    assert.equal(recordCalls, 2);
+    assert.deepEqual(seenAuthHeaders, ["Bearer token-1", "Bearer token-2"]);
+  }
+});
+
+test("normalizes fetch and response.json TimeoutError/AbortError into FeishuApiError instead of leaking DOMException", async () => {
+  const fetchTimeoutClient = new FeishuBitableClient({
+    ...CONFIG,
+    fetch: (async () => {
+      throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    }) as typeof fetch,
+  });
+  await assert.rejects(
+    () => fetchTimeoutClient.findByRequirementKey({ projectId: "p1", requirementId: "r1" }),
+    (error: unknown) =>
+      error instanceof FeishuApiError
+      && error.kind === "timeout"
+      && error.action === "token endpoint"
+      && isRetryableFeishuFailure(error),
+  );
+
+  const bodyAbortClient = new FeishuBitableClient({
+    ...CONFIG,
+    fetch: (async (url: string | URL) => {
+      if (String(url).includes("/tenant_access_token")) {
+        return jsonResponse({ code: 0, tenant_access_token: "t-1", expire: 3600 });
+      }
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          throw new DOMException("The operation was aborted", "AbortError");
+        },
+      } as unknown as Response;
+    }) as typeof fetch,
+  });
+  await assert.rejects(
+    () => bodyAbortClient.findByRequirementKey({ projectId: "p1", requirementId: "r1" }),
+    (error: unknown) =>
+      error instanceof FeishuApiError
+      && error.kind === "timeout"
+      && error.action === "records filter"
+      && isRetryableFeishuFailure(error),
+  );
+
+  const invalidJsonClient = new FeishuBitableClient({
+    ...CONFIG,
+    fetch: (async (url: string | URL) => {
+      if (String(url).includes("/tenant_access_token")) {
+        return jsonResponse({ code: 0, tenant_access_token: "t-1", expire: 3600 });
+      }
+      return new Response("not-json", { status: 200, headers: { "content-type": "text/plain" } });
+    }) as typeof fetch,
+  });
+  await assert.rejects(
+    () => invalidJsonClient.create({ 标题: "X" }),
+    (error: unknown) =>
+      error instanceof FeishuApiError
+      && error.kind === "invalid_response"
+      && error.action === "record create"
+      && !isRetryableFeishuFailure(error),
+  );
+});

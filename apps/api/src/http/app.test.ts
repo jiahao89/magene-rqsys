@@ -1865,3 +1865,117 @@ test("Wave 2: POST /api/sync/run checks running batches within the target source
   assert.equal(res.status, 409);
   assert.equal(queriedPool, "group");
 });
+
+test("Perf Wave 1: GET /api/requirements/:id deduplicates analyses/scoring queries, passes titleKey, and keeps full source", async () => {
+  const d = makeDependencies();
+  let latestCalled = 0;
+  let currentScoreCalled = 0;
+  let aiSuggestionCalled = 0;
+  let candidateTitleKey: string | undefined;
+  const v1Run = { ...analysisRun, analysisVersion: 1, structuredResult: null };
+  const v2Run = { ...analysisRun, analysisVersion: 2, structuredResult: { summary: "v2" } };
+  const confirmedScore = {
+    id: "s-2", requirementId: requirement.id, version: 2, status: "confirmed" as const, origin: "manual" as const,
+    sourceVersion: 1, analysisVersion: 2, ruleVersionId: null, inputs: {}, alpha: 1, score: 12, priority: "P0" as const,
+    scoreConfidence: "高", scoreConfidenceReason: "r", safetyFlag: false, basis: {}, rationale: "ok", actorId: "u", changeReason: "ok", createdAt: "2026-10-08T00:00:00.000Z",
+  };
+  const aiSuggestedScore = { ...confirmedScore, id: "s-3", version: 3, status: "ai_suggested" as const, origin: "ai" as const, priority: "P1" as const };
+  d.repositories!.analyses = {
+    append: async () => v2Run as never,
+    complete: async () => v2Run as never,
+    latest: async () => { latestCalled += 1; return v2Run as never; },
+    listByRequirement: async () => [v1Run, v2Run] as never,
+  };
+  d.repositories!.scoring = {
+    current: async () => { currentScoreCalled += 1; return confirmedScore as never; },
+    aiSuggestion: async () => { aiSuggestionCalled += 1; return aiSuggestedScore as never; },
+    list: async () => [aiSuggestedScore, confirmedScore] as never,
+    createAi: async () => confirmedScore as never,
+    saveManual: async () => ({ outcome: "saved", version: confirmedScore } as never),
+    applyAi: async () => ({ outcome: "saved", version: confirmedScore } as never),
+  };
+  (d.repositories!.requirements as unknown as Record<string, unknown>).listDuplicateCandidates = async (input: { titleKey?: string }) => {
+    candidateTitleKey = input.titleKey;
+    return [];
+  };
+  const withFullSource = { ...requirement, sourcePayload: { rawNote: "full-detail-only", intakeOrigin: "chat_paste" } } as unknown as RequirementRecord;
+  d.repositories!.requirements!.get = async () => withFullSource;
+
+  const res = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`), d);
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("cache-control"), "no-store");
+  assert.equal(latestCalled, 0, "must derive latest from listByRequirement without redundant query");
+  assert.equal(currentScoreCalled, 0, "must derive currentScore from scoring.list without redundant query");
+  assert.equal(aiSuggestionCalled, 0, "must derive aiScore from scoring.list without redundant query");
+  assert.equal(candidateTitleKey, requirement.title.toLowerCase());
+  const body = await res.json() as { analysis: { summary: string }; source: Record<string, unknown>; scoring: { current: { id: string }; aiSuggestion: { id: string } } };
+  assert.deepEqual(body.analysis, { summary: "v2" });
+  assert.deepEqual(body.source, { rawNote: "full-detail-only", intakeOrigin: "chat_paste" });
+  assert.equal(body.scoring.current.id, "s-2");
+  assert.equal(body.scoring.aiSuggestion.id, "s-3");
+});
+
+test("Perf Wave 1: GET /api/requirements slims list item source, degrades people.listActive failures, and sets no-store", async () => {
+  const d = makeDependencies();
+  const fatRow = {
+    ...requirement,
+    sourcePayload: { intakeOrigin: "chat_paste", hugeRawText: "x".repeat(5000), nested: { a: 1 } },
+  } as unknown as RequirementRecord;
+  d.repositories!.requirements!.search = async () => ({ items: [fatRow], nextCursor: null });
+  d.repositories!.people = {
+    upsertManual: async () => { throw new Error("unused"); },
+    resolveActive: async () => null,
+    listActive: async () => { throw new Error("people query glitch"); },
+  };
+  const res = await handleApiRequest(new Request("http://localhost/api/requirements?limit=10"), d);
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("cache-control"), "no-store");
+  const body = await res.json() as { items: Array<{ source: Record<string, unknown>; ownerName: string | null }> };
+  assert.deepEqual(body.items[0]?.source, { intakeOrigin: "chat_paste" });
+  assert.equal(body.items[0]?.ownerName, null);
+});
+
+test("Perf Wave 1: GET /api/health/ready caches schema_migrations for 20s and excludes Cache-Control: no-store", async () => {
+  let migrationQueries = 0;
+  let nowMs = Date.parse("2026-11-27T00:00:00.000Z");
+  const mockDb = {
+    query: async (sql: string) => {
+      if (sql.includes("schema_migrations")) {
+        migrationQueries += 1;
+        return { rows: [{ filename: EXPECTED_LATEST_MIGRATION }], rowCount: 1 };
+      }
+      return { rows: [{ "?column?": 1 }], rowCount: 1 };
+    },
+  } as never;
+  const d: ApiDependencies = { database: mockDb, repositories: undefined, identity: undefined, now: () => new Date(nowMs) };
+  const first = await handleApiRequest(new Request("http://localhost/api/health/ready"), d);
+  assert.equal(first.status, 200);
+  assert.equal(first.headers.get("cache-control"), null);
+  assert.equal(migrationQueries, 1);
+
+  nowMs += 10_000;
+  const second = await handleApiRequest(new Request("http://localhost/api/health/ready"), d);
+  assert.equal(second.status, 200);
+  assert.equal(migrationQueries, 1, "within 20s TTL must reuse cached migration status");
+
+  nowMs += 15_000;
+  const third = await handleApiRequest(new Request("http://localhost/api/health/ready"), d);
+  assert.equal(third.status, 200);
+  assert.equal(migrationQueries, 2, "after 20s TTL must re-query schema_migrations");
+});
+
+test("Perf Wave 1: handleApiRequest maps PG 22P02 to 400 and deletedRequirementWriteGate fails closed with 503", async () => {
+  const d = makeDependencies();
+  d.repositories!.requirements!.search = async () => { throw Object.assign(new Error("invalid input syntax for type uuid"), { code: "22P02" }); };
+  const badParam = await handleApiRequest(new Request("http://localhost/api/requirements?limit=10"), d);
+  assert.equal(badParam.status, 400);
+  assert.equal(((await badParam.json()) as { error: { code: string } }).error.code, "VALIDATION_FAILED");
+
+  const dWrite = makeDependencies();
+  dWrite.repositories!.requirements!.get = async () => { throw Object.assign(new Error("cannot connect now"), { code: "57P03" }); };
+  const gateFailed = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/priority-override`, {
+    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ priority: "P0", reason: "x" }),
+  }), dWrite);
+  assert.equal(gateFailed.status, 503);
+  assert.equal(((await gateFailed.json()) as { error: { code: string } }).error.code, "DEPENDENCY_UNAVAILABLE");
+});

@@ -247,26 +247,25 @@ const EMPTY_AI_INTAKE = { total: 0, today: 0, lastAt: null as string | null, las
 async function aiOverview(dependencies: ApiDependencies, repositories: ApiRepositories, now: Date) {
   const since = shanghaiDayStart(now).toISOString();
   const configured = Boolean(process.env.AI_API_KEY);
-  let analysis = EMPTY_AI_ANALYSIS;
-  let intake = EMPTY_AI_INTAKE;
-  let statsAvailable = true;
-  try {
-    // 总览固定产品池：AI 调用统计也只看产品池，避免集团池数字混入。
-    analysis = (await repositories.analyses?.aiCallStats?.(since, "product")) ?? EMPTY_AI_ANALYSIS;
-  } catch (error) {
+  // 并发拉取分析统计、聊天抽取统计与额度暂停标记（单轮 RTT）。
+  const [analysisOutcome, intakeOutcome, pause] = await Promise.all([
+    repositories.analyses?.aiCallStats
+      ? repositories.analyses.aiCallStats(since, "product").then(
+          (value) => ({ ok: true as const, value }),
+          (error: unknown) => ({ ok: false as const, error }),
+        )
+      : Promise.resolve({ ok: true as const, value: EMPTY_AI_ANALYSIS }),
+    repositories.audit?.countByEntityType
+      ? repositories.audit.countByEntityType({ entityType: "intake", eventTypes: ["intake.draft_extracted", "intake.draft_failed"], since }).then(
+          (value) => ({ ok: true as const, value }),
+          (error: unknown) => ({ ok: false as const, error }),
+        )
+      : Promise.resolve({ ok: true as const, value: EMPTY_AI_INTAKE }),
+    readAiPause(repositories.flags, now),
+  ]);
+  if (!analysisOutcome.ok) {
     // 统计失败只降级 AI 卡片：接口仍回 200 和 counts，不让整页总览跟着挂；错误类型与 SQLSTATE 进诊断日志。
-    statsAvailable = false;
-    reportAiStatsFailure(dependencies, "analysis", error);
-  }
-  if (statsAvailable) {
-    try {
-      intake = (await repositories.audit?.countByEntityType?.({ entityType: "intake", eventTypes: ["intake.draft_extracted", "intake.draft_failed"], since })) ?? EMPTY_AI_INTAKE;
-    } catch (error) {
-      statsAvailable = false;
-      reportAiStatsFailure(dependencies, "intake", error);
-    }
-  }
-  if (!statsAvailable) {
+    reportAiStatsFailure(dependencies, "analysis", analysisOutcome.error);
     return {
       status: "unavailable" as const,
       statsAvailable: false,
@@ -277,7 +276,20 @@ async function aiOverview(dependencies: ApiDependencies, repositories: ApiReposi
       lastCall: { at: null, kind: null, result: null },
     };
   }
-  const pause = await readAiPause(repositories.flags, now);
+  if (!intakeOutcome.ok) {
+    reportAiStatsFailure(dependencies, "intake", intakeOutcome.error);
+    return {
+      status: "unavailable" as const,
+      statsAvailable: false,
+      pausedUntil: null,
+      pauseReason: null,
+      analysis: { total: 0, today: 0 },
+      chatIntake: { total: 0, today: 0 },
+      lastCall: { at: null, kind: null, result: null },
+    };
+  }
+  const analysis = analysisOutcome.value;
+  const intake = intakeOutcome.value;
   const latest: { at: string; kind: "analysis" | "chat_intake"; result: "succeeded" | "failed" | null }[] = [];
   if (analysis.lastAt) latest.push({ at: analysis.lastAt, kind: "analysis", result: analysis.lastStatus ? AI_ANALYSIS_RESULTS[analysis.lastStatus] ?? null : null });
   if (intake.lastAt) latest.push({ at: intake.lastAt, kind: "chat_intake", result: intake.lastEventType ? AI_INTAKE_RESULTS[intake.lastEventType] ?? null : null });
@@ -294,16 +306,27 @@ async function aiOverview(dependencies: ApiDependencies, repositories: ApiReposi
     lastCall: { at: last?.at ?? null, kind: last?.kind ?? null, result: last?.result ?? null },
   };
 }
-async function readMigrationStatus(database: Pool | null): Promise<{ latest: string | null; expected: string; upToDate: boolean | null; error?: string }> {
+const MIGRATION_STATUS_CACHE_TTL_MS = 20_000;
+type MigrationStatusResult = { latest: string | null; expected: string; upToDate: boolean | null; error?: string };
+const migrationStatusCache = new WeakMap<Pool, { checkedAt: number; result: MigrationStatusResult }>();
+async function readMigrationStatus(database: Pool | null, nowMs: number = Date.now()): Promise<MigrationStatusResult> {
+  if (!database) return { latest: null, expected: EXPECTED_LATEST_MIGRATION, upToDate: null, error: "migration_state_unavailable" };
+  const cached = migrationStatusCache.get(database);
+  if (cached && nowMs - cached.checkedAt >= 0 && nowMs - cached.checkedAt < MIGRATION_STATUS_CACHE_TTL_MS) {
+    return cached.result;
+  }
+  let result: MigrationStatusResult;
   try {
-    const { rows } = await database!.query("SELECT filename FROM schema_migrations ORDER BY filename DESC LIMIT 1");
+    const { rows } = await database.query("SELECT filename FROM schema_migrations ORDER BY filename DESC LIMIT 1");
     const latest = typeof rows[0]?.filename === "string" ? rows[0].filename : null;
-    return { latest, expected: EXPECTED_LATEST_MIGRATION, upToDate: latest === EXPECTED_LATEST_MIGRATION };
+    result = { latest, expected: EXPECTED_LATEST_MIGRATION, upToDate: latest === EXPECTED_LATEST_MIGRATION };
   } catch {
     // 空库、或目标平台不暴露应用迁移记录（Miaoda 迁移由平台回放，不写 schema_migrations）时不能判定。
     // upToDate=null 表示「未知」，不是「落后」；调用方不得据此提示用户去执行迁移。
-    return { latest: null, expected: EXPECTED_LATEST_MIGRATION, upToDate: null, error: "migration_state_unavailable" };
+    result = { latest: null, expected: EXPECTED_LATEST_MIGRATION, upToDate: null, error: "migration_state_unavailable" };
   }
+  migrationStatusCache.set(database, { checkedAt: nowMs, result });
+  return result;
 }
 // PostgreSQL 的 uuid 列不接受任意字符串；路径里的非法 ID 必须在进入仓储层前收敛成 404，
 // 否则查询会抛 22P02 并被兜底成 500（PRD 8.5 EQ-02）。只有真实数据库组合根强制 UUID；
@@ -466,11 +489,25 @@ function prdPromptDto(r: RequirementPrdPromptRecord) {
     createdAt: r.createdAt, completedAt: r.completedAt,
   };
 }
-function requirementSearchDto(req: RequirementRecord) { return requirementDto(req); }
-/** 0034：列表/我的需求的响应组装；按页内来源批量解析负责人姓名、池标签与 Base 深链。 */
+function requirementSearchDto(req: RequirementRecord) {
+  const origin = req.sourcePayload && typeof req.sourcePayload === "object"
+    ? (req.sourcePayload as { intakeOrigin?: unknown }).intakeOrigin
+    : undefined;
+  // 列表只保留来源徽标所需的 intakeOrigin，不下发完整原始 source_payload（详情页仍返回完整 source）。
+  return { ...requirementDto(req), source: typeof origin === "string" && origin ? { intakeOrigin: origin } : {} };
+}
+/** 0034：列表/我的需求的响应组装；并发按页内来源批量解析负责人姓名、池标签与 Base 深链。 */
 async function requirementListPayload(repositories: ApiRepositories, page: { items: RequirementRecord[]; nextCursor: string | null }, pool: SourcePool | "all") {
   const pageSourceIds = [...new Set(page.items.map((item) => item.sourceConfigId).filter((id): id is string => Boolean(id)))];
-  const mappings = repositories.people ? (await Promise.all(pageSourceIds.map((id) => repositories.people!.listActive(id)))).flat() : [];
+  // 负责人映射与来源池标签均为展示增强：并发拉取，任一失败降级为空，不让列表页整页报错。
+  const [mappings, sourcesList] = await Promise.all([
+    repositories.people
+      ? Promise.all(pageSourceIds.map((id) => repositories.people!.listActive(id).catch(() => []))).then((chunks) => chunks.flat())
+      : Promise.resolve([]),
+    repositories.sources?.list
+      ? repositories.sources.list().catch(() => [] as SourceConfigRecord[])
+      : Promise.resolve([] as SourceConfigRecord[]),
+  ]);
   const nameByTbUser = new Map(mappings.filter((m) => m.teambitionUserId && m.teambitionDisplayName).map((m) => [`${m.sourceConfigId}:${m.teambitionUserId}`, m.teambitionDisplayName as string]));
   // 按规范化姓名回落（人员页 unique_name 绑定）：只对目标唯一的姓名生效，歧义留空。
   const targetsByName = new Map<string, Set<string>>();
@@ -487,9 +524,8 @@ async function requirementListPayload(repositories: ApiRepositories, page: { ite
   for (const [key, set] of targetsByName.entries()) {
     if (set.size === 1) nameByNormalized.set(key, displayByName.get(key)!);
   }
-  // 回收站聚合两池后每行要能显示池标签；按来源一次性取，解析失败只影响标签不失败整个列表。
   const poolBySource = new Map<string, SourcePool>();
-  try { for (const source of await repositories.sources.list()) poolBySource.set(source.id, source.pool ?? "product"); } catch { /* 标签是展示增强 */ }
+  for (const source of sourcesList) poolBySource.set(source.id, source.pool ?? "product");
   const fallbackPool: SourcePool = pool === "all" ? "product" : pool;
   return {
     items: page.items.map((item) => {
@@ -723,18 +759,33 @@ async function deletedRequirementWriteGate(request: Request, url: URL, dependenc
   const auth = await actorFor(request, dependencies);
   if ("response" in auth) return auth.response;
   let requirement: RequirementRecord | null;
-  try { requirement = await repositories.requirements.get(requirementId); } catch { return null; }
+  try { requirement = await repositories.requirements.get(requirementId); }
+  catch (error) {
+    // 写闸口遇到瞬态 DB 故障必须 fail-closed（503），避免已删除需求在 DB 抖动窗口被绕过写入。
+    if (isTransientDatabaseError(error)) return jsonError("DEPENDENCY_UNAVAILABLE");
+    return null;
+  }
   if (!requirement?.deletedAt) return null;
   return jsonError("REQUIREMENT_DELETED", "该需求已删除，请先在回收站还原后再操作。");
 }
 
+function withNoStoreIfProtected(request: Request, response: Response): Response {
+  const pathname = new URL(request.url).pathname;
+  if (!pathname.startsWith("/api/health") && !response.headers.has("cache-control")) {
+    response.headers.set("cache-control", "no-store");
+  }
+  return response;
+}
+
 export async function handleApiRequest(request: Request, dependencies: ApiDependencies): Promise<Response> {
-  try { return await routeApiRequest(request, dependencies); }
+  try { return withNoStoreIfProtected(request, await routeApiRequest(request, dependencies)); }
   catch (error) {
     // 请求体超限是客户端可控的输入问题，回 413，不要漏成 500。
-    if (error instanceof PayloadTooLargeError) return jsonError("PAYLOAD_TOO_LARGE", "请求体过大，请缩短后重试。");
+    if (error instanceof PayloadTooLargeError) return withNoStoreIfProtected(request, jsonError("PAYLOAD_TOO_LARGE", "请求体过大，请缩短后重试。"));
+    // 非法 UUID/时间戳等 PostgreSQL 22P02 文本格式错误统一收敛为 400，不漏成 500。
+    if (safeDatabaseCode(error) === "22P02") return withNoStoreIfProtected(request, jsonError("VALIDATION_FAILED", "请求参数格式无效。"));
     // 瞬态数据库/网络故障统一收敛为 503，不漏成未处理的 500 堆栈。
-    if (isTransientDatabaseError(error)) return jsonError("DEPENDENCY_UNAVAILABLE");
+    if (isTransientDatabaseError(error)) return withNoStoreIfProtected(request, jsonError("DEPENDENCY_UNAVAILABLE"));
     throw error;
   }
 }
@@ -750,16 +801,20 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
   if (method === "GET" && url.pathname === "/api/health/ready") {
     if (!(await isDatabaseReady(dependencies.database))) return json({ status: "not_ready", reason: "database_unavailable_or_not_configured" }, 503);
     // 迁移滞后只提示，不把服务判死：数据库可用即 ready，运维页据此提醒先跑迁移。
-    return json({ status: "ready", database: "connected", migrations: await readMigrationStatus(dependencies.database) });
+    const readyNowMs = (dependencies.now ?? (() => new Date()))().getTime();
+    return json({ status: "ready", database: "connected", migrations: await readMigrationStatus(dependencies.database, readyNowMs) });
   }
   if (method === "GET" && url.pathname === "/api/overview/metrics") {
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
-    // 总览固定产品池（Chief 决定 2026-11-21）：集团池数字只在其自身页头显示，不进入总览。
-    const counts = await repositories.requirements.getPipelineCounts("product");
-    const rule = await repositories.priorityRules?.getPublished();
+    // 总览固定产品池（Chief 决定 2026-11-21）：集团池数字只在其自身页头显示，不进入总览；独立查询并发执行。
+    const overviewNow = (dependencies.now ?? (() => new Date()))();
+    const [counts, rule, ai] = await Promise.all([
+      repositories.requirements.getPipelineCounts("product"),
+      repositories.priorityRules?.getPublished() ?? Promise.resolve(null),
+      aiOverview(dependencies, repositories, overviewNow),
+    ]);
     const rulePayload = rule?.rules as { thresholds?: { p0?: number; p1?: number; p2?: number } } | null;
-    const ai = await aiOverview(dependencies, repositories, (dependencies.now ?? (() => new Date()))());
     return json({
       counts: {
         ...counts,
@@ -1685,13 +1740,11 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     if (!repositories?.requirements) return jsonError("DEPENDENCY_UNAVAILABLE");
     const requirementId = pathUuid(requirementMatch[1]!, dependencies); if (!requirementId) return jsonError("NOT_FOUND");
     const req = await repositories.requirements.get(requirementId); if (!req) return jsonError("NOT_FOUND");
-    // 0031：详情按 UUID 推导池归属并只读返回；客户端不传 pool（显式不符已在上方守卫返回 404）。
-    const detailPool = await requirementPoolOf(repositories, req);
-    const latest = await repositories.analyses?.latest(req.id) ?? null;
-    const history = await repositories.analyses?.listByRequirement(req.id) ?? [];
-    // 负责人姓名：逐条人工负责人优先于 TB 执行人映射；两者都没有时返回 null。
-    let ownerName: string | null = manualOwnerName(req);
-    if (!ownerName && req.sourceConfigId && (req.executorUserId || req.executorName)) {
+    const titleKey = requirementTitleKey(req.title);
+    const resolveDetailOwner = async (): Promise<string | null> => {
+      const manual = manualOwnerName(req);
+      if (manual) return manual;
+      if (!req.sourceConfigId || (!req.executorUserId && !req.executorName)) return null;
       try {
         let mapping = req.executorUserId
           ? await repositories.people?.resolveActive(req.sourceConfigId, { tbUserId: req.executorUserId })
@@ -1699,21 +1752,33 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
         if (!mapping && req.executorName) {
           mapping = await repositories.people?.resolveActive(req.sourceConfigId, { normalizedName: normalizeOwnerName(req.executorName) });
         }
-        ownerName = mapping?.teambitionDisplayName ?? null;
-      } catch { /* 姓名是展示增强，解析失败不影响详情返回 */ }
-    }
-    const duplicates = await repositories.requirements.listDuplicates(req.id);
-    // PRD §4.7.5：候选是「同标题的其他 active 需求」，与 duplicates（以本需求为主记录的子记录）是两件事。
-    // 仓储只做来源与压制过滤；标题按 markDuplicateTitles 同一套 requirementTitleKey 归一后比对。
-    const titleKey = requirementTitleKey(req.title);
+        return mapping?.teambitionDisplayName ?? null;
+      } catch { return null; /* 姓名是展示增强，解析失败不影响详情返回 */ }
+    };
+    // 并发拉取全部独立详情依赖（13 次串行 RTT → 2 次 RTT）：
+    // - latest 分析从 listByRequirement 派生（listByRequirement 已对最新版本保留 structuredResult）；
+    // - currentScore / aiScore 从 scoring.list 派生（按 version DESC 排序）；
+    // - listDuplicateCandidates 传入 titleKey 在 SQL 层预过滤，避免全池拉取。
+    const [detailPool, history, ownerName, duplicates, rawDuplicateCandidates, resolution, scoreHistory, publishedRule] = await Promise.all([
+      requirementPoolOf(repositories, req),
+      repositories.analyses?.listByRequirement(req.id) ?? Promise.resolve([] as AnalysisRunRecord[]),
+      resolveDetailOwner(),
+      repositories.requirements.listDuplicates(req.id),
+      titleKey
+        ? (repositories.requirements.listDuplicateCandidates?.({ requirementId: req.id, sourceConfigId: req.sourceConfigId, titleKey }) ?? Promise.resolve([]))
+        : Promise.resolve([]),
+      repositories.requirements.getResolution?.(req.id) ?? Promise.resolve(null),
+      repositories.scoring ? repositories.scoring.list(req.id) : Promise.resolve([]),
+      repositories.priorityRules?.getPublished() ?? Promise.resolve(null),
+    ]);
+    const latest = history.length > 0
+      ? history.reduce((best, item) => (item.analysisVersion > best.analysisVersion ? item : best))
+      : null;
     const duplicateCandidates = titleKey
-      ? (await repositories.requirements.listDuplicateCandidates?.({ requirementId: req.id, sourceConfigId: req.sourceConfigId }) ?? [])
-          .filter((candidate) => requirementTitleKey(candidate.title) === titleKey)
+      ? rawDuplicateCandidates.filter((candidate) => requirementTitleKey(candidate.title) === titleKey)
       : [];
-    const resolution = await repositories.requirements.getResolution?.(req.id) ?? null;
-    const currentScore = repositories.scoring ? await repositories.scoring.current(req.id) : null;
-    const aiScore = repositories.scoring ? await repositories.scoring.aiSuggestion(req.id) : null;
-    const scoreHistory = repositories.scoring ? await repositories.scoring.list(req.id) : [];
+    const currentScore = scoreHistory.find((entry) => entry.status === "current" || entry.status === "confirmed") ?? null;
+    const aiScore = scoreHistory.find((entry) => entry.status === "ai_suggested") ?? null;
     // M16：deleted_by 只对删除人返回；canRestore 直接告诉前端能不能点还原（不靠 deletedBy 推断）。
     // deleted_by 存登录身份（妙搭 userId），与 auth.actor.id 同口径比较，不依赖飞书身份解析。
     const detailDto = requirementDto(req, latest && latest.status === "analyzed" ? latest.structuredResult : null, history.map(analysisVersionDto), ownerName, currentScore?.priority ?? null, detailPool);
@@ -1729,7 +1794,7 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
         current: currentScore,
         aiSuggestion: aiScore,
         history: scoreHistory,
-        formula: { text: SCORING_FORMULA_TEXT, thresholds: priorityRuleThresholds(await repositories.priorityRules?.getPublished()) ?? SCORING_THRESHOLDS },
+        formula: { text: SCORING_FORMULA_TEXT, thresholds: priorityRuleThresholds(publishedRule) ?? SCORING_THRESHOLDS },
       },
     });
   }

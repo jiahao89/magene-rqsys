@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { Activity, ArrowDownToLine, ArrowRight, Blocks, BookOpen, Building2, Check, CircleAlert, CircleHelp, Clock3, Database, FolderSync, Gauge, GitBranch, Layers3, ListChecks, LoaderCircle, Menu, Moon, PanelLeftClose, PanelLeftOpen, Play, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Sun, Trash2, UserRoundCheck, Users } from "lucide-react";
 import { Alert as ArcoAlert, Badge as ArcoBadge, Breadcrumb as ArcoBreadcrumb, Button as ArcoButton, Card as ArcoCard, Collapse as ArcoCollapse, Divider as ArcoDivider, Drawer as ArcoDrawer, Dropdown as ArcoDropdown, Empty as ArcoEmpty, Form as ArcoForm, Grid as ArcoGrid, Input as ArcoInput, InputNumber as ArcoInputNumber, Layout as ArcoLayout, Menu as ArcoMenu, Progress as ArcoProgress, Result as ArcoResult, Space as ArcoSpace, Statistic as ArcoStatistic, Table as ArcoTable, Tag as ArcoTag, Tooltip as ArcoTooltip, Typography as ArcoTypography } from "@arco-design/web-react";
-import { ApiError, createPriorityRuleDraft, getHealth, getMyRequirementCounts, getRequirement, getOverviewMetrics, listBatches, listPriorityRules, listRequirements, listSources, publishPriorityRule, runSync, type BatchSummary, type MyRequirementCounts, type OverviewMetrics, type PriorityRuleVersion, type RequirementSummary, type SourceConfig, type SyncExecutionMode } from "./api";
-import { GuidePanel, ModulesPanel, MyRequirementsPanel, OpsPanel, PanelErrorBoundary, PublishStatusChip, RecycleBinPanel, RequirementsPanel, SourcesPanel, SyncRecordsPanel, TeamPanel } from "./panels";
-import { SopPanel } from "./sop";
+import { ApiError, createPriorityRuleDraft, getMyRequirementCounts, getRequirement, getOverviewMetrics, isAbortError, listBatches, listPriorityRules, listRequirements, listSources, onUnauthorized, publishPriorityRule, runSync, type BatchSummary, type MyRequirementCounts, type OverviewMetrics, type PriorityRuleVersion, type RequirementSummary, type SourceConfig, type SyncExecutionMode } from "./api";
+import { CACHE_KEYS, invalidateQueryCache } from "./cache";
+import { API_ERROR_TEXT, PanelErrorBoundary, PublishStatusChip, type LoadState } from "./panel-shared";
 import { SkeletonBlock, SkeletonCards, SkeletonTableRows } from "./skeleton";
 import { AiStatusCard } from "./overview-ai";
 import { readRequirementDeepLink } from "./deep-link";
@@ -13,11 +13,22 @@ import { requirementDisplayId } from "./requirement-view";
 import { stateLabel } from "./state-labels";
 import { checkScheduleHealth, describeCountdown, formatInZone, nextRunAt, type WeeklySchedule } from "./schedule";
 
+// 路由级代码分割：次级页面按需加载，缩小首屏总览 JS 包体积。
+const RequirementsPanel = lazy(() => import("./pages/requirements-page").then((m) => ({ default: m.RequirementsPanel })));
+const MyRequirementsPanel = lazy(() => import("./pages/requirements-page").then((m) => ({ default: m.MyRequirementsPanel })));
+const RecycleBinPanel = lazy(() => import("./pages/requirements-page").then((m) => ({ default: m.RecycleBinPanel })));
+const SourcesPanel = lazy(() => import("./pages/sources-page"));
+const TeamPanel = lazy(() => import("./pages/team-page"));
+const ModulesPanel = lazy(() => import("./pages/modules-page"));
+const SyncRecordsPanel = lazy(() => import("./pages/sync-records-page"));
+const OpsPanel = lazy(() => import("./pages/ops-page"));
+const GuidePanel = lazy(() => import("./pages/guide-page"));
+const SopPanel = lazy(() => import("./pages/sop-page"));
+
 type Batch = BatchSummary;
 // 与列表接口的 DTO 保持同一类型：此前这里复制了一份更窄的本地结构，字段一旦分叉就会在运行时才暴露。
 type Requirement = RequirementSummary;
 type Page = WorkbenchPage;
-type LoadState = "loading" | "ready" | "error";
 type Theme = "light" | "dark";
 
 function readStoredTheme(): Theme {
@@ -40,20 +51,21 @@ const navigationGroups: { title: string; items: { label: Page; icon: typeof Gaug
 ];
 const pageTitles: Record<Page, string> = { Overview: "总览", MyRequirements: "我的需求", Requirements: "需求池", GroupRequirements: "集团需求池", RecycleBin: "回收站", Team: "团队管理", Modules: "功能模块", SyncRecords: "同步记录", Sources: "数据源与计划", Rules: "优先级规则", Ops: "作业运维", Guide: "使用指南", Sop: "SOP 与培训" };
 
-const API_ERROR_TEXT: Record<string, string> = {
-  INTERNAL: "服务暂时不可用，请稍后重试。",
-  DEPENDENCY_UNAVAILABLE: "依赖服务暂不可用，请稍后重试。",
-  VALIDATION_FAILED: "请求参数不合法，请检查输入。",
-  NOT_FOUND: "请求的资源不存在或已被删除。",
-  CONFLICT: "当前状态不允许此操作，请刷新后重试。",
-  REQUEST_FAILED: "无法连接到 API 服务，请确认服务已启动后重试。",
-  SOURCE_NOT_ENABLED: "请先配置并启用一个数据源。",
-  UNAUTHORIZED: "登录已失效，请重新登录。",
-  FORBIDDEN: "没有权限执行此操作。",
-};
+function formatRetrySeconds(seconds: number): string {
+  if (seconds >= 3600) return `${Math.ceil(seconds / 3600)} 小时`;
+  if (seconds >= 60) return `${Math.ceil(seconds / 60)} 分钟`;
+  return `${seconds} 秒`;
+}
 
 function formatApiError(cause: unknown): string {
+  if (isAbortError(cause)) return "";
   if (cause instanceof ApiError) {
+    if (cause.status === 401) return API_ERROR_TEXT.UNAUTHORIZED!;
+    if (cause.status === 413) return API_ERROR_TEXT.PAYLOAD_TOO_LARGE!;
+    if (cause.status === 429) {
+      const base = /[\u4e00-\u9fff]/.test(cause.message) ? cause.message : API_ERROR_TEXT.RATE_LIMITED!;
+      return cause.retryAfterSeconds ? `${base}（请约 ${formatRetrySeconds(cause.retryAfterSeconds)} 后重试）` : base;
+    }
     if (/[\u4e00-\u9fff]/.test(cause.message)) return cause.message;
     return API_ERROR_TEXT[cause.code] ?? `操作失败（${cause.code}）。`;
   }
@@ -77,7 +89,15 @@ function StagePill({ stage, value }: { stage: keyof typeof stageLabels; value: s
  * 调度状态卡片：展示计划配置是否可用与下次计划时刻。
  * 只描述「已配置的计划」，不代表目标环境已执行或能够执行——绝对时刻来自本地纯计算。
  */
-export function SchedulerHealthPanel({ schedule, now, loadState, onConfigure }: { schedule?: WeeklySchedule; now: Date; loadState: LoadState; onConfigure: () => void }) {
+export function SchedulerHealthPanel({ schedule, now: externalNow, loadState, onConfigure }: { schedule?: WeeklySchedule; now?: Date; loadState: LoadState; onConfigure: () => void }) {
+  // 30s 倒计时时钟收口在本卡片内，避免每 30 秒触发根 App 及其他页面整树重渲染。
+  const [internalNow, setInternalNow] = useState(() => externalNow ?? new Date());
+  useEffect(() => {
+    if (externalNow) return;
+    const timer = window.setInterval(() => setInternalNow(new Date()), 30_000);
+    return () => window.clearInterval(timer);
+  }, [externalNow]);
+  const now = externalNow ?? internalNow;
   const health = checkScheduleHealth(schedule);
   const next = health.active ? nextRunAt(schedule, now) : null;
   const badgeStatus = loadState === "loading" ? "processing" : health.active ? "success" : "default";
@@ -191,12 +211,12 @@ function App() {
   const [requirements, setRequirements] = useState<Requirement[]>([]);
   const [metrics, setMetrics] = useState<OverviewMetrics | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [sessionExpired, setSessionExpired] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [query, setQuery] = useState("");
-  // 调度倒计时基于本地时钟持续走：页面停留期间「下次同步还有 X」不能冻结在数据读取时刻。
-  const [now, setNow] = useState(() => new Date());
+  const sourcesLoadedRef = useRef(false);
+  const overviewLoadedRef = useRef(false);
 
   const setPage = useCallback((nextPage: Page, requirementFilters?: Partial<RequirementListFilters>) => {
     setPageState(nextPage);
@@ -278,44 +298,72 @@ function App() {
   }, []);
 
   const loadVersionRef = useRef(0);
+  const loadControllerRef = useRef<AbortController | null>(null);
   const batchesVersionRef = useRef(0);
-  const loadData = useCallback(async () => {
+
+  // 订阅全局 401 会话失效事件：展示重新登录引导并暂停后台 5 秒轮询。
+  useEffect(() => onUnauthorized(() => setSessionExpired(true)), []);
+
+  // 总览数据单波并行拉取（消除 health → sources → 3x endpoints 串行瀑布），由实际结果推导连接状态。
+  const loadData = useCallback(async (force = false) => {
+    if (force) invalidateQueryCache(CACHE_KEYS.sources, CACHE_KEYS.myRequirementCounts);
     const version = ++loadVersionRef.current;
+    loadControllerRef.current?.abort();
+    const controller = new AbortController();
+    loadControllerRef.current = controller;
     // 轮询刷新时保留已加载状态：每 5 秒闪回“正在检查 API”只会让按钮禁用、数字抖动。
     setHealth((prev) => (prev === "ready" ? "ready" : "loading")); setError(null);
-    try {
-      await getHealth();
-      if (version !== loadVersionRef.current) return;
-      setHealth("ready");
-      const sourceRows = await listSources();
-      if (version !== loadVersionRef.current) return;
-      // 各端点独立容错：个别端点未实现（501）时不拖垮整页
-      const [batchPage, requirementPage, metricsResult] = await Promise.allSettled([
-        listBatches({ limit: 10 }),
-        listRequirements({ limit: 25 }),
-        getOverviewMetrics(),
-      ]);
-      if (version !== loadVersionRef.current) return;
-      setSources(sourceRows);
-      setBatches(batchPage.status === "fulfilled" ? batchPage.value.items : []);
-      setRequirements(requirementPage.status === "fulfilled" ? requirementPage.value.items : []);
-      setMetrics(metricsResult.status === "fulfilled" ? metricsResult.value : null);
-      if (batchPage.status === "rejected" && requirementPage.status === "rejected") {
-        throw batchPage.reason instanceof ApiError ? batchPage.reason : new Error("API request failed");
-      }
-    } catch (cause) {
-      if (version !== loadVersionRef.current) return;
+    const [sourcesResult, batchPage, requirementPage, metricsResult] = await Promise.allSettled([
+      listSources(undefined, force ? controller.signal : undefined),
+      listBatches({ limit: 10, signal: controller.signal }),
+      listRequirements({ limit: 25, signal: controller.signal }),
+      getOverviewMetrics(undefined, controller.signal),
+    ]);
+    if (version !== loadVersionRef.current || controller.signal.aborted) return;
+    const anyFulfilled = [sourcesResult, batchPage, requirementPage, metricsResult].some((r) => r.status === "fulfilled");
+    if (!anyFulfilled || (sourcesResult.status === "rejected" && batchPage.status === "rejected" && requirementPage.status === "rejected")) {
+      const firstFailure = [sourcesResult, batchPage, requirementPage, metricsResult].find((r): r is PromiseRejectedResult => r.status === "rejected");
+      if (firstFailure && isAbortError(firstFailure.reason)) return;
       setHealth("error");
-      setError(formatApiError(cause));
+      setError(formatApiError(firstFailure?.reason));
+      return;
+    }
+    if (sourcesResult.status === "fulfilled") {
+      sourcesLoadedRef.current = true;
+      setSources(sourcesResult.value);
+    }
+    setBatches(batchPage.status === "fulfilled" ? batchPage.value.items : []);
+    setRequirements(requirementPage.status === "fulfilled" ? requirementPage.value.items : []);
+    setMetrics(metricsResult.status === "fulfilled" ? metricsResult.value : null);
+    overviewLoadedRef.current = true;
+    setHealth("ready");
+  }, []);
+
+  // 仅在 Sources / SyncRecords 需要来源列表但未加载总览时按需拉取 sources，避免次级深链触发 5 个总览请求。
+  const loadSourcesOnly = useCallback(async (force = false) => {
+    if (force) invalidateQueryCache(CACHE_KEYS.sources);
+    try {
+      const rows = await listSources();
+      sourcesLoadedRef.current = true;
+      setSources(rows);
+      setHealth("ready");
+    } catch (cause) {
+      if (!isAbortError(cause)) setHealth("error");
     }
   }, []);
 
-  useEffect(() => { void loadData(); }, [loadData]);
-  // 30s 足够让「下次计划同步」倒计时保持准确，也不会造成每帧重渲染。
   useEffect(() => {
-    const timer = window.setInterval(() => setNow(new Date()), 30_000);
-    return () => window.clearInterval(timer);
-  }, []);
+    if (page === "Overview") {
+      if (!overviewLoadedRef.current) void loadData();
+    } else if (page === "Sources" || page === "SyncRecords") {
+      if (!sourcesLoadedRef.current) void loadSourcesOnly();
+    } else {
+      setHealth((prev) => (prev === "loading" ? "ready" : prev));
+    }
+  }, [page, loadData, loadSourcesOnly]);
+
+  useEffect(() => () => { loadControllerRef.current?.abort(); }, []);
+
   // 局部刷新：批次列表单独拉取。同步提交/运行中轮询只更新批次，需求与统计保持稳定，避免整页刷新。
   const refreshBatches = useCallback(async () => {
     const version = ++batchesVersionRef.current;
@@ -333,7 +381,18 @@ function App() {
   }, [theme]);
 
   const handleRunSync = async (mode: SyncExecutionMode = "full_pipeline") => {
-    const source = sources.find((item) => item.enabled);
+    let currentSources = sources;
+    if (!sourcesLoadedRef.current) {
+      try {
+        currentSources = await listSources();
+        sourcesLoadedRef.current = true;
+        setSources(currentSources);
+      } catch (cause) {
+        setActionError(formatApiError(cause));
+        return;
+      }
+    }
+    const source = currentSources.find((item) => item.enabled);
     if (!source) { setNotice("请先配置并启用一个数据源。"); return; }
     setBusy(true); setNotice(null); setActionError(null);
     try {
@@ -345,23 +404,22 @@ function App() {
     } finally { setBusy(false); }
   };
 
-  const shownRequirements = requirements.filter((item) => item.title.toLowerCase().includes(query.toLowerCase()) || (item.sourceRequirementId ?? "").toLowerCase().includes(query.toLowerCase()));
   const latestBatch = batches[0];
   // 运行中 → 终态时才补一次全量刷新；轮询期间只用 refreshBatches 更新进度，页面其余内容不重载。
   const previousBatchStatus = useRef<string | undefined>(undefined);
   useEffect(() => {
     const previous = previousBatchStatus.current;
     previousBatchStatus.current = latestBatch?.status;
-    if (previous === "running" && latestBatch && latestBatch.status !== "running") void loadData();
+    if (previous === "running" && latestBatch && latestBatch.status !== "running") void loadData(true);
   }, [latestBatch?.status, loadData]);
-  // 运行中的批次需要可见进度：只在前端做有界轮询，终态/页面隐藏时停止。
+  // 运行中的批次需要可见进度：只在前端做有界轮询，终态/页面隐藏/401 会话失效时停止。
   useEffect(() => {
-    if (latestBatch?.status !== "running") return;
+    if (latestBatch?.status !== "running" || sessionExpired) return;
     const timer = window.setInterval(() => {
       if (document.visibilityState === "visible") void refreshBatches();
     }, 5000);
     return () => window.clearInterval(timer);
-  }, [latestBatch?.status, refreshBatches]);
+  }, [latestBatch?.status, sessionExpired, refreshBatches]);
   const counts = { pull: metrics?.pullSynced ?? 0, analysis: metrics?.analysisAnalyzed ?? 0, owner: metrics?.ownerResolved ?? 0, push: metrics?.pushPushed ?? 0, failed: metrics?.failed ?? 0, pushFailed: metrics?.pushFailed ?? 0, pushPending: metrics?.pushPending ?? 0, suppressed: metrics?.suppressed ?? 0 };
   const total = metrics?.total ?? 0;
   const priority = metrics?.priority ?? null;
@@ -543,7 +601,18 @@ function App() {
                   <ArcoBreadcrumb.Item key={page}>{pageTitles[page]}</ArcoBreadcrumb.Item>
                 </ArcoBreadcrumb>
               </div>
-              <PanelErrorBoundary>
+              <PanelErrorBoundary resetKey={`${page}:${tab ?? ""}:${deepLinkRequirementId ?? ""}`}>
+                {sessionExpired && (
+                  <ArcoAlert
+                    className="rq-page-alert"
+                    type="warning"
+                    showIcon
+                    role="alert"
+                    title="登录已失效"
+                    content="当前飞书登录会话已过期，后台轮询已暂停；请重新登录后继续操作。"
+                    action={<ArcoButton type="primary" size="small" htmlType="button" onClick={() => window.location.reload()}>重新登录</ArcoButton>}
+                  />
+                )}
                 {error && page === "Overview" && (
                   <ArcoAlert
                     className="rq-page-alert"
@@ -552,7 +621,7 @@ function App() {
                     role="alert"
                     title="服务暂不可用"
                     content={error}
-                    action={<ArcoButton type="secondary" size="small" htmlType="button" onClick={() => void loadData()}><RefreshCw size={14} />重试连接</ArcoButton>}
+                    action={<ArcoButton type="secondary" size="small" htmlType="button" onClick={() => void loadData(true)}><RefreshCw size={14} />重试连接</ArcoButton>}
                   />
                 )}
                 {actionError && (
@@ -590,7 +659,7 @@ function App() {
                               <ArcoTypography.Text type="secondary" className="page-heading-subtitle">查看需求同步进度、分析状态与推送健康度；四个处理阶段独立统计、互不阻塞。</ArcoTypography.Text>
                             </div>
                             <ArcoSpace size={8} wrap className="heading-actions">
-                              <ArcoButton type="secondary" htmlType="button" onClick={() => void loadData()} disabled={health === "loading"}>
+                              <ArcoButton type="secondary" htmlType="button" onClick={() => void loadData(true)} disabled={health === "loading"}>
                                 <RefreshCw size={14} className={health === "loading" ? "spin" : ""} />刷新
                               </ArcoButton>
                               <AdvancedActions busy={busy} health={health} onRunSourceOnly={() => void handleRunSync("source_only")} />
@@ -742,31 +811,11 @@ function App() {
                             </div>
                           </ArcoCard>
 
-                          <ArcoCard
-                            bordered={false}
-                            className="rq-card requirements-panel"
-                            title={
-                              <div className="rq-card-title">
-                                <h2>最近处理的需求</h2>
-                                <ArcoTypography.Text type="secondary" className="rq-card-subtitle">每个阶段状态分别展示，分析失败不会隐藏已推送结果</ArcoTypography.Text>
-                              </div>
-                            }
-                            extra={
-                              <ArcoSpace size={8} wrap align="center">
-                                <ArcoInput
-                                  className="rq-search-input"
-                                  prefix={<Search size={14} />}
-                                  aria-label="搜索需求"
-                                  placeholder="在当前已加载需求内搜索…"
-                                  value={query}
-                                  onChange={(value: string) => setQuery(value)}
-                                />
-                                <ArcoButton type="text" htmlType="button" size="small" onClick={() => setPage("Requirements")}>查看全部 <ArrowRight size={14} /></ArcoButton>
-                              </ArcoSpace>
-                            }
-                          >
-                            <RequirementsTable rows={shownRequirements.slice(0, 5)} loading={health === "loading"} />
-                          </ArcoCard>
+                          <RecentRequirementsCard
+                            requirements={requirements}
+                            loading={health === "loading"}
+                            onViewAll={() => setPage("Requirements")}
+                          />
                       </div>
 
                       <div className="workplace-rail">
@@ -843,7 +892,7 @@ function App() {
                             )}
                           </ArcoCard>
 
-                          <SchedulerHealthPanel schedule={sources[0]?.schedule} now={now} loadState={health} onConfigure={() => setPage("Sources")} />
+                          <SchedulerHealthPanel schedule={sources[0]?.schedule} loadState={health} onConfigure={() => setPage("Sources")} />
                       </div>
                     </div>
 
@@ -878,7 +927,9 @@ function App() {
                         </ArcoSpace>
                       )}
                     </div>
-                    <SecondaryContent page={page} tab={tab} sources={sources} loadState={health} deepLinkRequirementId={deepLinkRequirementId} onNavigate={setPage} onRefresh={() => void loadData()} onGroupCountChange={setGroupRequirementCount} />
+                    <Suspense fallback={<SkeletonCards count={2} />}>
+                      <SecondaryContent page={page} tab={tab} sources={sources} loadState={health} deepLinkRequirementId={deepLinkRequirementId} onNavigate={setPage} onRefresh={() => { if (page === "Sources") void loadSourcesOnly(true); else void loadData(true); }} onGroupCountChange={setGroupRequirementCount} />
+                    </Suspense>
                   </section>
                 )}
               </PanelErrorBoundary>
@@ -943,7 +994,62 @@ function MyRequirementsCard({ onOpen }: { onOpen: () => void }) {
   );
 }
 
-function RequirementsTable({ rows, loading }: { rows: Requirement[]; loading: boolean }) {
+const OVERVIEW_REQUIREMENTS_COLUMNS = [
+  { title: "需求", dataIndex: "title", render: (_value: unknown, row: Requirement) => <div className="requirement-title"><span className="req-id">{requirementDisplayId(row)}</span><strong>{row.title}</strong></div> },
+  { title: "版本", dataIndex: "sourceVersion", width: 64, render: (_value: unknown, row: Requirement) => <span className="version-label">v{row.sourceVersion}</span> },
+  { title: "拉取", key: "pipeline-pull", dataIndex: "pipeline", width: 112, render: (_value: unknown, row: Requirement) => <StagePill stage="pull" value={row.pipeline.pull} /> },
+  { title: "AI 分析", key: "pipeline-analysis", dataIndex: "pipeline", width: 120, render: (_value: unknown, row: Requirement) => <StagePill stage="analysis" value={row.pipeline.analysis} /> },
+  { title: "负责人", key: "pipeline-owner", dataIndex: "pipeline", width: 116, render: (_value: unknown, row: Requirement) => <StagePill stage="owner" value={row.pipeline.owner} /> },
+  { title: "Base 推送", key: "pipeline-push", dataIndex: "pipeline", width: 116, render: (_value: unknown, row: Requirement) => <StagePill stage="push" value={row.pipeline.push} /> },
+];
+
+const RecentRequirementsCard = memo(function RecentRequirementsCard({
+  requirements,
+  loading,
+  onViewAll,
+}: {
+  requirements: Requirement[];
+  loading: boolean;
+  onViewAll: () => void;
+}) {
+  // 本地筛选状态收口在本卡片内，输入关键词不会触发根 App 或其他总览卡片重渲染。
+  const [query, setQuery] = useState("");
+  const shownRequirements = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return requirements.slice(0, 5);
+    return requirements.filter((item) => item.title.toLowerCase().includes(q) || (item.sourceRequirementId ?? "").toLowerCase().includes(q)).slice(0, 5);
+  }, [requirements, query]);
+
+  return (
+    <ArcoCard
+      bordered={false}
+      className="rq-card requirements-panel"
+      title={
+        <div className="rq-card-title">
+          <h2>最近处理的需求</h2>
+          <ArcoTypography.Text type="secondary" className="rq-card-subtitle">每个阶段状态分别展示，分析失败不会隐藏已推送结果</ArcoTypography.Text>
+        </div>
+      }
+      extra={
+        <ArcoSpace size={8} wrap align="center">
+          <ArcoInput
+            className="rq-search-input"
+            prefix={<Search size={14} />}
+            aria-label="搜索需求"
+            placeholder="在当前已加载需求内搜索…"
+            value={query}
+            onChange={(value: string) => setQuery(value)}
+          />
+          <ArcoButton type="text" htmlType="button" size="small" onClick={onViewAll}>查看全部 <ArrowRight size={14} /></ArcoButton>
+        </ArcoSpace>
+      }
+    >
+      <RequirementsTable rows={shownRequirements} loading={loading} />
+    </ArcoCard>
+  );
+});
+
+const RequirementsTable = memo(function RequirementsTable({ rows, loading }: { rows: Requirement[]; loading: boolean }) {
   // 首屏加载显示骨架屏；空态保留表头（Arco Pro 2.0 Search Table 规范）。
   if (loading && !rows.length) {
     return <SkeletonTableRows rows={5} columns={6} />;
@@ -966,17 +1072,10 @@ function RequirementsTable({ rows, loading }: { rows: Requirement[]; loading: bo
           }
         />
       }
-      columns={[
-        { title: "需求", dataIndex: "title", render: (_value, row) => <div className="requirement-title"><span className="req-id">{requirementDisplayId(row)}</span><strong>{row.title}</strong></div> },
-        { title: "版本", dataIndex: "sourceVersion", width: 64, render: (_value, row) => <span className="version-label">v{row.sourceVersion}</span> },
-        { title: "拉取", key: "pipeline-pull", dataIndex: "pipeline", width: 112, render: (_value, row) => <StagePill stage="pull" value={row.pipeline.pull} /> },
-        { title: "AI 分析", key: "pipeline-analysis", dataIndex: "pipeline", width: 120, render: (_value, row) => <StagePill stage="analysis" value={row.pipeline.analysis} /> },
-        { title: "负责人", key: "pipeline-owner", dataIndex: "pipeline", width: 116, render: (_value, row) => <StagePill stage="owner" value={row.pipeline.owner} /> },
-        { title: "Base 推送", key: "pipeline-push", dataIndex: "pipeline", width: 116, render: (_value, row) => <StagePill stage="push" value={row.pipeline.push} /> },
-      ]}
+      columns={OVERVIEW_REQUIREMENTS_COLUMNS}
     />
   );
-}
+});
 
 function SecondaryContent({ page, tab, sources, loadState, deepLinkRequirementId, onNavigate, onRefresh, onGroupCountChange }: { page: Page; tab: WorkbenchTab | null; sources: SourceConfig[]; loadState: LoadState; deepLinkRequirementId: string | null; onNavigate: (page: Page) => void; onRefresh: () => void; onGroupCountChange: (count: number | null) => void }) {
   if (page === "MyRequirements") return <MyRequirementsPanel onRefresh={onRefresh} />;
@@ -1025,19 +1124,59 @@ function RulesPanel() {
   // v2 是已确认的固定公式：生效期间 API 拒绝发布任何 v1 草稿，界面必须提前说明而不是让人点了才收到 409。
   const activeV2 = rules.some((rule) => rule.status === "published" && (rule.rules.formulaType === "umsc_weighted_v2" || rule.rules.formulaType === "umsc_weighted_v3"));
 
+  const loadControllerRef = useRef<AbortController | null>(null);
   const load = useCallback(async () => {
+    loadControllerRef.current?.abort();
+    const controller = new AbortController();
+    loadControllerRef.current = controller;
     setLoadError(null);
-    try { setRules(await listPriorityRules()); }
-    catch (cause) { setLoadError(formatApiError(cause)); }
+    try {
+      const list = await listPriorityRules(undefined, controller.signal);
+      if (!controller.signal.aborted) setRules(list);
+    } catch (cause) {
+      if (!controller.signal.aborted && !isAbortError(cause)) setLoadError(formatApiError(cause));
+    }
   }, []);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+    return () => { loadControllerRef.current?.abort(); };
+  }, [load]);
 
-  const withFeedback = async (action: () => Promise<string>) => {
+  const withFeedback = useCallback(async (action: () => Promise<string>) => {
     setBusy(true); setNotice(null); setActionError(null);
     try { setNotice(await action()); await load(); }
     catch (cause) { setActionError(formatApiError(cause)); }
     finally { setBusy(false); }
-  };
+  }, [load]);
+
+  const ruleColumns = useMemo(() => [
+    { title: "版本", dataIndex: "version", width: 90, render: (_value: unknown, rule: PriorityRuleVersion) => <span className="mono-cell">v{rule.version}</span> },
+    { title: "状态", dataIndex: "status", width: 110, render: (_value: unknown, rule: PriorityRuleVersion) => <PublishStatusChip status={rule.status} /> },
+    { title: "阈值 (P0/P1/P2)", dataIndex: "rules", width: 170, render: (_value: unknown, rule: PriorityRuleVersion) => <span className="mono-cell">{[rule.rules.thresholds?.p0, rule.rules.thresholds?.p1, rule.rules.thresholds?.p2].map((value) => value ?? "—").join(" / ")}</span> },
+    { title: "创建时间", dataIndex: "createdAt", width: 180, render: (_value: unknown, rule: PriorityRuleVersion) => new Date(rule.createdAt).toLocaleString("zh-CN") },
+    { title: "发布时间", dataIndex: "publishedAt", width: 180, render: (_value: unknown, rule: PriorityRuleVersion) => rule.publishedAt ? new Date(rule.publishedAt).toLocaleString("zh-CN") : "—" },
+    {
+      title: "操作",
+      dataIndex: "id",
+      width: 110,
+      render: (_value: unknown, rule: PriorityRuleVersion) => {
+        const blocked = activeV2 && rule.rules.formulaType !== "umsc_weighted_v2" && rule.rules.formulaType !== "umsc_weighted_v3";
+        return rule.status === "draft" && (
+          <ArcoTooltip content={blocked ? "v2/v3 公式生效期间不能发布 v1 规则" : ""} disabled={!blocked}>
+            <ArcoButton
+              type="primary"
+              htmlType="button"
+              size="small"
+              onClick={() => void withFeedback(async () => { await publishPriorityRule(rule.id); return `规则 v${rule.version} 已发布`; })}
+              disabled={busy || blocked}
+            >
+              发布
+            </ArcoButton>
+          </ArcoTooltip>
+        );
+      },
+    },
+  ], [activeV2, busy, withFeedback]);
   const handleCreateRule = () => withFeedback(async () => {
     if (thresholds.p0 === undefined || thresholds.p1 === undefined || thresholds.p2 === undefined) {
       throw new ApiError("请填写完整的 P0 / P1 / P2 阈值。", 400, "INVALID_THRESHOLDS");
@@ -1059,7 +1198,7 @@ function RulesPanel() {
         <ArcoButton type="secondary" htmlType="button" size="small" onClick={() => void load()} disabled={busy}><RefreshCw size={14} />刷新</ArcoButton>
       </div>
       {activeV2 && <ArcoAlert className="rq-inline-alert" type="info" showIcon role="status" content="当前生效的是已确认的 v2/v3 评分公式。v1 四维求和规则不能再发布覆盖它，下方「创建草稿」已暂停。" />}
-      {loadError && <ArcoAlert className="rq-inline-alert" type="error" showIcon role="alert" title="配置加载失败" content={loadError} />}
+      {loadError && <ArcoAlert className="rq-inline-alert" type="error" showIcon role="alert" title="配置加载失败" content={loadError} action={<ArcoButton type="secondary" size="mini" htmlType="button" onClick={() => void load()}>重试</ArcoButton>} />}
       {actionError && <ArcoAlert className="rq-inline-alert" type="error" showIcon closable role="alert" title="操作未完成" content={actionError} onClose={() => setActionError(null)} />}
       {notice && <ArcoAlert className="rq-inline-alert" type="success" showIcon closable role="status" content={notice} onClose={() => setNotice(null)} />}
 
@@ -1115,34 +1254,7 @@ function RulesPanel() {
             }
           />
         }
-        columns={[
-          { title: "版本", dataIndex: "version", width: 90, render: (_value, rule) => <span className="mono-cell">v{rule.version}</span> },
-          { title: "状态", dataIndex: "status", width: 110, render: (_value, rule) => <PublishStatusChip status={rule.status} /> },
-          { title: "阈值 (P0/P1/P2)", dataIndex: "rules", width: 170, render: (_value, rule) => <span className="mono-cell">{[rule.rules.thresholds?.p0, rule.rules.thresholds?.p1, rule.rules.thresholds?.p2].map((value) => value ?? "—").join(" / ")}</span> },
-          { title: "创建时间", dataIndex: "createdAt", width: 180, render: (_value, rule) => new Date(rule.createdAt).toLocaleString("zh-CN") },
-          { title: "发布时间", dataIndex: "publishedAt", width: 180, render: (_value, rule) => rule.publishedAt ? new Date(rule.publishedAt).toLocaleString("zh-CN") : "—" },
-          {
-            title: "操作",
-            dataIndex: "id",
-            width: 110,
-            render: (_value, rule) => {
-              const blocked = activeV2 && rule.rules.formulaType !== "umsc_weighted_v2" && rule.rules.formulaType !== "umsc_weighted_v3";
-              return rule.status === "draft" && (
-                <ArcoTooltip content={blocked ? "v2/v3 公式生效期间不能发布 v1 规则" : ""} disabled={!blocked}>
-                  <ArcoButton
-                    type="primary"
-                    htmlType="button"
-                    size="small"
-                    onClick={() => void withFeedback(async () => { await publishPriorityRule(rule.id); return `规则 v${rule.version} 已发布`; })}
-                    disabled={busy || blocked}
-                  >
-                    发布
-                  </ArcoButton>
-                </ArcoTooltip>
-              );
-            },
-          },
-        ]}
+        columns={ruleColumns}
       />
     </ArcoCard>
   );

@@ -189,7 +189,7 @@ describe("RQ-Sys local workbench", () => {
     fireEvent.click(await screen.findByRole("link", { name: "SOP 与培训" }));
 
     expect(await screen.findByRole("heading", { level: 1, name: "SOP 与培训" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 3, name: /30 分钟培训议程/ })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 3, name: /30 分钟培训议程/ })).toBeInTheDocument();
     expect(screen.getByText(/PM Leader · 每日 \/ 每周 SOP/)).toBeInTheDocument();
     expect(window.location.hash).toBe("#sop");
   });
@@ -218,11 +218,7 @@ describe("RQ-Sys local workbench", () => {
   });
 
   it("renders an honest empty state when the API has no sources or batches", async () => {
-    fetchMock
-      .mockResolvedValueOnce(Response.json({ status: "ok", service: "rq-sys-api" }))
-      .mockResolvedValueOnce(Response.json({ items: [] }))
-      .mockResolvedValueOnce(Response.json({ items: [] }))
-      .mockResolvedValueOnce(Response.json({ items: [] }));
+    fetchMock.mockImplementation(async () => Response.json({ items: [] }));
 
     render(<App />);
 
@@ -441,11 +437,7 @@ describe("RQ-Sys local workbench", () => {
   });
 
   it("keeps the advanced sync item disabled and inert while the API is unavailable", async () => {
-    fetchMock.mockImplementation(async (input) => {
-      const path = typeof input === "string" ? input : new Request(input).url;
-      if (path === "/api/health/ready") return new Response("{}", { status: 500 });
-      return Response.json({ items: [] });
-    });
+    fetchMock.mockImplementation(async () => new Response("{}", { status: 500 }));
     render(<App />);
     const advanced = screen.getByRole("button", { name: "高级操作" });
     fireEvent.click(advanced);
@@ -606,7 +598,7 @@ describe("RQ-Sys local workbench", () => {
     fireEvent.click(screen.getByText("产品池 8 · 集团池 4（含已压制）").closest("a")!);
     expect(await screen.findByRole("heading", { level: 1, name: "我的需求" })).toBeInTheDocument();
     expect(window.location.hash).toBe("#my-requirements");
-    expect(screen.getByRole("tab", { name: /产品需求池/ })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByRole("tab", { name: /产品需求池/ })).toHaveAttribute("aria-selected", "true");
   });
 
   it("restores the group tab from a stage=mine deep link and hides the count when unavailable", async () => {

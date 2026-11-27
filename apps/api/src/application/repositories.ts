@@ -196,6 +196,8 @@ export interface RequirementPrdPromptRepository {
 export interface SystemFlagRepository {
   get(name: string): Promise<{ value: Record<string, unknown>; updatedAt: string } | null>;
   set(name: string, value: Record<string, unknown>, at: string): Promise<void>;
+  /** 按前缀批量读取标志（例如 gate:），避免 N+1 逐条查库。 */
+  listByPrefix?(prefix: string): Promise<Array<{ name: string; value: Record<string, unknown>; updatedAt: string }>>;
 }
 
 // V02-S06：评分版本。AI 建议、人工确认和历史分表保存；current/confirmed 至多一个。
@@ -674,8 +676,8 @@ export interface RequirementQueryRepository {
   listKnownTeambitionIds?(sourceConfigId: string): Promise<string[]>;
   // 标题重复检测的输入：当前来源全部需求（含已标记重复项）。
   listTitleCandidates(sourceConfigId: string): Promise<Array<{ id: string; teambitionRequirementId: string; title: string; sourceCreatedAt: string | null; duplicateOfRequirementId: string | null }>>;
-  /** 2026-11-23：PRD §4.7.5 的「疑似重复候选」——同来源、其他 active 需求，排除自身与已压制；标题比对在调用方用 requirementTitleKey。 */
-  listDuplicateCandidates?(input: { requirementId: string; sourceConfigId: string | null }): Promise<Array<{ id: string; title: string; platformRequirementId: string; teambitionRequirementId: string | null }>>;
+  /** 2026-11-23：PRD §4.7.5 的「疑似重复候选」——同来源、其他 active 需求，排除自身与已压制；传入 titleKey 时 SQL 层按规范化标题预过滤。 */
+  listDuplicateCandidates?(input: { requirementId: string; sourceConfigId: string | null; titleKey?: string }): Promise<Array<{ id: string; title: string; platformRequirementId: string; teambitionRequirementId: string | null }>>;
   setDuplicateOf(requirementId: string, canonicalRequirementId: string | null): Promise<void>;
   setBaseRecord(requirementId: string, baseRecordId: string, pushedAt: string): Promise<void>;
   setPushState(requirementId: string, state: PushState): Promise<void>;

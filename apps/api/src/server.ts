@@ -1,5 +1,7 @@
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
+import { promisify } from "node:util";
+import { gzip } from "node:zlib";
 import { createPool } from "./adapters/postgres/pool.js";
 import { PostgresRepositories } from "./adapters/postgres/repositories.js";
 import { createPostgresSyncPersistence } from "./adapters/postgres/sync-persistence.js";
@@ -202,6 +204,9 @@ const worker = repositories ? new PipelineJobWorker({
   leaseMs: Number(process.env.WORKER_LEASE_MS ?? 120_000),
 }) : undefined;
 
+const gzipAsync = promisify(gzip);
+const GZIP_MIN_BYTES = 1024;
+
 const server = createServer(async (incoming, outgoing) => {
   try {
     // 请求体上限：防止异常/恶意的超大 body 拖垮本地 dev server。
@@ -232,8 +237,24 @@ const server = createServer(async (incoming, outgoing) => {
     const dependencies: ApiDependencies = { database, repositories, identity, chatIntake, ...(assessments ? { assessments } : {}), ...(prdPrompt ? { prdPrompt } : {}), ...(duplicateMarker ? { duplicateMarker } : {}), ...(teambitionSourceProjects ? { teambitionSourceProjects, teambitionMembers: teambitionSourceProjects } : {}), ...(feishuUserDirectory ? { feishuUsers: feishuUserDirectory } : {}), now: undefined };
     const response = await handleApiRequest(request, dependencies);
     outgoing.statusCode = response.status;
-    response.headers.forEach((value, key) => outgoing.setHeader(key, value));
-    outgoing.end(Buffer.from(await response.arrayBuffer()));
+    const rawPayload = Buffer.from(await response.arrayBuffer());
+    const acceptEncoding = String(incoming.headers["accept-encoding"] ?? "");
+    const shouldGzip = rawPayload.byteLength >= GZIP_MIN_BYTES
+      && /\bgzip\b/i.test(acceptEncoding)
+      && !response.headers.has("content-encoding");
+    response.headers.forEach((value, key) => {
+      if (shouldGzip && key.toLowerCase() === "content-length") return;
+      outgoing.setHeader(key, value);
+    });
+    if (shouldGzip) {
+      const compressed = await gzipAsync(rawPayload);
+      outgoing.setHeader("content-encoding", "gzip");
+      outgoing.setHeader("vary", "Accept-Encoding");
+      outgoing.setHeader("content-length", String(compressed.byteLength));
+      outgoing.end(compressed);
+    } else {
+      outgoing.end(rawPayload);
+    }
   } catch (error) {
     // 未捕获异常此前直接变成裸 500、服务端零痕迹：没有路由、没有 actor、没有错误类，
     // 线上排障只能靠复现。这里只记录脱敏字段（路由 + 错误类名 + 结构化状态码），不写消息原文。

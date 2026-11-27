@@ -135,3 +135,79 @@ test("product pool keeps the strict single-candidate rule even when one is named
     (error: unknown) => error instanceof SourceProjectResolutionError && error.reason === "requirement_type_ambiguous",
   );
 });
+
+test("cancels non-2xx response bodies and does not retry 4xx failures", async (t) => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  let cancelled = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    const stream = new ReadableStream({
+      cancel() { cancelled += 1; },
+    });
+    return new Response(stream, { status: 404 });
+  }) as typeof fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  const client = new TeambitionClient({ baseUrl: "https://gateway.example", apiKey: "test-key", retryDelayMs: 0 });
+  await assert.rejects(
+    client.listOrganizationMembers(),
+    (error: unknown) => error instanceof TeambitionApiError && error.statusCode === 404,
+  );
+  assert.equal(calls, 1);
+  assert.equal(cancelled, 1);
+});
+
+test("retries transient 5xx once (cancelling the failed body) and succeeds on recovery", async (t) => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  let cancelled = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    if (calls === 1) {
+      const stream = new ReadableStream({
+        cancel() { cancelled += 1; },
+      });
+      return new Response(stream, { status: 503 });
+    }
+    return Response.json({ "u-1": "张三" }, { status: 200 });
+  }) as typeof fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  const client = new TeambitionClient({ baseUrl: "https://gateway.example", apiKey: "test-key", retryDelayMs: 0 });
+  const members = await client.listOrganizationMembers();
+  assert.deepEqual(members, [{ userId: "u-1", name: "张三" }]);
+  assert.equal(calls, 2);
+  assert.equal(cancelled, 1);
+});
+
+test("retries transient network failures once and caps retries at 2 total attempts", async (t) => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    if (calls === 1) throw new TypeError("socket hang up");
+    return Response.json([{ id: "t-1", content: "A" }], { status: 200 });
+  }) as typeof fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  const client = new TeambitionClient({ baseUrl: "https://gateway.example", apiKey: "test-key", retryDelayMs: 0 });
+  const tasks = await client.listRequirementTasks({
+    id: "s1", projectId: "p1", projectName: "P", requirementTypeId: "rt1",
+    enabled: true, schedule: { enabled: false, weekday: null, time: null, timezone: null },
+    ownerNames: [], fieldMap: {},
+  });
+  assert.equal(tasks.length, 1);
+  assert.equal(calls, 2);
+
+  calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    throw new DOMException("aborted", "TimeoutError");
+  }) as typeof fetch;
+  await assert.rejects(
+    client.listOrganizationMembers(),
+    (error: unknown) => error instanceof TeambitionApiError && error.statusCode === null,
+  );
+  assert.equal(calls, 2);
+});

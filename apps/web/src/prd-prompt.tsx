@@ -5,11 +5,13 @@ import { Alert as ArcoAlert, Badge as ArcoBadge, Button as ArcoButton, Card as A
 import {
   ApiError,
   createPrdPrompt,
+  isAbortError,
   listPrdPrompts,
   listRequirementAssessments,
   type PrdPromptVersion,
   type RequirementAssessment,
 } from "./api";
+import { useUnsavedGuard } from "./unsaved-guard";
 
 /** 规格 §3.1：固定 10 个二级标题，顺序一致。 */
 const PRD_CHAPTERS = [
@@ -51,6 +53,8 @@ function formatTime(value?: string | null): string {
 function errorMessage(cause: unknown, timedOut = false): string {
   if (timedOut) return "生成超时（最长约 95 秒），请稍后重试；已填写的调研结论会保留。";
   if (cause instanceof ApiError) {
+    if (cause.status === 401) return "登录已失效，请重新登录。";
+    if (cause.status === 413) return "调研结论内容过大，请精简后重试。";
     if (cause.code === "ASSESSMENT_REQUIRED") return "请先生成一条成功的需求评估，再生成 PRD 提示词。";
     if (cause.code === "PRD_PROMPT_IN_PROGRESS") return "已有生成中的版本，请稍候再试。";
     if (cause.status === 429) return `AI 调用过于频繁，请 ${cause.retryAfterSeconds ?? 60} 秒后重试。`;
@@ -61,12 +65,29 @@ function errorMessage(cause: unknown, timedOut = false): string {
   return "生成失败：无法连接服务，请稍后重试。";
 }
 
-export function PrdPromptSection({ requirementId, assessmentRevision = 0, timeoutMs = 95_000 }: { requirementId: string; assessmentRevision?: number; timeoutMs?: number }) {
-  const [assessments, setAssessments] = useState<RequirementAssessment[] | null>(null);
+export function PrdPromptSection({
+  requirementId,
+  assessmentRevision = 0,
+  timeoutMs = 95_000,
+  sharedAssessments,
+  sharedAssessmentsLoaded,
+  sharedAssessmentsError,
+}: {
+  requirementId: string;
+  assessmentRevision?: number;
+  timeoutMs?: number;
+  /** 由详情页统一拉取并共享的评估列表；传入时不再重复发 GET /assessments。 */
+  sharedAssessments?: RequirementAssessment[] | null;
+  sharedAssessmentsLoaded?: boolean;
+  sharedAssessmentsError?: string | null;
+}) {
+  const usesSharedAssessments = sharedAssessments !== undefined;
+  const [localAssessments, setLocalAssessments] = useState<RequirementAssessment[] | null>(null);
   const [items, setItems] = useState<PrdPromptVersion[] | null>(null);
-  const [assessError, setAssessError] = useState<string | null>(null);
+  const [localAssessError, setLocalAssessError] = useState<string | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
+  const [baselineNotes, setBaselineNotes] = useState("");
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -79,36 +100,51 @@ export function PrdPromptSection({ requirementId, assessmentRevision = 0, timeou
   const historyInitialized = useRef(false);
   const assessRequestVersion = useRef(0);
   const historyRequestVersion = useRef(0);
+  const assessControllerRef = useRef<AbortController | null>(null);
+  const historyControllerRef = useRef<AbortController | null>(null);
   const generateControllerRef = useRef<AbortController | null>(null);
 
+  useUnsavedGuard(notes.trim() !== "" && notes !== baselineNotes);
+
   const loadAssessments = useCallback(async () => {
+    if (usesSharedAssessments) return;
     const version = ++assessRequestVersion.current;
-    setAssessError(null);
+    assessControllerRef.current?.abort();
+    const controller = new AbortController();
+    assessControllerRef.current = controller;
+    setLocalAssessError(null);
     try {
-      const list = await listRequirementAssessments(requirementId);
+      const list = await listRequirementAssessments(requirementId, undefined, controller.signal);
       if (version !== assessRequestVersion.current) return;
-      setAssessments(list);
+      setLocalAssessments(list);
     } catch (cause) {
-      if (version !== assessRequestVersion.current) return;
-      setAssessments([]);
-      setAssessError(errorMessage(cause));
+      if (version !== assessRequestVersion.current || isAbortError(cause)) return;
+      setLocalAssessments([]);
+      setLocalAssessError(errorMessage(cause));
     }
-  }, [requirementId]);
+  }, [requirementId, usesSharedAssessments]);
 
   const loadHistory = useCallback(async () => {
     const version = ++historyRequestVersion.current;
+    historyControllerRef.current?.abort();
+    const controller = new AbortController();
+    historyControllerRef.current = controller;
     setHistoryError(null);
     try {
-      const list = await listPrdPrompts(requirementId);
+      const list = await listPrdPrompts(requirementId, undefined, controller.signal);
       if (version !== historyRequestVersion.current) return;
       setItems(list);
       if (!historyInitialized.current) {
         historyInitialized.current = true;
         const latest = list[0];
-        if (latest) setNotes((previous) => previous === "" ? investigationNotesOf(latest) : previous);
+        if (latest) {
+          const initialNotes = investigationNotesOf(latest);
+          setBaselineNotes(initialNotes);
+          setNotes((previous) => previous === "" ? initialNotes : previous);
+        }
       }
     } catch (cause) {
-      if (version !== historyRequestVersion.current) return;
+      if (version !== historyRequestVersion.current || isAbortError(cause)) return;
       setItems([]);
       setHistoryError(errorMessage(cause));
     }
@@ -119,33 +155,39 @@ export function PrdPromptSection({ requirementId, assessmentRevision = 0, timeou
     historyInitialized.current = false;
     generateControllerRef.current?.abort();
     generateControllerRef.current = null;
-    setAssessments(null);
+    setLocalAssessments(null);
     setItems(null);
     setNotes("");
+    setBaselineNotes("");
     setSelectedVersion(null);
     setBusy(false);
     setError(null);
     setNotice(null);
     setExpanded(false);
     setCopied(false);
-    void loadAssessments();
+    if (!usesSharedAssessments) void loadAssessments();
     void loadHistory();
     return () => {
       assessRequestVersion.current += 1;
       historyRequestVersion.current += 1;
+      assessControllerRef.current?.abort();
+      historyControllerRef.current?.abort();
       generateControllerRef.current?.abort();
       generateControllerRef.current = null;
     };
-  }, [loadAssessments, loadHistory]);
+  }, [loadAssessments, loadHistory, usesSharedAssessments]);
 
-  // 同页「需求评估」生成成功后触发：仅重新拉评估列表解锁本区块，不清空用户正在写的调研结论。
+  // 同页「需求评估」生成成功后触发：仅独立模式下重新拉评估列表；共享模式下由详情页同步最新列表。
   useEffect(() => {
-    if (assessmentRevision > 0) void loadAssessments();
-  }, [assessmentRevision, loadAssessments]);
+    if (!usesSharedAssessments && assessmentRevision > 0) void loadAssessments();
+  }, [assessmentRevision, loadAssessments, usesSharedAssessments]);
 
   useEffect(() => () => {
     if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
   }, []);
+
+  const assessments = usesSharedAssessments ? (sharedAssessmentsLoaded ? (sharedAssessments ?? []) : null) : localAssessments;
+  const assessError = usesSharedAssessments ? (sharedAssessmentsError ?? null) : localAssessError;
 
   const latestAssessment = (assessments ?? [])
     .filter((item) => item.status === "succeeded")
@@ -159,7 +201,9 @@ export function PrdPromptSection({ requirementId, assessmentRevision = 0, timeou
 
   const selectVersion = (item: PrdPromptVersion) => {
     setSelectedVersion(item.version);
-    setNotes(investigationNotesOf(item));
+    const loadedNotes = investigationNotesOf(item);
+    setNotes(loadedNotes);
+    setBaselineNotes(loadedNotes);
     setExpanded(false);
     setCopied(false);
   };
@@ -181,7 +225,10 @@ export function PrdPromptSection({ requirementId, assessmentRevision = 0, timeou
       setItems((previous) => [created, ...(previous ?? []).filter((item) => item.version !== created.version)].sort((a, b) => b.version - a.version));
       setSelectedVersion(created.version);
       setExpanded(false);
-      if (created.status === "succeeded") setNotice(`v${created.version} 已生成；内容可以复制，不写 Base、不发通知。`);
+      if (created.status === "succeeded") {
+        setBaselineNotes(notes);
+        setNotice(`v${created.version} 已生成；内容可以复制，不写 Base、不发通知。`);
+      }
       else setError(`生成失败：${ERROR_LABELS[created.errorCode ?? ""] ?? created.errorCode ?? "未知原因"}。可重新生成。`);
       if (created.status !== "succeeded") void loadHistory();
     } catch (cause) {

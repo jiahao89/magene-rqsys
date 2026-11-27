@@ -85,7 +85,7 @@ function makeDeps(overrides: { stored?: RequirementRecord; score?: typeof scoreV
     scoring: {
       current: async () => (overrides.score === null ? null : scoreVersion) as never,
       aiSuggestion: async () => null,
-      list: async () => [],
+      list: async () => (overrides.score === null ? [] : [scoreVersion]) as never,
       createAi: async () => scoreVersion as never, saveManual: async () => ({ outcome: "saved", version: scoreVersion } as never), applyAi: async () => ({ outcome: "saved", version: scoreVersion } as never),
     },
     requirements: {

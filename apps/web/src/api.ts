@@ -1,3 +1,5 @@
+import { CACHE_KEYS, cachedQuery, invalidateQueryCache } from "./cache";
+
 /** 需求池作用域：product=现有产品池，group=集团需求池。 */
 export type RequirementPool = "product" | "group";
 
@@ -105,45 +107,107 @@ export class ApiError extends Error {
   }
 }
 
+export const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
+export const CSV_EXPORT_TIMEOUT_MS = 60_000;
+
+const unauthorizedListeners = new Set<() => void>();
+
+/** 订阅全局 401 会话失效事件（返回取消订阅函数）；便于顶层展示重新登录提示并暂停后台轮询。 */
+export function onUnauthorized(listener: () => void): () => void {
+  unauthorizedListeners.add(listener);
+  return () => { unauthorizedListeners.delete(listener); };
+}
+
+function notifyUnauthorized(): void {
+  for (const listener of unauthorizedListeners) {
+    try { listener(); } catch { /* listener failure must not break API error propagation */ }
+  }
+}
+
+/** 识别请求主动取消（AbortController / axios ERR_CANCELED），避免切页或重建请求时误弹网络错误。 */
+export function isAbortError(cause: unknown): boolean {
+  if (!cause || typeof cause !== "object") return false;
+  const record = cause as { name?: unknown; code?: unknown };
+  return record.name === "AbortError" || record.name === "CanceledError" || record.code === "ERR_CANCELED";
+}
+
+async function fetchWithTimeout(
+  fetcher: typeof fetch,
+  path: string,
+  init: RequestInit,
+  timeoutMs?: number,
+): Promise<Response> {
+  const externalSignal = init.signal ?? undefined;
+  // 调用方已传入外部 AbortSignal（如 AI 30–125s 专用超时）且未显式指定 timeoutMs 时，不叠加更短的 20s 默认超时。
+  const effectiveTimeout = timeoutMs ?? (externalSignal ? 0 : DEFAULT_REQUEST_TIMEOUT_MS);
+  if (!effectiveTimeout || effectiveTimeout <= 0) {
+    return fetcher(path, init);
+  }
+  const controller = new AbortController();
+  let timedOut = false;
+  const onExternalAbort = () => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) controller.abort();
+    else externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+  }
+  const timer = globalThis.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, effectiveTimeout);
+  try {
+    return await fetcher(path, { ...init, signal: controller.signal });
+  } catch (cause) {
+    if (timedOut) {
+      throw new ApiError("请求超时，请检查网络连接后重试。", 408, "REQUEST_TIMEOUT");
+    }
+    throw cause;
+  } finally {
+    globalThis.clearTimeout(timer);
+    if (externalSignal) externalSignal.removeEventListener("abort", onExternalAbort);
+  }
+}
+
 async function parseJsonResponse<T>(response: Response): Promise<T> {
   const body: unknown = await response.json().catch(() => null);
   if (!response.ok) {
+    if (response.status === 401) notifyUnauthorized();
     const error = body && typeof body === "object" && "error" in body ? body.error : undefined;
     const detail = error && typeof error === "object" ? error as { code?: string; message?: string; details?: unknown } : {};
     // Retry-After 可能是秒数或 HTTP 日期；契约里只发秒数，其他格式按未知处理。
     const retryHeader = response.headers.get("retry-after");
     const retrySeconds = retryHeader && /^\d+$/.test(retryHeader.trim()) ? Math.max(1, Number(retryHeader)) : null;
-    throw new ApiError(detail.message ?? `Request failed (${response.status})`, response.status, detail.code ?? "REQUEST_FAILED", retrySeconds, detail.details ?? null);
+    const fallbackCode = response.status === 413 ? "PAYLOAD_TOO_LARGE" : response.status === 401 ? "UNAUTHORIZED" : response.status === 429 ? "RATE_LIMITED" : "REQUEST_FAILED";
+    throw new ApiError(detail.message ?? `Request failed (${response.status})`, response.status, detail.code ?? fallbackCode, retrySeconds, detail.details ?? null);
   }
   return body as T;
 }
 
-async function requestJson<T>(path: string, fetcher: typeof fetch, signal?: AbortSignal): Promise<T> {
-  const response = await fetcher(path, { headers: { accept: "application/json" }, ...(signal ? { signal } : {}) });
+async function requestJson<T>(path: string, fetcher: typeof fetch, signal?: AbortSignal, timeoutMs?: number): Promise<T> {
+  const response = await fetchWithTimeout(fetcher, path, { headers: { accept: "application/json" }, ...(signal ? { signal } : {}) }, timeoutMs);
   return parseJsonResponse<T>(response);
 }
 
-async function postJson<T>(path: string, body: unknown, fetcher: typeof fetch, headers: Record<string, string> = {}, signal?: AbortSignal): Promise<T> {
-  const response = await fetcher(path, {
+async function postJson<T>(path: string, body: unknown, fetcher: typeof fetch, headers: Record<string, string> = {}, signal?: AbortSignal, timeoutMs?: number): Promise<T> {
+  const response = await fetchWithTimeout(fetcher, path, {
     method: "POST",
     headers: { accept: "application/json", "content-type": "application/json", ...headers },
     ...(body === null ? {} : { body: JSON.stringify(body) }),
     ...(signal ? { signal } : {}),
-  });
+  }, timeoutMs);
   return parseJsonResponse<T>(response);
 }
 
 async function putJson<T>(path: string, body: unknown, fetcher: typeof fetch): Promise<T> {
-  const response = await fetcher(path, { method: "PUT", headers: { accept: "application/json", "content-type": "application/json" }, body: JSON.stringify(body) });
+  const response = await fetchWithTimeout(fetcher, path, { method: "PUT", headers: { accept: "application/json", "content-type": "application/json" }, body: JSON.stringify(body) });
   return parseJsonResponse<T>(response);
 }
 
 async function deleteJson<T>(path: string, fetcher: typeof fetch): Promise<T> {
-  return parseJsonResponse<T>(await fetcher(path, { method: "DELETE", headers: { accept: "application/json" } }));
+  return parseJsonResponse<T>(await fetchWithTimeout(fetcher, path, { method: "DELETE", headers: { accept: "application/json" } }));
 }
 
 async function deleteJsonWithBody<T>(path: string, body: unknown, fetcher: typeof fetch): Promise<T> {
-  const response = await fetcher(path, {
+  const response = await fetchWithTimeout(fetcher, path, {
     method: "DELETE",
     headers: { accept: "application/json", "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -151,14 +215,14 @@ async function deleteJsonWithBody<T>(path: string, body: unknown, fetcher: typeo
   return parseJsonResponse<T>(response);
 }
 
-export function getHealth(fetcher: typeof fetch = fetch): Promise<HealthResponse> {
-  return requestJson<HealthResponse>("/api/health/ready", fetcher);
+export function getHealth(fetcher: typeof fetch = fetch, signal?: AbortSignal): Promise<HealthResponse> {
+  return requestJson<HealthResponse>("/api/health/ready", fetcher, signal);
 }
 
-export async function getOverviewMetrics(fetcher: typeof fetch = fetch): Promise<OverviewMetrics> {
+export async function getOverviewMetrics(fetcher: typeof fetch = fetch, signal?: AbortSignal): Promise<OverviewMetrics> {
   // 契约：GET /api/overview/metrics 返回 { counts, ai }；ai 在顶层，不在 counts 里。
   // 这里把它合并进返回对象；ai 缺失或格式异常不影响计数校验（总览卡片自行降级）。
-  const result = await requestJson<{ counts: OverviewMetrics; ai?: OverviewAiStatus | null }>("/api/overview/metrics", fetcher);
+  const result = await requestJson<{ counts: OverviewMetrics; ai?: OverviewAiStatus | null }>("/api/overview/metrics", fetcher, signal);
   const keys = ["total", "pullSynced", "analysisAnalyzed", "ownerResolved", "pushPushed", "failed"] as const;
   const rawCounts = result.counts as unknown as Record<string, unknown> | undefined;
   if (!result.counts || !rawCounts || keys.some((key) => !Number.isInteger(rawCounts[key]) || Number(rawCounts[key]) < 0)) {
@@ -179,9 +243,12 @@ export async function runSync(
   return postJson<SyncRunResponse>("/api/sync/run", { sourceId: source.id, ...(mode === "source_only" ? { mode } : {}) }, fetcher, { "Idempotency-Key": createIdempotencyKey() });
 }
 
-export async function listSources(fetcher: typeof fetch = fetch): Promise<SourceConfig[]> {
-  const result = await requestJson<{ items: SourceConfig[] }>("/api/sources", fetcher);
-  return result.items;
+export async function listSources(fetcher: typeof fetch = fetch, signal?: AbortSignal): Promise<SourceConfig[]> {
+  return cachedQuery(
+    CACHE_KEYS.sources,
+    async () => (await requestJson<{ items: SourceConfig[] }>("/api/sources", fetcher, signal)).items,
+    { bypass: fetcher !== fetch || Boolean(signal) },
+  );
 }
 
 /** 飞书 Base 地址（只读展示）：两个池各自承载需求推送与消息通知。 */
@@ -190,27 +257,57 @@ export interface BaseLinks {
   group: { url: string } | null;
 }
 
-export async function getBaseLinks(fetcher: typeof fetch = fetch): Promise<BaseLinks> {
-  return requestJson<BaseLinks>("/api/base-links", fetcher);
+export async function getBaseLinks(fetcher: typeof fetch = fetch, signal?: AbortSignal): Promise<BaseLinks> {
+  return requestJson<BaseLinks>("/api/base-links", fetcher, signal);
 }
 
-export async function listTeamPeople(fetcher: typeof fetch = fetch): Promise<TeamPerson[]> {
-  return (await requestJson<{ items: TeamPerson[] }>("/api/people", fetcher)).items;
+export async function listTeamPeople(fetcher: typeof fetch = fetch, signal?: AbortSignal): Promise<TeamPerson[]> {
+  return cachedQuery(
+    CACHE_KEYS.people,
+    async () => (await requestJson<{ items: TeamPerson[] }>("/api/people", fetcher, signal)).items,
+    { bypass: fetcher !== fetch || Boolean(signal) },
+  );
 }
-export function addTeamPerson(name: string, fetcher: typeof fetch = fetch) { return postJson<{ items: TeamPerson[] }>("/api/people", { name }, fetcher); }
-export function renameTeamPerson(oldName: string, name: string, fetcher: typeof fetch = fetch) { return putJson<{ items: TeamPerson[] }>(`/api/people/${encodeURIComponent(oldName)}`, { name }, fetcher); }
-export function deleteTeamPerson(name: string, fetcher: typeof fetch = fetch) { return deleteJson<{ items: TeamPerson[] }>(`/api/people/${encodeURIComponent(name)}`, fetcher); }
-export function bindTeamPersonFeishu(name: string, selection: FeishuUserSelection, fetcher: typeof fetch = fetch) {
-  return putJson<{ items: TeamPerson[] }>(`/api/people/${encodeURIComponent(name)}/feishu`, { feishuUserId: selection.feishuUserId, feishuIdType: selection.feishuIdType }, fetcher);
+export async function addTeamPerson(name: string, fetcher: typeof fetch = fetch) {
+  const result = await postJson<{ items: TeamPerson[] }>("/api/people", { name }, fetcher);
+  invalidateQueryCache(CACHE_KEYS.people);
+  return result;
 }
-export function unbindTeamPersonFeishu(name: string, fetcher: typeof fetch = fetch) {
-  return deleteJson<{ items: TeamPerson[] }>(`/api/people/${encodeURIComponent(name)}/feishu`, fetcher);
+export async function renameTeamPerson(oldName: string, name: string, fetcher: typeof fetch = fetch) {
+  const result = await putJson<{ items: TeamPerson[] }>(`/api/people/${encodeURIComponent(oldName)}`, { name }, fetcher);
+  invalidateQueryCache(CACHE_KEYS.people, CACHE_KEYS.modules);
+  return result;
 }
-export function getFunctionModules(fetcher: typeof fetch = fetch) { return requestJson<FunctionModuleDirectory>("/api/modules", fetcher); }
-export function saveFunctionModules(version: number, items: FunctionModuleEntry[], fetcher: typeof fetch = fetch) { return putJson<FunctionModuleDirectory>("/api/modules", { version, items }, fetcher); }
+export async function deleteTeamPerson(name: string, fetcher: typeof fetch = fetch) {
+  const result = await deleteJson<{ items: TeamPerson[] }>(`/api/people/${encodeURIComponent(name)}`, fetcher);
+  invalidateQueryCache(CACHE_KEYS.people);
+  return result;
+}
+export async function bindTeamPersonFeishu(name: string, selection: FeishuUserSelection, fetcher: typeof fetch = fetch) {
+  const result = await putJson<{ items: TeamPerson[] }>(`/api/people/${encodeURIComponent(name)}/feishu`, { feishuUserId: selection.feishuUserId, feishuIdType: selection.feishuIdType }, fetcher);
+  invalidateQueryCache(CACHE_KEYS.people, CACHE_KEYS.myRequirementCounts);
+  return result;
+}
+export async function unbindTeamPersonFeishu(name: string, fetcher: typeof fetch = fetch) {
+  const result = await deleteJson<{ items: TeamPerson[] }>(`/api/people/${encodeURIComponent(name)}/feishu`, fetcher);
+  invalidateQueryCache(CACHE_KEYS.people, CACHE_KEYS.myRequirementCounts);
+  return result;
+}
+export function getFunctionModules(fetcher: typeof fetch = fetch, signal?: AbortSignal) {
+  return cachedQuery(
+    CACHE_KEYS.modules,
+    () => requestJson<FunctionModuleDirectory>("/api/modules", fetcher, signal),
+    { bypass: fetcher !== fetch || Boolean(signal) },
+  );
+}
+export async function saveFunctionModules(version: number, items: FunctionModuleEntry[], fetcher: typeof fetch = fetch) {
+  const result = await putJson<FunctionModuleDirectory>("/api/modules", { version, items }, fetcher);
+  invalidateQueryCache(CACHE_KEYS.modules);
+  return result;
+}
 
-export async function listDictionaryVersions(fetcher: typeof fetch = fetch): Promise<DictionaryVersion[]> {
-  const result = await requestJson<{ items: DictionaryVersion[] }>("/api/rules/dictionary", fetcher);
+export async function listDictionaryVersions(fetcher: typeof fetch = fetch, signal?: AbortSignal): Promise<DictionaryVersion[]> {
+  const result = await requestJson<{ items: DictionaryVersion[] }>("/api/rules/dictionary", fetcher, signal);
   return result.items;
 }
 
@@ -218,12 +315,14 @@ export function createDictionaryDraft(entries: string[], fetcher: typeof fetch =
   return postJson<DictionaryVersion>("/api/rules/dictionary", { entries }, fetcher);
 }
 
-export function publishDictionaryVersion(version: number, fetcher: typeof fetch = fetch): Promise<DictionaryVersion> {
-  return postJson<DictionaryVersion>(`/api/rules/dictionary/${version}/publish`, null, fetcher);
+export async function publishDictionaryVersion(version: number, fetcher: typeof fetch = fetch): Promise<DictionaryVersion> {
+  const result = await postJson<DictionaryVersion>(`/api/rules/dictionary/${version}/publish`, null, fetcher);
+  invalidateQueryCache(CACHE_KEYS.modules);
+  return result;
 }
 
-export async function listPriorityRules(fetcher: typeof fetch = fetch): Promise<PriorityRuleVersion[]> {
-  const result = await requestJson<{ items: PriorityRuleVersion[] }>("/api/rules/priority", fetcher);
+export async function listPriorityRules(fetcher: typeof fetch = fetch, signal?: AbortSignal): Promise<PriorityRuleVersion[]> {
+  const result = await requestJson<{ items: PriorityRuleVersion[] }>("/api/rules/priority", fetcher, signal);
   return result.items;
 }
 
@@ -249,12 +348,16 @@ export interface SourceConfigUpdate {
   executorAllowlist?: string[];
 }
 
-export function createSource(update: SourceConfigUpdate, fetcher: typeof fetch = fetch): Promise<SourceConfig> {
-  return postJson<SourceConfig>("/api/sources", update, fetcher);
+export async function createSource(update: SourceConfigUpdate, fetcher: typeof fetch = fetch): Promise<SourceConfig> {
+  const result = await postJson<SourceConfig>("/api/sources", update, fetcher);
+  invalidateQueryCache(CACHE_KEYS.sources);
+  return result;
 }
 
-export function updateSource(id: string, update: SourceConfigUpdate, fetcher: typeof fetch = fetch): Promise<SourceConfig> {
-  return putJson<SourceConfig>(`/api/sources/${id}`, update, fetcher);
+export async function updateSource(id: string, update: SourceConfigUpdate, fetcher: typeof fetch = fetch): Promise<SourceConfig> {
+  const result = await putJson<SourceConfig>(`/api/sources/${id}`, update, fetcher);
+  invalidateQueryCache(CACHE_KEYS.sources);
+  return result;
 }
 
 export interface SyncItem {
@@ -293,8 +396,8 @@ export function retrySyncItem(id: string, fetcher: typeof fetch = fetch, idempot
   return postJson<{ batchId: string; status: string }>(`/api/items/${id}/retry`, null, fetcher, { "Idempotency-Key": idempotencyKey });
 }
 
-export function getRequirement(id: string, fetcher: typeof fetch = fetch): Promise<RequirementDetail> {
-  return requestJson<RequirementDetail>(`/api/requirements/${id}`, fetcher);
+export function getRequirement(id: string, fetcher: typeof fetch = fetch, signal?: AbortSignal): Promise<RequirementDetail> {
+  return requestJson<RequirementDetail>(`/api/requirements/${id}`, fetcher, signal);
 }
 
 
@@ -453,13 +556,17 @@ export function pushRequirement(id: string, fetcher: typeof fetch = fetch, idemp
   return postJson<{ requirementId: string; status: string }>(`/api/requirements/${id}/push`, null, fetcher, { "Idempotency-Key": idempotencyKey });
 }
 
-export function setOwner(id: string, input: { feishuUserId: string; feishuIdType: "open_id" | "user_id" | "union_id"; tbDisplayName?: string | null }, fetcher: typeof fetch = fetch): Promise<{ requirementId: string; ownerState: string; status: string }> {
-  return putJson<{ requirementId: string; ownerState: string; status: string }>(`/api/requirements/${id}/owner`, input, fetcher);
+export async function setOwner(id: string, input: { feishuUserId: string; feishuIdType: "open_id" | "user_id" | "union_id"; tbDisplayName?: string | null }, fetcher: typeof fetch = fetch): Promise<{ requirementId: string; ownerState: string; status: string }> {
+  const result = await putJson<{ requirementId: string; ownerState: string; status: string }>(`/api/requirements/${id}/owner`, input, fetcher);
+  invalidateQueryCache(CACHE_KEYS.myRequirementCounts);
+  return result;
 }
 
 /** 清除本条需求的人工负责人，恢复为 TB 执行人默认负责人（无执行人时为空负责人）。 */
-export function clearOwner(id: string, fetcher: typeof fetch = fetch): Promise<{ requirementId: string; ownerState: RequirementOwnerState; status: string }> {
-  return deleteJson<{ requirementId: string; ownerState: RequirementOwnerState; status: string }>(`/api/requirements/${id}/owner`, fetcher);
+export async function clearOwner(id: string, fetcher: typeof fetch = fetch): Promise<{ requirementId: string; ownerState: RequirementOwnerState; status: string }> {
+  const result = await deleteJson<{ requirementId: string; ownerState: RequirementOwnerState; status: string }>(`/api/requirements/${id}/owner`, fetcher);
+  invalidateQueryCache(CACHE_KEYS.myRequirementCounts);
+  return result;
 }
 
 export interface DuplicateDecisionInput {
@@ -710,11 +817,16 @@ function buildSearch(query: Record<string, string | number | undefined>): string
   return suffix ? `?${suffix}` : "";
 }
 
-/** I3-2：按当前筛选导出需求池 CSV（服务端上限 5000 条）。 */
-export async function exportRequirementsCsv(params: { q?: string; executorName?: string; pullState?: string; ownerState?: string; analysisState?: string; pushState?: string; processingState?: "active" | "suppressed"; priority?: string; source?: string; sort?: string; batchId?: string; since?: string; until?: string; pool?: RequirementPool; fetcher?: typeof fetch } = {}): Promise<{ csv: string; truncated: boolean }> {
-  const { fetcher = fetch, ...rest } = params;
-  const response = await (fetcher as typeof fetch)(`/api/requirements/export${buildSearch(rest)}`);
-  if (!response.ok) throw new ApiError("导出失败，请重试。", response.status, "EXPORT_FAILED");
+/** I3-2：按当前筛选导出需求池 CSV（服务端上限 5000 条；60s 客户端超时）。 */
+export async function exportRequirementsCsv(params: { q?: string; executorName?: string; pullState?: string; ownerState?: string; analysisState?: string; pushState?: string; processingState?: "active" | "suppressed"; priority?: string; source?: string; sort?: string; batchId?: string; since?: string; until?: string; pool?: RequirementPool; fetcher?: typeof fetch; signal?: AbortSignal } = {}): Promise<{ csv: string; truncated: boolean }> {
+  const { fetcher = fetch, signal, ...rest } = params;
+  const response = await fetchWithTimeout(fetcher, `/api/requirements/export${buildSearch(rest)}`, signal ? { signal } : {}, CSV_EXPORT_TIMEOUT_MS);
+  if (!response.ok) {
+    if (response.status === 401) notifyUnauthorized();
+    const retryHeader = response.headers.get("retry-after");
+    const retrySeconds = retryHeader && /^\d+$/.test(retryHeader.trim()) ? Math.max(1, Number(retryHeader)) : null;
+    throw new ApiError("导出失败，请重试。", response.status, response.status === 429 ? "RATE_LIMITED" : "EXPORT_FAILED", retrySeconds);
+  }
   return { csv: await response.text(), truncated: response.headers.get("x-rq-truncated") === "true" };
 }
 
@@ -734,40 +846,50 @@ export interface MyRequirementCounts {
   suppressed: number;
 }
 
-export async function getMyRequirementCounts(fetcher: typeof fetch = fetch): Promise<MyRequirementCounts> {
-  const result = await requestJson<{
-    identityResolved?: unknown; total?: unknown; product?: unknown; group?: unknown; suppressed?: unknown;
-    counts?: { identityResolved?: unknown; total?: unknown; product?: unknown; group?: unknown; suppressed?: unknown } | null;
-  }>("/api/requirements/mine/counts", fetcher);
-  const raw = result?.counts ?? result;
-  const count = (value: unknown): number | null => (typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null);
-  const product = count(raw?.product);
-  const group = count(raw?.group);
-  const total = count(raw?.total);
-  if (typeof raw?.identityResolved !== "boolean" || product === null || group === null || total === null) {
-    throw new ApiError("我的需求计数响应格式不正确。", 502, "INVALID_MY_REQUIREMENT_COUNTS");
-  }
-  return { identityResolved: raw.identityResolved, total, product, group, suppressed: count(raw?.suppressed) ?? 0 };
+export async function getMyRequirementCounts(fetcher: typeof fetch = fetch, signal?: AbortSignal): Promise<MyRequirementCounts> {
+  return cachedQuery(
+    CACHE_KEYS.myRequirementCounts,
+    async () => {
+      const result = await requestJson<{
+        identityResolved?: unknown; total?: unknown; product?: unknown; group?: unknown; suppressed?: unknown;
+        counts?: { identityResolved?: unknown; total?: unknown; product?: unknown; group?: unknown; suppressed?: unknown } | null;
+      }>("/api/requirements/mine/counts", fetcher, signal);
+      const raw = result?.counts ?? result;
+      const count = (value: unknown): number | null => (typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null);
+      const product = count(raw?.product);
+      const group = count(raw?.group);
+      const total = count(raw?.total);
+      if (typeof raw?.identityResolved !== "boolean" || product === null || group === null || total === null) {
+        throw new ApiError("我的需求计数响应格式不正确。", 502, "INVALID_MY_REQUIREMENT_COUNTS");
+      }
+      return { identityResolved: raw.identityResolved, total, product, group, suppressed: count(raw?.suppressed) ?? 0 };
+    },
+    { bypass: fetcher !== fetch || Boolean(signal) },
+  );
 }
 
 /** 我的需求列表：服务端按当前登录身份解析负责人；pool 区分产品池/集团池。 */
-export async function listMyRequirements(params: { pool?: RequirementPool; limit?: number; cursor?: string; fetcher?: typeof fetch } = {}): Promise<{ items: RequirementSummary[]; nextCursor: string | null }> {
-  const { fetcher = fetch, ...rest } = params;
-  return requestJson<{ items: RequirementSummary[]; nextCursor: string | null }>(`/api/requirements/mine${buildSearch(rest)}`, fetcher);
+export async function listMyRequirements(params: { pool?: RequirementPool; limit?: number; cursor?: string; fetcher?: typeof fetch; signal?: AbortSignal } = {}): Promise<{ items: RequirementSummary[]; nextCursor: string | null }> {
+  const { fetcher = fetch, signal, ...rest } = params;
+  return requestJson<{ items: RequirementSummary[]; nextCursor: string | null }>(`/api/requirements/mine${buildSearch(rest)}`, fetcher, signal);
 }
 
 /** 回收站：只返回当前用户删除的项，按删除时间倒序。 */
-export async function listRecycleBinRequirements(params: { limit?: number; cursor?: string; fetcher?: typeof fetch } = {}): Promise<{ items: RequirementSummary[]; nextCursor: string | null }> {
-  const { fetcher = fetch, limit, cursor } = params;
-  return requestJson<{ items: RequirementSummary[]; nextCursor: string | null }>(`/api/requirements${buildSearch({ deleted: "true", limit, cursor })}`, fetcher);
+export async function listRecycleBinRequirements(params: { limit?: number; cursor?: string; fetcher?: typeof fetch; signal?: AbortSignal } = {}): Promise<{ items: RequirementSummary[]; nextCursor: string | null }> {
+  const { fetcher = fetch, limit, cursor, signal } = params;
+  return requestJson<{ items: RequirementSummary[]; nextCursor: string | null }>(`/api/requirements${buildSearch({ deleted: "true", limit, cursor })}`, fetcher, signal);
 }
 
 export async function deleteRequirement(id: string, fetcher: typeof fetch = fetch): Promise<{ deletedAt?: string | null }> {
-  return deleteJson<{ deletedAt?: string | null }>(`/api/requirements/${id}`, fetcher);
+  const result = await deleteJson<{ deletedAt?: string | null }>(`/api/requirements/${id}`, fetcher);
+  invalidateQueryCache(CACHE_KEYS.myRequirementCounts);
+  return result;
 }
 
 export async function restoreRequirement(id: string, fetcher: typeof fetch = fetch): Promise<{ lifecycleState?: string; processingState?: string }> {
-  return postJson<{ lifecycleState?: string; processingState?: string }>(`/api/requirements/${id}/restore`, {}, fetcher);
+  const result = await postJson<{ lifecycleState?: string; processingState?: string }>(`/api/requirements/${id}/restore`, {}, fetcher);
+  invalidateQueryCache(CACHE_KEYS.myRequirementCounts);
+  return result;
 }
 
 /**
@@ -783,10 +905,10 @@ export interface RequirementSourceCounts {
   all: number;
 }
 
-export async function getRequirementSourceCounts(params: { pool?: RequirementPool; fetcher?: typeof fetch } = {}): Promise<RequirementSourceCounts | null> {
-  const { fetcher = fetch, pool } = params;
+export async function getRequirementSourceCounts(params: { pool?: RequirementPool; fetcher?: typeof fetch; signal?: AbortSignal } = {}): Promise<RequirementSourceCounts | null> {
+  const { fetcher = fetch, pool, signal } = params;
   try {
-    const result = await requestJson<{ counts?: Partial<Record<keyof RequirementSourceCounts, unknown>> | null }>(`/api/requirements/source-counts${buildSearch({ pool })}`, fetcher);
+    const result = await requestJson<{ counts?: Partial<Record<keyof RequirementSourceCounts, unknown>> | null }>(`/api/requirements/source-counts${buildSearch({ pool })}`, fetcher, signal);
     const counts = result?.counts;
     if (!counts || typeof counts !== "object") return null;
     const keys: Array<keyof RequirementSourceCounts> = ["teambition", "web_manual", "base_form", "chat_paste", "all"];
@@ -832,8 +954,8 @@ export interface PersonMapping {
   updatedAt: string;
 }
 
-export async function listMappings(fetcher: typeof fetch = fetch): Promise<PersonMapping[]> {
-  const result = await requestJson<{ items: PersonMapping[] }>("/api/mappings", fetcher);
+export async function listMappings(fetcher: typeof fetch = fetch, signal?: AbortSignal): Promise<PersonMapping[]> {
+  const result = await requestJson<{ items: PersonMapping[] }>("/api/mappings", fetcher, signal);
   return result.items;
 }
 
@@ -864,8 +986,8 @@ export interface Readiness {
 }
 
 /** 健康检查：数据库可用性与迁移对齐状态（不要求认证）。 */
-export function getReadiness(fetcher: typeof fetch = fetch): Promise<Readiness> {
-  return requestJson<Readiness>("/api/health/ready", fetcher);
+export function getReadiness(fetcher: typeof fetch = fetch, signal?: AbortSignal): Promise<Readiness> {
+  return requestJson<Readiness>("/api/health/ready", fetcher, signal);
 }
 
 export interface GateStatus {
@@ -880,8 +1002,8 @@ export interface GateStatus {
 export interface GatesResponse { ready: boolean; gates: GateStatus[] }
 
 /** PR-15：上线 Gate 当前状态（自动检查 + 人工确认）。 */
-export function getGates(fetcher: typeof fetch = fetch): Promise<GatesResponse> {
-  return requestJson<GatesResponse>("/api/ops/gates", fetcher as typeof fetch);
+export function getGates(fetcher: typeof fetch = fetch, signal?: AbortSignal): Promise<GatesResponse> {
+  return requestJson<GatesResponse>("/api/ops/gates", fetcher as typeof fetch, signal);
 }
 
 /** PR-15：人工确认/撤销某个 Gate（通过时必须提供证据）。 */
@@ -925,8 +1047,10 @@ export interface IntakeResult {
 }
 export const REQUIREMENT_INTAKE_CHANNELS = ["销售", "售后", "电商", "运营/用研", "终端用户", "产品/研发/测试"] as const;
 // 同一次提交（含失败重试）复用同一幂等键；成功后由表单重新生成（V02-T04-AC03）。
-export function createRequirement(input: { title: string; description: string; sourceChannel: string; productModel?: string | null; requirementType?: string | null; constraintNotes?: string | null; supplementUrl?: string | null; intakeModule?: string | null; /** PRD-26：只有聊天粘贴路径传 "chat_paste"；落库仍是 web_manual。 */ intakeOrigin?: "chat_paste" | null; /** PRD-26：聊天中提到的提出人，仅展示，不进负责人匹配、不发通知。 */ proposerName?: string | null; owner?: { feishuUserId: string; feishuIdType: "open_id" | "user_id" | "union_id"; tbDisplayName?: string | null } }, fetcher: typeof fetch = fetch, idempotencyKey: string = crypto.randomUUID()): Promise<IntakeResult> {
-  return postJson<IntakeResult>("/api/requirements", input, fetcher, { "Idempotency-Key": idempotencyKey });
+export async function createRequirement(input: { title: string; description: string; sourceChannel: string; productModel?: string | null; requirementType?: string | null; constraintNotes?: string | null; supplementUrl?: string | null; intakeModule?: string | null; /** PRD-26：只有聊天粘贴路径传 "chat_paste"；落库仍是 web_manual。 */ intakeOrigin?: "chat_paste" | null; /** PRD-26：聊天中提到的提出人，仅展示，不进负责人匹配、不发通知。 */ proposerName?: string | null; owner?: { feishuUserId: string; feishuIdType: "open_id" | "user_id" | "union_id"; tbDisplayName?: string | null } }, fetcher: typeof fetch = fetch, idempotencyKey: string = crypto.randomUUID()): Promise<IntakeResult> {
+  const result = await postJson<IntakeResult>("/api/requirements", input, fetcher, { "Idempotency-Key": idempotencyKey });
+  invalidateQueryCache(CACHE_KEYS.myRequirementCounts);
+  return result;
 }
 export const REQUIREMENT_INTAKE_TYPES = ["新增功能", "功能扩展", "体验优化", "性能优化", "质量修复", "安全合规", "成本效率", "技术治理"] as const;
 
@@ -957,7 +1081,7 @@ export function extractIntakeDraft(text: string, fetcher: typeof fetch = fetch, 
 }
 
 async function patchJson<T>(path: string, body: unknown, fetcher: typeof fetch, headers: Record<string, string> = {}): Promise<T> {
-  const response = await fetcher(path, { method: "PATCH", headers: { accept: "application/json", "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
+  const response = await fetchWithTimeout(fetcher, path, { method: "PATCH", headers: { accept: "application/json", "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
   return parseJsonResponse<T>(response);
 }
 

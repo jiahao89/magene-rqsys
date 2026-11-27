@@ -39,13 +39,38 @@ const ESCALATION_ROWS = [
   { symptom: "权限/数据治理/合规问题", check: "变更记录、Base 权限", escalate: "PM Leader → 产品/安全" },
 ];
 
+const ROLE_COLUMNS = [
+  { title: "角色", dataIndex: "role", width: 120, render: (_value: unknown, row: (typeof ROLE_ROWS)[number]) => <strong>{row.role}</strong> },
+  { title: "主要工作", dataIndex: "duties" },
+  { title: "系统入口", dataIndex: "entries" },
+  { title: "不负责", dataIndex: "outOfScope" },
+];
+
+const SOURCE_COLUMNS = [
+  { title: "来源方式", dataIndex: "mode", width: 130, render: (_value: unknown, row: (typeof SOURCE_ROWS)[number]) => <strong>{row.mode}</strong> },
+  { title: "入口", dataIndex: "how", width: 220 },
+  { title: "需求池标识", dataIndex: "where" },
+];
+
+const AGENDA_COLUMNS = [
+  { title: "时段", dataIndex: "time", width: 120, render: (_value: unknown, row: (typeof AGENDA_ROWS)[number]) => <span className="mono-cell">{row.time}</span> },
+  { title: "内容", dataIndex: "content" },
+  { title: "形式", dataIndex: "format", width: 130 },
+];
+
+const ESCALATION_COLUMNS = [
+  { title: "现象", dataIndex: "symptom", width: 220, render: (_value: unknown, row: (typeof ESCALATION_ROWS)[number]) => <strong>{row.symptom}</strong> },
+  { title: "首查项", dataIndex: "check", width: 260 },
+  { title: "升级路径", dataIndex: "escalate" },
+];
+
 export function SopPanel() {
   return (
     <div className="sop-stack guide-panel sop-panel">
       <ArcoCard
         bordered={false}
         className="rq-card"
-        title={<h3>一、角色与边界</h3>}
+        title={<h2>一、角色与边界</h2>}
         extra={<ArcoTag color="green">试点材料 · v3.1</ArcoTag>}
       >
         <div className="guide-section">
@@ -57,12 +82,7 @@ export function SopPanel() {
             data={ROLE_ROWS}
             pagination={false}
             border={false}
-            columns={[
-              { title: "角色", dataIndex: "role", width: 120, render: (_value, row) => <strong>{row.role}</strong> },
-              { title: "主要工作", dataIndex: "duties" },
-              { title: "系统入口", dataIndex: "entries" },
-              { title: "不负责", dataIndex: "outOfScope" },
-            ]}
+            columns={ROLE_COLUMNS}
           />
           <ArcoAlert
             className="rq-inline-alert"
@@ -73,9 +93,9 @@ export function SopPanel() {
         </div>
       </ArcoCard>
 
-      <ArcoCard bordered={false} className="rq-card" title={<h3>二、日常标准作业流程（PM Leader &amp; 执行 PM）</h3>}>
+      <ArcoCard bordered={false} className="rq-card" title={<h2>二、日常标准作业流程（PM Leader &amp; 执行 PM）</h2>}>
         <div className="guide-section">
-          <h4 className="guide-subheading">PM Leader · 每日 / 每周 SOP</h4>
+          <h3 className="guide-subheading">PM Leader · 每日 / 每周 SOP</h3>
           <ul className="guide-steps">
             <li><strong>每日 10 分钟（上午）：</strong>打开「总览」，看同步、分析、推送四项健康度；点「需求池」，先筛「待分配负责人」，再筛「推送失败」。待分配优先在详情页选负责人，系统会自动排队推送并通知新负责人。</li>
             <li><strong>每日异常：</strong>推送失败先看详情页的最近失败原因，点「重试 Base 推送」；同一错误反复出现时，记录 RQ 编号并升级运维。同步/分析失败交给系统自动重试，不在 Web 重复触发。</li>
@@ -90,7 +110,7 @@ export function SopPanel() {
         <ArcoDivider className="rq-compact-divider" />
 
         <div className="guide-section">
-          <h4 className="guide-subheading">三、执行 PM · 每日 SOP</h4>
+          <h3 className="guide-subheading">三、执行 PM · 每日 SOP</h3>
           <ul className="guide-steps">
             <li><strong>打开 Base「TB需求池」：</strong>按「PM状态=待处理」筛选自己负责的行；先看 AI模块建议/AI优先级建议，再确定「PM确认模块」与「PM确认优先级」。</li>
             <li><strong>处理负责人通知：</strong>收到「需求通知」卡片后，进入对应需求；确认需求描述与证据，在 Base 完成字段确认并更新 PM 状态。</li>
@@ -103,13 +123,13 @@ export function SopPanel() {
         </div>
       </ArcoCard>
 
-      <ArcoCard bordered={false} className="rq-card" title={<h3>四、来源入口与需求评估</h3>}>
+      <ArcoCard bordered={false} className="rq-card" title={<h2>四、来源入口与需求评估</h2>}>
         <div className="guide-section">
           <ArcoTypography.Paragraph type="secondary" className="guide-lead">
             除 Teambition 同步外，系统支持两种新来源：Web「从聊天粘贴」和飞书 Base「需求收集表」；加上手工录入，共四种来源。四种来源进入后走同一条 分析 → 负责人 → 推送 链路；来源只影响入口和来源标识，不改变 PM 确认口径。
           </ArcoTypography.Paragraph>
 
-          <h4 className="guide-subheading">4.1 聊天粘贴（Web 需求池）</h4>
+          <h3 className="guide-subheading">4.1 聊天粘贴（Web 需求池）</h3>
           <ol className="guide-steps">
             <li><strong>入口：</strong>需求池「新建需求」旁的「从聊天粘贴」。</li>
             <li><strong>粘贴：</strong>把聊天原文粘到文本框（最多 20,000 字）；不要粘账号、密码、密钥或附件内容。</li>
@@ -122,7 +142,7 @@ export function SopPanel() {
           </ol>
           <p className="guide-note">聊天原文不保存；手机号、邮箱、证件号、@提及会先掩码。AI 没能整理时，标题和描述会按脱敏原文填入并明确提示「未经过 AI 整理」，必须人工改写后再提交。</p>
 
-          <h4 className="guide-subheading">4.2 需求收集表（多维表格同步）</h4>
+          <h3 className="guide-subheading">4.2 需求收集表（多维表格同步）</h3>
           <ol className="guide-steps">
             <li><strong>入口：</strong>飞书 Base 里的「需求收集表」，与「TB需求池」是两张表；把表单/表格入口发给需求提出人（销售、售后、电商、运营等）。</li>
             <li><strong>填写：</strong>标题、描述、来源渠道必填；需求类型、产品型号、约束说明、补充链接、功能模块、提出人按需填写。链接必须是 http(s)，不要带账号密码。</li>
@@ -132,20 +152,16 @@ export function SopPanel() {
             <li><strong>日常维护：</strong>收集表本身不设删除同步；如需暂停收录，在「数据源与计划 → 多维表格需求收集表」核对同步状态。</li>
           </ol>
 
-          <h4 className="guide-subheading">4.3 四种来源对照</h4>
+          <h3 className="guide-subheading">4.3 四种来源对照</h3>
           <ArcoTable<(typeof SOURCE_ROWS)[number]>
             rowKey="mode"
             data={SOURCE_ROWS}
             pagination={false}
             border={false}
-            columns={[
-              { title: "来源方式", dataIndex: "mode", width: 130, render: (_value, row) => <strong>{row.mode}</strong> },
-              { title: "入口", dataIndex: "how", width: 220 },
-              { title: "需求池标识", dataIndex: "where" },
-            ]}
+            columns={SOURCE_COLUMNS}
           />
 
-          <h4 className="guide-subheading">4.4 需求评估（详情页按需辅助）</h4>
+          <h3 className="guide-subheading">4.4 需求评估（详情页按需辅助）</h3>
           <ol className="guide-steps">
             <li><strong>触发：</strong>需求详情页「需求评估」区块，点「生成评估」手动触发；不会在同步/分析时自动调用模型。</li>
             <li><strong>补充输入：</strong>背景（≤2000 字）、目标（≤1000 字）、使用场景（≤2000 字）都可留空；补充内容只保存在评估版本里，不改需求原文、不写 Base。</li>
@@ -155,36 +171,28 @@ export function SopPanel() {
         </div>
       </ArcoCard>
 
-      <ArcoCard bordered={false} className="rq-card" title={<h3>五、30 分钟培训议程与异常排查</h3>}>
+      <ArcoCard bordered={false} className="rq-card" title={<h2>五、30 分钟培训议程与异常排查</h2>}>
         <div className="guide-section">
-          <h4 className="guide-subheading">30 分钟培训议程</h4>
+          <h3 className="guide-subheading">30 分钟培训议程</h3>
           <ArcoTable<(typeof AGENDA_ROWS)[number]>
             rowKey="time"
             data={AGENDA_ROWS}
             pagination={false}
             border={false}
-            columns={[
-              { title: "时段", dataIndex: "time", width: 120, render: (_value, row) => <span className="mono-cell">{row.time}</span> },
-              { title: "内容", dataIndex: "content" },
-              { title: "形式", dataIndex: "format", width: 130 },
-            ]}
+            columns={AGENDA_COLUMNS}
           />
         </div>
 
         <ArcoDivider className="rq-compact-divider" />
 
         <div className="guide-section">
-          <h4 className="guide-subheading">六、异常排查与升级路径</h4>
+          <h3 className="guide-subheading">六、异常排查与升级路径</h3>
           <ArcoTable<(typeof ESCALATION_ROWS)[number]>
             rowKey="symptom"
             data={ESCALATION_ROWS}
             pagination={false}
             border={false}
-            columns={[
-              { title: "现象", dataIndex: "symptom", width: 220, render: (_value, row) => <strong>{row.symptom}</strong> },
-              { title: "首查项", dataIndex: "check", width: 260 },
-              { title: "升级路径", dataIndex: "escalate" },
-            ]}
+            columns={ESCALATION_COLUMNS}
           />
         </div>
       </ArcoCard>

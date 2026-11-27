@@ -44,24 +44,23 @@ test("audit intake counts avoid array parameters and FILTER so the target transp
     // 妙搭 Drizzle 传输层会把数组参数展开成元组（ANY(($2,$3)::text[]) 报 42809），所以这里断言 SQL 形状。
     query: async (text: string, values?: unknown[]) => {
       queries.push({ text, values });
-      if (text.includes("AS today")) return { rows: [{ today: 2 }], rowCount: 1 };
       if (text.includes("LIMIT 1")) return { rows: [{ event_type: "intake.draft_failed", occurred_at: "2026-11-18T09:00:00.000Z" }], rowCount: 1 };
-      return { rows: [{ total: 5 }], rowCount: 1 };
+      return { rows: [{ total: 5, today: 2 }], rowCount: 1 };
     },
   };
   const repository = new PostgresAuditEventRepository(pool as never);
   const stats = await repository.countByEntityType({ entityType: "intake", eventTypes: ["intake.draft_extracted", "intake.draft_failed"], since: "2026-11-17T16:00:00.000Z" });
   assert.deepEqual(stats, { total: 5, today: 2, lastAt: "2026-11-18T09:00:00.000Z", lastEventType: "intake.draft_failed" });
-  assert.equal(queries.length, 3);
+  assert.equal(queries.length, 2);
   for (const query of queries) {
     assert.equal(query.text.includes("ANY("), false, query.text);
     assert.equal(query.text.includes("FILTER"), false, query.text);
     assert.match(query.text, /entity_type=\$1/);
   }
-  assert.deepEqual(queries[0]!.values, ["intake", "intake.draft_extracted", "intake.draft_failed"]);
-  assert.match(queries[1]!.text, /occurred_at>=\$4::timestamptz/);
-  assert.deepEqual(queries[1]!.values, ["intake", "intake.draft_extracted", "intake.draft_failed", "2026-11-17T16:00:00.000Z"]);
-  assert.match(queries[2]!.text, /ORDER BY occurred_at DESC,id DESC LIMIT 1/);
+  assert.match(queries[0]!.text, /occurred_at>=\$4::timestamptz/);
+  assert.deepEqual(queries[0]!.values, ["intake", "intake.draft_extracted", "intake.draft_failed", "2026-11-17T16:00:00.000Z"]);
+  assert.match(queries[1]!.text, /ORDER BY occurred_at DESC,id DESC LIMIT 1/);
+  assert.deepEqual(queries[1]!.values, ["intake", "intake.draft_extracted", "intake.draft_failed"]);
 });
 
 test("base form intake inserts source_type base_form with a record-id identity guard", async () => {
@@ -938,4 +937,55 @@ test("Wave 2: priority override, analysis context, owner, and duplicate resoluti
   assert.equal(txCalls.filter((s) => s === "BEGIN").length, 2);
   assert.equal(txCalls.filter((s) => s.startsWith("INSERT INTO audit_events")).length, 2);
   assert.equal(txCalls.filter((s) => s === "COMMIT").length, 2);
+});
+
+test("Perf Wave 1: search uses slim list column projection, listDuplicateCandidates filters titleKey in SQL, and flags.listByPrefix escapes wildcards", async () => {
+  const { pool, calls } = recordingPool();
+  const store = new PostgresRepositories(pool);
+  await store.requirements.search({ limit: 25 });
+  const searchSql = calls[0]!.sql;
+  assert.equal(searchSql.includes("SELECT r.*"), false, "search must not SELECT r.*");
+  assert.match(searchSql, /r\.source_payload->>'intakeOrigin' AS intake_origin/);
+  assert.equal(searchSql.includes("r.source_custom_fields"), false);
+  assert.equal(searchSql.includes("r.attachment_refs"), false);
+
+  await store.requirements.listDuplicateCandidates({ requirementId: "req-1", sourceConfigId: "src-1", titleKey: "低温掉电" });
+  const dupCall = calls[1]!;
+  assert.match(dupCall.sql, /lower\(regexp_replace\(btrim\(normalize\(title,NFKC\)\),'\\s\+',' ','g'\)\)=\$3::text/);
+  assert.deepEqual(dupCall.values, ["req-1", "src-1", "低温掉电"]);
+
+  const flagRows = [{ name: "gate:G1", value: { confirmed: true }, updated_at: "2026-11-27T00:00:00.000Z" }];
+  const flagCalls: Array<{ sql: string; values: unknown[] }> = [];
+  const flagPool = {
+    query: async (sql: string, values: unknown[] = []) => { flagCalls.push({ sql, values }); return { rows: flagRows, rowCount: 1 }; },
+    connect: async () => { throw new Error("unused"); },
+  } as never;
+  const listed = await new PostgresRepositories(flagPool).flags.listByPrefix("gate_100%:");
+  assert.deepEqual(listed, [{ name: "gate:G1", value: { confirmed: true }, updatedAt: "2026-11-27T00:00:00.000Z" }]);
+  assert.match(flagCalls[0]!.sql, /WHERE name LIKE \$1\|\|'%' ORDER BY name/);
+  assert.deepEqual(flagCalls[0]!.values, ["gate\\_100\\%:"]);
+});
+
+test("Perf Wave 1: analysis-run aiCallStats collapses to 1 CTE query and listByRequirement projects structured_result only for latest version", async () => {
+  const calls: Array<{ sql: string; values: unknown[] }> = [];
+  const pool = {
+    query: async (sql: string, values: unknown[] = []) => {
+      calls.push({ sql, values });
+      if (sql.includes("WITH scoped AS")) {
+        return { rows: [{ total: 10, today: 3, last_status: "analyzed", last_at: "2026-11-27T01:00:00.000Z" }], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+    connect: async () => { throw new Error("unused"); },
+  } as never;
+  const analyses = new PostgresRepositories(pool).analyses;
+  const stats = await analyses.aiCallStats("2026-11-26T16:00:00.000Z", "product");
+  assert.deepEqual(stats, { total: 10, today: 3, lastAt: "2026-11-27T01:00:00.000Z", lastStatus: "analyzed" });
+  assert.equal(calls.length, 1, "aiCallStats must run in 1 CTE query");
+  assert.equal(calls[0]!.sql.includes("FILTER"), false);
+  assert.equal(calls[0]!.sql.includes("ANY("), false);
+  assert.deepEqual(calls[0]!.values, ["2026-11-26T16:00:00.000Z", "product"]);
+
+  await analyses.listByRequirement("req-1");
+  assert.match(calls[1]!.sql, /CASE WHEN analysis_version=MAX\(analysis_version\) OVER \(\) THEN structured_result ELSE NULL END AS structured_result/);
 });

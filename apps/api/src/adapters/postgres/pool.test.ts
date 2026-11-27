@@ -41,3 +41,30 @@ test("pool size defaults to 10 and honours PG_POOL_MAX", async () => {
     await Promise.all(pools.map((pool) => pool.end()));
   }
 });
+
+test("statement_timeout and query_timeout default safely and honour positive-int env overrides", async () => {
+  const pools: Pool[] = [];
+  const readTimeouts = (stmt: string | undefined, query: string | undefined) => {
+    let result = { statement_timeout: -1, query_timeout: -1 };
+    withEnv("PG_STATEMENT_TIMEOUT_MS", stmt, () => {
+      withEnv("PG_QUERY_TIMEOUT_MS", query, () => {
+        const pool = createPool("postgres://example/db");
+        assert.ok(pool);
+        pools.push(pool);
+        result = {
+          statement_timeout: Number(pool.options.statement_timeout ?? -1),
+          query_timeout: Number(pool.options.query_timeout ?? -1),
+        };
+      });
+    });
+    return result;
+  };
+  try {
+    assert.deepEqual(readTimeouts(undefined, undefined), { statement_timeout: 15_000, query_timeout: 20_000 });
+    assert.deepEqual(readTimeouts("8000", "12000"), { statement_timeout: 8_000, query_timeout: 12_000 });
+    assert.deepEqual(readTimeouts("0", "-5"), { statement_timeout: 15_000, query_timeout: 20_000 });
+    assert.deepEqual(readTimeouts("abc", "12.5"), { statement_timeout: 15_000, query_timeout: 20_000 });
+  } finally {
+    await Promise.all(pools.map((pool) => pool.end()));
+  }
+});

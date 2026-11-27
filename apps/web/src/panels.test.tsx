@@ -407,9 +407,10 @@ describe("SourcesPanel (ticket 16)", () => {
     expect(productLink).toHaveAttribute("href", productBase);
     expect(productLink).toHaveAttribute("target", "_blank");
     expect(screen.getByRole("link", { name: groupBase })).toHaveAttribute("href", groupBase);
-    // ≥1200px 两列（Arco xl=12），窄屏由 xs=24 回落单列；align="stretch" 使两张数据源配置卡等高对齐。
+    // ≥1200px 两列（Arco xl=12），窄屏由 xs=24 回落单列；align="start" 避免两卡被强制等高。
     expect(document.querySelectorAll(".arco-col-xs-24.arco-col-xl-12")).toHaveLength(2);
-    expect(document.querySelector(".sources-page .arco-row-align-stretch")).toBeTruthy();
+    expect(document.querySelector(".sources-page .arco-row-align-start")).toBeTruthy();
+    expect(document.querySelector(".sources-page .arco-row-align-stretch")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "复制需求池 Base 地址" }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(productBase));
     expect(await screen.findByRole("button", { name: "复制需求池 Base 地址" })).toHaveTextContent("已复制");
@@ -590,7 +591,7 @@ describe("RequirementsPanel (ticket 17)", () => {
       fireEvent.change(screen.getByLabelText("搜索需求标题"), { target: { value: "报表" } });
       fireEvent.click(screen.getByRole("button", { name: "筛选" }));
       fireEvent.click(screen.getByRole("button", { name: "导出 CSV" }));
-      await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/api/requirements/export?q=%E6%8A%A5%E8%A1%A8")));
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/api/requirements/export?q=%E6%8A%A5%E8%A1%A8"), expect.objectContaining({ signal: expect.any(AbortSignal) })));
       await waitFor(() => expect(createObjectURL).toHaveBeenCalledTimes(1));
       expect(revokeObjectURL).toHaveBeenCalledWith("blob:mock");
       expect(click).toHaveBeenCalled();
