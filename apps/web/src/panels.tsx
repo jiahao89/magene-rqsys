@@ -5,7 +5,7 @@ import { useCallback, useEffect, useId, useRef, useState, Component, type Keyboa
 import { AudienceEditor, BetaPanel, IntakeForm, ManualEditSection } from "./intake-form";
 import { Alert as ArcoAlert, Badge as ArcoBadge, Button as ArcoButton, Card as ArcoCard, Checkbox as ArcoCheckbox, Collapse, Descriptions as ArcoDescriptions, Divider as ArcoDivider, Empty as ArcoEmpty, Form as ArcoForm, Grid as ArcoGrid, Input as ArcoInput, InputNumber as ArcoInputNumber, Message as ArcoMessage, Popover as ArcoPopover, Radio as ArcoRadio, Result as ArcoResult, Select as ArcoSelect, Space as ArcoSpace, Statistic as ArcoStatistic, Switch as ArcoSwitch, Table as ArcoTable, Tabs as ArcoTabs, Tag as ArcoTag, Tooltip as ArcoTooltip, Typography as ArcoTypography } from "@arco-design/web-react";
 import { ConfirmModal } from "./confirm-modal";
-import { ArrowLeft, RefreshCw } from "lucide-react";
+import { ArrowLeft, CircleHelp, Download, RefreshCw } from "lucide-react";
 import { stateLabel } from "./state-labels";
 import { RequirementDetailSkeleton, SkeletonBlock, SkeletonTableRows } from "./skeleton";
 import { checkScheduleHealth } from "./schedule";
@@ -277,7 +277,7 @@ export function SourcesPanel({ sources, loadState, onRefresh }: { sources: Sourc
   const product = sources.find((item) => (item.pool ?? "product") === "product");
   const group = sources.find((item) => item.pool === "group");
   return <div className="sources-page">
-    <ArcoGrid.Row gutter={[16, 16]} align="start">
+    <ArcoGrid.Row gutter={[16, 16]} align="stretch">
       <ArcoGrid.Col xs={24} xl={12}><SourceConfigCard pool="product" existing={product} loadState={loadState} onRefresh={onRefresh} /></ArcoGrid.Col>
       <ArcoGrid.Col xs={24} xl={12}><SourceConfigCard pool="group" existing={group} loadState={loadState} onRefresh={onRefresh} /></ArcoGrid.Col>
     </ArcoGrid.Row>
@@ -375,31 +375,36 @@ function SourceConfigCard({ pool, existing, loadState, onRefresh }: { pool: Requ
       : lastBatchState === "error" ? "暂不可用" : "暂无同步记录";
 
   return <section className="source-card-wrap" aria-label={isGroup ? "集团需求池来源配置" : "产品需求池来源配置"}>
-    <ArcoCard className={`source-card ${isGroup ? "is-group" : "is-product"}`} title={<ArcoSpace size={8} align="center" wrap>
+    <ArcoCard bordered={false} className={`rq-card source-card ${isGroup ? "is-group" : "is-product"}`} title={<ArcoSpace size={8} align="center" wrap>
       <ArcoTypography.Title heading={5} style={{ margin: 0 }}>{title}</ArcoTypography.Title>
       {existing && <ArcoTag color={existing.enabled ? "green" : "gray"} bordered={false}>{existing.enabled ? "当前已启用" : "当前已停用"}</ArcoTag>}
     </ArcoSpace>}>
+      {loadState === "error" && <ArcoAlert className="rq-inline-alert" type="error" showIcon role="alert" title="无法读取来源配置" content="请检查 API 连接后重试。" />}
+      <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
+      {unresolvedNames.length > 0 && <ArcoAlert className="rq-inline-alert" type="error" showIcon role="alert" title="执行人未解析" content={`${unresolvedNames.join("、")}：请填写 Teambition 组织目录中的准确姓名。`} />}
       <ArcoTypography.Paragraph type="secondary">{description}</ArcoTypography.Paragraph>
-      {/* 摘要即表单：每个字段只出现一次，卡片标题上的 Tag 表示已保存状态，勾选框表示保存后的状态。 */}
-      <ArcoDescriptions column={1} size="small" className="source-summary" labelStyle={{ width: 132 }} data={[
+      {/* 摘要即表单：每个字段只出现一次，卡片标题上的 Tag 表示已保存状态，开关表示保存后的状态。 */}
+      <ArcoDescriptions column={1} size="small" className="source-summary" labelStyle={{ width: 112 }} data={[
         { label: "项目名称", value: <ArcoInput aria-label={`${prefix}项目名称`} value={draft.projectName} onChange={(value: string) => set("projectName", value)} /> },
-        { label: "同步开关", value: <ArcoSpace size={8} align="center" wrap>
+        { label: "同步开关", value: <div className="schedule-toggle-row">
           <ArcoSwitch checked={draft.enabled} disabled={emptyAllowlist} aria-label={isGroup ? "启用集团池同步" : "启用同步"} onChange={(checked: boolean) => set("enabled", checked)} />
           <span>{isGroup ? "启用集团池同步" : "启用同步"}</span>
           <span className="subtle-text">保存后启用</span>
-        </ArcoSpace> },
+        </div> },
         ...(isGroup ? [{ label: "执行人名单", value: <ExecutorAllowlistEditor value={executorNames} onChange={(next) => set("executorAllowlist", next)} disabled={busy} /> }] : []),
         { label: "周计划", value: <ArcoSpace direction="vertical" size={8} style={{ width: "100%" }}>
-          <ArcoSpace size={4} wrap>
+          <div className="weekday-grid">
             {WEEKDAY_LABELS.map((label, index) => { const day = index + 1; return <ArcoButton key={label} htmlType="button" size="small" type={selectedDays.includes(day) ? "primary" : "secondary"} aria-label={isGroup ? `集团池${label}` : label} aria-pressed={selectedDays.includes(day)} onClick={() => toggleWeekday(day)}>{label}</ArcoButton>; })}
-          </ArcoSpace>
+          </div>
           <ArcoSpace size={8} align="center" wrap>
-            <ArcoInput aria-label={`${prefix}执行时间`} placeholder="09:00" style={{ width: 120 }} value={draft.schedule.time ?? ""} onChange={(value: string) => set("schedule", { ...draft.schedule, time: value === "" ? null : value })} />
-            <ArcoInput aria-label={`${prefix}时区`} placeholder="Asia/Shanghai" style={{ width: 180 }} value={draft.schedule.timezone ?? ""} onChange={(value: string) => set("schedule", { ...draft.schedule, timezone: value === "" ? null : value })} />
+            <ArcoInput aria-label={`${prefix}执行时间`} placeholder="09:00" style={{ width: 110 }} value={draft.schedule.time ?? ""} onChange={(value: string) => set("schedule", { ...draft.schedule, time: value === "" ? null : value })} />
+            <ArcoInput aria-label={`${prefix}时区`} placeholder="Asia/Shanghai" style={{ width: 168 }} value={draft.schedule.timezone ?? ""} onChange={(value: string) => set("schedule", { ...draft.schedule, timezone: value === "" ? null : value })} />
+          </ArcoSpace>
+          <div className="schedule-toggle-row">
             <ArcoSwitch checked={draft.schedule.enabled} aria-label={isGroup ? "启用集团池周计划" : "启用周计划"} onChange={(checked: boolean) => set("schedule", { ...draft.schedule, enabled: checked })} />
             <span>{isGroup ? "启用集团池周计划" : "启用周计划"}</span>
             <span className="subtle-text">保存后启用</span>
-          </ArcoSpace>
+          </div>
         </ArcoSpace> },
         { label: "最近同步", value: lastSyncText },
       ]} />
@@ -408,11 +413,8 @@ function SourceConfigCard({ pool, existing, loadState, onRefresh }: { pool: Requ
         <ArcoButton type="primary" htmlType="button" size="small" onClick={() => void save()} disabled={busy || loadState === "loading" || emptyAllowlist}>{isGroup ? (existing ? "保存集团池设置" : "创建集团池来源") : (existing ? "保存更新" : "创建来源")}</ArcoButton>
       </ArcoSpace>
 
-      <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
-      {unresolvedNames.length > 0 && <ArcoAlert className="rq-inline-alert" type="error" showIcon role="alert" title="执行人未解析" content={`${unresolvedNames.join("、")}：请填写 Teambition 组织目录中的准确姓名。`} />}
       {emptyAllowlist && <ArcoAlert className="rq-inline-alert" type="warning" showIcon role="status" content="请至少填写 1 个执行人后再启用同步；名单为空时不能保存或启用。" />}
       {loadState === "ready" && <ConnectionSelfCheck existing={existing} draft={draft} pool={pool} />}
-      {loadState === "error" && <ArcoEmpty className="rq-empty" description={<div className="rq-empty-copy"><strong>无法读取来源配置</strong><span>请检查 API 连接后重试。</span></div>} />}
       {!existing && loadState === "ready" && <ArcoEmpty className="rq-empty" description={<div className="rq-empty-copy"><strong>{isGroup ? "尚未配置集团池数据源" : "尚未配置数据源"}</strong><span>{isGroup ? "填写项目名称与执行人名单后创建；名单为空时不能启用同步。" : "填写项目名称并创建后，可手动同步；周计划启用后按设定执行。"}</span></div>} />}
     </ArcoCard>
   </section>;
@@ -461,7 +463,7 @@ function BaseFormReadonlyPanel() {
     && typeof stats?.writeBackFailed === "number"
     && typeof stats?.readFailed === "boolean";
   const lastError = sanitizeBaseFormError(stats?.lastError ?? null);
-  return <ArcoCard className="baseform-card" title={<h3 id="baseform-source-heading">多维表格需求收集表</h3>} extra={<ArcoSpace size={8}>
+  return <ArcoCard bordered={false} className="rq-card baseform-card" title={<h3 id="baseform-source-heading">多维表格需求收集表</h3>} extra={<ArcoSpace size={8}>
     <ArcoTag color="orange" bordered={false}>同步已暂停</ArcoTag>
     <ArcoTag color="gray" bordered={false}>只读</ArcoTag>
   </ArcoSpace>}>
@@ -528,7 +530,7 @@ function BaseLinksPanel() {
     { key: "product", label: "需求池 Base", copyLabel: "复制需求池 Base 地址", url: links?.product?.url?.trim() || null },
     { key: "group", label: "集团需求池 Base", copyLabel: "复制集团需求池 Base 地址", url: links?.group?.url?.trim() || null },
   ];
-  return <ArcoCard className="base-links-card" title={<ArcoTypography.Title heading={5} style={{ margin: 0 }}>飞书 Base 地址</ArcoTypography.Title>}>
+  return <ArcoCard bordered={false} className="rq-card base-links-card" title={<ArcoTypography.Title heading={5} style={{ margin: 0 }}>飞书 Base 地址</ArcoTypography.Title>}>
     <ArcoTypography.Paragraph type="secondary">这两个 Base 承载需求推送与飞书消息通知，仅在应用内展示，不可编辑。</ArcoTypography.Paragraph>
     <div className="base-link-list">
       {rows.map((row) => {
@@ -697,30 +699,25 @@ export function PeoplePanel() {
   };
 
   return (
-    <ArcoCard
-      className="rq-card requirements-panel"
-      title={
-        <div className="rq-card-title">
-          <h2>组内人员</h2>
-          <ArcoTypography.Text type="secondary" className="rq-card-subtitle">用于按 TB 负责人筛选需求、维护功能模块责任人；绑定飞书账号后，该人员才会出现在需求的负责人下拉中。</ArcoTypography.Text>
-        </div>
-      }
-      extra={<ArcoButton htmlType="button" onClick={() => void load()} disabled={busy} type="secondary" size="small"><RefreshCw size={14} />刷新</ArcoButton>}
-    >
+    <ArcoCard bordered={false} className="rq-card requirements-panel">
+      <div className="req-action-row">
+        <ArcoForm layout="inline" className="rq-compact-form">
+          <ArcoForm.Item label="人员姓名" style={{ marginBottom: 0 }}>
+            <ArcoInput aria-label="新增人员姓名" placeholder="输入成员姓名…" value={draft} onChange={(value: string) => setDraft(value)} />
+          </ArcoForm.Item>
+          <ArcoForm.Item style={{ marginBottom: 0 }}>
+            <ArcoButton htmlType="button" onClick={() => void submit(() => addTeamPerson(draft), "人员已添加。")} disabled={busy || !draft.trim()} type="primary" size="small">新增人员</ArcoButton>
+          </ArcoForm.Item>
+        </ArcoForm>
+        <ArcoButton htmlType="button" onClick={() => void load()} disabled={busy} type="secondary" size="small"><RefreshCw size={14} />刷新</ArcoButton>
+      </div>
       <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
-      <ArcoForm layout="inline" className="rq-compact-form">
-        <ArcoForm.Item label="人员姓名">
-          <ArcoInput aria-label="新增人员姓名" value={draft} onChange={(value: string) => setDraft(value)} />
-        </ArcoForm.Item>
-        <ArcoForm.Item>
-          <ArcoButton htmlType="button" onClick={() => void submit(() => addTeamPerson(draft), "人员已添加。")} disabled={busy || !draft.trim()} type="primary" size="small">新增人员</ArcoButton>
-        </ArcoForm.Item>
-      </ArcoForm>
-      {people.length ? <ArcoTable<TeamPerson>
+      {loadState === "loading" && !people.length ? <SkeletonTableRows rows={4} columns={3} /> : <ArcoTable<TeamPerson>
         rowKey="name"
         data={people}
         pagination={false}
         border={false}
+        noDataElement={<ArcoEmpty className="rq-empty" description={<div className="rq-empty-copy"><strong>{loadError ? "人员读取失败" : "暂无人员"}</strong><span>{loadError ? "检查 API 连接后刷新。" : "填写姓名并新增；数据源配置完成后可维护组内名单并绑定飞书账号。"}</span></div>} />}
         columns={[
           { title: "人员", dataIndex: "name", width: 200, render: (_value, person) => editing === person.name ? <ArcoInput aria-label="编辑人员姓名" value={editDraft} onChange={(value: string) => setEditDraft(value)} /> : person.name },
           { title: "飞书账号", dataIndex: "feishuUserId", render: (_value, person) => bindingName === person.name
@@ -739,7 +736,7 @@ export function PeoplePanel() {
               ? <ArcoSpace size={8}><ArcoButton htmlType="button" onClick={() => void submit(() => renameTeamPerson(person.name, editDraft), "人员及模块责任关系已更新。")} disabled={busy || !editDraft.trim()} type="primary" size="small">保存</ArcoButton><ArcoButton htmlType="button" onClick={() => setEditing(null)} disabled={busy} type="secondary" size="small">取消</ArcoButton></ArcoSpace>
               : <ArcoSpace size={8}><ArcoButton htmlType="button" onClick={() => { setEditing(person.name); setEditDraft(person.name); setBindingName(null); }} disabled={busy} type="secondary" size="small">编辑</ArcoButton>{(person.feishuUserId || person.bindingConflict) && <DeleteConfirmation disabled={busy} triggerLabel="解除绑定" heading="解除飞书绑定" confirmLabel="确认解除" description={`解除「${person.name}」的飞书账号绑定？该人员名下需求的负责人映射将被清除，后续推送会停在待匹配负责人；已推送的 Base 记录不会被清除。`} onConfirm={() => void unbindFeishu(person.name)} />}<DeleteConfirmation disabled={busy} description={`删除人员“${person.name}”？相关功能模块将变为未分配，飞书账号绑定同时解除。`} onConfirm={() => void submit(() => deleteTeamPerson(person.name), "人员已删除，相关模块已解除分配。")} /></ArcoSpace> },
         ]}
-      /> : loadState === "loading" ? <SkeletonTableRows rows={4} columns={3} /> : <ArcoEmpty className="rq-empty" description={<div className="rq-empty-copy"><strong>{loadError ? "人员读取失败" : "暂无人员"}</strong><span>{loadError ? "检查 API 连接后刷新。" : "填写姓名并新增；数据源配置完成后可维护组内名单并绑定飞书账号。"}</span></div>} />}
+      />}
     </ArcoCard>
   );
 }
@@ -819,55 +816,62 @@ export function ModulesPanel() {
   };
 
   return (
-    <ArcoCard
-      className="rq-card requirements-panel"
-      title={
-        <div className="rq-card-title">
-          <h2>功能模块</h2>
-          <ArcoTypography.Text type="secondary" className="rq-card-subtitle">AI 仅从已发布的模块名称中选择；无法匹配时输出“无法识别”。每次保存生成一个新字典版本，且至少保留一个模块。</ArcoTypography.Text>
+    <div className="modules-stack">
+      <ArcoCard bordered={false} className="rq-card requirements-panel">
+        <div className="req-action-row">
+          <ArcoForm layout="inline" className="rq-compact-form">
+            <ArcoForm.Item label="功能模块" style={{ marginBottom: 0 }}>
+              <ArcoInput aria-label="功能模块名称" placeholder="输入功能模块名称…" value={name} onChange={(value: string) => setName(value)} />
+            </ArcoForm.Item>
+            <ArcoForm.Item label="人员" style={{ marginBottom: 0 }}>
+              <ArcoSelect aria-label="模块责任人员" value={personName} onChange={(value: string) => setPersonName(value)} style={{ minWidth: 150 }} options={[{ label: "未分配", value: "" }, ...people.filter((person) => person.name).map((person) => ({ label: person.name!, value: person.name! }))]} />
+            </ArcoForm.Item>
+            <ArcoForm.Item style={{ marginBottom: 0 }}>
+              <ArcoButton htmlType="button" onClick={submit} disabled={busy} type="primary" size="small">新增模块</ArcoButton>
+            </ArcoForm.Item>
+          </ArcoForm>
+          <ArcoButton htmlType="button" onClick={() => void load()} disabled={busy} type="secondary" size="small"><RefreshCw size={14} />刷新</ArcoButton>
         </div>
-      }
-      extra={<ArcoButton htmlType="button" onClick={() => void load()} disabled={busy} type="secondary" size="small"><RefreshCw size={14} />刷新</ArcoButton>}
-    >
-      <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
-      {formError && <ArcoAlert className="rq-inline-alert" type="error" showIcon role="alert" content={formError} />}
-      <ArcoForm layout="inline" className="rq-compact-form">
-        <ArcoForm.Item label="功能模块">
-          <ArcoInput aria-label="功能模块名称" value={name} onChange={(value: string) => setName(value)} />
-        </ArcoForm.Item>
-        <ArcoForm.Item label="人员">
-          <ArcoSelect aria-label="模块责任人员" value={personName} onChange={(value: string) => setPersonName(value)} style={{ minWidth: 150 }} options={[{ label: "未分配", value: "" }, ...people.filter((person) => person.name).map((person) => ({ label: person.name!, value: person.name! }))]} />
-        </ArcoForm.Item>
-        <ArcoForm.Item>
-          <ArcoButton htmlType="button" onClick={submit} disabled={busy} type="primary" size="small">新增模块</ArcoButton>
-        </ArcoForm.Item>
-      </ArcoForm>
-      {items.length ? <div tabIndex={0} role="region" aria-label="功能模块列表"><ArcoTable<FunctionModuleEntry>
-        rowKey="name"
-        data={items}
-        pagination={false}
-        border={false}
-        rowClassName={(item: FunctionModuleEntry) => editing === item.name ? "module-row is-editing" : "module-row"}
-        columns={[
-          { title: "功能模块", dataIndex: "name", render: (_value, item) => editing === item.name ? <ArcoInput className="inline-input" aria-label="编辑功能模块名称" value={editName} onChange={(value: string) => setEditName(value)} autoFocus /> : item.name },
-          { title: "人员", dataIndex: "personName", width: 220, render: (_value, item) => editing === item.name ? <ArcoSelect className="inline-input" aria-label="编辑模块责任人员" value={editPerson} onChange={(value: string) => setEditPerson(value)} style={{ minWidth: 150 }} options={[{ label: "未分配", value: "" }, ...people.filter((person) => person.name).map((person) => ({ label: person.name!, value: person.name! }))]} /> : (item.personName ?? "未分配") },
-          { title: "操作", width: 200, render: (_value, item) => editing === item.name
-              ? <ArcoSpace size={8}><ArcoButton htmlType="button" onClick={submitEdit} disabled={busy} type="primary" size="small">保存</ArcoButton><ArcoButton htmlType="button" onClick={() => { setEditing(null); setEditName(""); setEditPerson(""); }} disabled={busy} type="secondary" size="small">取消</ArcoButton></ArcoSpace>
-              : <ArcoSpace size={8}><ArcoButton htmlType="button" onClick={() => beginEdit(item)} disabled={busy} type="secondary" size="small">编辑</ArcoButton><DeleteConfirmation disabled={busy || items.length === 1} description={`删除功能模块“${item.name}”？`} onConfirm={() => void save(items.filter((candidate) => candidate.name !== item.name))} /></ArcoSpace> },
-        ]}
-      /></div> : loadState === "loading" ? <SkeletonTableRows rows={4} columns={3} /> : <ArcoEmpty className="rq-empty" description={<div className="rq-empty-copy"><strong>{loadError ? "模块字典读取失败" : "暂无功能模块"}</strong><span>{loadError ? "检查 API 连接后刷新。" : "新增模块后，AI 分析会使用最新的已发布字典。"}</span></div>} />}
-      <ArcoDivider />
-      <div className="subsection">
-        <div className="rq-card-title" style={{ marginBottom: 12 }}>
-          <h3>词典版本历史</h3>
-          <ArcoTypography.Text type="secondary" className="rq-card-subtitle">每次保存生成一个新版本；仅最新发布版供 AI 分析使用。</ArcoTypography.Text>
-        </div>
-        {versionsError ? <ArcoEmpty className="rq-empty" description={<div className="rq-empty-copy"><strong>版本历史读取失败</strong><span>{versionsError}</span></div>} /> : versions.length ? <ArcoTable<DictionaryVersion>
+        <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
+        {formError && <ArcoAlert className="rq-inline-alert" type="error" showIcon role="alert" content={formError} />}
+        {loadState === "loading" && !items.length ? <SkeletonTableRows rows={4} columns={3} /> : <div tabIndex={0} role="region" aria-label="功能模块列表"><ArcoTable<FunctionModuleEntry>
+          rowKey="name"
+          data={items}
+          pagination={false}
+          border={false}
+          noDataElement={<ArcoEmpty className="rq-empty" description={<div className="rq-empty-copy"><strong>{loadError ? "模块字典读取失败" : "暂无功能模块"}</strong><span>{loadError ? "检查 API 连接后刷新。" : "新增模块后，AI 分析会使用最新的已发布字典。"}</span></div>} />}
+          rowClassName={(item: FunctionModuleEntry) => editing === item.name ? "module-row is-editing" : "module-row"}
+          columns={[
+            { title: "功能模块", dataIndex: "name", render: (_value, item) => editing === item.name ? <ArcoInput className="inline-input" aria-label="编辑功能模块名称" value={editName} onChange={(value: string) => setEditName(value)} autoFocus /> : item.name },
+            { title: "人员", dataIndex: "personName", width: 220, render: (_value, item) => editing === item.name ? <ArcoSelect className="inline-input" aria-label="编辑模块责任人员" value={editPerson} onChange={(value: string) => setEditPerson(value)} style={{ minWidth: 150 }} options={[{ label: "未分配", value: "" }, ...people.filter((person) => person.name).map((person) => ({ label: person.name!, value: person.name! }))]} /> : (item.personName ?? "未分配") },
+            { title: "操作", width: 200, render: (_value, item) => editing === item.name
+                ? <ArcoSpace size={8}><ArcoButton htmlType="button" onClick={submitEdit} disabled={busy} type="primary" size="small">保存</ArcoButton><ArcoButton htmlType="button" onClick={() => { setEditing(null); setEditName(""); setEditPerson(""); }} disabled={busy} type="secondary" size="small">取消</ArcoButton></ArcoSpace>
+                : <ArcoSpace size={8}><ArcoButton htmlType="button" onClick={() => beginEdit(item)} disabled={busy} type="secondary" size="small">编辑</ArcoButton><DeleteConfirmation disabled={busy || items.length === 1} description={`删除功能模块“${item.name}”？`} onConfirm={() => void save(items.filter((candidate) => candidate.name !== item.name))} /></ArcoSpace> },
+          ]}
+        /></div>}
+      </ArcoCard>
+
+      <ArcoCard
+        bordered={false}
+        className="rq-card"
+        title={
+          <div className="rq-card-title">
+            <h3>词典版本历史</h3>
+            <ArcoTypography.Text type="secondary" className="rq-card-subtitle">每次保存生成一个新版本；仅最新发布版供 AI 分析使用。</ArcoTypography.Text>
+          </div>
+        }
+      >
+        <ArcoTable<DictionaryVersion>
           rowKey="version"
-          data={versions}
+          data={versionsError ? [] : versions}
           pagination={false}
           border={false}
           scroll={{ x: 900 }}
+          noDataElement={
+            versionsError
+              ? <ArcoEmpty className="rq-empty" description={<div className="rq-empty-copy"><strong>版本历史读取失败</strong><span>{versionsError}</span></div>} />
+              : <ArcoEmpty className="rq-empty" description={<div className="rq-empty-copy"><strong>还没有词典版本</strong><span>保存一次模块字典后会生成首个已发布版本。</span></div>} />
+          }
           columns={[
             { title: "版本", dataIndex: "version", width: 90, render: (_value, d) => <span className="mono-cell">v{d.version}</span> },
             { title: "状态", dataIndex: "status", width: 110, render: (_value, d) => <PublishStatusChip status={d.status} /> },
@@ -875,9 +879,9 @@ export function ModulesPanel() {
             { title: "创建时间", dataIndex: "createdAt", width: 180, render: (_value, d) => timeLabel(d.createdAt) },
             { title: "发布时间", dataIndex: "publishedAt", width: 180, render: (_value, d) => d.publishedAt ? timeLabel(d.publishedAt) : "—" },
           ]}
-        /> : <ArcoEmpty className="rq-empty" description={<div className="rq-empty-copy"><strong>还没有词典版本</strong><span>保存一次模块字典后会生成首个已发布版本。</span></div>} />}
-      </div>
-    </ArcoCard>
+        />
+      </ArcoCard>
+    </div>
   );
 }
 
@@ -953,6 +957,7 @@ export function BatchesPanel({ onRefresh, pool = "product" }: { onRefresh: () =>
 
   return (
     <ArcoCard
+      bordered={false}
       className="rq-card requirements-panel"
       title={
         <div className="rq-card-title">
@@ -1009,12 +1014,13 @@ export function BatchesPanel({ onRefresh, pool = "product" }: { onRefresh: () =>
           />
         </ArcoCard>
       )}
-      {batches.length ? <>
+      {loadState === "loading" && !batches.length ? <SkeletonTableRows rows={5} columns={4} /> : <>
         <ArcoTable<BatchSummary> scroll={{ x: 960 }}
           rowKey="id"
           data={batches}
           pagination={false}
           border={false}
+          noDataElement={<ArcoEmpty className="rq-empty" description={<div className="rq-empty-copy"><strong>还没有同步批次</strong><span>启动手动同步后，真实批次记录会显示在这里。</span></div>} />}
           columns={[
             { title: "批次 ID", dataIndex: "id", render: (_value, batch) => <span className="mono-cell">{batch.id}</span> },
             { title: "池", dataIndex: "pool", width: 90, render: (_value, batch) => poolChip(batch.pool) },
@@ -1024,11 +1030,11 @@ export function BatchesPanel({ onRefresh, pool = "product" }: { onRefresh: () =>
             { title: "成功", dataIndex: "succeededCount" },
             { title: "失败", dataIndex: "failedCount", render: (_value, batch) => <span className={batch.failedCount ? "text-danger" : ""}>{batch.failedCount}</span> },
             { title: "开始时间", dataIndex: "startedAt", render: (_value, batch) => timeLabel(batch.startedAt) },
-            { title: "明细", render: (_value, batch) => <ArcoButton htmlType="button" onClick={() => void open(batch.id)} type="secondary" size="small">查看</ArcoButton> },
+            { title: "明细", render: (_value, batch) => <ArcoButton htmlType="button" onClick={() => void open(batch.id)} type="text" size="small">查看</ArcoButton> },
           ]}
         />
         {cursor && <div className="rq-action-bar"><ArcoButton htmlType="button" onClick={() => void load(appliedFiltersRef.current, cursor)} disabled={loadState === "loading"} type="secondary" size="small">加载更多</ArcoButton></div>}
-      </> : loadState === "loading" ? <SkeletonTableRows rows={5} columns={4} /> : <ArcoEmpty className="rq-empty" description={<div className="rq-empty-copy"><strong>还没有同步批次</strong><span>启动手动同步后，真实批次记录会显示在这里。</span></div>} />}
+      </>}
     </ArcoCard>
   );
 }
@@ -1600,104 +1606,163 @@ export function RequirementsPanel({ onRefresh, initialRequirementId, scope = "pr
     </section>;
   }
 
-  return <ArcoCard className="rq-card requirements-panel">
+  return <ArcoCard bordered={false} className="rq-card requirements-panel">
     {/* 5c-1：来源是一等维度。采用 Arco Tabs 置于列表上方，带计数、可深链；计数拿不到时只显示文字。
         集团池只有一个 TB 来源，不渲染来源 Tab，也不请求五来源计数。 */}
     {!mine && !isGroup && (
-      <AccessibleTabs
-        label="需求来源"
-        activeTab={sourceFilter || "__all__"}
-        onChange={(key) => applySourceFilter(key === "__all__" ? "" : key)}
-      >
-        {SOURCE_TABS.map((tab) => {
-          const countKey = sourceCountKey(tab.value);
-          // 处理视图切到「全部/已压制重复」时隐藏计数：计数是活跃数，列表行数会更多，避免误读。
-          const count = sourceCounts && processingState === "active" && countKey ? sourceCounts[countKey] : null;
-          return (
-            <ArcoTabs.TabPane
-              key={tab.value || "__all__"}
-              title={
-                <ArcoSpace size={4} align="center">
-                  <span>{tab.label}</span>
-                  {count !== null ? <ArcoTag size="small" className="source-tab-count">{count}</ArcoTag> : null}
-                </ArcoSpace>
-              }
-            />
-          );
-        })}
-      </AccessibleTabs>
+      <div className="req-source-tabs">
+        <AccessibleTabs
+          label="需求来源"
+          activeTab={sourceFilter || "__all__"}
+          onChange={(key) => applySourceFilter(key === "__all__" ? "" : key)}
+        >
+          {SOURCE_TABS.map((tab) => {
+            const countKey = sourceCountKey(tab.value);
+            // 处理视图切到「全部/已压制重复」时隐藏计数：计数是活跃数，列表行数会更多，避免误读。
+            const count = sourceCounts && processingState === "active" && countKey ? sourceCounts[countKey] : null;
+            return (
+              <ArcoTabs.TabPane
+                key={tab.value || "__all__"}
+                title={
+                  <ArcoSpace size={4} align="center">
+                    <span>{tab.label}</span>
+                    {count !== null ? <ArcoTag size="small" className="source-tab-count">{count}</ArcoTag> : null}
+                  </ArcoSpace>
+                }
+              />
+            );
+          })}
+        </AccessibleTabs>
+      </div>
     )}
     {!mine && (
-      <div className="processing-view-switch">
-        <span className="processing-view-switch-label">重复处理</span>
-        <ArcoRadio.Group
-          type="button"
-          size="small"
-          aria-label="重复处理视图"
-          value={processingState}
-          onChange={(value: RequirementProcessingView) => applyProcessingView(value)}
-          options={PROCESSING_VIEWS.map((view) => ({ label: view.label, value: view.value }))}
-        />
-        <ArcoTypography.Text type="secondary" className="rq-caption">已压制需求保留记录，但不会进入 AI 分析、Base 推送与通知。</ArcoTypography.Text>
+      <>
+        <div className="req-filter-bar">
+          <div className="qtoolbar-main">
+            <div className="qfield qfield-search">
+              <ArcoInput aria-label="搜索需求标题" placeholder="搜索需求标题或批次 ID…" value={query} onChange={(value: string) => setQuery(value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); applyFilters(); } }} />
+            </div>
+            <div className="qfield">
+              <ArcoSelect aria-label="TB负责人筛选" value={executorName} onChange={(value: string) => setExecutorName(value)} style={{ minWidth: 150 }} options={[{ label: "全部 TB 负责人", value: "" }, ...people.filter((person) => person.name).map((person) => ({ label: person.name!, value: person.name! }))]} />
+            </div>
+            <div className="qfield">
+              <ArcoSelect aria-label="同步状态筛选" value={pullState} onChange={(value: string) => setPullState(value)} style={{ minWidth: 130 }} options={pullStateOptions.map(([value, label]) => ({ label, value }))} />
+            </div>
+            {/* ARCO-05：更多筛选改为 Arco Popover，交由组件统一处理外部点击与 Escape 关闭。 */}
+            <ArcoPopover
+              className="qmore-popover"
+              style={{ maxWidth: 520 }}
+              trigger="click"
+              position="bl"
+              unmountOnExit
+              popupVisible={moreFiltersOpen}
+              onVisibleChange={setMoreFiltersOpen}
+              content={moreFiltersOpen ? (
+                <div className="qmore-popover-body" id="requirement-more-filters">
+                  <div className="qmore-field">
+                    <span className="qmore-field-label">优先级</span>
+                    <ArcoSelect aria-label="优先级筛选" value={priorityFilter} onChange={(value: string) => setPriorityFilter(value)} options={priorityFilterOptions.map(([value, label]) => ({ label, value }))} />
+                  </div>
+                  <div className="qmore-field">
+                    <span className="qmore-field-label">排序方式</span>
+                    <ArcoSelect aria-label="排序方式" value={prioritySort} onChange={(value: string) => setPrioritySort(value)} options={prioritySortOptions.map(([value, label]) => ({ label, value }))} />
+                  </div>
+                  <div className="qmore-field">
+                    <span className="qmore-field-label">负责人状态</span>
+                    <ArcoSelect aria-label="负责人筛选" value={ownerState} onChange={(value: string) => setOwnerState(value)} options={ownerStateOptions.map(([value, label]) => ({ label, value }))} />
+                  </div>
+                  <div className="qmore-field">
+                    <span className="qmore-field-label">分析状态</span>
+                    <ArcoSelect aria-label="分析状态筛选" value={analysisState} onChange={(value: string) => setAnalysisState(value)} options={analysisStateOptions.map(([value, label]) => ({ label, value }))} />
+                  </div>
+                  <div className="qmore-field">
+                    <span className="qmore-field-label">推送状态</span>
+                    <ArcoSelect aria-label="推送状态筛选" value={pushState} onChange={(value: string) => setPushState(value)} options={pushStateOptions.map(([value, label]) => ({ label, value }))} />
+                  </div>
+                  <div className="qmore-field">
+                    <span className="qmore-field-label">批次 ID</span>
+                    <ArcoInput aria-label="批次 ID 筛选" placeholder="输入批次 ID" value={batchId} onChange={(value: string) => setBatchId(value)} />
+                  </div>
+                  <div className="qmore-field">
+                    <span className="qmore-field-label">开始时间</span>
+                    {/* ARCO-04 豁免：datetime-local 依赖浏览器本地时区语义，保留原生控件。 */}
+                    <input className="rq-datetime-input" type="datetime-local" aria-label="最近同步开始时间" value={since} onChange={(e) => setSince(e.target.value)} />
+                  </div>
+                  <div className="qmore-field">
+                    <span className="qmore-field-label">结束时间</span>
+                    <input className="rq-datetime-input" type="datetime-local" aria-label="最近同步结束时间" value={until} onChange={(e) => setUntil(e.target.value)} />
+                  </div>
+                </div>
+              ) : null}
+            >
+              <ArcoButton type="secondary" htmlType="button" size="small" className="qmore-popover-trigger" aria-expanded={moreFiltersOpen} aria-controls="requirement-more-filters">更多筛选{moreFilterCount > 0 ? `（${moreFilterCount}）` : ""}</ArcoButton>
+            </ArcoPopover>
+          </div>
+          <div className="req-filter-actions">
+            {appliedFilterCount > 0 && <ArcoTag color="arcoblue" role="status">{appliedFilterCount} 个筛选已生效</ArcoTag>}
+            <ArcoButton type="primary" htmlType="button" size="small" onClick={applyFilters}>筛选</ArcoButton>
+            {activeFilterCount > 0 && <ArcoButton type="secondary" size="small" onClick={clearFilters} htmlType="button">清除筛选</ArcoButton>}
+          </div>
+        </div>
+        <ArcoDivider className="req-search-divider" />
+        <div className="req-action-row">
+          <div className="req-action-row-left">
+            {!isGroup && <IntakeForm onCreated={(id) => { refresh(); void open(id, { push: true }); }} />}
+            {isGroup && (
+              <div className="processing-view-switch">
+                <span className="processing-view-switch-label">重复处理</span>
+                <ArcoTooltip content="已压制需求保留记录，但不会进入 AI 分析、Base 推送与通知。">
+                  <span className="inline-help-icon" role="img" aria-label="重复处理说明"><CircleHelp size={14} /></span>
+                </ArcoTooltip>
+                <ArcoRadio.Group
+                  type="button"
+                  size="small"
+                  aria-label="重复处理视图"
+                  value={processingState}
+                  onChange={(value: RequirementProcessingView) => applyProcessingView(value)}
+                  options={PROCESSING_VIEWS.map((view) => ({ label: view.label, value: view.value }))}
+                />
+              </div>
+            )}
+          </div>
+          <div className="req-action-row-right">
+            {!isGroup && (
+              <div className="processing-view-switch">
+                <span className="processing-view-switch-label">重复处理</span>
+                <ArcoTooltip content="已压制需求保留记录，但不会进入 AI 分析、Base 推送与通知。">
+                  <span className="inline-help-icon" role="img" aria-label="重复处理说明"><CircleHelp size={14} /></span>
+                </ArcoTooltip>
+                <ArcoRadio.Group
+                  type="button"
+                  size="small"
+                  aria-label="重复处理视图"
+                  value={processingState}
+                  onChange={(value: RequirementProcessingView) => applyProcessingView(value)}
+                  options={PROCESSING_VIEWS.map((view) => ({ label: view.label, value: view.value }))}
+                />
+              </div>
+            )}
+            <ArcoButton type="secondary" htmlType="button" size="small" onClick={() => void exportCsv()} disabled={exportBusy}><Download size={14} />{exportBusy ? "导出中…" : "导出 CSV"}</ArcoButton>
+            <ArcoButton type="secondary" htmlType="button" size="small" onClick={refresh}><RefreshCw size={14} />刷新</ArcoButton>
+          </div>
+        </div>
+        <div className="list-summary" role="status" style={{ marginBottom: 12 }}>
+          {exportNotice && <ArcoTypography.Text type="secondary" role="status">{exportNotice}</ArcoTypography.Text>}
+          <span className="list-summary-count">已加载 {sortedRows.length} 条{cursor ? "，还有更多" : ""}{activeFilterCount > 0 ? `（已应用 ${activeFilterCount} 个筛选）` : ""}</span>
+          <span className="list-summary-sort">{prioritySort === "priority_asc" ? "分诊视图：P0 → P3（最多 100 条）" : "待分配 → 推送失败 → 待推送 → 已推送"}</span>
+          <ArcoTooltip content="三个状态互不影响：同步状态（是否已拉取最新原文）、AI 分析状态（是否已生成模块与优先级建议）、推送状态（是否已写入飞书多维表格）；分析失败不会阻止推送。">
+            <span className="inline-help-icon" role="img" aria-label="处理状态说明"><CircleHelp size={14} /></span>
+          </ArcoTooltip>
+        </div>
+      </>
+    )}
+    <StateBanner loadError={loadError ?? peopleError ?? actionError} notice={notice} onCloseNotice={() => setNotice(null)} />
+    {mine && (
+      <div className="list-summary" role="status" style={{ marginBottom: 12 }}>
+        <span className="list-summary-count">已加载 {sortedRows.length} 条{cursor ? "，还有更多" : ""}</span>
+        <ArcoButton type="secondary" htmlType="button" size="small" onClick={refresh}><RefreshCw size={14} />刷新</ArcoButton>
       </div>
     )}
-    {!mine && <div className="qtoolbar">
-      <div className="qtoolbar-main">
-        <div className="qfield qfield-search">
-          <ArcoInput aria-label="搜索需求标题" placeholder="搜索需求标题或批次 ID…" value={query} onChange={(value: string) => setQuery(value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); applyFilters(); } }} />
-        </div>
-        <div className="qfield">
-          <ArcoSelect aria-label="TB负责人筛选" value={executorName} onChange={(value: string) => setExecutorName(value)} style={{ minWidth: 150 }} options={[{ label: "全部 TB 负责人", value: "" }, ...people.filter((person) => person.name).map((person) => ({ label: person.name!, value: person.name! }))]} />
-        </div>
-        <div className="qfield">
-          <ArcoSelect aria-label="同步状态筛选" value={pullState} onChange={(value: string) => setPullState(value)} style={{ minWidth: 130 }} options={pullStateOptions.map(([value, label]) => ({ label, value }))} />
-        </div>
-        {/* ARCO-05：更多筛选改为 Arco Popover，交由组件统一处理外部点击与 Escape 关闭。 */}
-        <ArcoPopover
-          trigger="click"
-          position="bl"
-          unmountOnExit
-          popupVisible={moreFiltersOpen}
-          onVisibleChange={setMoreFiltersOpen}
-          content={moreFiltersOpen ? (
-            <div className="qmore-popover-body" id="requirement-more-filters">
-              <ArcoSelect aria-label="优先级筛选" value={priorityFilter} onChange={(value: string) => setPriorityFilter(value)} options={priorityFilterOptions.map(([value, label]) => ({ label, value }))} />
-              <ArcoSelect aria-label="排序方式" value={prioritySort} onChange={(value: string) => setPrioritySort(value)} options={prioritySortOptions.map(([value, label]) => ({ label, value }))} />
-              <ArcoSelect aria-label="负责人筛选" value={ownerState} onChange={(value: string) => setOwnerState(value)} options={ownerStateOptions.map(([value, label]) => ({ label, value }))} />
-              <ArcoSelect aria-label="分析状态筛选" value={analysisState} onChange={(value: string) => setAnalysisState(value)} options={analysisStateOptions.map(([value, label]) => ({ label, value }))} />
-              <ArcoSelect aria-label="推送状态筛选" value={pushState} onChange={(value: string) => setPushState(value)} options={pushStateOptions.map(([value, label]) => ({ label, value }))} />
-              <ArcoInput aria-label="批次 ID 筛选" placeholder="批次 ID" value={batchId} onChange={(value: string) => setBatchId(value)} />
-              {/* ARCO-04 豁免：datetime-local 依赖浏览器本地时区语义，保留原生控件。 */}
-              <input className="rq-datetime-input" type="datetime-local" aria-label="最近同步开始时间" value={since} onChange={(e) => setSince(e.target.value)} />
-              <input className="rq-datetime-input" type="datetime-local" aria-label="最近同步结束时间" value={until} onChange={(e) => setUntil(e.target.value)} />
-            </div>
-          ) : null}
-        >
-          <ArcoButton type="secondary" htmlType="button" size="small" className="qmore-popover-trigger" aria-expanded={moreFiltersOpen} aria-controls="requirement-more-filters">更多筛选{moreFilterCount > 0 ? `（${moreFilterCount}）` : ""}</ArcoButton>
-        </ArcoPopover>
-      </div>
-      {!isGroup && <IntakeForm onCreated={(id) => { refresh(); void open(id, { push: true }); }} />}
-      <ArcoSpace size={8} wrap className="toolbar-actions">
-        {appliedFilterCount > 0 && <ArcoTag color="arcoblue" role="status">{appliedFilterCount} 个筛选已生效</ArcoTag>}
-        {activeFilterCount > 0 && <ArcoButton type="text" size="small" onClick={clearFilters} htmlType="button">清除筛选</ArcoButton>}
-        <ArcoButton type="secondary" htmlType="button" size="small" onClick={() => void exportCsv()} disabled={exportBusy}>{exportBusy ? "导出中…" : "导出 CSV"}</ArcoButton>
-        <ArcoButton type="secondary" htmlType="button" size="small" onClick={refresh}><RefreshCw size={14} />刷新</ArcoButton>
-        <ArcoButton type="primary" htmlType="button" size="small" onClick={applyFilters}>筛选</ArcoButton>
-      </ArcoSpace>
-    </div>}
-    {!mine && <ArcoAlert
-      className="rq-inline-alert"
-      type="info"
-      showIcon={false}
-      content="三个状态互不影响：同步状态（是否已拉取最新原文）、AI 分析状态（是否已生成模块与优先级建议）、推送状态（是否已写入飞书多维表格）；分析失败不会阻止推送。"
-    />}
-    <StateBanner loadError={loadError ?? peopleError ?? actionError} notice={notice} onCloseNotice={() => setNotice(null)} />
-    <div className="list-summary" role="status">
-      {exportNotice && <ArcoTypography.Text type="secondary" role="status">{exportNotice}</ArcoTypography.Text>}
-      <span className="list-summary-count">已加载 {sortedRows.length} 条{cursor ? "，还有更多" : ""}{!mine && activeFilterCount > 0 ? `（已应用 ${activeFilterCount} 个筛选）` : ""}</span>
-      <span className="list-summary-sort">{mine ? "分配给你的需求；含已压制，删除后进入回收站。" : prioritySort === "priority_asc" ? "分诊视图：按生效优先级 P0 → P3 排序，单页最多 100 条（不分页）" : "排序仅作用于已加载的记录：待分配 → 推送失败 → 待推送 → 已推送"}</span>
-      {mine && <ArcoButton type="secondary" htmlType="button" size="small" onClick={refresh}><RefreshCw size={14} />刷新</ArcoButton>}
-    </div>
     <div id="requirement-tab-panel" role="tabpanel" aria-label="需求列表">
       <RequirementsTable
         rows={sortedRows}
@@ -1752,26 +1817,26 @@ export function MyRequirementsPanel({ onRefresh }: { onRefresh: () => void }) {
     { value: "group", label: "集团需求池", count: countsState === "ready" && counts ? counts.group : null },
   ];
 
+  const tabExtra = countsState === "error"
+    ? <span className="subtle-text">数量暂不可用</span>
+    : countsState === "ready" && counts
+      ? <span className="subtle-text">含已压制 · 共 {counts.total} 条</span>
+      : undefined;
+
   return <div className="composite-page my-requirements-page">
-    <div className="my-requirements-tabs">
-      <AccessibleTabs label="我的需求池" activeTab={pool} onChange={(key) => switchPool(key as RequirementPool)}>
-        {tabs.map((tab) => (
-          <ArcoTabs.TabPane
-            key={tab.value}
-            title={
-              <ArcoSpace size={4} align="center">
-                <span>{tab.label}</span>
-                {tab.count !== null ? <ArcoTag size="small">{tab.count}</ArcoTag> : null}
-              </ArcoSpace>
-            }
-          />
-        ))}
-      </AccessibleTabs>
-      <div className="my-requirements-tabs-meta">
-        {countsState === "error" ? <span className="subtle-text">数量暂不可用</span> : null}
-        {countsState === "ready" && counts ? <span className="subtle-text">含已压制 · 共 {counts.total} 条</span> : null}
-      </div>
-    </div>
+    <AccessibleTabs label="我的需求池" activeTab={pool} onChange={(key) => switchPool(key as RequirementPool)} extra={tabExtra}>
+      {tabs.map((tab) => (
+        <ArcoTabs.TabPane
+          key={tab.value}
+          title={
+            <ArcoSpace size={4} align="center">
+              <span>{tab.label}</span>
+              {tab.count !== null ? <ArcoTag size="small">{tab.count}</ArcoTag> : null}
+            </ArcoSpace>
+          }
+        />
+      ))}
+    </AccessibleTabs>
     {countsState === "ready" && counts && !counts.identityResolved ? (
       <ArcoAlert className="rq-inline-alert" type="warning" showIcon role="status" content="当前账号还没有可识别的飞书身份；请在团队管理中绑定飞书账号后再查看。" />
     ) : null}
@@ -1939,16 +2004,14 @@ export function RecycleBinPanel({ onRefresh }: { onRefresh: () => void }) {
     },
   ];
 
-  return <ArcoCard className="rq-card requirements-panel recycle-bin-panel">
+  return <ArcoCard bordered={false} className="rq-card requirements-panel recycle-bin-panel">
     <StateBanner loadError={loadError ?? actionError} notice={notice} onCloseNotice={() => setNotice(null)} />
-    <div className="list-summary" role="status">
+    <div className="list-summary" role="status" style={{ marginBottom: 12 }}>
       <span className="list-summary-count">已加载 {rows.length} 条{cursor ? "，还有更多" : ""}</span>
       <span className="list-summary-sort">只显示你删除的需求；不做物理删除，可随时还原。</span>
     </div>
-    {!rows.length
-      ? loadState === "loading"
-        ? <SkeletonTableRows rows={4} columns={5} />
-        : <ArcoEmpty className="rq-empty" description={<div className="rq-empty-copy"><strong>回收站是空的</strong><span>你移入回收站的需求会出现在这里，可随时还原。</span></div>} />
+    {loadState === "loading" && !rows.length
+      ? <SkeletonTableRows rows={4} columns={5} />
       : <div className="table-scroll req-list-scroll">
         <ArcoTable<RequirementSummary>
           className="req-list"
@@ -1958,6 +2021,7 @@ export function RecycleBinPanel({ onRefresh }: { onRefresh: () => void }) {
           data={rows}
           pagination={false}
           border={false}
+          noDataElement={<ArcoEmpty className="rq-empty" description={<div className="rq-empty-copy"><strong>回收站是空的</strong><span>你移入回收站的需求会出现在这里，可随时还原。</span></div>} />}
           onRow={(row) => ({
             style: { cursor: "pointer" },
             tabIndex: 0,
@@ -3439,10 +3503,8 @@ function isRowActionTarget(target: EventTarget | null): boolean {
 }
 
 function RequirementsTable({ rows, loading, showSource = true, showPool = false, emptyState, onOpen, onAssign, onDelete }: { rows: RequirementSummary[]; loading: boolean; showSource?: boolean; showPool?: boolean; emptyState?: { title: string; description: string }; onOpen: (row: RequirementSummary) => void; onAssign: (row: RequirementSummary) => void; onDelete?: (row: RequirementSummary) => void }) {
-  // 首屏加载骨架屏；静默刷新时保留已渲染的行，避免整块列表闪烁。
-  if (!rows.length) return loading
-    ? <SkeletonTableRows rows={6} columns={6} />
-    : <ArcoEmpty className="rq-empty" description={<div className="rq-empty-copy"><strong>{emptyState?.title ?? "没有匹配的需求"}</strong><span>{emptyState?.description ?? "数据仅在 API 返回后显示，不使用演示数据。"}</span></div>} />;
+  // 首屏加载骨架屏；空态保留表头（Arco Pro 2.0 Search Table 规范）。
+  if (loading && !rows.length) return <SkeletonTableRows rows={6} columns={6} />;
   const sourceTagColor = (kind: RequirementSourceKind) => kind === "base_form" ? "arcoblue" : kind === "chat_paste" ? "purple" : "orange";
   const badgeTagColor = (className: string) => className === "status-danger" ? "red" : className === "status-warning" ? "orange" : "gray";
   const columns = [
@@ -3509,7 +3571,7 @@ function RequirementsTable({ rows, loading, showSource = true, showPool = false,
       render: (_value: unknown, row: RequirementSummary) => {
         const owner = requirementOwnerView(row);
         return <ArcoSpace size={4} className="req-row-action">
-          {owner.unassigned ? <ArcoButton htmlType="button" onClick={() => onAssign(row)} type="secondary" size="small">分配</ArcoButton> : null}
+          {owner.unassigned ? <ArcoButton htmlType="button" onClick={() => onAssign(row)} type="text" size="small">分配</ArcoButton> : null}
           {onDelete ? <ArcoButton type="text" status="danger" size="small" onClick={(event) => { event.stopPropagation(); onDelete(row); }} htmlType="button">删除</ArcoButton> : null}
         </ArcoSpace>;
       },
@@ -3524,6 +3586,7 @@ function RequirementsTable({ rows, loading, showSource = true, showPool = false,
       data={rows}
       pagination={false}
       border={false}
+      noDataElement={<ArcoEmpty className="rq-empty" description={<div className="rq-empty-copy"><strong>{emptyState?.title ?? "没有匹配的需求"}</strong><span>{emptyState?.description ?? "数据仅在 API 返回后显示，不使用演示数据。"}</span></div>} />}
       onRow={(row) => ({
         style: { cursor: "pointer" },
         tabIndex: 0,
@@ -3618,6 +3681,7 @@ export function MappingsPanel({ onRefresh }: { onRefresh: () => void }) {
   const matchMethodLabel: Record<PersonMapping["matchMethod"], string> = { tb_user_id: "TB 用户 ID", unique_name: "姓名唯一匹配", manual: "人工指定" };
 
   return <ArcoCard
+    bordered={false}
     className="rq-card requirements-panel"
     title={
       <div className="rq-card-title">
@@ -3629,11 +3693,12 @@ export function MappingsPanel({ onRefresh }: { onRefresh: () => void }) {
   >
     <StateBanner loadError={loadError} notice={notice} onCloseNotice={() => setNotice(null)} />
     {pending.length ? <ArcoAlert className="rq-inline-alert" type="info" showIcon={false} content={<><strong>待匹配 {pending.length}{cursor ? "+" : ""} 条</strong>，按 TB 负责人聚合：{pendingExecutorSummary(pending)}</>} /> : null}
-    {pending.length ? <ArcoTable<RequirementSummary>
+    {loadState === "loading" && !pending.length ? <SkeletonTableRows rows={4} columns={3} /> : <ArcoTable<RequirementSummary>
       rowKey="id"
       data={pending}
       pagination={false}
       border={false}
+      noDataElement={<ArcoEmpty className="rq-empty" description={<div className="rq-empty-copy"><strong>没有待匹配的负责人</strong><span>未匹配需求会出现在这里，等待为每一条需求单独指定负责人。</span></div>} />}
       columns={[
         { title: "需求", dataIndex: "title", render: (_value, row) => <div className="requirement-title"><span className="req-id">{requirementDisplayId(row)}</span><strong>{row.title}</strong></div> },
         { title: "TB 负责人", dataIndex: "executorName", width: 140, render: (_value, row) => row.executorName ?? "待匹配" },
@@ -3641,7 +3706,7 @@ export function MappingsPanel({ onRefresh }: { onRefresh: () => void }) {
             ? <ArcoSpace size={8} wrap align="center"><FeishuUserPicker key={row.id} disabled={busy} onMap={(user) => submit(row.id, user)} saveLabel="保存" /><ArcoButton htmlType="button" onClick={() => setTargetId(null)} disabled={busy} type="secondary" size="small">取消</ArcoButton></ArcoSpace>
             : <ArcoButton htmlType="button" onClick={() => setTargetId(row.id)} type="secondary" size="small">选择飞书用户</ArcoButton> },
       ]}
-    /> : loadState === "loading" ? <SkeletonTableRows rows={4} columns={3} /> : <ArcoEmpty className="rq-empty" description={<div className="rq-empty-copy"><strong>没有待匹配的负责人</strong><span>未匹配需求会出现在这里，等待为每一条需求单独指定负责人。</span></div>} />}
+    />}
     {cursor && <div className="rq-action-bar" style={{ textAlign: "center" }}><ArcoButton type="secondary" htmlType="button" size="small" disabled={loadingMore || busy} onClick={() => void load(cursor)}>{loadingMore ? "加载中…" : "加载更多待匹配需求"}</ArcoButton></div>}
     {mappings.length > 0 && <><ArcoDivider /><ArcoTable<PersonMapping>
       rowKey="id"
@@ -3689,6 +3754,7 @@ export function AuditPanel() {
   }, [load]);
 
   return <ArcoCard
+    bordered={false}
     className="rq-card requirements-panel"
     title={
       <div className="rq-card-title">
@@ -3697,20 +3763,33 @@ export function AuditPanel() {
       </div>
     }
   >
-    <ArcoForm layout="inline" className="rq-compact-form">
-      <ArcoForm.Item><ArcoInput aria-label="对象 ID 筛选" placeholder="按对象 ID 筛选" value={entityId} onChange={(value: string) => setEntityId(value)} /></ArcoForm.Item>
-      <ArcoForm.Item><ArcoInput aria-label="事件类型筛选" placeholder="事件类型，如 analysis.retry_requested" value={eventType} onChange={(value: string) => setEventType(value)} /></ArcoForm.Item>
-      <ArcoForm.Item label="开始时间"><input className="rq-datetime-input" type="datetime-local" aria-label="开始时间" value={since} onChange={(e) => setSince(e.target.value)} /></ArcoForm.Item>
-      <ArcoForm.Item label="结束时间"><input className="rq-datetime-input" type="datetime-local" aria-label="结束时间" value={until} onChange={(e) => setUntil(e.target.value)} /></ArcoForm.Item>
-      <ArcoForm.Item><ArcoButton htmlType="button" onClick={() => void load({ entityId: entityId.trim(), eventType: eventType.trim(), since: since ? new Date(since).toISOString() : "", until: until ? new Date(until).toISOString() : "" })} type="primary" size="small">筛选</ArcoButton></ArcoForm.Item>
-    </ArcoForm>
+    <div className="audit-filter-bar">
+      <div className="audit-filter-field">
+        <label>对象 ID</label>
+        <ArcoInput aria-label="对象 ID 筛选" placeholder="按对象 ID 筛选" style={{ minWidth: 170 }} value={entityId} onChange={(value: string) => setEntityId(value)} />
+      </div>
+      <div className="audit-filter-field">
+        <label>事件类型</label>
+        <ArcoInput aria-label="事件类型筛选" placeholder="事件类型，如 analysis.retry" style={{ minWidth: 230 }} value={eventType} onChange={(value: string) => setEventType(value)} />
+      </div>
+      <div className="audit-filter-field">
+        <label>开始时间</label>
+        <input type="datetime-local" aria-label="开始时间" className="rq-datetime-input" value={since} onChange={(e) => setSince(e.target.value)} />
+      </div>
+      <div className="audit-filter-field">
+        <label>结束时间</label>
+        <input type="datetime-local" aria-label="结束时间" className="rq-datetime-input" value={until} onChange={(e) => setUntil(e.target.value)} />
+      </div>
+      <ArcoButton htmlType="button" onClick={() => void load({ entityId: entityId.trim(), eventType: eventType.trim(), since: since ? new Date(since).toISOString() : "", until: until ? new Date(until).toISOString() : "" })} type="primary" size="small">筛选</ArcoButton>
+    </div>
     <StateBanner loadError={loadError} notice={null} onCloseNotice={() => undefined} />
     {events.length >= AUDIT_PAGE_LIMIT && <ArcoAlert className="rq-inline-alert" type="info" showIcon={false} content={`已加载最近 ${AUDIT_PAGE_LIMIT} 条审计记录；更早的记录请缩小时间范围或按对象筛选。`} />}
-    {events.length ? <ArcoTable<AuditEvent> scroll={{ x: 1040 }}
+    {loadState === "loading" && !events.length ? <SkeletonTableRows rows={6} columns={6} /> : <ArcoTable<AuditEvent> scroll={{ x: 1040 }}
       rowKey="id"
       data={events}
       pagination={false}
       border={false}
+      noDataElement={<ArcoEmpty className="rq-empty" description={<div className="rq-empty-copy"><strong>没有匹配的审计记录</strong><span>调整筛选条件或执行操作后再试。</span></div>} />}
       columns={[
         { title: "时间", dataIndex: "occurredAt", width: 180, render: (_value, event) => timeLabel(event.occurredAt) },
         { title: "操作者", dataIndex: "actorId", width: 140, render: (_value, event) => event.actorId ?? "系统" },
@@ -3719,7 +3798,7 @@ export function AuditPanel() {
         { title: "结果", dataIndex: "result", width: 110, render: (_value, event) => auditResultLabel(event.result) },
         { title: "安全摘要", dataIndex: "safeDetails", render: (_value, event) => Object.keys(event.safeDetails).length ? JSON.stringify(event.safeDetails) : "—" },
       ]}
-    /> : loadState === "loading" ? <SkeletonTableRows rows={6} columns={6} /> : <ArcoEmpty className="rq-empty" description={<div className="rq-empty-copy"><strong>没有匹配的审计记录</strong><span>调整筛选条件或执行操作后再试。</span></div>} />}
+    />}
   </ArcoCard>;
 }
 
@@ -3738,10 +3817,17 @@ function opsJobColumns() {
   ];
 }
 
-function OpsJobTable({ jobs, emptyTitle, emptyHint }: { jobs: OpsJob[]; emptyTitle: string; emptyHint: string }) {
-  return jobs.length
-    ? <ArcoTable<OpsJob> rowKey="id" data={jobs} pagination={false} border={false} scroll={{ x: 980 }} columns={opsJobColumns()} />
-    : <ArcoEmpty className="rq-empty" description={<div className="rq-empty-copy"><strong>{emptyTitle}</strong><span>{emptyHint}</span></div>} />;
+function OpsJobTable({ jobs, loading, error, emptyTitle, emptyHint }: { jobs: OpsJob[]; loading?: boolean; error?: string | null; emptyTitle: string; emptyHint: string }) {
+  if (loading && !jobs.length) return <SkeletonTableRows rows={3} columns={6} />;
+  return <ArcoTable<OpsJob>
+    rowKey="id"
+    data={jobs}
+    pagination={false}
+    border={false}
+    scroll={{ x: 980 }}
+    noDataElement={<ArcoEmpty className="rq-empty" description={<div className="rq-empty-copy"><strong>{error ? "作业列表暂不可用" : emptyTitle}</strong><span>{error ? "请检查 API 连接后重试。" : emptyHint}</span></div>} />}
+    columns={opsJobColumns()}
+  />;
 }
 
 export function OpsPanel() {
@@ -3749,6 +3835,7 @@ export function OpsPanel() {
   const [migrations, setMigrations] = useState<Awaited<ReturnType<typeof getReadiness>>["migrations"] | null>(null);
   const [metrics, setMetrics] = useState<OpsMetrics | null>(null);
   const [gates, setGates] = useState<GatesResponse | null>(null);
+  const [gatesLoadState, setGatesLoadState] = useState<LoadState>("loading");
   const [gateEditing, setGateEditing] = useState<string | null>(null);
   const [gateEvidence, setGateEvidence] = useState("");
   const [gateError, setGateError] = useState<string | null>(null);
@@ -3761,16 +3848,20 @@ export function OpsPanel() {
 
   const load = useCallback(async () => {
     const version = ++loadRequestVersion.current;
-    setLoadState("loading"); setLoadError(null);
+    setLoadState("loading"); setGatesLoadState("loading"); setLoadError(null);
     // 迁移与指标是辅助信息：读取失败不影响作业列表。
     // 上线 Gate 只在产品池视图显示，集团池视图不请求；切回产品池时 load 会重新取。
     const [jobsResult, readyResult, metricsResult, gatesResult] = await Promise.allSettled([getOpsJobs({ limit: 50, pool: pool === "group" ? "group" : undefined }), getReadiness(), getOpsMetrics({ days, pool: pool === "group" ? "group" : undefined }), pool === "product" ? getGates() : Promise.resolve(null)]);
     if (version !== loadRequestVersion.current) return;
     if (jobsResult.status === "fulfilled") { setItems(jobsResult.value.items); setLoadState("ready"); }
-    else { setLoadError(errorText(jobsResult.reason)); setLoadState("error"); }
+    else { setItems(null); setLoadError(errorText(jobsResult.reason)); setLoadState("error"); }
     setMigrations(readyResult.status === "fulfilled" ? readyResult.value.migrations ?? null : null);
     setMetrics(metricsResult.status === "fulfilled" ? metricsResult.value : null);
-    setGates(gatesResult.status === "fulfilled" && gatesResult.value && Array.isArray(gatesResult.value.gates) ? gatesResult.value : null);
+    if (gatesResult.status === "fulfilled" && gatesResult.value && Array.isArray(gatesResult.value.gates)) {
+      setGates(gatesResult.value); setGatesLoadState("ready");
+    } else {
+      setGates(null); setGatesLoadState(pool === "product" ? "error" : "ready");
+    }
   }, [days, pool]);
 
   const confirmGateAction = async (id: string) => {
@@ -3793,47 +3884,49 @@ export function OpsPanel() {
     return () => { loadRequestVersion.current += 1; };
   }, [load]);
 
-  return <ArcoCard
-    className="rq-card requirements-panel"
-    title={
-      <div className="rq-card-title">
-        <h2>作业运维</h2>
-        <ArcoTypography.Text type="secondary" className="rq-card-subtitle">只读视图：最近失败的作业，以及尝试次数用尽且租约过期的运行中作业。</ArcoTypography.Text>
-      </div>
-    }
-    extra={
-      <ArcoSpace size={8} wrap align="center">
-        <ArcoRadio.Group
-          type="button"
-          size="small"
-          aria-label="作业运维池筛选"
-          value={pool}
-          onChange={(value: RequirementPool) => setPool(value)}
-          options={[{ label: "产品池", value: "product" }, { label: "集团池", value: "group" }]}
-        />
+  const gateTag = gates
+    ? <ArcoTag color={gates.ready ? "green" : "orange"}>{gates.ready ? "已满足" : "未满足"}</ArcoTag>
+    : gatesLoadState === "loading"
+      ? <ArcoTag color="orange">加载中</ArcoTag>
+      : <ArcoTag color="gray">不可用</ArcoTag>;
+
+  return <div className="ops-stack">
+    <ArcoCard bordered={false} className="rq-card">
+      <div className="ops-toolbar">
+        <ArcoSpace size={10} wrap align="center">
+          <span className="pool-switch-label">所属池</span>
+          <ArcoRadio.Group
+            type="button"
+            size="small"
+            aria-label="作业运维池筛选"
+            value={pool}
+            onChange={(value: RequirementPool) => setPool(value)}
+            options={[{ label: "产品池", value: "product" }, { label: "集团池", value: "group" }]}
+          />
+        </ArcoSpace>
         <ArcoButton type="secondary" size="small" onClick={() => void load()} disabled={loadState === "loading"} htmlType="button"><RefreshCw size={14} />刷新</ArcoButton>
-      </ArcoSpace>
-    }
-  >
-    <StateBanner loadError={loadError} notice={null} onCloseNotice={() => undefined} />
-    <ArcoAlert
-      className="rq-inline-alert"
-      type={migrations?.upToDate === false ? "error" : migrations?.upToDate === true ? "success" : "info"}
-      showIcon
-      role="status"
-      content={migrations
-        ? migrations.upToDate === true
-          ? `迁移：已应用 ${migrations.latest ?? "未知"}，与代码一致`
-          : migrations.upToDate === false
-            ? `迁移：库中最新 ${migrations.latest ?? "未知"}，代码期望 ${migrations.expected}；请先应用待执行迁移`
-            : `迁移：无法读取应用迁移记录（目标环境由平台管理迁移）；代码期望 ${migrations.expected}，无法判断是否落后`
-        : "迁移状态：不可用"}
-    />
+      </div>
+      <StateBanner loadError={loadError} notice={null} onCloseNotice={() => undefined} />
+      <ArcoAlert
+        className="rq-inline-alert"
+        style={{ marginBottom: 0 }}
+        type={migrations?.upToDate === false ? "error" : migrations?.upToDate === true ? "success" : "info"}
+        showIcon
+        role="status"
+        content={migrations
+          ? migrations.upToDate === true
+            ? `迁移：已应用 ${migrations.latest ?? "未知"}，与代码一致`
+            : migrations.upToDate === false
+              ? `迁移：库中最新 ${migrations.latest ?? "未知"}，代码期望 ${migrations.expected}；请先应用待执行迁移`
+              : `迁移：无法读取应用迁移记录（目标环境由平台管理迁移）；代码期望 ${migrations.expected}，无法判断是否落后`
+          : "迁移状态：不可用"}
+      />
+    </ArcoCard>
+
     <ArcoCard
-      size="small"
-      className="rq-subcard"
-      style={{ marginBottom: 16 }}
-      title={<strong>运营指标</strong>}
+      bordered={false}
+      className="rq-card"
+      title={<h3>运营指标</h3>}
       extra={
         <ArcoRadio.Group
           type="button"
@@ -3870,13 +3963,13 @@ export function OpsPanel() {
         {pool === "product" && metrics.baseForm && <p className="detail-note">多维表格同步（已暂停，以下为历史值）：扫描 {metrics.baseForm.scanned} 行 · 已收录 {metrics.baseForm.created + metrics.baseForm.recorded} · 校验失败 {metrics.baseForm.rejected} · 写回失败 {metrics.baseForm.writeBackFailed} · 读取失败 {metrics.baseForm.readFailed ? "是" : "否"} · 最近一次同步 {metrics.baseForm.lastRunAt ? timeLabel(metrics.baseForm.lastRunAt) : "—"}{metrics.baseForm.lastError ? ` · ${metrics.baseForm.lastError}` : ""}</p>}
       </> : <ArcoTypography.Text type="secondary">运营指标暂不可用。</ArcoTypography.Text>}
     </ArcoCard>
+
     {/* 上线 Gate 是产品池的上线判据（G1 为产品口径条数）；集团池视图不显示，避免误读。 */}
     {pool === "product" && <ArcoCard
-      size="small"
-      className="rq-subcard"
-      style={{ marginBottom: 16 }}
-      title={<strong>上线 Gate</strong>}
-      extra={<ArcoTag color={gates?.ready ? "green" : "orange"}>{gates ? (gates.ready ? "已满足" : "未满足") : "加载中"}</ArcoTag>}
+      bordered={false}
+      className="rq-card"
+      title={<h3>上线 Gate</h3>}
+      extra={gateTag}
     >
       {gates ? <ul className="gate-list">
         {gates.gates.map((gate) => <li key={gate.id} className={`gate-row is-${gate.status}`}>
@@ -3903,16 +3996,33 @@ export function OpsPanel() {
       </ul> : <ArcoTypography.Text type="secondary">Gate 状态暂不可用。</ArcoTypography.Text>}
       {gateError && <ArcoAlert className="rq-inline-alert" type="error" showIcon role="alert" content={gateError} />}
     </ArcoCard>}
-    <div className="subsection">
-      <div className="rq-card-title" style={{ marginBottom: 10 }}><h3>失败作业</h3><ArcoTypography.Text type="secondary" className="rq-card-subtitle">恢复由各自的重试入口或恢复器完成；本页不提供写入操作。</ArcoTypography.Text></div>
-      {items ? <OpsJobTable jobs={items.failed} emptyTitle="没有失败作业" emptyHint="最近没有处于 failed 状态的作业。" /> : <SkeletonTableRows rows={3} columns={6} />}
-    </div>
-    <ArcoDivider />
-    <div className="subsection">
-      <div className="rq-card-title" style={{ marginBottom: 10 }}><h3>卡住的运行中作业</h3><ArcoTypography.Text type="secondary" className="rq-card-subtitle">尝试次数已用尽且租约过期，等待回收器或人工处理；仅含 base_push / kano_run。</ArcoTypography.Text></div>
-      {items ? <OpsJobTable jobs={items.stuck} emptyTitle="没有卡住的作业" emptyHint="运行中的作业都有有效租约或仍有重试机会。" /> : <SkeletonTableRows rows={3} columns={6} />}
-    </div>
-  </ArcoCard>;
+
+    <ArcoCard
+      bordered={false}
+      className="rq-card"
+      title={
+        <div className="rq-card-title">
+          <h3>失败作业</h3>
+          <ArcoTypography.Text type="secondary" className="rq-card-subtitle">恢复由各自的重试入口或恢复器完成；本页不提供写入操作。</ArcoTypography.Text>
+        </div>
+      }
+    >
+      <OpsJobTable jobs={items?.failed ?? []} loading={loadState === "loading"} error={loadError} emptyTitle="没有失败作业" emptyHint="最近没有处于 failed 状态的作业。" />
+    </ArcoCard>
+
+    <ArcoCard
+      bordered={false}
+      className="rq-card"
+      title={
+        <div className="rq-card-title">
+          <h3>卡住的运行中作业</h3>
+          <ArcoTypography.Text type="secondary" className="rq-card-subtitle">尝试次数已用尽且租约过期，等待回收器或人工处理；仅含 base_push / kano_run。</ArcoTypography.Text>
+        </div>
+      }
+    >
+      <OpsJobTable jobs={items?.stuck ?? []} loading={loadState === "loading"} error={loadError} emptyTitle="没有卡住的作业" emptyHint="运行中的作业都有有效租约或仍有重试机会。" />
+    </ArcoCard>
+  </div>;
 }
 
 // ---------- 全局错误边界：面板崩溃时显示可恢复状态而非白屏 ----------
@@ -3943,7 +4053,7 @@ export class PanelErrorBoundary extends Component<{ children: ReactNode }, Error
 // ---------- 菜单收敛：团队管理 / 同步记录（同一入口下的页签，不做重复菜单） ----------
 
 /** ARCO-06 收尾：Arco Tabs 自身不渲染 role=tablist；挂载后在头部补 role/aria-label，保留 tab/tabpanel 关联。 */
-function AccessibleTabs({ label, activeTab, onChange, children }: { label: string; activeTab: string; onChange: (key: string) => void; children: ReactNode }) {
+function AccessibleTabs({ label, activeTab, onChange, extra, children }: { label: string; activeTab: string; onChange: (key: string) => void; extra?: ReactNode; children: ReactNode }) {
   const hostRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const header = hostRef.current?.querySelector<HTMLElement>(".arco-tabs-header");
@@ -3951,7 +4061,7 @@ function AccessibleTabs({ label, activeTab, onChange, children }: { label: strin
     header.setAttribute("role", "tablist");
     header.setAttribute("aria-label", label);
   });
-  return <div ref={hostRef}><ArcoTabs activeTab={activeTab} onChange={onChange}>{children}</ArcoTabs></div>;
+  return <div ref={hostRef}><ArcoTabs activeTab={activeTab} onChange={onChange} extra={extra}>{children}</ArcoTabs></div>;
 }
 
 export function TeamPanel({ initialTab, onRefresh }: { initialTab?: WorkbenchTab | null; onRefresh: () => void }) {
@@ -3972,21 +4082,23 @@ export function SyncRecordsPanel({ initialTab, onRefresh }: { initialTab?: Workb
   const [pool, setPool] = useState<RequirementPool>("product");
   useEffect(() => { if (initialTab === "batches" || initialTab === "audit") setTab(initialTab); }, [initialTab]);
   return <div className="composite-page">
-    {tab === "batches" && <div className="pool-switch">
-      <span className="pool-switch-label">批次所属池</span>
-      <ArcoRadio.Group
-        type="button"
-        size="small"
-        aria-label="同步批次池筛选"
-        value={pool}
-        onChange={(value: RequirementPool) => setPool(value)}
-        options={[{ label: "产品池", value: "product" }, { label: "集团池", value: "group" }]}
-      />
-      <ArcoTypography.Text type="secondary" className="rq-caption">审计日志暂不支持按池筛选。</ArcoTypography.Text>
-    </div>}
-    {/* ARCO-06：同 TeamPanel，受控 Arco Tabs。 */}
+    {/* ARCO-06：受控 Arco Tabs；批次所属池筛选放在同步批次 TabPane 内部，切到审计日志时页签栏不会上下跳动。 */}
     <AccessibleTabs label="同步记录" activeTab={tab} onChange={(key) => setTab(key as "batches" | "audit")}>
-      <ArcoTabs.TabPane key="batches" title="同步批次"><BatchesPanel onRefresh={onRefresh} pool={pool} /></ArcoTabs.TabPane>
+      <ArcoTabs.TabPane key="batches" title="同步批次">
+        <div className="pool-switch">
+          <span className="pool-switch-label">批次所属池</span>
+          <ArcoRadio.Group
+            type="button"
+            size="small"
+            aria-label="同步批次池筛选"
+            value={pool}
+            onChange={(value: RequirementPool) => setPool(value)}
+            options={[{ label: "产品池", value: "product" }, { label: "集团池", value: "group" }]}
+          />
+          <ArcoTypography.Text type="secondary" className="rq-caption">审计日志暂不支持按池筛选。</ArcoTypography.Text>
+        </div>
+        <BatchesPanel onRefresh={onRefresh} pool={pool} />
+      </ArcoTabs.TabPane>
       <ArcoTabs.TabPane key="audit" title="审计日志"><AuditPanel /></ArcoTabs.TabPane>
     </AccessibleTabs>
   </div>;
@@ -4033,15 +4145,7 @@ export function GuidePanel() {
     ["AI 分析失败后重试成功", "发给当前负责人", "同上"],
     ["改备注、改错别字", "不发", "不构成实质变更"],
   ];
-  return <ArcoCard
-    className="rq-card requirements-panel guide-panel"
-    title={
-      <div className="rq-card-title">
-        <h2>使用指南</h2>
-        <ArcoTypography.Text type="secondary" className="rq-card-subtitle">这套系统的数据怎么流、状态怎么读、每天该做什么。</ArcoTypography.Text>
-      </div>
-    }
-  >
+  return <ArcoCard bordered={false} className="rq-card requirements-panel guide-panel">
     <div className="guide-section">
       <h3>一、数据从哪里来，到哪里去</h3>
       <ArcoTypography.Paragraph type="secondary">Teambition 拥有需求原文，应用拥有处理状态，飞书多维表格拥有 PM 处理结果和通知。三者各管一段，互不覆盖。</ArcoTypography.Paragraph>

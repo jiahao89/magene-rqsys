@@ -188,7 +188,7 @@ describe("RQ-Sys local workbench", () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("link", { name: "SOP 与培训" }));
 
-    expect(await screen.findByRole("heading", { level: 2, name: "SOP 与培训" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "SOP 与培训" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 3, name: /30 分钟培训议程/ })).toBeInTheDocument();
     expect(screen.getByText(/PM Leader · 每日 \/ 每周 SOP/)).toBeInTheDocument();
     expect(window.location.hash).toBe("#sop");
@@ -300,7 +300,7 @@ describe("RQ-Sys local workbench", () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("link", { name: "功能模块" }));
 
-    expect(await screen.findAllByRole("heading", { name: "功能模块" })).toHaveLength(2);
+    expect(await screen.findAllByRole("heading", { name: "功能模块" })).toHaveLength(1);
     expect(await screen.findByText("地图")).toBeInTheDocument();
     expect(screen.getAllByText("盛永帮").length).toBeGreaterThanOrEqual(1);
     expect(fetchMock).toHaveBeenCalledWith("/api/modules", expect.anything());

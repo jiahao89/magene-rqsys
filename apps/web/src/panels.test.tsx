@@ -407,10 +407,9 @@ describe("SourcesPanel (ticket 16)", () => {
     expect(productLink).toHaveAttribute("href", productBase);
     expect(productLink).toHaveAttribute("target", "_blank");
     expect(screen.getByRole("link", { name: groupBase })).toHaveAttribute("href", groupBase);
-    // ≥1200px 两列（Arco xl=12），窄屏由 xs=24 回落单列；align="start" 避免两卡被强制等高。
+    // ≥1200px 两列（Arco xl=12），窄屏由 xs=24 回落单列；align="stretch" 使两张数据源配置卡等高对齐。
     expect(document.querySelectorAll(".arco-col-xs-24.arco-col-xl-12")).toHaveLength(2);
-    expect(document.querySelector(".sources-page .arco-row-align-start")).toBeTruthy();
-    expect(document.querySelector(".sources-page .arco-row-align-stretch")).toBeNull();
+    expect(document.querySelector(".sources-page .arco-row-align-stretch")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "复制需求池 Base 地址" }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(productBase));
     expect(await screen.findByRole("button", { name: "复制需求池 Base 地址" })).toHaveTextContent("已复制");
@@ -2655,7 +2654,7 @@ describe("OpsPanel", () => {
       return jsonOk({ now: "2026-11-03T02:00:00.000Z", items: { failed: [job], stuck: [{ ...job, id: "job-2", status: "running" }] } });
     });
     render(<OpsPanel />);
-    expect(await screen.findByRole("heading", { name: "作业运维" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "运营指标" })).toBeInTheDocument();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/ops/jobs?limit=50", expect.anything()));
     expect(screen.getAllByText("base_push").length).toBe(2);
     expect(screen.getAllByText("BASE_TIMEOUT").length).toBe(2);
@@ -3319,7 +3318,7 @@ describe("Wave 1 frontend hardening regressions", () => {
   it("renders SopPanel with Arco Tables and no raw guide-table wrappers", async () => {
     const { SopPanel } = await import("./sop");
     const { container } = render(<SopPanel />);
-    expect(screen.getByRole("heading", { name: "SOP 与培训" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "一、角色与边界" })).toBeInTheDocument();
     expect(container.querySelectorAll(".arco-table").length).toBe(4);
     expect(container.querySelectorAll(".guide-table").length).toBe(0);
   });

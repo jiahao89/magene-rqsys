@@ -71,18 +71,15 @@ export function AiStatusCard({ ai, loadState, onExpire }: { ai?: OverviewAiStatu
 
   return (
     <ArcoCard
+      bordered={false}
       className="rq-card ai-status-panel"
       aria-labelledby="ai-status-heading"
-      title={
-        <div className="rq-card-title">
-          <h2 id="ai-status-heading">AI 状态</h2>
-          <ArcoTypography.Text type="secondary" className="rq-card-subtitle">
-            AI 分析与聊天抽取的调用状态；累计用量按调用次数统计，不含 token
-          </ArcoTypography.Text>
-        </div>
-      }
+      title={<h2 id="ai-status-heading">AI 状态</h2>}
       extra={<span role="status"><ArcoBadge status={badge.status} text={badge.label} /></span>}
     >
+      <ArcoTypography.Text type="secondary" className="rail-card-subtitle">
+        分析与聊天抽取用量（按次统计，不含 token）
+      </ArcoTypography.Text>
       {!data ? (
         <ArcoEmpty
           className="rq-empty"
@@ -105,26 +102,26 @@ export function AiStatusCard({ ai, loadState, onExpire }: { ai?: OverviewAiStatu
         />
       ) : (
         <>
-          <ArcoGrid.Row gutter={[16, 16]} className="ai-status-grid">
-            <ArcoGrid.Col xs={12} md={6}>
+          <ArcoGrid.Row gutter={[12, 12]} className="ai-status-grid">
+            <ArcoGrid.Col xs={12}>
               <div className="rq-stat-tile">
                 <ArcoStatistic title="分析调用" value={data.analysis.total} />
                 <span className="rq-stat-extra">今日 {data.analysis.today} 次</span>
               </div>
             </ArcoGrid.Col>
-            <ArcoGrid.Col xs={12} md={6}>
+            <ArcoGrid.Col xs={12}>
               <div className="rq-stat-tile">
                 <ArcoStatistic title="聊天抽取" value={data.chatIntake.total} />
                 <span className="rq-stat-extra">今日 {data.chatIntake.today} 次</span>
               </div>
             </ArcoGrid.Col>
-            <ArcoGrid.Col xs={12} md={6}>
+            <ArcoGrid.Col xs={12}>
               <div className="rq-stat-tile">
                 <ArcoStatistic title="今日合计" value={data.analysis.today + data.chatIntake.today} />
                 <span className="rq-stat-extra">次调用</span>
               </div>
             </ArcoGrid.Col>
-            <ArcoGrid.Col xs={12} md={6}>
+            <ArcoGrid.Col xs={12}>
               <div className="rq-stat-tile">
                 <span className="arco-statistic-title">最近一次调用</span>
                 <strong className="rq-stat-text">{lastCallLabel}</strong>
