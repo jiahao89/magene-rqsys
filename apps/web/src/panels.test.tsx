@@ -256,13 +256,13 @@ describe("SourcesPanel (ticket 16)", () => {
 
   it("shows a configuration self-check that never claims to have validated credentials", async () => {
     render(<SourcesPanel sources={[source]} loadState="ready" onRefresh={() => undefined} />);
-    // 自检默认折叠成一行摘要，展开后才显示逐项明细。
-    const details = document.querySelector(".self-check") as HTMLDetailsElement;
-    expect(details).toBeTruthy();
-    expect(details.open).toBe(false);
-    expect(within(details).getByText(/项已就绪/)).toBeInTheDocument();
-    fireEvent.click(within(details).getByText("连接自检"));
-    expect(details.open).toBe(true);
+    // 自检默认折叠成一行摘要（Arco Collapse），展开后才显示逐项明细。
+    const collapse = document.querySelector(".self-check") as HTMLElement;
+    expect(collapse).toBeTruthy();
+    expect(collapse.querySelector(".arco-collapse-item-active")).toBeNull();
+    expect(within(collapse).getByText(/项已就绪/)).toBeInTheDocument();
+    fireEvent.click(within(collapse).getByText("连接自检"));
+    expect(collapse.querySelector(".arco-collapse-item-active")).not.toBeNull();
 
     const selfCheck = screen.getByRole("group", { name: "连接自检" });
     expect(within(selfCheck).getByText("Teambition 项目名称")).toBeInTheDocument();
@@ -276,8 +276,8 @@ describe("SourcesPanel (ticket 16)", () => {
   it("summarises the saved schedule instead of the unsaved draft", () => {
     const scheduled = { ...source, enabled: true, schedule: { enabled: true, weekday: 1, time: "09:00", timezone: "Asia/Shanghai" } };
     render(<SourcesPanel sources={[scheduled]} loadState="ready" onRefresh={() => undefined} />);
-    const details = document.querySelector(".self-check") as HTMLDetailsElement;
-    fireEvent.click(within(details).getByText("连接自检"));
+    const collapse = document.querySelector(".self-check") as HTMLElement;
+    fireEvent.click(within(collapse).getByText("连接自检"));
     const selfCheck = screen.getByRole("group", { name: "连接自检" });
 
     // 自检读取已保存配置：应显示计划摘要，而不是「周计划未启用」。
@@ -894,7 +894,7 @@ describe("RequirementsPanel (ticket 17)", () => {
     expect(screen.getByText("是否需要保留最低提示音量？")).toBeInTheDocument();
 
     // 版本切换只换展示，不重新请求。
-    fireEvent.click(screen.getByRole("button", { name: "v1" }));
+    fireEvent.click(screen.getByRole("radio", { name: "v1" }));
     expect(await screen.findByText("第一版背景")).toBeInTheDocument();
     expect(screen.getByText("建议推进")).toBeInTheDocument();
 
@@ -932,7 +932,7 @@ describe("RequirementsPanel (ticket 17)", () => {
     await waitFor(() => expect(posted).toEqual({ background: "售后反馈", goal: "降低投诉", scenario: "" }));
     expect(await screen.findByText("评估 v2 已生成。")).toBeInTheDocument();
     expect(screen.getByText("建议暂缓")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "v2" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("radio", { name: "v2" })).toBeChecked();
   });
 
   it("allows empty supplements and surfaces the 429 wait time on assessment generation", async () => {
@@ -989,7 +989,7 @@ describe("RequirementsPanel (ticket 17)", () => {
     await openFirstRow();
     expect(await screen.findByDisplayValue("v2 背景")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "v1" }));
+    fireEvent.click(screen.getByRole("radio", { name: "v1" }));
 
     expect(await screen.findByDisplayValue("v1 背景")).toBeInTheDocument();
     expect(screen.getByDisplayValue("v1 目标")).toBeInTheDocument();
@@ -1014,7 +1014,7 @@ describe("RequirementsPanel (ticket 17)", () => {
     render(<RequirementsPanel onRefresh={() => undefined} />);
     await openFirstRow();
 
-    expect(await screen.findByRole("button", { name: "v2 生成中" })).toBeInTheDocument();
+    expect(await screen.findByRole("radio", { name: "v2 生成中" })).toBeInTheDocument();
     expect(screen.getByText("这一版正在生成")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "正在生成，请稍候" })).toBeDisabled();
   });
@@ -1059,13 +1059,13 @@ describe("RequirementsPanel (ticket 17)", () => {
     });
     render(<RequirementsPanel onRefresh={() => undefined} />);
     await openFirstRow();
-    expect(await screen.findByRole("button", { name: "v1" })).toBeInTheDocument();
+    expect(await screen.findByRole("radio", { name: "v1" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "生成评估" }));
 
     expect(await screen.findByText("服务暂时不可用，请稍后重试；已保存的评估不受影响。")).toBeInTheDocument();
     // 503 后服务端保留了 failed 版本：静默刷新历史即可看到它，而不是只剩一句报错。
-    expect(await screen.findByRole("button", { name: "v2（失败）" })).toBeInTheDocument();
+    expect(await screen.findByRole("radio", { name: "v2（失败）" })).toBeInTheDocument();
     expect(screen.getByText(/错误码：analysis_failure/)).toBeInTheDocument();
     expect(historyCalls).toBeGreaterThanOrEqual(2);
   });
@@ -1534,9 +1534,9 @@ describe("RequirementsPanel (ticket 17)", () => {
     await waitFor(() => expect(document.querySelectorAll(".source-tab-count")).toHaveLength(5));
 
     // 计数是「活跃」口径；切到全部/已压制后列表行数会更多，隐藏计数避免误读。
-    fireEvent.click(screen.getByRole("button", { name: "全部" }));
+    fireEvent.click(screen.getByRole("radio", { name: "全部" }));
     await waitFor(() => expect(document.querySelectorAll(".source-tab-count")).toHaveLength(0));
-    fireEvent.click(screen.getByRole("button", { name: "仅活跃" }));
+    fireEvent.click(screen.getByRole("radio", { name: "仅活跃" }));
     await waitFor(() => expect(document.querySelectorAll(".source-tab-count")).toHaveLength(5));
   });
 
@@ -2698,7 +2698,7 @@ describe("OpsPanel", () => {
       return jsonOk({ now: "2026-11-03T02:00:00.000Z", items: { failed: [], stuck: [] } });
     });
     render(<OpsPanel />);
-    fireEvent.click(await screen.findByRole("button", { name: "近 30 天" }));
+    fireEvent.click(await screen.findByRole("radio", { name: "近 30 天" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/api/ops/metrics?days=30"), expect.anything()));
   });
 
@@ -2897,7 +2897,7 @@ describe("集团需求池 UI（方案 A）", () => {
     render(<SyncRecordsPanel onRefresh={() => undefined} />);
     await waitFor(() => expect(fetchMock.mock.calls.map((call) => String(call[0])).some((path) => path.startsWith("/api/batches?"))).toBe(true));
     expect(screen.getByText("审计日志暂不支持按池筛选。")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "集团池" }));
+    fireEvent.click(screen.getByRole("radio", { name: "集团池" }));
     await waitFor(() => expect(fetchMock.mock.calls.map((call) => String(call[0])).some((path) => path.startsWith("/api/batches?") && path.includes("pool=group"))).toBe(true));
   });
 
@@ -2916,7 +2916,7 @@ describe("集团需求池 UI（方案 A）", () => {
     const gateRequests = () => fetchMock.mock.calls.map((call) => String(call[0])).filter((path) => path.startsWith("/api/ops/gates")).length;
     const gateRequestsInProduct = gateRequests();
     expect(gateRequestsInProduct).toBeGreaterThan(0);
-    fireEvent.click(screen.getByRole("button", { name: "集团池" }));
+    fireEvent.click(screen.getByRole("radio", { name: "集团池" }));
     await waitFor(() => expect(fetchMock.mock.calls.map((call) => String(call[0]))).toContain("/api/ops/jobs?limit=50&pool=group"));
     expect(fetchMock.mock.calls.map((call) => String(call[0]))).toContain("/api/ops/metrics?days=7&pool=group");
     // 集团池：产品口径的 Gate 整块不渲染，避免 G1「已推送 334 条」误导。
@@ -2925,7 +2925,7 @@ describe("集团需求池 UI（方案 A）", () => {
     // 集团池视图也不应再请求 Gate 接口（界面不显示，请求没有用处）。
     expect(gateRequests()).toBe(gateRequestsInProduct);
     // 切回产品池恢复，并重新取 Gate。
-    fireEvent.click(screen.getByRole("button", { name: "产品池" }));
+    fireEvent.click(screen.getByRole("radio", { name: "产品池" }));
     expect(await screen.findByText("上线 Gate")).toBeInTheDocument();
     expect(gateRequests()).toBeGreaterThan(gateRequestsInProduct);
   });

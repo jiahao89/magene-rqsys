@@ -2,7 +2,7 @@
 // 只必填标题/描述/渠道；四段提示是 placeholder 引导，不是四个必填项（PRD 3.2）。
 // 幂等键在同一次提交意图内复用（失败重试不换键），成功或重新展开表单后重置。
 import { useEffect, useRef, useState } from "react";
-import { Button as ArcoButton, Input, Select } from "@arco-design/web-react";
+import { Alert as ArcoAlert, Button as ArcoButton, Card as ArcoCard, Divider as ArcoDivider, Form as ArcoForm, Grid as ArcoGrid, Input, Select, Space as ArcoSpace, Tag as ArcoTag, Typography as ArcoTypography } from "@arco-design/web-react";
 import { ApiError, AUDIENCE_LEVELS, AUDIENCE_LEVEL_NAMES, REQUIREMENT_INTAKE_CHANNELS, REQUIREMENT_INTAKE_TYPES, createRequirement, extractIntakeDraft, getFunctionModules, getRiceDraft, listKanoEvidence, listKanoRuns, listRequirements, saveRiceDraft, setAudienceTags, triggerKanoRun, updateRequirement, type ChatIntakeDraft, type KanoEvidenceVersionDto, type KanoRunDto, type RequirementSummary, type RiceDraft } from "./api";
 import { ConfirmModal } from "./confirm-modal";
 import { requirementSourceName } from "./requirement-view";
@@ -78,7 +78,12 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
   const moduleCandidate = modules.find((item) => item.name === intakeModule)?.personName ?? null;
 
   if (!open) {
-    return <div className="toolbar-actions"><ArcoButton type="primary" size="small" htmlType="button" onClick={() => { setOpen(true); setError(null); }}>新建需求</ArcoButton><ArcoButton size="small" htmlType="button" onClick={() => { setOpen(true); setChatOpen(true); setError(null); }}>从聊天粘贴</ArcoButton></div>;
+    return (
+      <ArcoSpace size={8} className="toolbar-actions">
+        <ArcoButton type="primary" size="small" htmlType="button" onClick={() => { setOpen(true); setError(null); }}>新建需求</ArcoButton>
+        <ArcoButton type="secondary" size="small" htmlType="button" onClick={() => { setOpen(true); setChatOpen(true); setError(null); }}>从聊天粘贴</ArcoButton>
+      </ArcoSpace>
+    );
   }
 
   const reset = () => {
@@ -147,7 +152,7 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
       setChatError(timedOut ? "整理超时，请重试或手工填写。" : intakeErrorMessage(cause, "整理", "无法整理聊天内容，请手工填写。"));
     } finally { clearTimeout(timer); setExtracting(false); }
   };
-  const aiMark = (field: string) => aiFilled.includes(field) ? <small className="ai-filled-tag" title="由 AI 根据聊天内容填充，请核对后再提交"> AI 填充</small> : null;
+  const aiMark = (field: string) => aiFilled.includes(field) ? <ArcoTag size="small" color="arcoblue" className="ai-filled-tag" title="由 AI 根据聊天内容填充，请核对后再提交">AI 填充</ArcoTag> : null;
 
   /**
    * PRD-31：草稿生成后、标题失焦或提交前按标题关键字查一次相似需求（最多 5 条）。
@@ -234,80 +239,104 @@ export function IntakeForm({ onCreated }: { onCreated: (requirementId: string) =
   }));
 
   return <>
-    <div className="rules-form intake-form" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
-      <div className="field" style={{ flexBasis: "100%" }}>
-        {!chatOpen
-          ? <ArcoButton size="small" htmlType="button" onClick={() => setChatOpen(true)} disabled={busy}>从聊天粘贴</ArcoButton>
-          : <>
-              <span>聊天内容（粘贴后由 AI 整理成下面的表单，仍需你确认；聊天原文不会保存）</span>
+    <ArcoCard className="rq-subcard intake-form" size="small">
+      <ArcoForm layout="vertical" className="rq-compact-form">
+        <div className="intake-chat-block">
+          {!chatOpen ? (
+            <ArcoButton type="secondary" size="small" htmlType="button" onClick={() => setChatOpen(true)} disabled={busy}>从聊天粘贴</ArcoButton>
+          ) : (
+            <ArcoForm.Item label="聊天内容（粘贴后由 AI 整理成下面的表单，仍需你确认；聊天原文不会保存）">
               <Input.TextArea aria-label="聊天内容" rows={5} maxLength={20000} showWordLimit placeholder="把聊天里的需求原文粘贴到这里" value={chatText} onChange={(value: string) => setChatText(value)} disabled={busy || extracting} />
-              <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6, flexWrap: "wrap" }}>
+              <ArcoSpace size={8} wrap className="rq-action-bar">
                 <ArcoButton type="primary" size="small" htmlType="button" onClick={() => void extract()} disabled={busy || extracting || !chatText.trim()}>{extracting ? "整理中…" : "整理成需求草稿"}</ArcoButton>
-                <ArcoButton size="small" htmlType="button" onClick={() => { setChatOpen(false); setChatError(null); }} disabled={extracting}>收起</ArcoButton>
-                {aiFilled.length > 0 && <span className="status-hint" role="status">已填充表单，带「AI 填充」的字段请核对后再提交。</span>}
-              </div>
-              {chatError && <div className="field-error" role="alert">{chatError}</div>}
-            </>}
-        {fallbackDraft && <div className="field-error" role="alert" style={{ display: "block", marginTop: 4 }}>AI 没能整理这段聊天，标题和描述已按脱敏原文填入（未经过 AI 整理），请核对或改写后再提交。</div>}
-        {proposer && !isMaskedPlaceholder(proposer) && <span className="status-hint" style={{ display: "block", marginTop: 4 }}>聊天中的提出人：{proposer}（只做展示，不进负责人匹配、不发通知；提交后显示在需求详情里）</span>}
-      </div>
-      <label className="field" style={{ flex: 2, minWidth: 240 }}>
-        <span>标题 *{aiMark("title")}</span>
-        <Input aria-label="新建需求标题" placeholder="一句话描述用户的问题或诉求" value={title} onChange={(value: string) => {
-          setTitle(value); clearAiMark("title");
-          // 标题一变，旧的相似结果就不再对应当前标题：立即清空并作废在途查询。
-          setSimilarRequirements([]); similarQuery.current = ""; similarRequest.current += 1;
-        }} onBlur={() => void lookupSimilar()} disabled={busy} />
-      </label>
-      {visibleSimilar.length > 0 && <div className="status-hint" role="status" style={{ flexBasis: "100%" }}>
-        <strong>相似需求（按标题关键字匹配，仅供参考，不代表重复；不会阻断提交）</strong>
-        <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
-          {visibleSimilar.map((item) => <li key={item.id}>
-            <a href={`?requirement=${item.id}`} target="_blank" rel="noreferrer">{item.platformRequirementId ? `${item.platformRequirementId} · ` : ""}{item.title}</a>
-            <span className="subtle-text"> · {item.sourceLabel}</span>
-          </li>)}
-        </ul>
-      </div>}
-      <div className="field">
-        <span>来源渠道 *{aiMark("sourceChannel")}</span>
-        <Select aria-label="新建来源渠道" value={channel} onChange={(value: string) => { setChannel(value); clearAiMark("sourceChannel"); }} disabled={busy} placeholder="请选择" style={{ minWidth: 160 }} options={[{ label: "请选择", value: "" }, ...REQUIREMENT_INTAKE_CHANNELS.map((item) => ({ label: item, value: item }))]} />
-      </div>
-      <label className="field">
-        <span>产品/型号{aiMark("productModel")}</span>
-        <Input aria-label="关联产品或型号" placeholder="选填，如码表 C606" value={productModel} onChange={(value: string) => { setProductModel(value); clearAiMark("productModel"); }} disabled={busy} />
-      </label>
-      <div className="field">
-        <span>需求类型{aiMark("requirementType")}</span>
-        <Select aria-label="需求类型" value={requirementType} onChange={(value: string) => { setRequirementType(value); clearAiMark("requirementType"); }} disabled={busy} placeholder="未选择" style={{ minWidth: 160 }} options={[{ label: "未选择", value: "" }, ...REQUIREMENT_INTAKE_TYPES.map((item) => ({ label: item, value: item }))]} />
-      </div>
-      <div className="field">
-        <span>功能模块{aiMark("intakeModule")}</span>
-        <Select aria-label="功能模块（录入）" value={intakeModule} onChange={(value: string) => { setIntakeModule(value); clearAiMark("intakeModule"); }} disabled={busy} placeholder="未选择" style={{ minWidth: 160 }} options={[{ label: "未选择", value: "" }, ...modules.map((item) => ({ label: item.name, value: item.name }))]} />
-      </div>
-      {moduleCandidate && <span className="status-hint" style={{ flexBasis: "100%" }}>该模块责任人：{moduleCandidate}（候选提示；负责人在创建后的详情里确认分配）</span>}
-      <label className="field" style={{ flexBasis: "100%" }}>
-        <span>边界/限制{aiMark("constraintNotes")}</span>
-        <Input.TextArea aria-label="边界或限制" rows={2} placeholder="选填：兼容性、法规、成本、上市时间等已知约束；未知留空" value={constraintNotes} onChange={(value: string) => { setConstraintNotes(value); clearAiMark("constraintNotes"); }} disabled={busy} />
-      </label>
-      <label className="field" style={{ flexBasis: "100%" }}>
-        <span>来源链接</span>
-        <Input aria-label="来源链接" type="url" placeholder="选填：原始反馈或工单链接（http/https）" value={supplementUrl} onChange={(value: string) => { setSupplementUrl(value); }} disabled={busy} />
-      </label>
-      <label className="field" style={{ flexBasis: "100%" }}>
-        <span>需求描述 *{aiMark("description")}</span>
-        <Input.TextArea aria-label="新建需求描述" rows={4} placeholder={"建议按四段描述（缺段不阻断提交，AI 会标出缺失项）：\n用户/场景：谁在什么场景下…\n现状问题：当前遇到…\n期望结果：希望…\n补充：约束、链接等（可留空）"} value={description} onChange={(value: string) => { setDescription(value); clearAiMark("description"); }} disabled={busy} />
-      </label>
-      <div className="field" style={{ flexBasis: "100%", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <ArcoButton type="primary" size="small" htmlType="button" onClick={() => void submit()} disabled={busy}>提交并进入分析</ArcoButton>
-        <ArcoButton size="small" htmlType="button" onClick={() => { setOpen(false); reset(); }} disabled={busy}>取消</ArcoButton>
-        {busy && <span className="status-hint" role="status">正在提交…</span>}
-      </div>
-      {error && <div className="field-error" role="alert" style={{ flexBasis: "100%" }}>{error}</div>}
-      {conflict && <div className="field" style={{ flexBasis: "100%", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <ArcoButton size="small" htmlType="button" onClick={retryWithNewKey} disabled={busy}>换新键重提</ArcoButton>
-        <span className="status-hint">只在你确认上一次没有创建成功时使用：换了提交编号后重复提交可能产生重复需求。</span>
-      </div>}
-    </div>
+                <ArcoButton type="secondary" size="small" htmlType="button" onClick={() => { setChatOpen(false); setChatError(null); }} disabled={extracting}>收起</ArcoButton>
+                {aiFilled.length > 0 && <ArcoTypography.Text type="secondary" role="status">已填充表单，带「AI 填充」的字段请核对后再提交。</ArcoTypography.Text>}
+              </ArcoSpace>
+              {chatError && <ArcoAlert className="rq-inline-alert" type="error" showIcon role="alert" content={chatError} />}
+            </ArcoForm.Item>
+          )}
+          {fallbackDraft && <ArcoAlert className="rq-inline-alert" type="warning" showIcon role="alert" content="AI 没能整理这段聊天，标题和描述已按脱敏原文填入（未经过 AI 整理），请核对或改写后再提交。" />}
+          {proposer && !isMaskedPlaceholder(proposer) && <ArcoAlert className="rq-inline-alert" type="info" showIcon content={`聊天中的提出人：${proposer}（只做展示，不进负责人匹配、不发通知；提交后显示在需求详情里）`} />}
+        </div>
+
+        <ArcoGrid.Row gutter={[12, 0]}>
+          <ArcoGrid.Col xs={24} md={12}>
+            <ArcoForm.Item label={<ArcoSpace size={6}><span>标题 *</span>{aiMark("title")}</ArcoSpace>}>
+              <Input aria-label="新建需求标题" placeholder="一句话描述用户的问题或诉求" value={title} onChange={(value: string) => {
+                setTitle(value); clearAiMark("title");
+                setSimilarRequirements([]); similarQuery.current = ""; similarRequest.current += 1;
+              }} onBlur={() => void lookupSimilar()} disabled={busy} />
+            </ArcoForm.Item>
+          </ArcoGrid.Col>
+          <ArcoGrid.Col xs={24} sm={12} md={6}>
+            <ArcoForm.Item label={<ArcoSpace size={6}><span>来源渠道 *</span>{aiMark("sourceChannel")}</ArcoSpace>}>
+              <Select aria-label="新建来源渠道" value={channel} onChange={(value: string) => { setChannel(value); clearAiMark("sourceChannel"); }} disabled={busy} placeholder="请选择" options={[{ label: "请选择", value: "" }, ...REQUIREMENT_INTAKE_CHANNELS.map((item) => ({ label: item, value: item }))]} />
+            </ArcoForm.Item>
+          </ArcoGrid.Col>
+          <ArcoGrid.Col xs={24} sm={12} md={6}>
+            <ArcoForm.Item label={<ArcoSpace size={6}><span>产品/型号</span>{aiMark("productModel")}</ArcoSpace>}>
+              <Input aria-label="关联产品或型号" placeholder="选填，如码表 C606" value={productModel} onChange={(value: string) => { setProductModel(value); clearAiMark("productModel"); }} disabled={busy} />
+            </ArcoForm.Item>
+          </ArcoGrid.Col>
+          <ArcoGrid.Col xs={24} sm={12} md={6}>
+            <ArcoForm.Item label={<ArcoSpace size={6}><span>需求类型</span>{aiMark("requirementType")}</ArcoSpace>}>
+              <Select aria-label="需求类型" value={requirementType} onChange={(value: string) => { setRequirementType(value); clearAiMark("requirementType"); }} disabled={busy} placeholder="未选择" options={[{ label: "未选择", value: "" }, ...REQUIREMENT_INTAKE_TYPES.map((item) => ({ label: item, value: item }))]} />
+            </ArcoForm.Item>
+          </ArcoGrid.Col>
+          <ArcoGrid.Col xs={24} sm={12} md={6}>
+            <ArcoForm.Item label={<ArcoSpace size={6}><span>功能模块</span>{aiMark("intakeModule")}</ArcoSpace>}>
+              <Select aria-label="功能模块（录入）" value={intakeModule} onChange={(value: string) => { setIntakeModule(value); clearAiMark("intakeModule"); }} disabled={busy} placeholder="未选择" options={[{ label: "未选择", value: "" }, ...modules.map((item) => ({ label: item.name, value: item.name }))]} />
+            </ArcoForm.Item>
+          </ArcoGrid.Col>
+          <ArcoGrid.Col xs={24} md={12}>
+            <ArcoForm.Item label="来源链接">
+              <Input aria-label="来源链接" type="url" placeholder="选填：原始反馈或工单链接（http/https）" value={supplementUrl} onChange={(value: string) => { setSupplementUrl(value); }} disabled={busy} />
+            </ArcoForm.Item>
+          </ArcoGrid.Col>
+        </ArcoGrid.Row>
+
+        {visibleSimilar.length > 0 && (
+          <ArcoAlert
+            className="rq-inline-alert"
+            type="info"
+            showIcon
+            role="status"
+            title="相似需求（按标题关键字匹配，仅供参考，不代表重复；不会阻断提交）"
+            content={
+              <ul className="rq-compact-list">
+                {visibleSimilar.map((item) => (
+                  <li key={item.id}>
+                    <a href={`?requirement=${item.id}`} target="_blank" rel="noreferrer">{item.platformRequirementId ? `${item.platformRequirementId} · ` : ""}{item.title}</a>
+                    <ArcoTypography.Text type="secondary"> · {item.sourceLabel}</ArcoTypography.Text>
+                  </li>
+                ))}
+              </ul>
+            }
+          />
+        )}
+        {moduleCandidate && <ArcoTypography.Paragraph type="secondary" className="detail-note">该模块责任人：{moduleCandidate}（候选提示；负责人在创建后的详情里确认分配）</ArcoTypography.Paragraph>}
+
+        <ArcoForm.Item label={<ArcoSpace size={6}><span>边界/限制</span>{aiMark("constraintNotes")}</ArcoSpace>}>
+          <Input.TextArea aria-label="边界或限制" rows={2} placeholder="选填：兼容性、法规、成本、上市时间等已知约束；未知留空" value={constraintNotes} onChange={(value: string) => { setConstraintNotes(value); clearAiMark("constraintNotes"); }} disabled={busy} />
+        </ArcoForm.Item>
+        <ArcoForm.Item label={<ArcoSpace size={6}><span>需求描述 *</span>{aiMark("description")}</ArcoSpace>}>
+          <Input.TextArea aria-label="新建需求描述" rows={4} placeholder={"建议按四段描述（缺段不阻断提交，AI 会标出缺失项）：\n用户/场景：谁在什么场景下…\n现状问题：当前遇到…\n期望结果：希望…\n补充：约束、链接等（可留空）"} value={description} onChange={(value: string) => { setDescription(value); clearAiMark("description"); }} disabled={busy} />
+        </ArcoForm.Item>
+
+        <ArcoSpace size={8} wrap className="rq-action-bar">
+          <ArcoButton type="primary" size="small" htmlType="button" onClick={() => void submit()} disabled={busy}>提交并进入分析</ArcoButton>
+          <ArcoButton type="secondary" size="small" htmlType="button" onClick={() => { setOpen(false); reset(); }} disabled={busy}>取消</ArcoButton>
+          {busy && <ArcoTypography.Text type="secondary" role="status">正在提交…</ArcoTypography.Text>}
+        </ArcoSpace>
+        {error && <ArcoAlert className="rq-inline-alert" type="error" showIcon role="alert" content={error} />}
+        {conflict && (
+          <ArcoSpace size={8} wrap className="rq-action-bar">
+            <ArcoButton type="outline" status="warning" size="small" htmlType="button" onClick={retryWithNewKey} disabled={busy}>换新键重提</ArcoButton>
+            <ArcoTypography.Text type="secondary">只在你确认上一次没有创建成功时使用：换了提交编号后重复提交可能产生重复需求。</ArcoTypography.Text>
+          </ArcoSpace>
+        )}
+      </ArcoForm>
+    </ArcoCard>
     <ConfirmModal
       visible={pendingDraft !== null}
       title="草稿与已填内容冲突"
@@ -371,10 +400,12 @@ export function ManualEditSection({ detail, onSaved }: { detail: ManualEditSourc
   // 手工与多维表格来源都可编辑；聊天粘贴属 web_manual，沿用同一入口；Teambition 只读。
   if (detail.sourceType !== "web_manual" && detail.sourceType !== "base_form") return null;
   if (!open) {
-    return <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-      <ArcoButton size="small" htmlType="button" onClick={() => setOpen(true)}>编辑需求</ArcoButton>
-      {notice && <span className="status-hint" role="status">{notice}</span>}
-    </div>;
+    return (
+      <ArcoSpace size={8} wrap className="rq-action-bar">
+        <ArcoButton type="secondary" size="small" htmlType="button" onClick={() => setOpen(true)}>编辑需求</ArcoButton>
+        {notice && <ArcoTypography.Text type="secondary" role="status">{notice}</ArcoTypography.Text>}
+      </ArcoSpace>
+    );
   }
   const validateEdit = (): string | null => {
     if (!title.trim() || !description.trim() || !channel) return "标题、需求描述与来源渠道不能为空。";
@@ -408,27 +439,38 @@ export function ManualEditSection({ detail, onSaved }: { detail: ManualEditSourc
       setError(cause instanceof ApiError ? cause.message : "保存失败，请重试；同一保存重试不会产生第二个版本。");
     } finally { setBusy(false); }
   };
-  return <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap", borderTop: "1px solid rgba(125,131,140,.25)", paddingTop: 12 }}>
-    {detail.sourceType === "base_form" ? <p className="detail-note" role="note" style={{ flexBasis: "100%", margin: 0 }}>修改只保存在需求平台，不会写回多维表格收集表。</p> : null}
-    <label className="field" style={{ flex: 2, minWidth: 240 }}><span>标题 *</span><Input aria-label="编辑需求标题" value={title} onChange={(value: string) => setTitle(value)} disabled={busy} /></label>
-    <div className="field"><span>来源渠道 *</span>
-      <Select aria-label="编辑来源渠道" value={channel} onChange={(value: string) => setChannel(value)} disabled={busy} placeholder="请选择" style={{ minWidth: 160 }} options={[{ label: "请选择", value: "" }, ...REQUIREMENT_INTAKE_CHANNELS.map((item) => ({ label: item, value: item }))]} />
+  return (
+    <div className="manual-edit-block">
+      <ArcoDivider />
+      {detail.sourceType === "base_form" ? <ArcoAlert className="rq-inline-alert" type="info" showIcon role="note" content="修改只保存在需求平台，不会写回多维表格收集表。" /> : null}
+      <ArcoForm layout="vertical" className="rq-compact-form">
+        <ArcoGrid.Row gutter={[12, 0]}>
+          <ArcoGrid.Col xs={24} md={12}>
+            <ArcoForm.Item label="标题 *"><Input aria-label="编辑需求标题" value={title} onChange={(value: string) => setTitle(value)} disabled={busy} /></ArcoForm.Item>
+          </ArcoGrid.Col>
+          <ArcoGrid.Col xs={24} sm={12} md={4}>
+            <ArcoForm.Item label="来源渠道 *"><Select aria-label="编辑来源渠道" value={channel} onChange={(value: string) => setChannel(value)} disabled={busy} placeholder="请选择" options={[{ label: "请选择", value: "" }, ...REQUIREMENT_INTAKE_CHANNELS.map((item) => ({ label: item, value: item }))]} /></ArcoForm.Item>
+          </ArcoGrid.Col>
+          <ArcoGrid.Col xs={24} sm={12} md={4}>
+            <ArcoForm.Item label="产品/型号"><Input aria-label="编辑产品或型号" value={productModel} onChange={(value: string) => setProductModel(value)} disabled={busy} /></ArcoForm.Item>
+          </ArcoGrid.Col>
+          <ArcoGrid.Col xs={24} sm={12} md={4}>
+            <ArcoForm.Item label="需求类型"><Select aria-label="编辑需求类型" value={requirementType} onChange={(value: string) => setRequirementType(value)} disabled={busy} placeholder="未选择" options={[{ label: "未选择", value: "" }, ...REQUIREMENT_INTAKE_TYPES.map((item) => ({ label: item, value: item }))]} /></ArcoForm.Item>
+          </ArcoGrid.Col>
+        </ArcoGrid.Row>
+        <ArcoForm.Item label="需求描述 *"><Input.TextArea aria-label="编辑需求描述" rows={4} value={description} onChange={(value: string) => setDescription(value)} disabled={busy} /></ArcoForm.Item>
+        <ArcoForm.Item label="边界/限制"><Input.TextArea aria-label="编辑边界或限制" rows={2} value={constraintNotes} onChange={(value: string) => setConstraintNotes(value)} disabled={busy} /></ArcoForm.Item>
+        <ArcoForm.Item label="来源链接"><Input aria-label="编辑来源链接" type="url" value={supplementUrl} onChange={(value: string) => setSupplementUrl(value)} disabled={busy} /></ArcoForm.Item>
+        <ArcoSpace size={8} wrap className="rq-action-bar">
+          <ArcoButton type="primary" size="small" htmlType="button" onClick={() => void submit()} disabled={busy}>保存（基于 v{detail.sourceVersion}）</ArcoButton>
+          <ArcoButton type="secondary" size="small" htmlType="button" onClick={() => setOpen(false)} disabled={busy}>取消</ArcoButton>
+          {busy && <ArcoTypography.Text type="secondary" role="status">正在保存…</ArcoTypography.Text>}
+          {notice && <ArcoTypography.Text type="secondary" role="status">{notice}</ArcoTypography.Text>}
+        </ArcoSpace>
+        {error && <ArcoAlert className="rq-inline-alert" type="error" showIcon role="alert" content={error} />}
+      </ArcoForm>
     </div>
-    <label className="field"><span>产品/型号</span><Input aria-label="编辑产品或型号" value={productModel} onChange={(value: string) => setProductModel(value)} disabled={busy} /></label>
-    <div className="field"><span>需求类型</span>
-      <Select aria-label="编辑需求类型" value={requirementType} onChange={(value: string) => setRequirementType(value)} disabled={busy} placeholder="未选择" style={{ minWidth: 160 }} options={[{ label: "未选择", value: "" }, ...REQUIREMENT_INTAKE_TYPES.map((item) => ({ label: item, value: item }))]} />
-    </div>
-    <label className="field" style={{ flexBasis: "100%" }}><span>需求描述 *</span><Input.TextArea aria-label="编辑需求描述" rows={4} value={description} onChange={(value: string) => setDescription(value)} disabled={busy} /></label>
-    <label className="field" style={{ flexBasis: "100%" }}><span>边界/限制</span><Input.TextArea aria-label="编辑边界或限制" rows={2} value={constraintNotes} onChange={(value: string) => setConstraintNotes(value)} disabled={busy} /></label>
-    <label className="field" style={{ flexBasis: "100%" }}><span>来源链接</span><Input aria-label="编辑来源链接" type="url" value={supplementUrl} onChange={(value: string) => setSupplementUrl(value)} disabled={busy} /></label>
-    <div className="field" style={{ flexBasis: "100%", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-      <ArcoButton type="primary" size="small" htmlType="button" onClick={() => void submit()} disabled={busy}>保存（基于 v{detail.sourceVersion}）</ArcoButton>
-      <ArcoButton size="small" htmlType="button" onClick={() => setOpen(false)} disabled={busy}>取消</ArcoButton>
-      {busy && <span className="status-hint" role="status">正在保存…</span>}
-      {notice && <span className="status-hint" role="status">{notice}</span>}
-    </div>
-    {error && <div className="field-error" role="alert" style={{ flexBasis: "100%" }}>{error}</div>}
-  </div>;
+  );
 }
 
 export interface AudienceState { tags: string[]; confirmed: boolean; version: number }
@@ -463,28 +505,61 @@ export function AudienceEditor({ requirementId, audience, suggestedTags = [], on
       setError(cause instanceof ApiError ? cause.message : "保存失败，请重试。");
     } finally { setBusy(false); }
   };
-  return <div className="audience-editor">
-    <div className="audience-ai-row">
-      <span className="audience-ai-label">AI 建议</span>
-      {suggestedTags.length > 0
-        ? <div className="audience-ai-chips">{suggestedTags.map((level) => <ArcoButton type="text" key={level} className={`audience-ai-chip${selected.includes(level) ? " is-in-draft" : ""}`} onClick={() => toggle(level)} disabled={busy} aria-pressed={selected.includes(level)} title="把该 AI 建议加入/移出本次选择" htmlType="button">{AUDIENCE_LEVEL_NAMES[level] ?? level}</ArcoButton>)}</div>
-        : <span className="audience-ai-empty">AI 未给出人群建议</span>}
-      <span className="audience-ai-hint">未确认时默认选中首个 AI 建议；可修改后保存</span>
-    </div>
-    <div className="audience-choice-row" role="group" aria-label="选择适用人群">
-      {AUDIENCE_LEVELS.map((level) => (
-        <ArcoButton type="text" key={level} aria-pressed={selected.includes(level)} className={`audience-tag${selected.includes(level) ? " is-selected" : ""}`} onClick={() => toggle(level)} disabled={busy} title={AUDIENCE_LEVEL_NAMES[level]} htmlType="button">
-          {AUDIENCE_LEVEL_NAMES[level]}
+  return (
+    <div className="audience-editor">
+      <div className="audience-ai-row">
+        <ArcoTypography.Text type="secondary" className="audience-ai-label">AI 建议</ArcoTypography.Text>
+        {suggestedTags.length > 0 ? (
+          <ArcoSpace size={[6, 6]} wrap className="audience-ai-chips">
+            {suggestedTags.map((level) => (
+              <ArcoButton
+                key={level}
+                size="mini"
+                type={selected.includes(level) ? "primary" : "outline"}
+                onClick={() => toggle(level)}
+                disabled={busy}
+                aria-pressed={selected.includes(level)}
+                title="把该 AI 建议加入/移出本次选择"
+                htmlType="button"
+              >
+                {AUDIENCE_LEVEL_NAMES[level] ?? level}
+              </ArcoButton>
+            ))}
+          </ArcoSpace>
+        ) : (
+          <ArcoTypography.Text type="secondary">AI 未给出人群建议</ArcoTypography.Text>
+        )}
+        <ArcoTypography.Text type="secondary" className="audience-ai-hint">未确认时默认选中首个 AI 建议；可修改后保存</ArcoTypography.Text>
+      </div>
+      <div className="audience-choice-row" role="group" aria-label="选择适用人群">
+        <ArcoSpace size={[8, 8]} wrap>
+          {AUDIENCE_LEVELS.map((level) => (
+            <ArcoButton
+              key={level}
+              size="small"
+              type={selected.includes(level) ? "primary" : "secondary"}
+              aria-pressed={selected.includes(level)}
+              className={`audience-tag${selected.includes(level) ? " is-selected" : ""}`}
+              onClick={() => toggle(level)}
+              disabled={busy}
+              title={AUDIENCE_LEVEL_NAMES[level]}
+              htmlType="button"
+            >
+              {AUDIENCE_LEVEL_NAMES[level]}
+            </ArcoButton>
+          ))}
+        </ArcoSpace>
+      </div>
+      <ArcoSpace size={10} wrap className="audience-actions">
+        <ArcoButton type="primary" size="small" className="audience-save-button" onClick={() => void save()} disabled={busy} htmlType="button">
+          {busy ? "保存中…" : "保存人群标签"}
         </ArcoButton>
-      ))}
+        {audience.confirmed && audience.tags.length === 0 && <ArcoTypography.Text type="secondary">已确认为空（不再默认采用 AI 建议）</ArcoTypography.Text>}
+        {!audience.confirmed && <ArcoTypography.Text type="secondary">尚未确认；当前选择是草稿，保存后才成为 PM 确认值</ArcoTypography.Text>}
+        {error && <ArcoTypography.Text type="error" role="alert">{error}</ArcoTypography.Text>}
+      </ArcoSpace>
     </div>
-    <div className="audience-actions">
-      <ArcoButton type="text" className="audience-save-button" onClick={() => void save()} disabled={busy} htmlType="button">{busy ? "保存中…" : "保存人群标签"}</ArcoButton>
-      {audience.confirmed && audience.tags.length === 0 && <span className="status-hint">已确认为空（不再默认采用 AI 建议）</span>}
-      {!audience.confirmed && <span className="status-hint">尚未确认；当前选择是草稿，保存后才成为 PM 确认值</span>}
-      {error && <span className="field-error" role="alert">{error}</span>}
-    </div>
-  </div>;
+  );
 }
 
 /** V02-T11：详情「Beta 分析」次级入口（默认收起）。RICE 草稿只落草稿与历史，
@@ -531,7 +606,7 @@ export function BetaPanel({ requirementId }: { requirementId: string }) {
     }).catch(() => { if (!cancelled) setError("草稿读取失败，请重试。"); });
     return () => { cancelled = true; controller.abort(); };
   }, [open, requirementId]);
-  if (!open) return <ArcoButton size="small" htmlType="button" onClick={() => setOpen(true)}>Beta 分析</ArcoButton>;
+  if (!open) return <ArcoButton type="secondary" size="small" htmlType="button" onClick={() => setOpen(true)}>Beta 分析</ArcoButton>;
   const save = async () => {
     if (!draft) return;
     setBusy(true); setError(null); setNotice(null);
@@ -550,53 +625,77 @@ export function BetaPanel({ requirementId }: { requirementId: string }) {
       setError(cause instanceof ApiError ? cause.message : "保存失败，请重试。");
     } finally { setBusy(false); }
   };
-  return <div className="rules-form" style={{ alignItems: "flex-end", flexWrap: "wrap", borderTop: "1px solid rgba(125,131,140,.25)", paddingTop: 12 }}>
-    <strong style={{ flexBasis: "100%" }}>RICE 草稿（Beta · 与主优先级无关）</strong>
-    <label className="field"><span>Reach（草稿）</span><Input aria-label="RICE Reach 草稿" value={reach} onChange={(value: string) => setReach(value)} disabled={busy} placeholder="如：约 200 次/月（单位待配置）" /></label>
-    <label className="field"><span>Impact（草稿）</span><Input aria-label="RICE Impact 草稿" value={impact} onChange={(value: string) => setImpact(value)} disabled={busy} /></label>
-    <label className="field"><span>Confidence（草稿）</span><Input aria-label="RICE Confidence 草稿" value={confidence} onChange={(value: string) => setConfidence(value)} disabled={busy} /></label>
-    <label className="field"><span>Effort（草稿）</span><Input aria-label="RICE Effort 草稿" value={effort} onChange={(value: string) => setEffort(value)} disabled={busy} /></label>
-    <label className="field" style={{ flexBasis: "100%" }}><span>依据说明</span><Input.TextArea aria-label="RICE 依据说明" rows={2} value={notes} onChange={(value: string) => setNotes(value)} disabled={busy} /></label>
-    <div className="field" style={{ flexBasis: "100%", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-      <ArcoButton type="primary" size="small" htmlType="button" onClick={() => void save()} disabled={busy || !draft}>保存草稿</ArcoButton>
-      <ArcoButton size="small" htmlType="button" onClick={() => setOpen(false)} disabled={busy}>收起</ArcoButton>
-      {draft && <span className="status-hint" role="status">状态：{draft.status} · 依据源版本 v{draft.sourceVersion} · 草稿版本 v{draft.editVersion}</span>}
-      {notice && <span className="status-hint" role="status">{notice}</span>}
-    </div>
-    <div className="req-field" style={{ flexBasis: "100%", marginTop: 8 }}>
-      <strong>Kano 资料（已批准快照 · 只读）</strong>
-      {evidence.length === 0 ? <p className="status-hint">暂无已批准的访谈资料。</p> : <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
-        {evidence.map((item) => {
-          const safeUrl = safeHttpUrl(item.sourceUrl);
-          return <li key={item.id}>v{item.version} · {item.title}{item.coverageNotes ? `（覆盖限制：${item.coverageNotes}）` : ""}{safeUrl ? <> · <a href={safeUrl} target="_blank" rel="noreferrer">来源</a></> : null}</li>;
-        })}
-      </ul>}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 8 }}>
-        <Select aria-label="Kano 资料版本" value={selectedEvidence} onChange={(value: string) => setSelectedEvidence(value)} disabled={kanoBusy || evidence.length === 0} placeholder="选择资料版本" style={{ minWidth: 200 }} options={[{ label: "选择资料版本", value: "" }, ...evidence.map((item) => ({ label: `v${item.version} · ${item.title}`, value: String(item.version) }))]} />
-        <ArcoButton type="primary" size="small" htmlType="button" disabled={kanoBusy || !selectedEvidence} onClick={() => void (async () => {
-          setKanoBusy(true); setKanoError(null);
-          try {
-            await triggerKanoRun(requirementId, Number(selectedEvidence));
-            setRuns((await listKanoRuns(requirementId)).items);
-          } catch (cause) {
-            setKanoError(cause instanceof ApiError ? cause.message : "触发失败，请重试。");
-          } finally { setKanoBusy(false); }
-        })()}>生成 Kano 假设报告（手动）</ArcoButton>
-        {kanoBusy && <span className="status-hint" role="status">已提交，运行中…</span>}
-        {kanoError && <span className="field-error" role="alert">{kanoError}</span>}
+  return (
+    <div className="beta-panel-block">
+      <ArcoDivider />
+      <ArcoTypography.Title heading={6}>RICE 草稿（Beta · 与主优先级无关）</ArcoTypography.Title>
+      <ArcoForm layout="vertical" className="rq-compact-form">
+        <ArcoGrid.Row gutter={[12, 0]}>
+          <ArcoGrid.Col xs={24} sm={12} md={6}><ArcoForm.Item label="Reach（草稿）"><Input aria-label="RICE Reach 草稿" value={reach} onChange={(value: string) => setReach(value)} disabled={busy} placeholder="如：约 200 次/月（单位待配置）" /></ArcoForm.Item></ArcoGrid.Col>
+          <ArcoGrid.Col xs={24} sm={12} md={6}><ArcoForm.Item label="Impact（草稿）"><Input aria-label="RICE Impact 草稿" value={impact} onChange={(value: string) => setImpact(value)} disabled={busy} /></ArcoForm.Item></ArcoGrid.Col>
+          <ArcoGrid.Col xs={24} sm={12} md={6}><ArcoForm.Item label="Confidence（草稿）"><Input aria-label="RICE Confidence 草稿" value={confidence} onChange={(value: string) => setConfidence(value)} disabled={busy} /></ArcoForm.Item></ArcoGrid.Col>
+          <ArcoGrid.Col xs={24} sm={12} md={6}><ArcoForm.Item label="Effort（草稿）"><Input aria-label="RICE Effort 草稿" value={effort} onChange={(value: string) => setEffort(value)} disabled={busy} /></ArcoForm.Item></ArcoGrid.Col>
+        </ArcoGrid.Row>
+        <ArcoForm.Item label="依据说明"><Input.TextArea aria-label="RICE 依据说明" rows={2} value={notes} onChange={(value: string) => setNotes(value)} disabled={busy} /></ArcoForm.Item>
+        <ArcoSpace size={8} wrap className="rq-action-bar">
+          <ArcoButton type="primary" size="small" htmlType="button" onClick={() => void save()} disabled={busy || !draft}>保存草稿</ArcoButton>
+          <ArcoButton type="secondary" size="small" htmlType="button" onClick={() => setOpen(false)} disabled={busy}>收起</ArcoButton>
+          {draft && <ArcoTypography.Text type="secondary" role="status">状态：{draft.status} · 依据源版本 v{draft.sourceVersion} · 草稿版本 v{draft.editVersion}</ArcoTypography.Text>}
+          {notice && <ArcoTypography.Text type="secondary" role="status">{notice}</ArcoTypography.Text>}
+        </ArcoSpace>
+      </ArcoForm>
+
+      <ArcoDivider />
+      <div className="req-field">
+        <ArcoTypography.Title heading={6}>Kano 资料（已批准快照 · 只读）</ArcoTypography.Title>
+        {evidence.length === 0 ? <ArcoTypography.Text type="secondary">暂无已批准的访谈资料。</ArcoTypography.Text> : (
+          <ul className="rq-compact-list">
+            {evidence.map((item) => {
+              const safeUrl = safeHttpUrl(item.sourceUrl);
+              return <li key={item.id}>v{item.version} · {item.title}{item.coverageNotes ? `（覆盖限制：${item.coverageNotes}）` : ""}{safeUrl ? <> · <a href={safeUrl} target="_blank" rel="noreferrer">来源</a></> : null}</li>;
+            })}
+          </ul>
+        )}
+        <ArcoSpace size={8} wrap className="rq-action-bar">
+          <Select aria-label="Kano 资料版本" value={selectedEvidence} onChange={(value: string) => setSelectedEvidence(value)} disabled={kanoBusy || evidence.length === 0} placeholder="选择资料版本" style={{ minWidth: 200 }} options={[{ label: "选择资料版本", value: "" }, ...evidence.map((item) => ({ label: `v${item.version} · ${item.title}`, value: String(item.version) }))]} />
+          <ArcoButton type="primary" size="small" htmlType="button" disabled={kanoBusy || !selectedEvidence} onClick={() => void (async () => {
+            setKanoBusy(true); setKanoError(null);
+            try {
+              await triggerKanoRun(requirementId, Number(selectedEvidence));
+              setRuns((await listKanoRuns(requirementId)).items);
+            } catch (cause) {
+              setKanoError(cause instanceof ApiError ? cause.message : "触发失败，请重试。");
+            } finally { setKanoBusy(false); }
+          })()}>生成 Kano 假设报告（手动）</ArcoButton>
+          {kanoBusy && <ArcoTypography.Text type="secondary" role="status">已提交，运行中…</ArcoTypography.Text>}
+          {kanoError && <ArcoTypography.Text type="error" role="alert">{kanoError}</ArcoTypography.Text>}
+        </ArcoSpace>
+        {runs.length > 0 && (
+          <div className="beta-kano-runs">
+            {runs.slice(0, 3).map((run) => (
+              <ArcoCard key={run.id} size="small" className="rq-subcard">
+                <strong>v{run.runVersion} · {run.status === "succeeded" ? (run.result?.researchStatus ?? "AI假设（待验证）") : run.status === "running" ? "运行中" : `失败（${run.safeErrorCode ?? ""}）`}{run.staleInputs ? " · 输入已过期，建议重跑" : ""}</strong>
+                {run.result && (
+                  <ul className="rq-compact-list">
+                    {run.result.capabilities.map((capability, index) => (
+                      <li key={index}>
+                        <strong>{capability.capability}</strong>（{capability.audience ?? "人群待判断"}）→ 候选 <strong>{capability.candidateType}</strong>
+                        {capability.conflicts?.length ? ` · 冲突：${capability.conflicts.join("；")}` : ""}
+                        <br /><ArcoTypography.Text type="secondary">正向：{capability.positiveQuestion}／反向：{capability.negativeQuestion}</ArcoTypography.Text>
+                        <br /><ArcoTypography.Text type="secondary">推演倾向：{capability.simulatedLeaning.option}——{capability.simulatedLeaning.rationale}；证据 {capability.evidence.join(", ")}</ArcoTypography.Text>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {run.result && run.result.gaps.length > 0 && <ArcoTypography.Paragraph type="secondary" className="detail-note">缺口：{run.result.gaps.join("；")}</ArcoTypography.Paragraph>}
+                {run.result && <ArcoTypography.Paragraph type="secondary" className="detail-note">置信度：{run.result.confidence}——{run.result.confidenceReason}</ArcoTypography.Paragraph>}
+                {run.status === "failed" && <ArcoTypography.Paragraph type="secondary" className="detail-note">{run.safeErrorSummary ?? ""}</ArcoTypography.Paragraph>}
+              </ArcoCard>
+            ))}
+          </div>
+        )}
       </div>
-      {runs.length > 0 && <div style={{ marginTop: 8 }}>
-        {runs.slice(0, 3).map((run) => <div key={run.id} className="req-field" style={{ borderTop: "1px dashed rgba(125,131,140,.3)", paddingTop: 8, marginTop: 8 }}>
-          <strong>v{run.runVersion} · {run.status === "succeeded" ? (run.result?.researchStatus ?? "AI假设（待验证）") : run.status === "running" ? "运行中" : `失败（${run.safeErrorCode ?? ""}）`}{run.staleInputs ? " · 输入已过期，建议重跑" : ""}</strong>
-          {run.result && <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
-            {run.result.capabilities.map((capability, index) => <li key={index}><strong>{capability.capability}</strong>（{capability.audience ?? "人群待判断"}）→ 候选 <strong>{capability.candidateType}</strong>{capability.conflicts?.length ? ` · 冲突：${capability.conflicts.join("；")}` : ""}<br /><span className="status-hint">正向：{capability.positiveQuestion}／反向：{capability.negativeQuestion}</span><br /><span className="status-hint">推演倾向：{capability.simulatedLeaning.option}——{capability.simulatedLeaning.rationale}；证据 {capability.evidence.join(", ")}</span></li>)}
-          </ul>}
-          {run.result && run.result.gaps.length > 0 && <p className="status-hint">缺口：{run.result.gaps.join("；")}</p>}
-          {run.result && <p className="status-hint">置信度：{run.result.confidence}——{run.result.confidenceReason}</p>}
-          {run.status === "failed" && <p className="status-hint">{run.safeErrorSummary ?? ""}</p>}
-        </div>)}
-      </div>}
+      {error && <ArcoAlert className="rq-inline-alert" type="error" showIcon role="alert" content={error} />}
     </div>
-    {error && <div className="field-error" role="alert" style={{ flexBasis: "100%" }}>{error}</div>}
-  </div>;
+  );
 }

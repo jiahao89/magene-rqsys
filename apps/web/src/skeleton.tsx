@@ -1,23 +1,28 @@
-// 加载占位（骨架屏）：仅在“首次加载且没有旧数据”时出现；静默刷新保持既有内容，避免整页闪烁。
-// 所有骨架节点对辅助技术隐藏，外层用 role="status" + aria-busy 表达加载中。
+// 加载占位（骨架屏）：基于 Arco Skeleton，仅在“首次加载且没有旧数据”时出现；
+// 静默刷新保持既有内容，避免整页闪烁。外层用 role="status" + aria-busy 表达加载中。
+import { Card as ArcoCard, Grid as ArcoGrid, Skeleton as ArcoSkeleton } from "@arco-design/web-react";
 
 export function SkeletonBlock({ className = "" }: { className?: string }) {
-  return <span className={`skeleton ${className}`.trim()} aria-hidden="true" />;
+  return (
+    <span className={`skeleton ${className}`.trim()} aria-hidden="true">
+      <ArcoSkeleton animation text={{ rows: 1, width: "100%" }} />
+    </span>
+  );
 }
 
 export function SkeletonText({ lines = 1 }: { lines?: number }) {
   return (
     <span className="skeleton-text" role="status" aria-busy="true" aria-label="正在加载">
-      {Array.from({ length: lines }).map((_, index) => (
-        <span key={index} className="skeleton skeleton-line" aria-hidden="true" />
-      ))}
+      <span className="skeleton" aria-hidden="true">
+        <ArcoSkeleton animation text={{ rows: lines }} />
+      </span>
     </span>
   );
 }
 
 type SkeletonTableProps = { rows?: number; columns?: number };
 
-/** 表格骨架：列宽按序号轻微变化，避免整齐得像真实数据。 */
+/** 表格骨架：采用 Arco Skeleton 占位行，列宽按序号轻微变化。 */
 export function SkeletonTableRows({ rows = 5, columns = 5 }: SkeletonTableProps) {
   return (
     <div className="table-scroll skeleton-table" role="status" aria-busy="true" aria-label="正在加载列表">
@@ -27,7 +32,9 @@ export function SkeletonTableRows({ rows = 5, columns = 5 }: SkeletonTableProps)
             <tr key={rowIndex}>
               {Array.from({ length: columns }).map((_, columnIndex) => (
                 <td key={columnIndex}>
-                  <span className={`skeleton skeleton-line ${columnIndex === 0 ? "skeleton-line-wide" : ""}`} />
+                  <span className="skeleton">
+                    <ArcoSkeleton animation text={{ rows: 1, width: columnIndex === 0 ? "85%" : "60%" }} />
+                  </span>
                 </td>
               ))}
             </tr>
@@ -41,12 +48,15 @@ export function SkeletonTableRows({ rows = 5, columns = 5 }: SkeletonTableProps)
 export function SkeletonCards({ count = 4 }: { count?: number }) {
   return (
     <div className="skeleton-cards" role="status" aria-busy="true" aria-label="正在加载统计">
-      {Array.from({ length: count }).map((_, index) => (
-        <div key={index} className="skeleton skeleton-card" aria-hidden="true">
-          <span className="skeleton skeleton-line skeleton-line-short" />
-          <span className="skeleton skeleton-line skeleton-line-title" />
-        </div>
-      ))}
+      <ArcoGrid.Row gutter={[16, 16]}>
+        {Array.from({ length: count }).map((_, index) => (
+          <ArcoGrid.Col key={index} xs={24} sm={12} md={Math.max(6, Math.floor(24 / Math.min(count, 4)))}>
+            <ArcoCard className="skeleton skeleton-card" aria-hidden="true">
+              <ArcoSkeleton animation text={{ rows: 2, width: ["45%", "75%"] }} />
+            </ArcoCard>
+          </ArcoGrid.Col>
+        ))}
+      </ArcoGrid.Row>
     </div>
   );
 }
@@ -55,17 +65,18 @@ export function SkeletonCards({ count = 4 }: { count?: number }) {
 export function RequirementDetailSkeleton() {
   return (
     <div className="req-detail-skeleton" role="status" aria-busy="true" aria-label="正在加载需求详情">
-      <span className="skeleton skeleton-line skeleton-line-title" />
-      <span className="skeleton skeleton-line skeleton-line-wide" />
-      <div className="req-detail-skeleton-grid">
+      <ArcoCard className="skeleton" aria-hidden="true">
+        <ArcoSkeleton animation text={{ rows: 3, width: ["40%", "85%", "60%"] }} />
+      </ArcoCard>
+      <ArcoGrid.Row gutter={[16, 16]} className="req-detail-skeleton-grid">
         {Array.from({ length: 4 }).map((_, index) => (
-          <div key={index} className="skeleton skeleton-card">
-            <span className="skeleton skeleton-line skeleton-line-short" />
-            <span className="skeleton skeleton-line" />
-            <span className="skeleton skeleton-line skeleton-line-wide" />
-          </div>
+          <ArcoGrid.Col key={index} xs={24} sm={12}>
+            <ArcoCard className="skeleton skeleton-card" aria-hidden="true">
+              <ArcoSkeleton animation text={{ rows: 3, width: ["45%", "90%", "70%"] }} />
+            </ArcoCard>
+          </ArcoGrid.Col>
         ))}
-      </div>
+      </ArcoGrid.Row>
     </div>
   );
 }

@@ -161,6 +161,7 @@ const PARITY_INVARIANTS = {
 
 // 前端共用文件：apps/web/src 与 rq-sys-miaoda/client/src/rqsys 必须逐字一致（忽略扩展名差异）。
 const WEB_SHARED = [
+  "arco-styles.ts",
   "confirm-modal.tsx",
   "deep-link.ts",
   "intake-form.tsx",
@@ -168,25 +169,23 @@ const WEB_SHARED = [
   "prd-prompt.tsx",
   "safe-url.ts",
   "schedule.ts",
+  "skeleton.tsx",
   "sop.tsx",
   "state-labels.ts",
+  "styles.css",
 ];
 
 // 前端平台适配文件：允许存在宿主差异，但必须登记理由，且不得缺少任一侧文件。
 const WEB_DECLARED = {
   "App.tsx": "宿主壳层差异（独立 Vite 壳 vs 妙搭 Layout/路由）",
   "api.ts": "请求传输层差异（原生 fetch vs 妙搭 backendFetch/axios）",
-  "arco-styles.ts": "按需 Arco 样式清单差异（独立壳 vs 妙搭客户端）",
   "panels.tsx": "妙搭平台选人与应用前缀接线差异（platform-people / backendFetch）",
   "requirement-view.ts": "注释差异",
   "requirements-url.ts": "查询参数 trim 与注释差异",
-  "skeleton.tsx": "骨架屏注释与 props 写法差异",
-  "styles.css": "宿主样式表差异（样式语义由 check:arco-styles 另行校验）",
   "workbench-routing.ts": "路由注释差异",
 };
 
 const WEB_ROOT_ONLY = {
-  "arco.tsx": "独立 Vite 壳 Arco 入口封装",
   "main.tsx": "独立 Vite 渲染入口；妙搭入口在 client/src/index.tsx",
   "test-setup.ts": "root web 单测环境初始化",
   "vite-env.d.ts": "root Vite 类型声明",

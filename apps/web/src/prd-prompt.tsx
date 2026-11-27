@@ -1,7 +1,7 @@
 // PRD 提示词（S2）：详情「需求评估」下方的独立区块。
 // 按需生成、版本化、只读结果、可复制；不自动调用模型、不写 Base、不发通知。
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Button as ArcoButton, Input as ArcoInput } from "@arco-design/web-react";
+import { Alert as ArcoAlert, Badge as ArcoBadge, Button as ArcoButton, Card as ArcoCard, Empty as ArcoEmpty, Form as ArcoForm, Input as ArcoInput, Message as ArcoMessage, Space as ArcoSpace, Tag as ArcoTag, Typography as ArcoTypography } from "@arco-design/web-react";
 import {
   ApiError,
   createPrdPrompt,
@@ -121,8 +121,6 @@ export function PrdPromptSection({ requirementId, assessmentRevision = 0, timeou
     generateControllerRef.current = null;
     setAssessments(null);
     setItems(null);
-    setAssessError(null);
-    setHistoryError(null);
     setNotes("");
     setSelectedVersion(null);
     setBusy(false);
@@ -138,32 +136,41 @@ export function PrdPromptSection({ requirementId, assessmentRevision = 0, timeou
       generateControllerRef.current?.abort();
       generateControllerRef.current = null;
     };
-  }, [requirementId, loadAssessments, loadHistory]);
-  // 详情页生成评估成功后 revision 递增：只重拉评估列表，解锁生成按钮（历史与输入不动）。
-  useEffect(() => { if (assessmentRevision > 0) void loadAssessments(); }, [assessmentRevision, loadAssessments]);
-  useEffect(() => () => { if (copyTimer.current !== null) window.clearTimeout(copyTimer.current); }, []);
+  }, [loadAssessments, loadHistory]);
+
+  // 同页「需求评估」生成成功后触发：仅重新拉评估列表解锁本区块，不清空用户正在写的调研结论。
+  useEffect(() => {
+    if (assessmentRevision > 0) void loadAssessments();
+  }, [assessmentRevision, loadAssessments]);
+
+  useEffect(() => () => {
+    if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
+  }, []);
 
   const latestAssessment = (assessments ?? [])
-    .filter((item) => item.status === "succeeded" && item.output)
-    .sort((a, b) => b.version - a.version)[0] ?? null;
-  const current = items?.find((item) => item.version === selectedVersion) ?? items?.[0] ?? null;
-  const inProgress = current?.status === "running";
+    .filter((item) => item.status === "succeeded")
+    .sort((left, right) => right.version - left.version)[0] ?? null;
+
+  const hasRunning = (items ?? []).some((item) => item.status === "running");
+  const current = (selectedVersion !== null ? items?.find((item) => item.version === selectedVersion) : null) ?? items?.[0] ?? null;
   const loaded = assessments !== null && items !== null;
-  const canGenerate = Boolean(latestAssessment) && !busy && !inProgress && loaded;
-  const noAssessment = assessments !== null && !latestAssessment;
+  const noAssessment = assessments !== null && !assessError && !latestAssessment;
+  const canGenerate = Boolean(latestAssessment) && !busy && !hasRunning;
 
   const selectVersion = (item: PrdPromptVersion) => {
     setSelectedVersion(item.version);
     setNotes(investigationNotesOf(item));
     setExpanded(false);
-    setError(null);
-    setNotice(null);
     setCopied(false);
   };
 
   const generate = async () => {
     if (!latestAssessment || !canGenerate) return;
-    setBusy(true); setError(null); setNotice(null); setCopied(false);
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    setCopied(false);
+    generateControllerRef.current?.abort();
     const controller = new AbortController();
     generateControllerRef.current = controller;
     let timedOut = false;
@@ -197,6 +204,7 @@ export function PrdPromptSection({ requirementId, assessmentRevision = 0, timeou
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
+      ArcoMessage.success("已复制 PRD 提示词");
       if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
       copyTimer.current = window.setTimeout(() => setCopied(false), 2000);
     } catch {
@@ -215,98 +223,165 @@ export function PrdPromptSection({ requirementId, assessmentRevision = 0, timeou
 
   const emptyNotes = current?.status === "succeeded" && !investigationNotesOf(current).trim();
 
-  return <section className="req-section req-prd-prompt-section" aria-labelledby="req-prd-prompt-heading">
-    <div className="req-section-head">
-      <h3 id="req-prd-prompt-heading">PRD 提示词</h3>
-      <span className="req-source-note">AI 建议，非结论 · 按需生成</span>
-    </div>
+  return (
+    <ArcoCard
+      className="rq-card req-section req-prd-prompt-section"
+      aria-labelledby="req-prd-prompt-heading"
+      title={<h3 id="req-prd-prompt-heading" className="rq-section-heading">PRD 提示词</h3>}
+      extra={<ArcoTag>AI 建议，非结论 · 按需生成</ArcoTag>}
+    >
+      {assessError ? <ArcoAlert className="rq-inline-alert" type="error" showIcon role="alert" content={assessError} /> : null}
+      {noAssessment ? (
+        <ArcoAlert
+          className="rq-inline-alert"
+          type="info"
+          showIcon
+          role="status"
+          content={
+            <ArcoSpace size={4} wrap>
+              <span>先生成一条成功的需求评估，才能生成 PRD 提示词。</span>
+              <ArcoButton
+                type="text"
+                size="small"
+                htmlType="button"
+                onClick={() => {
+                  const heading = document.getElementById("req-assessment-heading");
+                  if (!heading) return;
+                  heading.scrollIntoView?.({ behavior: "smooth", block: "start" });
+                  if (!heading.hasAttribute("tabindex")) heading.setAttribute("tabindex", "-1");
+                  heading.focus?.({ preventScroll: true });
+                }}
+              >
+                前往需求评估
+              </ArcoButton>
+            </ArcoSpace>
+          }
+        />
+      ) : null}
+      {latestAssessment ? (
+        <ArcoSpace size={10} wrap className="prd-prompt-meta">
+          <ArcoBadge status="success" text={`评估 v${latestAssessment.version} · ${VERDICT_LABELS[latestAssessment.output?.verdict ?? ""] ?? "已生成"}`} />
+          <ArcoTypography.Text type="secondary">基于该评估结论和下面的调研结论生成。</ArcoTypography.Text>
+        </ArcoSpace>
+      ) : null}
 
-    {assessError ? <p className="field-error" role="alert">{assessError}</p> : null}
-    {noAssessment ? <div className="notice-banner" role="status">
-      <span>先生成一条成功的需求评估，才能生成 PRD 提示词。<ArcoButton type="text" className="link-button" htmlType="button" onClick={() => {
-        const heading = document.getElementById("req-assessment-heading");
-        if (!heading) return;
-        heading.scrollIntoView?.({ behavior: "smooth", block: "start" });
-        if (!heading.hasAttribute("tabindex")) heading.setAttribute("tabindex", "-1");
-        heading.focus?.({ preventScroll: true });
-      }}>前往需求评估</ArcoButton></span>
-    </div> : null}
-    {latestAssessment ? <div className="prd-prompt-meta">
-      <span className="status-chip status-live"><span />评估 v{latestAssessment.version} · {VERDICT_LABELS[latestAssessment.output?.verdict ?? ""] ?? "已生成"}</span>
-      <span className="subtle-text">基于该评估结论和下面的调研结论生成。</span>
-    </div> : null}
+      <ArcoForm layout="vertical" className="rq-compact-form">
+        <ArcoForm.Item label="调研结论（0–8,000 字）" extra="调研结论可空；为空时生成的提示词会标注「调研结论未回填」并保留开放问题。发送模型前会自动掩码 PII。">
+          <ArcoInput.TextArea
+            aria-label="调研结论"
+            value={notes}
+            onChange={(value: string) => setNotes(value)}
+            maxLength={8000}
+            showWordLimit
+            rows={4}
+            disabled={!latestAssessment || busy}
+            placeholder="把调查结论与证据粘进来；不要粘贴客户姓名、电话、邮箱、订单号、密钥。"
+          />
+        </ArcoForm.Item>
+      </ArcoForm>
 
-    <label className="field">
-      <span>调研结论（0–8,000 字）</span>
-      <ArcoInput.TextArea
-        aria-label="调研结论"
-        value={notes}
-        onChange={(value: string) => setNotes(value)}
-        maxLength={8000}
-        showWordLimit
-        rows={4}
-        disabled={!latestAssessment || busy}
-        placeholder="把调查结论与证据粘进来；不要粘贴客户姓名、电话、邮箱、订单号、密钥。"
-      />
-    </label>
-    <p className="detail-note">调研结论可空；为空时生成的提示词会标注「调研结论未回填」并保留开放问题。发送模型前会自动掩码 PII。</p>
+      <ArcoSpace size={8} wrap className="rq-action-bar">
+        <ArcoButton type="primary" size="small" htmlType="button" onClick={() => void generate()} disabled={!canGenerate}>
+          {busy ? "生成中…（约 60 秒，最长 90 秒）" : items?.length ? "重新生成" : "生成 PRD 提示词"}
+        </ArcoButton>
+        {busy ? <ArcoTypography.Text type="secondary" role="status">生成中，请勿关闭页面（约 60 秒，最长 90 秒）。</ArcoTypography.Text> : null}
+      </ArcoSpace>
+      {error ? <ArcoAlert className="rq-inline-alert" type="error" showIcon role="alert" content={error} /> : null}
+      {notice ? <ArcoAlert className="rq-inline-alert" type="success" showIcon role="status" content={notice} /> : null}
+      {historyError ? <ArcoAlert className="rq-inline-alert" type="error" showIcon role="alert" content={historyError} /> : null}
 
-    <div className="rules-form">
-      <ArcoButton type="primary" size="small" htmlType="button" onClick={() => void generate()} disabled={!canGenerate}>
-        {busy ? "生成中…（约 60 秒，最长 90 秒）" : items?.length ? "重新生成" : "生成 PRD 提示词"}
-      </ArcoButton>
-      {busy ? <span className="status-hint" role="status">生成中，请勿关闭页面（约 60 秒，最长 90 秒）。</span> : null}
-    </div>
-    {error ? <p className="field-error" role="alert">{error}</p> : null}
-    {notice ? <p className="status-hint" role="status">{notice}</p> : null}
-    {historyError ? <p className="field-error" role="alert">{historyError}</p> : null}
+      {!loaded ? <ArcoTypography.Text type="secondary">正在读取评估与历史版本…</ArcoTypography.Text> : null}
 
-    {!loaded ? <p className="status-hint">正在读取评估与历史版本…</p> : null}
+      {loaded && !current ? (
+        <ArcoEmpty
+          className="rq-empty"
+          description={
+            <div className="rq-empty-copy">
+              <strong>还没有 PRD 提示词</strong>
+              <span>先完成评估和调查，再生成。</span>
+            </div>
+          }
+        />
+      ) : null}
 
-    {loaded && !current ? <div className="req-empty-state">
-      <strong>还没有 PRD 提示词</strong>
-      <span>先完成评估和调查，再生成。</span>
-    </div> : null}
+      {current ? (
+        <div className="prd-prompt-result">
+          <div className="prd-prompt-result-head">
+            <ArcoSpace size={8} wrap>
+              <strong>v{current.version} · {STATUS_LABELS[current.status] ?? current.status}</strong>
+              <ArcoTypography.Text type="secondary">
+                {formatTime(current.createdAt)}{current.completedAt ? ` · 完成 ${formatTime(current.completedAt)}` : ""}
+              </ArcoTypography.Text>
+            </ArcoSpace>
+            {current.status === "succeeded" && current.output ? (
+              <ArcoButton type="secondary" size="small" htmlType="button" onClick={() => void copyPrompt()}>
+                {copied ? "已复制" : "复制提示词"}
+              </ArcoButton>
+            ) : null}
+          </div>
 
-    {current ? <div className="prd-prompt-result">
-      <div className="prd-prompt-result-head">
-        <strong>v{current.version} · {STATUS_LABELS[current.status] ?? current.status}</strong>
-        <span className="subtle-text">{formatTime(current.createdAt)}{current.completedAt ? ` · 完成 ${formatTime(current.completedAt)}` : ""}</span>
-        {current.status === "succeeded" && current.output ? <ArcoButton size="small" htmlType="button" onClick={() => void copyPrompt()}>{copied ? "已复制" : "复制提示词"}</ArcoButton> : null}
-      </div>
+          {current.status === "running" ? <ArcoAlert className="rq-inline-alert" type="info" showIcon content="已有生成中的版本，请稍候；同一需求不会并发生成。" /> : null}
+          {current.status === "failed" ? (
+            <ArcoAlert
+              className="rq-inline-alert"
+              type="error"
+              showIcon
+              role="alert"
+              content={`生成失败：${ERROR_LABELS[current.errorCode ?? ""] ?? current.errorCode ?? "未知原因"}。已填写的调研结论会保留，可重新生成。`}
+            />
+          ) : null}
 
-      {current.status === "running" ? <p className="status-hint">已有生成中的版本，请稍候；同一需求不会并发生成。</p> : null}
-      {current.status === "failed" ? <p className="field-error" role="alert">生成失败：{ERROR_LABELS[current.errorCode ?? ""] ?? current.errorCode ?? "未知原因"}。已填写的调研结论会保留，可重新生成。</p> : null}
+          {current.output ? (
+            <>
+              <div className="prd-prompt-chapters" aria-label="提示词包含的章节">
+                <ArcoTypography.Text type="secondary">包含 10 个章节：</ArcoTypography.Text>
+                <ArcoSpace size={[6, 6]} wrap>
+                  {PRD_CHAPTERS.map((chapter) => <ArcoTag key={chapter} size="small">{chapter}</ArcoTag>)}
+                </ArcoSpace>
+              </div>
+              <pre ref={promptRef} className={`prd-prompt-text${expanded ? " is-expanded" : ""}`} aria-label="PRD 提示词内容">{current.output.prompt}</pre>
+              {current.output.prompt.length > 400 ? (
+                <ArcoButton type="text" size="small" htmlType="button" onClick={() => setExpanded((value) => !value)}>
+                  {expanded ? "收起" : "展开全部"}
+                </ArcoButton>
+              ) : null}
+              {emptyNotes ? <ArcoTypography.Paragraph type="secondary" className="detail-note">该版本生成时调研结论未回填；第 9 章应保留开放问题。</ArcoTypography.Paragraph> : null}
+              {current.output.assumptions.length > 0 ? (
+                <div className="prd-prompt-list">
+                  <strong>假设</strong>
+                  <ul>{current.output.assumptions.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}</ul>
+                </div>
+              ) : null}
+              {current.output.openQuestions.length > 0 ? (
+                <div className="prd-prompt-list">
+                  <strong>待确认</strong>
+                  <ul>{current.output.openQuestions.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}</ul>
+                </div>
+              ) : null}
+            </>
+          ) : null}
 
-      {current.output ? <>
-        <div className="prd-prompt-chapters" aria-label="提示词包含的章节">
-          <span className="subtle-text">包含 10 个章节：</span>
-          {PRD_CHAPTERS.map((chapter) => <span className="prd-chapter-chip" key={chapter}>{chapter}</span>)}
+          {items && items.length > 0 ? (
+            <div className="prd-prompt-versions" role="group" aria-label="PRD 提示词版本历史">
+              <ArcoTypography.Text type="secondary">版本历史</ArcoTypography.Text>
+              <ArcoSpace size={[6, 6]} wrap>
+                {items.map((item) => (
+                  <ArcoButton
+                    key={item.id}
+                    size="small"
+                    htmlType="button"
+                    type={item.version === current.version ? "primary" : "secondary"}
+                    aria-pressed={item.version === current.version}
+                    onClick={() => selectVersion(item)}
+                  >
+                    v{item.version} · {STATUS_LABELS[item.status] ?? item.status} · {formatTime(item.createdAt)}
+                  </ArcoButton>
+                ))}
+              </ArcoSpace>
+            </div>
+          ) : null}
         </div>
-        <pre ref={promptRef} className={`prd-prompt-text${expanded ? " is-expanded" : ""}`} aria-label="PRD 提示词内容">{current.output.prompt}</pre>
-        {current.output.prompt.length > 400 ? <ArcoButton type="text" className="link-button" size="small" htmlType="button" onClick={() => setExpanded((value) => !value)}>{expanded ? "收起" : "展开全部"}</ArcoButton> : null}
-        {emptyNotes ? <p className="detail-note">该版本生成时调研结论未回填；第 9 章应保留开放问题。</p> : null}
-        {current.output.assumptions.length > 0 ? <div className="prd-prompt-list">
-          <strong>假设</strong>
-          <ul>{current.output.assumptions.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}</ul>
-        </div> : null}
-        {current.output.openQuestions.length > 0 ? <div className="prd-prompt-list">
-          <strong>待确认</strong>
-          <ul>{current.output.openQuestions.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}</ul>
-        </div> : null}
-      </> : null}
-
-      {items && items.length > 0 ? <div className="prd-prompt-versions" role="group" aria-label="PRD 提示词版本历史">
-        <span className="subtle-text">版本历史</span>
-        {items.map((item) => <ArcoButton
-          key={item.id}
-          size="small"
-          htmlType="button"
-          type={item.version === current.version ? "primary" : "secondary"}
-          aria-pressed={item.version === current.version}
-          onClick={() => selectVersion(item)}
-        >v{item.version} · {STATUS_LABELS[item.status] ?? item.status} · {formatTime(item.createdAt)}</ArcoButton>)}
-      </div> : null}
-    </div> : null}
-  </section>;
+      ) : null}
+    </ArcoCard>
+  );
 }

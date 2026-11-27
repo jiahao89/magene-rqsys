@@ -2,6 +2,7 @@
 // 数据来自 GET /api/overview/metrics 的 ai 块。该块缺失或格式不完整时只降级本卡片，
 // 不影响同一响应里的其他总览指标。
 import { useEffect } from "react";
+import { Alert as ArcoAlert, Badge as ArcoBadge, Card as ArcoCard, Empty as ArcoEmpty, Grid as ArcoGrid, Statistic as ArcoStatistic, Typography as ArcoTypography } from "@arco-design/web-react";
 import type { OverviewAiStatus } from "./api";
 
 type LoadState = "loading" | "ready" | "error";
@@ -44,15 +45,15 @@ export function AiStatusCard({ ai, loadState, onExpire }: { ai?: OverviewAiStatu
   const loading = !data && loadState === "loading";
   // 统计聚合失败：状态与计数一起降级，但不把 0 当成真实用量。
   const statsUnavailable = !!data && (data.status === "unavailable" || data.statsAvailable === false);
-  const chip = loading
-    ? { tone: "status-muted", label: "读取中" }
+  const badge: { status: "success" | "error" | "default" | "processing"; label: string } = loading
+    ? { status: "processing", label: "读取中" }
     : !data || statsUnavailable
-      ? { tone: "status-muted", label: "状态不可用" }
+      ? { status: "default", label: "状态不可用" }
       : data.status === "ok"
-        ? { tone: "status-live", label: "正常" }
+        ? { status: "success", label: "正常" }
         : data.status === "paused"
-          ? { tone: "status-danger", label: "暂停中" }
-          : { tone: "status-muted", label: "未配置" };
+          ? { status: "error", label: "暂停中" }
+          : { status: "default", label: "未配置" };
   // 暂停到期后自动回正常：到点触发一次总览刷新，避免页面一直停在「暂停中」。
   // 已到期但服务端仍报暂停时不自动轮询，防止接口抖动时形成刷新循环。
   const pausedUntilMs = data?.status === "paused" && data.pausedUntil ? new Date(data.pausedUntil).getTime() : null;
@@ -67,27 +68,90 @@ export function AiStatusCard({ ai, loadState, onExpire }: { ai?: OverviewAiStatu
   const lastCallLabel = data?.lastCall.kind
     ? `${KIND_LABELS[data.lastCall.kind]}${data.lastCall.result ? ` · ${RESULT_LABELS[data.lastCall.result]}` : ""}`
     : "暂无记录";
-  return <section className="panel ai-status-panel" aria-labelledby="ai-status-heading">
-    <div className="panel-heading"><div><h2 id="ai-status-heading">AI 状态</h2><p>AI 分析与聊天抽取的调用状态；累计用量按调用次数统计，不含 token</p></div><span className={`status-chip ${chip.tone}`} role="status"><span />{chip.label}</span></div>
-    {!data
-      ? <div className="ai-status-unavailable">
-          <strong>{loading ? "正在读取 AI 状态…" : "状态不可用"}</strong>
-          <span>{loading ? "总览接口返回后显示状态与调用次数。" : "总览接口没有返回可用的 AI 状态；同一次响应里的其他指标照常展示。"}</span>
+
+  return (
+    <ArcoCard
+      className="rq-card ai-status-panel"
+      aria-labelledby="ai-status-heading"
+      title={
+        <div className="rq-card-title">
+          <h2 id="ai-status-heading">AI 状态</h2>
+          <ArcoTypography.Text type="secondary" className="rq-card-subtitle">
+            AI 分析与聊天抽取的调用状态；累计用量按调用次数统计，不含 token
+          </ArcoTypography.Text>
         </div>
-      : statsUnavailable
-        ? <div className="ai-status-unavailable">
-            <strong>状态不可用（统计暂不可用）</strong>
-            <span>AI 统计查询失败，累计与今日调用次数暂不可用，不展示为 0；同一次响应里的其他指标照常展示。</span>
-          </div>
-        : <>
-          <div className="ai-status-grid">
-            <div className="ai-status-stat"><span>分析调用</span><strong>{data.analysis.total}</strong><small>今日 {data.analysis.today} 次</small></div>
-            <div className="ai-status-stat"><span>聊天抽取</span><strong>{data.chatIntake.total}</strong><small>今日 {data.chatIntake.today} 次</small></div>
-            <div className="ai-status-stat"><span>今日合计</span><strong>{data.analysis.today + data.chatIntake.today}</strong><small>次调用</small></div>
-            <div className="ai-status-stat"><span>最近一次调用</span><strong>{lastCallLabel}</strong><small>{lastCallAt ?? "还没有调用"}</small></div>
-          </div>
-          {data.status === "paused" && <p className="ai-status-note" role="status">已暂停 AI 调用{data.pauseReason ? `：${data.pauseReason}` : ""}；{data.pausedUntil ? `预计 ${formatMoment(data.pausedUntil)} 恢复` : "恢复时间未提供"}。</p>}
-          {data.status === "unconfigured" && <p className="ai-status-note" role="status">未配置 AI 密钥：分析链路与聊天抽取暂时不可用，配置后自动恢复；已收录需求仍可手工处理。</p>}
-        </>}
-  </section>;
+      }
+      extra={<span role="status"><ArcoBadge status={badge.status} text={badge.label} /></span>}
+    >
+      {!data ? (
+        <ArcoEmpty
+          className="rq-empty"
+          description={
+            <div className="rq-empty-copy">
+              <strong>{loading ? "正在读取 AI 状态…" : "状态不可用"}</strong>
+              <span>{loading ? "总览接口返回后显示状态与调用次数。" : "总览接口没有返回可用的 AI 状态；同一次响应里的其他指标照常展示。"}</span>
+            </div>
+          }
+        />
+      ) : statsUnavailable ? (
+        <ArcoEmpty
+          className="rq-empty"
+          description={
+            <div className="rq-empty-copy">
+              <strong>状态不可用（统计暂不可用）</strong>
+              <span>AI 统计查询失败，累计与今日调用次数暂不可用，不展示为 0；同一次响应里的其他指标照常展示。</span>
+            </div>
+          }
+        />
+      ) : (
+        <>
+          <ArcoGrid.Row gutter={[16, 16]} className="ai-status-grid">
+            <ArcoGrid.Col xs={12} md={6}>
+              <div className="rq-stat-tile">
+                <ArcoStatistic title="分析调用" value={data.analysis.total} />
+                <span className="rq-stat-extra">今日 {data.analysis.today} 次</span>
+              </div>
+            </ArcoGrid.Col>
+            <ArcoGrid.Col xs={12} md={6}>
+              <div className="rq-stat-tile">
+                <ArcoStatistic title="聊天抽取" value={data.chatIntake.total} />
+                <span className="rq-stat-extra">今日 {data.chatIntake.today} 次</span>
+              </div>
+            </ArcoGrid.Col>
+            <ArcoGrid.Col xs={12} md={6}>
+              <div className="rq-stat-tile">
+                <ArcoStatistic title="今日合计" value={data.analysis.today + data.chatIntake.today} />
+                <span className="rq-stat-extra">次调用</span>
+              </div>
+            </ArcoGrid.Col>
+            <ArcoGrid.Col xs={12} md={6}>
+              <div className="rq-stat-tile">
+                <span className="arco-statistic-title">最近一次调用</span>
+                <strong className="rq-stat-text">{lastCallLabel}</strong>
+                <span className="rq-stat-extra">{lastCallAt ?? "还没有调用"}</span>
+              </div>
+            </ArcoGrid.Col>
+          </ArcoGrid.Row>
+          {data.status === "paused" && (
+            <ArcoAlert
+              className="rq-inline-alert"
+              type="warning"
+              showIcon
+              role="status"
+              content={`已暂停 AI 调用${data.pauseReason ? `：${data.pauseReason}` : ""}；${data.pausedUntil ? `预计 ${formatMoment(data.pausedUntil)} 恢复` : "恢复时间未提供"}。`}
+            />
+          )}
+          {data.status === "unconfigured" && (
+            <ArcoAlert
+              className="rq-inline-alert"
+              type="info"
+              showIcon
+              role="status"
+              content="未配置 AI 密钥：分析链路与聊天抽取暂时不可用，配置后自动恢复；已收录需求仍可手工处理。"
+            />
+          )}
+        </>
+      )}
+    </ArcoCard>
+  );
 }

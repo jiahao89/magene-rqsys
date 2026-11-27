@@ -1,477 +1,214 @@
-# RQ-Sys Web Design System
+# RQ-Sys Web Design System（Arco Design · 目标 B）
 
-> **实现基线已切换为 Arco Design（ADR-002，2026-10-31）。** 本文第 1–9、11–14 节的设计原则、语义色角色、间距、状态与无障碍规则仍然适用；其中的 HeroUI 组件目录与 Pro 模板（第 7–9 节）只作为信息架构与交互的**参考资料**，不再是组件选型依据。组件选型与实现约束以第 10 节为准。
-> 第 3.2 节的 OKLCH 数值来自 HeroUI 默认主题，已不是运行时取值：运行时颜色由 Arco token（`--primary-*`、`--color-*`）经 `styles.css` 的 `body[arco-theme]` 桥接提供。
+> **设计基线：原生 Arco Design（`@arco-design/web-react`，ADR-002 目标 B，2026-11-26 批准）。**
+> 本文是 `apps/web` 与 `rq-sys-miaoda/client` 的统一视觉与交互规范。历史 HeroUI v3 配色、模板与导入约定已全部废止；HeroUI 与 Radix 原语在两端均禁止引入。
 
-> 参考 HeroUI v3 与 HeroUI Pro React Web 官方文档整理，作为本项目 Web UI 的设计与实现基线。该文件不是 HeroUI Pro 源码或 Figma 变量的逐项导出；颜色与主题变量以官方当前默认主题为准，尺寸层级和组件使用规则中标为“建议”的部分是为了项目统一而补充的约定。
-
-**范围：** React Web / Arco Design（`@arco-design/web-react`）/ Tailwind CSS v4（仅 preflight/reset + `@theme inline` 主题桥）；**模式：** Light、Dark；**视觉基调：** 清爽、克制、内容优先，用中性表面建立层级，以单一强调色表达主要操作。
-
-## 1. 设计原则
-
-1. **先表达用途，再表达颜色。** 组件使用 `accent`、`success`、`warning`、`danger` 等语义色，不在组件中散落任意品牌色值。
-2. **靠表面、间距和层级组织内容。** 页面背景保持安静；卡片、面板和浮层使用不同的 surface 层级，边界线保持低对比。
-3. **每个操作有明确优先级。** 同一操作区域最多一个 primary；依次用 secondary、tertiary、ghost 表达较低权重，危险操作单独使用 danger。
-4. **组件由组合部件组成。** 对复杂组件保留 Header、Content、Footer 等语义结构，便于局部调整与无障碍标注。
-5. **交互状态完整。** hover、pressed、focus-visible、selected、disabled、loading、invalid、empty 均需可辨认；状态不只依赖颜色。
-6. **尊重辅助功能设置。** 保留键盘导航与可见焦点；动画响应 `prefers-reduced-motion`；图表和状态还要提供文字、形状或图标线索。
-
-## 2. 视觉语言
-
-HeroUI 默认主题是明亮的中性灰阶界面：接近白色的页面底色、白色内容表面、深灰文字、低对比细分隔线和克制阴影。默认强调色为蓝色系。整体应显得清晰、现代、可用于长时间操作的产品界面，而不是营销页式的大面积渐变和装饰。
-
-HeroUI Pro 支持多个完整主题，因此组件规范应优先依赖语义变量，而不要把某个主题的边角、阴影或字体特征固化进业务组件。可选视觉主题：
-
-| 主题 | 特征 | 适用场景 |
-|---|---|---|
-| Default | 中性表面、柔和边界、轻量阴影、圆角 | 通用 SaaS、后台、工具型产品；建议作为本项目默认 |
-| Brutalism | 直角、粗边框、高对比、表现力强的阴影；定制展示字体 | 强个性活动页或品牌化体验 |
-| Glass | 半透明表面、背景模糊、柔和浮层阴影 | 背景有足够纹理/渐变的沉浸式场景 |
-| Mouve | 暖紫调，强调色表面有抬升高光，次要胶囊按钮有按压感 | 需要更柔和、触感更明显的品牌主题 |
-
-避免在默认业务页面混用多种主题的特征。Glass 需要可见背景才能看出模糊；在高密度数据界面优先使用 Default。
-
-## 3. 颜色系统
-
-### 3.1 语义角色
-
-| Token | 作用 | 使用规则 |
-|---|---|---|
-| `background` / `foreground` | 页面底色 / 主文字与图标 | 页面根容器使用 `bg-background text-foreground` |
-| `surface` / `surface-foreground` | 卡片、面板等非浮层内容 | 用于主要内容容器 |
-| `surface-secondary`、`surface-tertiary` | 更深一层的容器或控件背景 | 表达嵌套层级，避免单靠边框区分 |
-| `overlay` / `overlay-foreground` | 菜单、弹层、弹出面板 | 与页面表面分离并使用 overlay 阴影 |
-| `accent` / `accent-foreground` | 品牌强调色与其上文字 | 主要操作、选中态、关键强调；避免大面积滥用 |
-| `default` / `default-foreground` | 中性控件与次要强调 | 中性按钮、未选中状态等 |
-| `muted` | 次要文字、占位信息 | 仍需满足可读性，不用于关键数值 |
-| `success`、`warning`、`danger` | 成功、警告、错误/危险状态 | 仅在对应语义出现时使用；可搭配 soft 背景 |
-| `field-*` | 表单控件背景、文字、占位、边框 | 输入控件可独立于卡片表面调整 |
-| `separator`、`border`、`focus`、`link` | 分隔线、描边、焦点环、链接 | 优先使用系统计算值与主题值 |
-| `chart-1` 至 `chart-5` | 图表序列色 | 从 accent 派生；多系列图表保持相邻序列可区分 |
-
-前景色命名规则：不带后缀的颜色代表背景/填充；`-foreground` 表示置于该背景上的文字或图标。使用系统生成的 hover、soft、separator 层级，避免手工重复计算。
-
-### 3.2 默认主题参考值
-
-以下 OKLCH 数值来自 HeroUI v3 当前默认主题，不转换成 HEX，以免损失原始色彩精度。部分颜色由基础 token 自动计算，具体派生关系见源码和颜色文档。
-
-| Token | Light | Dark |
-|---|---|---|
-| `background` | `oklch(0.9702 0 0)` | `oklch(12% 0.005 285.823)` |
-| `foreground` | `oklch(0.2103 0.0059 285.89)` | `oklch(0.9911 0 0)` |
-| `surface` | `oklch(100% 0 0)` | `oklch(0.2103 0.0059 285.89)` |
-| `surface-secondary` | `oklch(0.9524 0.0013 286.37)` | `oklch(0.257 0.0037 286.14)` |
-| `surface-tertiary` | `oklch(0.9373 0.0013 286.37)` | `oklch(0.2721 0.0024 247.91)` |
-| `accent` | `oklch(0.6204 0.195 253.83)` | 与 Light 共用该值 |
-| `success` | `oklch(0.7329 0.1935 150.81)` | 与 Light 共用该值 |
-| `warning` | `oklch(0.7819 0.1585 72.33)` | `oklch(0.8203 0.1388 76.34)` |
-| `danger` | `oklch(0.6532 0.2328 25.74)` | `oklch(0.594 0.1967 24.63)` |
-| `muted` | `oklch(0.5517 0.0138 285.94)` | `oklch(70.5% 0.015 286.067)` |
-| `default` | `oklch(94% 0.001 286.375)` | `oklch(27.4% 0.006 286.033)` |
-| `border` | `oklch(90% 0.004 286.32)` | `oklch(28% 0.006 286.033)` |
-| `separator` | `oklch(92% 0.004 286.32)` | `oklch(25% 0.006 286.033)` |
-
-基础几何值：`--spacing: 0.25rem`（4px 步长）、`--radius: 0.5rem`（8px）、`--field-radius: calc(var(--radius) * 1.5)`（默认 12px）、`--border-width: 1px`、`--field-border-width: 0px`。表单字段默认无边框，边界由底色、hover、focus 与焦点环共同表达。
-
-### 3.3 Light / Dark 使用方式
-
-切换主题时替换语义变量，不要在每个组件里复制一套颜色判断。确保 `html` 上的 class 或 `data-theme` 与系统约定一致：
-
-```html
-<html class="light" data-theme="light">
-  <body class="bg-background text-foreground">
-    <!-- application -->
-  </body>
-</html>
-```
-
-```html
-<html class="dark" data-theme="dark">
-```
-
-HeroUI 默认暗色模式会重设背景、表面、覆盖层、分隔线、字段和状态色；暗色表面通常不依赖投影，改用明度层级和细描边区分。浮层通过轮廓与轻微内高光保持可辨识。
-
-## 4. 字体与图标
-
-### 字体
-
-- 默认主题保持清晰的现代无衬线字体；具体字体栈由应用全局字体配置决定。不要在单个页面随意切换字体。
-- 通过字号、字重、行高区分层级，避免仅靠颜色区分标题与说明。
-- 推荐页面层级（项目建议，可按实际密度微调）：页面标题 28–32px / 600；区块标题 18–20px / 600；正文 14–16px / 400；辅助说明 12–14px / 400；数字 KPI 使用 tabular numerals。
-- 正文行高建议 1.45–1.6；紧凑标签和表格行可使用 1.3–1.45。标题保持自然字距，不额外扩字。
-- Pro 主题可能带入字体覆盖，例如 Brutalism 的 Anton 与 Share Tech Mono；只有明确采用该主题时才应用。
-
-### 图标
-
-- 统一使用一套线性图标；HeroUI 官方默认基于 Gravity UI Icons。
-- 常规图标建议 16px，按钮/导航图标可用 16–20px，强调型空状态插画除外。
-- 图标与文字使用同一语义颜色。纯图标按钮必须提供可访问名称，并呈现与文本按钮一致的 hover、focus、disabled 状态。
-- 图标只做识别或补充信息，不用图标代替不清楚的文案。
-
-## 5. 布局、间距与层级
-
-- 以 4px 为基础间距步长；推荐常用间距：4 / 8 / 12 / 16 / 24 / 32 / 48 / 64px。
-- 内容使用清晰的容器边界与对齐线。仪表盘优先采用侧栏 + 顶部栏 + 主工作区；窄屏将侧栏折叠为抽屉/导航入口。
-- 信息卡片内边距建议 16–24px；表单字段组间距 16–24px；页面区块间距 24–40px。密集数据表单可收紧，但行列基线须一致。
-- 默认圆角轻柔、统一：输入控件约 12px；普通卡片按 8–12px 体系；胶囊形状只用于 chip、segmented control 等有明确用途的控件。
-- 内容卡片使用 `surface`，嵌套区块使用次级 surface，浮层使用 `overlay`。阴影只标记悬浮层级；普通分区优先使用表面明度和分隔线。
-- 复杂工作区可以使用 Resizable、AppLayout、Sidebar 和 Sheet；避免每块内容都包在独立卡片中造成碎片化。
-- 响应式规则以内容可读和操作可达为先：宽表格允许横向滚动或提供列管理；窄屏操作入口不能只依赖 hover。
-
-## 6. 通用组件规范
-
-### 操作组件
-
-| 组件 | 规范 |
-|---|---|
-| Button | `primary` 用于当前上下文最重要的正向操作；`secondary` 为并列替代；`tertiary` 用于取消/跳过等低强调动作；`ghost` 用于轻量工具操作；`danger` 用于破坏性操作。支持文本、图标、纯图标、加载、禁用。 |
-| Link | 用于导航；使用链接语义和一致的 hover/focus，不以按钮样式承载页面跳转。 |
-| Icon Button | 适用于工具栏和行内动作；明确 tooltip/aria-label；点击热区要足够大。 |
-| Chip / Badge | 显示分类、状态或数量；优先中性样式，语义状态才使用对应 soft 色。不要把装饰性标签做成按钮。 |
-| Toggle / Checkbox / Radio | 清楚区分选中与未选中；卡片式选项可用 CheckboxButtonGroup/RadioButtonGroup；点击整项可操作时提供对应语义。 |
-| Switch | 用于即时生效的开关设置；若需要提交或保存，优先 checkbox + 保存流程。 |
-| Tabs / Segment | Tabs 切换页面级内容；Segment 在同一内容区域内切换互斥视图或筛选。选中态必须清晰。 |
-
-### 表单组件
-
-- 表单项由 Label、Control、Description、Error Message 组成；标签不可仅靠 placeholder 代替。
-- 错误信息靠近字段出现，说明如何修正；保留无效值并明确聚焦首个错误。
-- 输入提供默认、hover、focus-visible、disabled、invalid、readonly 状态；focus 使用 `focus`/`accent` 焦点环。
-- 搜索框显示搜索语义并提供清除动作；密码、数字、日期、文件上传使用合适的专用控件。
-- 长流程使用 Stepper 展示当前步骤和已完成步骤；每一步都给出继续/返回行为与验证反馈。
-- 上传使用 DropZone 显示支持格式、体积限制、进度、失败与重试；拖放不是唯一入口。
-
-### 容器与数据展示
-
-| 组件 | 规范 |
-|---|---|
-| Card / Widget | 使用 Header、Title、Description、Body、Footer 等组合插槽；标题描述卡片目的，操作集中在头部或尾部。 |
-| Data Grid / Table | 固定清晰列头；数字右对齐、文本左对齐；支持排序/筛选/分页时标出当前状态。包含 loading、empty、error、selection、row action 与窄屏策略。 |
-| List View | 适用于纵向对象集合；行内主次信息分层，主要动作不和行选择冲突。 |
-| KPI / Number Value / Trend Chip | 数值突出、单位完整、趋势有基准和时间范围；正负趋势同时配方向符号/文字，不只用红绿。 |
-| Charts | 使用主题派生的 `chart-1` 至 `chart-5`；标题、单位、时间范围、图例与 tooltip 齐全；图表颜色需在明暗模式均可辨认。 |
-| Empty State | 写清当前没有什么、可能原因和下一步；只有明确可执行时才放 CTA。 |
-| Timeline / Kanban / Agenda | 卡片内容密度保持一致；状态变化与拖拽目标有明确视觉反馈；提供非拖拽的可访问操作方式。 |
-| File Tree | 缩进/连接线表达层级，展开状态清楚，拖动/投放目标可辨认。 |
-
-### 导航与布局
-
-- `AppLayout` 提供应用区域骨架，`Navbar` 承载全局入口和账户动作，`Sidebar` 承载分区导航。
-- `Command` 用于全局搜索和快捷动作，显示键盘提示与分组；可用快捷键打开并支持键盘操作。
-- Breadcrumbs 表达层级路径；Pagination 管理有界集合；Tabs 表示同级内容切换。
-- Context Menu 只放与当前对象相关的操作；危险操作分组并设置确认流程。
-- Resizable 用于多面板工作区；拖动把手需可聚焦、可键盘调整或提供替代布局。
-
-### 浮层与反馈
-
-| 组件 | 规范 |
-|---|---|
-| Modal / Sheet / Drawer | 适用于需要暂时聚焦的流程；宽屏对话框、侧向详情用 Sheet/Drawer；控制焦点、Escape、背景遮罩和滚动锁。 |
-| Popover / Hover Card | 展示补充信息或就地控件；保持触发关系明确，避免承载过长或关键流程。 |
-| Tooltip | 仅补充简短说明；不放必需信息；延迟出现，键盘聚焦也可触发。 |
-| Alert Dialog | 用于需要明确选择的高影响动作；说明后果，危险按钮清晰区分。 |
-| Toast | 短时反馈；不要承载必须保存的消息；成功/失败/Promise 等状态要准确，允许必要时撤销。 |
-| Progress | 确定进度用百分比/步骤；不确定进度用 indeterminate；附带可读文本，长任务给出状态说明。 |
-
-## 7. HeroUI Core Web 组件目录
-
-基础层涵盖下列组件。它们提供日常交互、表单和页面骨架；Pro 组件在这些能力之上扩展工作区、数据可视化和 AI 场景。
-
-### Buttons、Collections 与 Controls
-
-- Button、ButtonGroup、CloseButton、ToggleButton、ToggleButtonGroup
-- Dropdown、ListBox、TagGroup
-- Slider、Switch
-
-### Colors 与 Data Display
-
-- ColorArea、ColorField、ColorPicker、ColorSlider、ColorSwatch、ColorSwatchPicker
-- Badge、Chip、Table
-
-### Date and Time
-
-- Calendar、DateField、DatePicker、DateRangePicker、RangeCalendar、TimeField
-
-### Feedback
-
-- Alert、Meter、ProgressBar、ProgressCircle、Skeleton、Spinner
-
-### Forms
-
-- Checkbox、CheckboxGroup、Description、ErrorMessage、FieldError、Fieldset、Form、Input、InputGroup、InputOTP、Label、NumberField、RadioGroup、SearchField、TextField、TextArea
-
-### Layout、Media 与 Navigation
-
-- Card、Separator、Surface、Toolbar
-- Avatar、AvatarGroup
-- Accordion、Breadcrumbs、Disclosure、DisclosureGroup、Link、Pagination、Tabs
-
-### Overlays、Pickers、Typography 与 Utilities
-
-- AlertDialog、Drawer、Modal、Popover、Toast、Tooltip
-- Autocomplete、ComboBox、Select
-- Kbd、Typography
-- ScrollShadow
-
-## 8. HeroUI Pro Web 组件目录
-
-以下按官网 React Web 组件目录归类。Pro 是在 HeroUI 基础组件之上的扩展；基础 Button、Card、Modal、Input 等仍遵循 HeroUI OSS 的基础 API/文档。官网组件与变体会持续增加，实施时以当前文档为准。
-
-### Charts
-
-- Area Chart、Bar Chart、Chart Tooltip、Composed Chart、Line Chart、Pie Chart、Radar Chart、Radial Chart
-
-### Data Display
-
-- Agenda、Action Bar、Carousel、Data Grid、Empty State、File Tree、Floating TOC、Holo Card、Hover Card、Kanban、Item Card、Item Card Group、KPI、KPI Group、List View、Map、Timeline、Widget
-
-### AI
-
-- Chain Of Thought、Chat Attachment、Chat Conversation、Chat List View、Chat Loader、Chat Message、Chat Message Actions、Chat Source、Chat Tool、Code Block、Markdown、Prompt Input、Prompt Suggestion、Text Shimmer
-
-### Feedback
-
-- Emoji Reaction Button、Number Value、Pressable Feedback、Rating、Trend Chip
-
-### Layout
-
-- Resizable
-
-### Forms
-
-- Cell Color Picker、Cell Select、Cell Slider、Cell Switch、Checkbox Button Group、Drop Zone、Inline Select、Native Select、Number Stepper、Radio Button Group、Rich Text Editor
-
-### Navigation
-
-- AppLayout、Command、Context Menu、Navbar、Segment、Sidebar、Stepper
-
-### Overlays
-
-- Emoji Picker、Sheet
-
-## 9. HeroUI Pro 页面模板与布局配方
-
-HeroUI Pro 模板是可运行的完整应用骨架，适合参考信息架构、导航和组件组合。它们不是单一视觉皮肤：各自服务于不同任务密度。保留默认主题的颜色/状态约定，再按页面任务选用相应骨架。
-
-| 模板 | 主要任务 | 页面骨架与内容模块 | 关键组件组合 |
-|---|---|---|---|
-| Dashboard | 查看经营表现并处理管理数据 | 持久侧栏（Dashboard、Orders、Tracker、Analytics、Settings、Help）；主区以 Overview 和时间范围筛选开头；首屏 KPI 横排；下方趋势图/流量来源；末尾员工等实体数据表，含搜索、筛选、排序、列操作。 | AppLayout + Sidebar + KPI/KPI Group + Charts + Select/Segment + Data Grid + 下载动作 |
-| Mail | 快速分拣邮件并阅读/撰写 | 三栏工作区：邮箱/标签导航、带摘要的会话列表、邮件阅读区；导航包含 Inbox、Starred、Sent、Drafts、Snoozed、Archive、Spam、Trash 和用户标签；未选中会话时显示空状态；New email 进入撰写流程。 | Resizable/AppLayout + Sidebar + SearchField + List View + 邮件详情面板 + Empty State + Sheet/Modal compose |
-| Chat | 在多轮会话中探索、提问并检查 AI 结果 | 左侧 New Chat、Library、Explore 与 Recent 会话；主区是可滚动对话；回答内部组合思考摘要、计划、Markdown/代码、工具调用与审批、来源、文件附件和媒体；底部固定 Prompt Input。 | Sidebar + Chat List View + Chat Conversation + Chat Message + Chain Of Thought + Chat Tool + Chat Source + Markdown/Code Block + Chat Attachment + Prompt Input |
-| CRM | 跟踪销售阶段、风险和预测 | 工作区以 Pipeline 为主入口；顶部日期范围和 pipeline filter；首屏指标显示 pipeline coverage、当日会议、季度流失、赢单率、风险项和逾期跟进；中部用 Created vs Closed、Days to Close、Weighted Forecast 和 Pipeline Funnel 分析阶段；下部展示重点 Accounts 与 Opportunities，支持进入公司档案。 | AppLayout/Sidebar + KPI Group + DateRangePicker + Filters/Segment + Charts + Kanban 或阶段 Funnel + Item Card/Account list + Data Grid |
-| Finances | 检查资产表现、持仓和交易记录 | 导航分为 Dashboard、Portfolio、Spending、Transactions、Earn、Settings；顶部总余额、24 小时变化、最佳表现资产、资产数量；Portfolio 图表配时间段切换；持仓列表展示资产、数量/价值和涨跌；Recent Activity 表展示交易类型、资产、金额、日期。 | Sidebar + KPI/KPI Group + Line/Area Chart + Segment + Item Card/List View + Data Grid + Number Value/Trend Chip |
-
-### 模板中提炼的通用页面规则
-
-1. **先给全局框架，再给任务内容。** 后台类页面使用持久侧栏 + 主工作区；顶栏只放全局搜索、范围选择、账户/辅助操作。菜单名称和当前页面要有明确选中态。
-2. **按任务顺序排信息。** 先放“当前发生什么”的摘要与范围控件，再放解释趋势的图表，最后放需要逐行处理的数据集合。不要让图表和表格抢同一层级。
-3. **KPI 卡片应能快速比较。** 同组指标统一数值字号、标签位置、单位和趋势表达；趋势提供比较周期与基准，正负变化同时显示符号或文字。
-4. **列表与详情构成稳定主从关系。** 邮件、会话、账户等对象先在列表中扫描，再在独立详情区阅读/操作。宽屏可并排；空间不足时改为导航到详情页或用 Sheet 承载详情。
-5. **筛选上下文放在结果之前。** 日期范围、状态、搜索、排序应贴近它们控制的图表/列表，并显示当前生效条件；提供清除筛选和空结果状态。
-6. **数据行呈现核心识别信息。** 主标题、对象/账户、状态、金额/时间按固定列或固定行位对齐；交易 ID 等长值截断并支持查看完整值。
-7. **密集工作区要留出阅读和操作空间。** 面板宽度可调整；长列表独立滚动；顶部工具区保持稳定；窄屏将侧栏收为 Drawer，将并列详情改成单列路径。
-8. **模板内容是结构示例。** 指标名称、商业规则、筛选默认值、交易状态和 AI 执行权限应由具体产品定义，不从演示数据推断。
-
-### 按场景选用模板骨架
-
-- **管理/运营后台：** 从 Dashboard 开始，采用 KPI → 趋势图 → 数据表的纵向节奏。
-- **收件箱/工单/对象管理：** 从 Mail 的三栏主从布局开始，窄屏时转为列表页与详情页两步导航。
-- **AI 助手：** 从 Chat 的会话侧栏 + 消息工作区 + 固定输入区开始；工具结果、来源和审批是消息流中的可检查部分。
-- **销售管理：** 从 CRM 的 pipeline 总览开始，将阶段、预测、风险账户和机会列表放在同一业务路径中。
-- **资产/支付后台：** 从 Finances 开始，摘要先于持仓/交易明细；数额同时明确币种、统计区间和变化基准。
-
-## 10. AI 对话专用模式
-
-- 消息区分用户、助手与工具结果；回答内容可包含 Markdown、引用来源、代码块和思考/工具执行状态。
-- `Prompt Input` 支持输入、附件、工具动作、发送中、停止生成、重试和排队状态；发送键、附件和辅助动作明确分组。
-- 流式输出期间提供轻量加载反馈；失败时保留用户输入，给出重试入口；用户滚离底部后不强制抢回滚动位置，可显示回到底部按钮。
-- 来源、工具调用、推理摘要等内容使用可折叠细节组件，默认层级低于最终回答。
-- Markdown 代码块展示语言、复制反馈和横向溢出处理；复制成功要有明确反馈。
-
-## 11. 交互状态与动效
-
-组件状态统一采用以下视觉职责：
-
-| 状态 | 表现 |
-|---|---|
-| Hover | 轻微背景/描边变化；不引起布局跳动 |
-| Pressed | 短暂颜色加深或轻微缩放；避免过度弹性效果 |
-| Focus Visible | 高对比、可见焦点环；不因鼠标点击长期显示键盘焦点 |
-| Selected / Expanded | 使用 accent/soft 背景、指示器或展开图标等多重线索 |
-| Disabled | 降低强调、阻止交互，仍保持文字可辨认；默认禁用透明度参考 50% |
-| Loading | 保持控件尺寸与位置稳定，说明正在执行的动作并防止重复提交 |
-| Invalid | danger 色 + 文本错误解释；避免只用红色边框传意 |
-
-动效以快速、平稳、可预测为目标：操作反馈建议 120–200ms，浮层进出建议 160–240ms；组件动画应尊重减少动态效果设置。HeroUI 自带动效优先于每页重复造动效。
-
-## 12. 无障碍与内容规则
-
-- 所有控件可以用键盘访问；焦点顺序与视觉顺序一致；弹层正确捕获和还原焦点。
-- 使用原生语义和 ARIA 状态；复合控件的选中、展开、禁用、错误等状态同步到辅助技术。
-- 文本与背景满足 WCAG AA 对比度；焦点指示、图标、图表不单独依赖颜色。
-- 表单错误使用字段关联描述；加载和异步完成使用适当的 live region。
-- 表格提供表头语义，图表提供摘要或数据表替代；图标按钮带可访问名称。
-- 中文界面优先简洁动作文案；日期、数字、货币按照用户区域设置格式化。
-
-## 13. Web 实现约定
-
-使用 Tailwind CSS v4 与语义 token；默认完整样式导入顺序如下：
-
-```css
-@import "tailwindcss";
-@import "@heroui/styles";
-@import "@heroui-pro/react/css";
-```
-
-若选用 HeroUI Pro 主题，将主题 CSS 放在 Pro 样式之后。例如：
-
-```css
-@import "tailwindcss";
-@import "@heroui/styles";
-@import "@heroui-pro/react/css";
-@import "@heroui-pro/react/themes/mouve";
-```
-
-在 HTML 根节点用 `data-theme="light"` 或 `data-theme="dark"` 控制默认主题；Pro 主题使用 `brutalism-light/dark`、`glass-light/dark` 或 `mouve-light/dark`。样式导入顺序错误可能使 Pro 样式被覆盖。
-
-- 在 JSX/CSS 中使用语义类，如 `bg-background`、`bg-surface`、`text-foreground`、`text-muted`、`bg-accent`。
-- 自定义颜色必须定义 light 和 dark 两套值，并映射到 Tailwind `@theme inline`；不要只补 light 值。
-- 样式微调优先使用组件 BEM 类与主题变量；避免以任意 `!important` 或硬编码 hex 覆盖基础系统。
-- 表单使用 `field-*` 变量，普通容器使用 `surface-*`，浮层使用 `overlay` 与 `overlay-shadow`。
-- Pro 组件的 CSS 和可选依赖可能通过子路径导入；只有使用对应组件时再加入相关 peer dependency。
-
-## 14. 页面设计检查清单
-
-- [ ] 页面背景、容器和浮层使用正确的语义 token。
-- [ ] 同一操作区域只有一个最重要的 primary action。
-- [ ] Light 与 Dark 下文字、边界、图表和状态都清晰。
-- [ ] 表单包含标签、帮助说明、错误与禁用状态。
-- [ ] 数据列表提供加载、空、错误、分页/筛选和响应式策略。
-- [ ] 所有纯图标操作有 accessible name；键盘焦点清楚。
-- [ ] 动效遵循减少动态偏好；hover 不是唯一的操作提示。
-- [ ] 组件使用 HeroUI 原生能力与复合结构，没有重复造等价组件。
-
-## 15. 官方参考
-
-- [HeroUI Pro React Components](https://heroui.pro/docs/react/components) — 当前 Web Pro 组件目录与组件分组。
-- [HeroUI Pro Templates](https://heroui.pro/docs/react/templates) — Dashboard、Mail、Chat、CRM、Finances 五类 Web 模板。
-- [Dashboard Template Preview](https://template-dashboard.heroui.pro/) — 指标、趋势图、筛选和管理数据表。
-- [Mail Template Preview](https://template-email.heroui.pro/) — 邮箱文件夹、会话列表和消息详情。
-- [Chat Template Preview](https://template-chat.heroui.pro/) — AI 会话、工具、来源和消息输入区。
-- [CRM Template Preview](https://template-crm.heroui.pro/) — 销售 pipeline、预测、风险账户和机会。
-- [Finances Template Preview](https://template-4.heroui.pro/) — 资产摘要、持仓、走势和交易活动。
-- [HeroUI React Components](https://heroui.com/en/docs/react/components) — 当前 HeroUI Core Web 组件目录与组件分组。
-- [HeroUI Pro Theming](https://heroui.pro/docs/react/getting-started/theming) — Pro 样式导入顺序、明暗模式与主题说明。
-- [HeroUI Pro Colors](https://heroui.pro/docs/react/getting-started/colors) — Pro 图表色板与主题派生规则。
-- [HeroUI Design Taste](https://heroui.pro/docs/react/getting-started/design-taste) — 间距、字体、语义色、表单、按钮、导航与无障碍原则。
-- [HeroUI Colors](https://heroui.com/en/docs/react/getting-started/colors) — 颜色角色及用法。
-- [HeroUI Theming](https://heroui.com/en/docs/react/getting-started/theming) — CSS 变量、BEM、Tailwind v4 集成与主题切换。
-- [Default Theme Variables](https://github.com/heroui-inc/heroui/blob/v3/packages/styles/themes/default/variables.css) — 上述默认 light/dark OKLCH 值、圆角、间距和阴影。
+**技术栈：** React 19 + Arco Design（`@arco-design/web-react`）｜**主题模式：** Light / Dark（由 `body[arco-theme]` 原生驱动）｜**视觉基调：** 清爽、克制、高信息密度的企业级控制台，以 Arco 中性灰画布与白色卡片建立清晰层级，以单一 Arco Blue（`#165DFF`）表达主操作。
 
 ---
 
-# 8. 页面结构：列表与详情分离
+## 1. 设计原则
 
-> 2026-10-20 修订。此前需求池采用「列表 + 行内展开」，实测问题：展开后详情高度可达数屏，把列表挤走；用户看完一条要手动收起再找下一条；详情内的操作区被推到长表格之后，看不见。改为**列表页与详情页分离**。
+1. **原生 Arco 优先，禁止重复造轮子。** 布局外壳、卡片、提示、标签、页签、表单、表格、空态、骨架屏、弹层一律优先使用 Arco 原生组件与内置属性，不手写等价 HTML/CSS 控件，不用 `!important` 把 Arco 控件改回旧皮肤。
+2. **先表达语义，再使用颜色。** 统一消费 Arco 语义 token（`--color-text-*`、`--color-bg-*`、`--color-fill-*`、`--color-border-*`、`--primary-6`、`--success-6`、`--warning-6`、`--danger-6`），不在业务样式中散落硬编码 hex。
+3. **清晰的操作权重层级。** 同一操作区最多 1 个 `type="primary"` 主按钮；并列/次要操作用 `secondary` 或 `outline`；轻量/行内操作用 `text`；破坏性操作单独使用 `status="danger"` 并经二次确认。
+4. **明暗主题零手工维护。** 所有表面、文字、边框与状态色默认跟随 Arco `body[arco-theme="dark"]` 自动切换，不编写成批 `html[data-theme="dark"]` 硬编码覆写。
+5. **交互与无障碍完整。** 所有操作键盘可达，焦点环清晰可见；状态不只依赖颜色（必须配中文文字或图标）；遵循 `prefers-reduced-motion`。
 
-## 8.1 列表页（需求池）
+---
 
-- 定位：**扫描与筛选**，不承载阅读与决策。一行只回答四个问题：这是什么、归谁、到哪一步、要不要我处理。
-- 每行固定展示：标题（1 行截断，悬浮显示全文）、负责人（头像 + 姓名，未分配显示「待分配」）、四阶段状态徽标（同步/分析/负责人/推送）、更新时间。
-- 点击整行 → **进入详情页**（不是展开）。列表状态（筛选、分页、滚动位置）在返回时保留。
-- 行内不放操作按钮。唯一例外：**「待分配」的行**在行尾给一个「分配」入口，因为这是等待人工的高频动作。
-- 排序默认按「待人工处理」优先：待分配负责人 > 推送失败 > 待推送 > 已推送，同组内按更新时间倒序。用户用筛选覆盖后以其选择为准。
+## 2. 颜色系统与暗色模式
 
-## 8.2 详情页
+基础 token 由 `@arco-design/web-react/es/style/index.css` 全局提供，业务样式直接引用 Arco CSS 变量：
 
-- 独立页面，带返回。深链为 `?requirement=<id>`（已实现），返回列表时回到原筛选状态。
-- 顶部固定一条**摘要栏**：标题（可换行，完整显示）、负责人、四阶段状态、以及**主操作按钮**（分配/变更负责人为主，重试分析/推送为次）。滚动时摘要栏吸顶。
-- 内容自上而下按**信息分层**排列，见第 9 节。
-
-# 9. 需求详情的信息架构（按重要性分层）
-
-一条需求在详情页里的信息按「用户是否需要立刻据此行动」分为三层。**L1 必须在首屏完整可见且不滚动**。
-
-| 层级 | 内容 | 展示形态 | 理由 |
+| 语义角色 | Arco CSS 变量 | Light 默认值 | 使用场景 |
 |---|---|---|---|
-| **L1 决策必需** | 需求标题、需求描述、负责人、四阶段状态 | 标题大号（18-20px）可换行；描述为正文段落（14px，最多 6 行 + 「展开」）；负责人用头像 + 姓名 + 「分配/变更」按钮；状态用四个中文徽标 | PM 打开详情就是为了判断「这是什么、归谁、卡在哪」，这四项目前埋在状态长句和表格里 |
-| **L2 决策辅助（AI）** | 模块建议、优先级建议、置信度 + U/M/S/C 四维建议 | 卡片网格。每张卡：维度名 + 结论（加粗一行）+ 理由（灰字）+ 证据不足时标红「需要补充信息」 | 这是 AI 的价值所在，现在被压进两列表格，长文本全挤成一团 |
-| **L3 溯源与审计** | 原文证据、事实、AI 推断、缺失信息、分析盲点、源快照、分析版本历史、Base 记录号 | 折叠区（默认收起），标题写清「查看依据与历史」。AI 推断必须显式标「【AI 推断】」 | 只在质疑结论时才需要，默认展开会淹没 L1/L2 |
+| 页面画布底色 | `var(--color-fill-2)` | `#F2F3F5` | `Layout.Content` 主工作区背景，使白色卡片自然分层 |
+| 内容卡片 / 侧栏 / 顶栏 | `var(--color-bg-2)` | `#FFFFFF` | `Card`、`Layout.Sider`、`Layout.Header` |
+| 浮层 / 弹层背景 | `var(--color-bg-popup)` | `#FFFFFF` | `Modal`、`Drawer`、`Popover`、`Dropdown`、`Select` 菜单 |
+| 次级表面 / 表格头 / 悬停 | `var(--color-fill-1)` / `var(--color-fill-2)` | `#F7F8FA` / `#F2F3F5` | 嵌套信息块、筛选条底色、行悬停 |
+| 常规边框 / 细分隔线 | `var(--color-border-2)` / `var(--color-border-1)` | `#E5E6EB` / `#F2F3F5` | 卡片描边、区域分隔、表格线 |
+| 文字主 / 次 / 辅 / 禁用 | `var(--color-text-1)` ~ `var(--color-text-4)` | `#1D2129` / `#4E5969` / `#86909C` / `#C9CDD4` | 标题与正文 / 次要说明 / 辅助元信息 / 禁用与占位 |
+| 品牌主色（Arco Blue） | `rgb(var(--primary-6))` / 浅底 `rgb(var(--primary-1))` | `#165DFF` / `#E8F3FF` | 主按钮、选中菜单、链接、焦点态 |
+| 成功语义 | `rgb(var(--success-6))` / 浅底 `rgb(var(--success-1))` | `#00B42A` / `#E8FFEA` | 已推送、已分析、验收通过 |
+| 警告语义 | `rgb(var(--warning-6))` / 浅底 `rgb(var(--warning-1))` | `#FF7D00` / `#FFF7E8` | 待分配负责人、暂缓、待处理、P1 |
+| 危险语义 | `rgb(var(--danger-6))` / 浅底 `rgb(var(--danger-1))` | `#F53F3F` / `#FFECE8` | 推送失败、安全阻断、删除确认、P0 |
 
-## 9.1 数据来源分区
+### 业务专属色（仅限极少量领域标识）
 
-详情页按**数据归属**分三个区，每区标题右侧标注来源，避免用户混淆哪条是事实、哪条是机器判断：
+需求来源竖色条（PRD §4.9.3）直接基于 Arco 标准色阶派生，自动适配亮/暗模式：
 
-| 分区 | 标题 | 来源标注 | 内容 |
-|---|---|---|---|
-| 一 | **需求信息** | `来自 Teambition` | 标题、描述、提出人、执行人、TB 状态、TB 链接、创建/更新时间 |
-| 二 | **AI 分析与建议** | `AI 生成 · 可被推翻` | 模块、优先级、置信度、U/M/S/C、结构化备注 |
-| 三 | **处理与推送** | `系统状态` | 四阶段状态、负责人映射方式、Base 记录、推送时间、最近一次失败原因 |
+- **多维表格（`base_form`）**：`rgb(var(--arcoblue-6))`
+- **Web 手工（`web_manual`）**：`rgb(var(--orange-6))`
+- **聊天粘贴（`chat_paste`）**：`rgb(var(--purple-6))`
+- **Teambition（`teambition`）**：默认来源，不加行首色条。
 
-区与区之间用分隔线 + 留白区分，不使用卡片套卡片。
+### 主题切换机制
 
-### 9.1.1 人工覆盖与补充上下文（V02-T26）
+- 亮/暗切换仅通过 `document.body.setAttribute("arco-theme", "dark")`（暗色）或移除该属性 / 设为 `"light"`（亮色）完成；`<html data-theme>` 仅作兼容保留，不再作为样式覆写选择器。
+- 原生 `<input type="datetime-local">` 同步跟随 `color-scheme: light | dark`。
 
-- **人工优先级**：放在「AI 评分与优先级」下方，独立展示当前生效优先级及其来源（人工覆盖 / 当前评分版本）。已覆盖时展示覆盖值、原因、操作人、时间，并提供「清除人工优先级」。人工优先级只影响应用内列表/详情/总览统计，**不回写 Base**；PM 在 Base 的确认字段仍以 Base 为准。
-- **补充上下文**：放在人工优先级下方，多行输入 + 「保存」/「保存并重新分析」。内容以下一次模型请求中的独立段（`补充上下文：`）提供，**不写入 Base**，也不替代来源事实或 PM 已确认字段；「保存并重新分析」会强制创建新的分析版本。
-- 被压制（重复/忽略）的需求不提供可用的写入入口（服务端返回 409）。
+---
 
-## 9.2 空态与不可用
+## 3. 字体、圆角与间距体系
 
-- 无 AI 分析结果：显示「尚未分析」+ 触发分析的入口，不显示空表格。
-- 无负责人：「待分配」用琥珀色，右侧直接给「分配负责人」按钮。
-- 某项字段源端为空：显示「—」并在 title 里说明「Teambition 未提供该字段」，不留空白引发猜测。
+### 排版规范
 
-# 10. 组件映射与实现约束
+- **字体栈**：沿用 Arco 系统无衬线字体栈（`Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif`）；ID、代码与公式使用等宽字体（`ui-monospace, SFMono-Regular, Menlo, monospace`）。
+- **四档字号**（禁止使用 `12.5px`、`17px`、`19px`、`23px` 等随意像素值）：
+  - **页面标题**：`20px` / `font-weight: 600` / `line-height: 1.4`
+  - **区块 / 卡片标题**：`16px` / `font-weight: 500` / `line-height: 1.5`
+  - **正文与表格内容**：`14px` / `font-weight: 400` / `line-height: 1.57`
+  - **辅助说明 / 标签 / 表格辅助列**：`12px` / `font-weight: 400` / `line-height: 1.5`
+- **字重约束**：全站仅允许 `400`（常规）、`500`（中等标题/强调）、`600`（主标题/KPI 数值），禁止使用 `560`、`620`、`760` 等非标准字重。
+- **数字对齐**：KPI、统计数值、表格计数与版本号一律启用 `font-variant-numeric: tabular-nums`。
 
-## 10.1 两处客户端
+### 圆角与间距规范
 
-| | `apps/web` | `rq-sys-miaoda/client`（线上） |
+- **三档圆角**（严禁混用 `5px`/`7px`/`9px`/`10px`/`14px`/`16px`）：
+  - `var(--border-radius-small)`（`2px`）：紧凑标签、小型内嵌徽标
+  - `var(--border-radius-medium)`（`4px`）：按钮、输入框、下拉框、菜单项、表格容器
+  - `var(--border-radius-large)`（`8px`）：`Card`、信息面板、`Modal`
+- **4px 间距栅格**：常用步长 `4 / 8 / 12 / 16 / 20 / 24px`；页面主内容区内边距 `20px 24px`；卡片间距 `16px`；工具栏控件间距 `8px` / `12px`（优先用 Arco `Space` 与 `Grid` 控制）。
+- **阴影策略**：普通卡片使用 `1px solid var(--color-border-2)` + 无阴影（扁平清晰）；阴影仅留给 Arco 内置浮层（`Popover` / `Dropdown` / `Modal` / `Drawer`）。
+
+---
+
+## 4. 布局骨架与导航
+
+两端统一使用原生 Arco `Layout` 骨架，消除根仓与妙搭的外壳差异：
+
+- **外层骨架**：`<Layout>` 包含左侧 `<Layout.Sider width={240}>` + 右侧 `<Layout>`（`<Layout.Header>` + `<Layout.Content>`）。
+- **侧栏导航**：使用 `<Menu>` + `<Menu.ItemGroup>` + `<Menu.Item>`，选中态、悬停态、图标间距均由 Arco 原生样式提供；禁止手写 `<a class="nav-item">` 或 `.rq-nav-menu !important` 强行改写。
+- **顶部栏**：左侧 `<Breadcrumb>` 表达当前位置，右侧通过 `<Space>` + `<Divider type="vertical" />` 排列连接状态 `<Tag>` / `<Badge>`、主题切换与用户头像。
+- **移动端适配（≤860px）**：使用 Arco `<Drawer placement="left">` 承载侧栏菜单，由组件库原生管理遮罩、滚动锁、Escape 关闭与焦点捕获；不再手写 `.sidebar-backdrop` 按钮或自定义键盘焦点陷阱。
+
+---
+
+## 5. 按钮优先级与操作层级
+
+| 视觉权重 | Arco Button 属性 | 使用场景 |
 |---|---|---|
-| UI 组件库 | Arco Design（`@arco-design/web-react`） | Arco Design，与根仓同版本 |
-| Tailwind | ⚠️ 仅 preflight/reset + `@theme inline` 主题变量桥；TSX 中 0 工具类（ARCO-14，2026-11-03） | 同左 |
-| 不得引入 | HeroUI（已移除） | HeroUI（曾因 `@heroui/styles` 导致云端构建失败） |
-| 主题 | `body[arco-theme]` 与 `html[data-theme]` 同步切换 | 同左（目前无切换入口，暗色样式暂不生效） |
+| 主操作 | `type="primary"` | 当前屏/表单唯一最重要的正向动作（如「提交需求」「分配负责人」「立即同步」） |
+| 次操作 | `type="secondary"` | 与主操作并列的常用动作（如「重新分析」「重试推送」「导出 CSV」） |
+| 边框次要 | `type="outline"` | 需要明确边界的辅助动作（如「复制提示词」「恢复默认」） |
+| 轻量/行内 | `type="text"` | 表格行内操作、取消、返回、展开/收起、页内跳转 |
+| 危险操作 | `status="danger"`（搭配 `primary` / `outline` / `text`） | 删除、清空负责人、撤销绑定等破坏性操作；执行前必须经过 `ConfirmModal` |
+| 纯图标按钮 | `type="text" shape="circle" icon={...}` | 顶栏工具按钮、关闭按钮；必须提供 `aria-label` 与 `Tooltip` |
 
-约束：
-- 样式按组件引入：新增 Arco 组件时，把它的 `style/css.js` 加到 `arco-styles.ts`（两端各一份），不要退回整份 `arco.css`。
-- 入口必须引入 React 19 适配器：`import "@arco-design/web-react/es/_util/react-19-adapter";`，否则 `Message` / `Modal.confirm` 等命令式 API 会抛错。
-- 新增页面直接使用 Arco 组件；不再新增 HeroUI 或被替换的 Radix 原语。
-- `Table` 同一张表内每列必须有唯一 `key`（或唯一 `dataIndex`）：多列读同一个字段时（如总览表的四个阶段列都读 `pipeline`）要显式写 `key`，否则 React 会报重复 key。
-- 按钮统一使用 Arco `Button`。`HeroButton/HeroInput/HeroChip/HeroCard` 等 `Hero*` 只是 `arco.tsx` 导出组件在调用处的历史别名，不是独立组件；`button button-primary|secondary` 字符串参数已被 `arco.tsx` 丢弃、对应 CSS 已删除，属清理中的死参数（ARCO-10 机械清理，状态以 Lead 最终提交为准）。
-- 「高级操作」等下拉使用受控 `AdvancedActions` 包装：`aria-haspopup="menu"` / `aria-expanded`、打开后焦点进入菜单、Esc 关闭并把焦点还给触发按钮（Arco Dropdown 默认都不提供）。不要直接用裸 `Dropdown` 承载键盘用户必须可达的操作。
-- 两端在**行为与信息层级上必须一致**，像素级允许差异。
+> 禁止把 `Button` 伪装成多行 KPI 卡片、筛选胶囊、遮罩层或列表整行容器——对应场景应分别使用 `Card hoverable`、`Tag checkable`、`Drawer` 与 `Table onRow`。
 
-## 10.2 组件对应
+---
 
-| 用途 | Arco 组件 | 备注 |
+## 6. 组件选型映射表
+
+| 业务用途 | 标准 Arco 组件 | 规范与备注 |
 |---|---|---|
-| 主/次按钮 | `Button` type=primary / secondary | 危险操作 `status="danger"` |
-| 状态徽标 | `Tag`（颜色 green/orange/red/gray） | 业务状态胶囊仍用 `.status-chip` |
-| 信息卡 | `Card` | |
-| 折叠区 | `Collapse` | 移动端保持可点击区域 ≥ 44px |
-| 表单控件 | `Select` / `Input` / `Input.TextArea` / `InputNumber` / `Checkbox` | P0 改造（ARCO-01~04）后两端均已完成；`Select` 选项在 portal 中渲染，测试需到 `document` 查找。以 Lead 最终验收提交为准 |
-| 列表 / 数据表 | `Table`，`pagination={false}` | 列表分页沿用游标「加载更多」 |
-| 删除确认 | 统一用 `ConfirmModal`（`confirm-modal.tsx`） | 内部包装 `Modal`，打开后把 role 改为 `alertdialog` 并关联正文；不要直接用 `Modal` 做破坏性确认 |
-| 空态 / 加载 | 自定义 + `Skeleton` / `Spin` | |
+| 页面骨架 / 移动端抽屉 | `Layout`（`Sider`/`Header`/`Content`）、`Drawer` | 统一两仓导航外壳 |
+| 导航与位置 | `Menu`、`Breadcrumb`、`Divider` | `Menu.ItemGroup` 组织分组 |
+| 内容容器与分区 | `Card`（`title` / `extra`） | 替代手写 `.panel` 与 `.req-section` |
+| 键值对元信息 | `Descriptions` | 替代手写 `<dl>` 网格 |
+| 数据列表 / 评分表 | `Table`（`pagination={false}`） | 列表沿用游标「加载更多」；同列多字段须写唯一 `key` |
+| 指标与进度 | `Statistic`、`Progress` | 替代手写 KPI 卡与 `.progress-track` |
+| 状态徽标与计数 | `Tag`、`Badge` | `Tag` 承载业务状态/优先级/来源；`Tag checkable` 用于人群选择；`Tag closable` 用于执行人白名单；`Badge status` 用于状态圆点 |
+| 横幅与短时反馈 | `Alert`、`Message` | `Alert` 替代 `.alert-banner`/`.notice-banner`；`Message` 承载复制/保存/还原等短时提示 |
+| 页签与分段切换 | `Tabs`、`Radio.Group type="button"` | 替代手写 `.source-tabs`、池切换、重复视图切换、时间窗口切换 |
+| 折叠与浮层筛选 | `Collapse`、`Popover`、`Tooltip` | 替代 `<details class="fold">`、手写 `.qmore-body` 浮层与裸 `title` 属性 |
+| 表单与控件 | `Form`/`Form.Item`、`Input`、`Input.TextArea`、`InputNumber`、`Select`、`Checkbox`、`Switch` | 开关类配置（如启用同步/周计划）用 `Switch`；校验错误贴近字段展示 |
+| 空态 / 加载 / 异常页 | `Empty`、`Skeleton`、`Result` | 替代手写 `.empty-state`、`.skeleton-*` 与错误边界静态块 |
+| 破坏性确认 | `ConfirmModal`（`confirm-modal.tsx`） | 封装 Arco `Modal`，打开后设置 `role="alertdialog"` 与 `aria-describedby` |
+| 键盘可达下拉菜单 | `AdvancedActions` | 封装受控 `Dropdown` + `Menu`，保证 `aria-haspopup`/`aria-expanded`/焦点与 `Esc` 行为 |
 
-## 10.3 交互规范
+### 明确豁免
 
-- 列表点击整行进详情；**禁止行内展开**。
-- 返回列表保留筛选与分页（用 URL 查询参数承载，便于分享与刷新）。
-- 主操作在同一屏只出现一个（详情页是「分配/变更负责人」）。
-- 危险操作（删除、清空负责人）需二次确认；普通操作不弹确认。
-- 所有状态徽标**中文呈现、英文原值放 `title`**。
+1. **ARCO-04 日期时间筛选**：6 处 `datetime-local` 保留原生 `<input type="datetime-local">`（放在 `Form.Item` 内，避免 `dayjs`/时区回归），边框与背景复用 Arco token。
+2. **原生链接 `<a>`**：需浏览器原生跳转/深链分享处保留 `<a>` 或使用 Arco `Link`。
 
-## 10.4 Arco 定位、豁免与样式规则（2026-11-03 决策）
+---
 
-- **目标 A（已选定）**：两端同一功能使用同一 Arco 组件，**视觉继续沿用 RQ 自定义设计语言**（现有 `--rq-*` CSS 变量 + `styles.css` 的 Arco token 桥接）；不整体切换 Arco 默认设计语言。目标 B（完整 Arco token/`ConfigProvider` 主题与视觉改写）会改变现有视觉，需单独设计确认，暂缓并登记为后续决策项。
-- **ConfigProvider locale**：入口接入 `ConfigProvider` 的 `zhCN` locale，仅做中文本地化，**不用它覆盖品牌视觉 token**；主题仍走现有 `body[arco-theme]` / `html[data-theme]` 桥接。
-- **已记录豁免（不得作为分叉理由）**：
-  - 日期筛选 2 处 `datetime-local` 保留原生控件（`dayjs`/时区偏移风险，ARCO-04 已登记豁免）；
-  - 评分九项输入网格保留原生 `<table>`（分组可编辑，需保留 `input` 语义）；
-  - `skeleton.tsx` 的 `aria-hidden` 占位 `<table>`；
-  - `<a>` 导航链接（Arco 无对应 Link 组件）。
-- **ARCO-09 颜色规则**：新增/修改的样式禁止直接写十六进制颜色；危险/成功/警告/链接/焦点等语义色统一走 `--rq-*` 变量。存量硬编码 hex（现状见 `docs/2026-11-03-arco-design-remaining-tasks.md`）收敛列为后续债务，本轮不全量清零。
-- **ARCO-14 Tailwind 定位**：保留依赖，仅承担 preflight/reset 与 `@theme inline` 主题变量桥；TSX 中 0 个工具类，**不启用工具类布局**。第 13 节的 Tailwind/HeroUI 导入顺序样例仅作历史参考，运行时以两端 `styles.css`/`arco-styles.ts` 实际为准。
-- **ARCO-12 防回归**：源码用到的 Arco 组件必须登记在两端 `arco-styles.ts` 的按需样式列表中；检查脚本随 ARCO-12 落地，运行 `npm run check:arco-styles`（提交后可用）。
+## 7. 交互状态、动效与无障碍规则
+
+- **完整状态覆盖**：所有可交互控件与页面必须清晰呈现 Default、Hover、Focus-Visible、Selected/Active、Disabled、Loading、Error、Empty 状态。
+- **状态不只靠颜色**：状态标签一律**中文呈现、英文原值放 `title` 或 `Tooltip`**，并辅以图标或文字区分，满足 WCAG AA 对比度。
+- **动效节制**：使用 Arco 默认过渡动画，不额外叠加自定义弹跳/缩放动效；遵循 `@media (prefers-reduced-motion: reduce)`。
+- **键盘与辅助技术**：所有操作支持键盘操作；表单错误与字段关联；异步刷新与通知使用恰当的 `role="status"` / `role="alert"`。
+
+---
+
+## 8. 页面信息架构：列表与详情分离
+
+> 沿用 2026-10-20 确认的信息架构。列表只负责扫描与筛选，详情独立页面承载阅读与决策，**禁止列表行内展开**。
+
+### 8.1 列表页（需求池 / 集团需求池 / 我的需求 / 回收站）
+
+- **单行四问**：一行清晰回答「这是什么（标题 + 平台 ID + 来源徽标）」「归谁（负责人）」「到哪一步（四阶段状态 Tag）」「要不要我处理（优先级/更新时间）」。
+- **点击整行进详情**：深链为 `?requirement=<id>`（集团池按详情 `pool` 自动守卫，显式跨池返回 404）；返回列表保留筛选条件与分页状态。
+- **行内操作克制**：常规行不堆叠操作按钮；高频待分配负责人或回收站还原入口保持明确且单列对齐。
+- **默认排序**：待人工处理优先（待分配负责人 > 推送失败 > 待推送 > 已推送），同组按更新时间倒序；切换优先级分诊排序后按生效优先级 P0→P3 展示。
+
+### 8.2 详情页
+
+- 独立页面，顶部提供返回导航与**摘要区**（标题完整换行、负责人、生效优先级评分卡、四阶段状态、`primary` 主操作与次要操作按钮）。
+- 下方按信息分层自上而下展开，区与区之间使用 `Card` 间距或 `Divider` 清晰分隔，避免多层嵌套卡片。
+
+---
+
+## 9. 需求详情的信息架构（L1 / L2 / L3）
+
+一条需求在详情页按「用户是否需要立刻据此行动」分为三层，**L1 首屏清晰可见**：
+
+| 层级 | 内容 | 展示形态 |
+|---|---|---|
+| **L1 决策必需** | 需求标题、需求描述（默认最多 6 行 + 展开）、负责人 + 分配/变更入口、四阶段状态、来源说明（「这条需求怎么来的」） | 摘要 `Card` + 需求信息 `Card`（`Descriptions` + 正文段落） |
+| **L2 决策辅助（AI）** | 综合评分与优先级（九项输入 + α + 公式 + 人工改分）、模块/人群建议（PM 确认）、人工优先级覆盖与补充上下文、按需「需求评估 + Investigation 提示词」、按需「PRD 提示词」、可选 RICE / Kano Beta | 独立 `Card` 分块；AI 建议与人工确认明确区分 |
+| **L3 溯源与审计** | 原文证据、事实与 `【AI 推断】`、缺失信息、分析盲点、源快照、分析版本历史、Base 记录号与链接、重复处理 | 默认收起的 Arco `Collapse`（「查看依据与历史」），避免淹没 L1/L2 |
+
+### 9.1 数据归属标注
+
+详情分区标题右侧用 Arco `Tag` 明确标注数据归属：
+
+- **需求信息**：`来自 Teambition` / `Web 手工` / `聊天粘贴` / `多维表格`（非 TB 需求隐藏 TB 专属字段）
+- **AI 分析与建议**：`AI 生成 · 可被推翻`
+- **处理与推送**：`系统状态`
+
+### 9.2 人工优先级覆盖与补充上下文（V02-T26）
+
+- **人工优先级**：置于「AI 评分与优先级」下方，独立展示当前生效优先级及来源（人工覆盖 / 当前评分版本）；只影响应用内列表/详情/总览，**不回写 Base**。
+- **补充上下文**：多行 `Input.TextArea` + 「保存」/「保存并重新分析」；以下一次模型请求独立段提供，不写入 Base，不改写来源事实。
+- 已压制（重复/忽略）或已逻辑删除需求隐藏/禁用写入口（服务端返回 `409`）。
+
+### 9.3 空态与缺失值
+
+- 无 AI 分析结果：使用 `Empty` + 「触发分析」按钮，不渲染空表格。
+- 无负责人：`Tag color="orange"` 标示「待分配」，旁边提供「分配负责人」入口。
+- 源端字段为空：显示 `—` 并通过 `Tooltip` 说明来源未提供，不留空白。
+
+---
+
+## 10. 双仓样式表、导入顺序与防回归约定
+
+| 项目 | `apps/web` | `rq-sys-miaoda/client`（线上） |
+|---|---|---|
+| 组件库 | `@arco-design/web-react`（直接导入，退役 `arco.tsx`） | `@arco-design/web-react`（同版本，直接导入） |
+| React 19 适配器 | 入口引入 `@arco-design/web-react/es/_util/react-19-adapter` | 同左 |
+| CSS 导入顺序 | **先** `./arco-styles`，**后** `./styles.css` | **先** `./rqsys/arco-styles`，**后** `./rqsys/styles.css`（严禁倒置） |
+| 按需样式注册 | `apps/web/src/arco-styles.ts` | `rq-sys-miaoda/client/src/rqsys/arco-styles.ts` |
+| Tailwind 定位 | 仅 preflight/reset（TSX 中 0 工具类，ARCO-14） | 同左；清理未使用的 `typography.css`、`tw-animate-css` 与废弃 shadcn 变量 |
+| 禁止项 | 禁止 HeroUI、禁止 `.arco-* !important`、禁止规则内硬编码 hex | 同左，同时禁止引入 Radix 业务控件 |
+
+### 自动化门禁
+
+1. **`npm run check:arco-styles`**：校验两端源码用到的所有 Arco 组件均已在 `arco-styles.ts` 中登记 `style/css.js`（以及基础 `@arco-design/web-react/es/style/index.css`）。
+2. **`npm run check:alignment`**：校验两端共享前端模块、`arco-styles.ts` 与 `styles.css` 无未声明漂移。
+3. **两仓一致性**：`apps/web` 与 `rq-sys-miaoda/client` 的视觉样式、布局结构与交互行为保持一致，同步样式时通过共享基线维护，禁止单边漂移或误删平台必要规则。
+
+---
+
+## 11. 页面设计检查清单
+
+- [ ] 页面画布使用 `var(--color-fill-2)`，卡片/侧栏/顶栏使用 `var(--color-bg-2)`，圆角仅用 `2px / 4px / 8px`。
+- [ ] 全页无新增硬编码 hex，无 `.arco-* !important` 覆盖；暗色模式仅依赖 `body[arco-theme="dark"]` 自动生效。
+- [ ] 同一操作区域至多 1 个 `type="primary"` 按钮；破坏性操作使用 `status="danger"` 并走 `ConfirmModal`。
+- [ ] 布局、卡片、表单、提示、标签、页签、空态、加载均使用原生 Arco 组件（仅 ARCO-04 `datetime-local` 与原生 `<a>` 例外）。
+- [ ] 新增 Arco 组件已同步登记至两端 `arco-styles.ts` 且 `npm run check:arco-styles` 通过。
+- [ ] 所有纯图标按钮带 `aria-label` 与 `Tooltip`，键盘导航与焦点可见。
