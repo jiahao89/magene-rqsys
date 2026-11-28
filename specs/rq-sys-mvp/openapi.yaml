@@ -1964,7 +1964,7 @@ components:
         pushFailed: { type: integer, minimum: 0 }
         pushPending: { type: integer, minimum: 0 }
         failed: { type: integer, minimum: 0 }
-        # 已压制（重复/忽略）需求数；不进入上面的阶段与优先级统计（验收 #27）。
+        # 已排除（已判定重复/已忽略）需求数；不进入上面的阶段与优先级统计（验收 #27）。
         suppressed: { type: integer, minimum: 0 }
         priority:
           type: object
@@ -2150,8 +2150,8 @@ components:
         identityResolved: { type: boolean, description: false 时四个计数固定为 0。 }
         product: { type: integer, minimum: 0 }
         group: { type: integer, minimum: 0 }
-        total: { type: integer, minimum: 0, description: product+group；含已压制、不含已删除。 }
-        suppressed: { type: integer, minimum: 0, description: 我的需求中已被重复/忽略压制的条数（含在 total 里）。 }
+        total: { type: integer, minimum: 0, description: product+group；含已排除、不含已删除。 }
+        suppressed: { type: integer, minimum: 0, description: 我的需求中已排除（已判定重复或已忽略）的条数（含在 total 里）。 }
     Requirement:
       type: object
       properties:
@@ -2270,13 +2270,13 @@ components:
               title: { type: string }
               teambitionRequirementId: { type: string }
             required: [id, title, teambitionRequirementId]
-        # 2026-11-23：PRD §4.7.5 的疑似重复候选（同标题的其他 active 需求，排除自身与已压制）。
+        # 2026-11-23：PRD §4.7.5 的疑似重复候选（同标题的其他 active 需求，排除自身与已排除需求）。
         # 与 duplicates 是两件事：duplicates 是以本需求为主记录的子记录，这里是可以选为主记录的候选。
         duplicateCandidates:
           type: array
           description: >-
             同来源下与本需求标题相同（NFKC + 去首尾空白 + 折叠空白 + 小写后相等）的其它 active 需求，
-            排除自身与已压制需求；无候选时为 []。
+            排除自身与已排除需求；无候选时为 []。
           items:
             type: object
             properties:

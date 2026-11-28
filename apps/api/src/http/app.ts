@@ -1564,7 +1564,7 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     const parsed = PriorityOverrideUpdateSchema.safeParse(await readJson(request)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
     const req = await repositories.requirements.get(requirementId); if (!req) return jsonError("NOT_FOUND");
     // 已压制需求不参与处理链路：人工优先级也不允许写入，避免“看起来已生效”。
-    if ((req.processingState ?? "active") !== "active") return jsonError("CONFLICT", "该需求已被压制，请先撤销判定再设置人工优先级。");
+    if ((req.processingState ?? "active") !== "active") return jsonError("CONFLICT", "该需求已被排除，请先撤销判定再设置人工优先级。");
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
     const cleared = parsed.data.priority === null;
     const auditEvent = { id: randomUUID(), actorId: auth.actor.id, eventType: cleared ? "requirement.priority_override_cleared" : "requirement.priority_override_set", entityType: "requirement", result: "succeeded" as const, safeDetails: { priority: parsed.data.priority, at: now }, occurredAt: now };
@@ -1583,7 +1583,7 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     const requirementId = pathUuid(analysisContextMatch[1]!, dependencies); if (!requirementId) return jsonError("NOT_FOUND");
     const parsed = AnalysisContextUpdateSchema.safeParse(await readJson(request)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
     const req = await repositories.requirements.get(requirementId); if (!req) return jsonError("NOT_FOUND");
-    if ((req.processingState ?? "active") !== "active") return jsonError("CONFLICT", "该需求已被压制，请先撤销判定再补充上下文。");
+    if ((req.processingState ?? "active") !== "active") return jsonError("CONFLICT", "该需求已被排除，请先撤销判定再补充上下文。");
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
     const auditEvent = { id: randomUUID(), actorId: auth.actor.id, eventType: "requirement.analysis_context_updated", entityType: "requirement", result: "succeeded" as const, safeDetails: { cleared: parsed.data.context === null, at: now }, occurredAt: now };
     let result: Awaited<ReturnType<RequirementQueryRepository["setAnalysisContext"]>>;
