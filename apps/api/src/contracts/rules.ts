@@ -41,21 +41,33 @@ const ScoringMapSchema = z.record(z.string().min(1), z.number().finite()).refine
   { message: "scoring map must contain at least one approved value" },
 );
 
-// POST /api/rules/priority 请求体：已批准的 U/M/S/C 评分映射 + 确定性阈值 + 可选校准证据
-export const PriorityRuleCreateSchema = z.object({
-  rules: z.object({
-    scoring: z.object({
-      user: ScoringMapSchema,
-      market: ScoringMapSchema,
-      business: ScoringMapSchema,
-      technology: ScoringMapSchema,
-    }),
-    thresholds: z.object({
-      p0: z.number().min(0).max(4),
-      p1: z.number().min(0).max(4),
-      p2: z.number().min(0).max(4),
-    }).refine((t) => t.p0 >= t.p1 && t.p1 >= t.p2, { message: "thresholds must satisfy p0 >= p1 >= p2" }),
+const LegacyPriorityRuleSchema = z.object({
+  scoring: z.object({
+    user: ScoringMapSchema,
+    market: ScoringMapSchema,
+    business: ScoringMapSchema,
+    technology: ScoringMapSchema,
   }),
+  thresholds: z.object({
+    p0: z.number().min(0).max(4),
+    p1: z.number().min(0).max(4),
+    p2: z.number().min(0).max(4),
+  }).refine((t) => t.p0 >= t.p1 && t.p1 >= t.p2, { message: "thresholds must satisfy p0 >= p1 >= p2" }),
+});
+
+const PragmaticTriageV4RuleSchema = z.object({
+  formulaType: z.literal("pragmatic_triage_v4"),
+  thresholds: z.object({
+    p0: z.number().min(0).max(100),
+    p1: z.number().min(0).max(100),
+    p2: z.number().min(0).max(100),
+  }).refine((t) => t.p0 >= t.p1 && t.p1 >= t.p2, { message: "thresholds must satisfy p0 >= p1 >= p2" }),
+  quarterlyFocus: z.array(z.string().trim().min(1).max(120)).max(5).optional(),
+});
+
+// POST /api/rules/priority 请求体：支持 v1 评分映射 或 v4 务实初筛规则 + 可选校准证据
+export const PriorityRuleCreateSchema = z.object({
+  rules: z.union([PragmaticTriageV4RuleSchema, LegacyPriorityRuleSchema]),
   validationEvidence: z.array(z.unknown()).optional(),
 });
 

@@ -635,10 +635,17 @@ describe("RequirementsPanel (ticket 17)", () => {
 
     await openFirstRow();
 
-    // 列表页被详情页替换；L1/L2/L3 与来源标注同时出现。
+    // 列表页被详情页替换；默认进入「核心信息与定级」Tab，可切换到「历史与高级」查看归档字段。
     expect(screen.queryByText("需求列表")).not.toBeInTheDocument();
+    expect(screen.getByText("AI 初筛与 PM 一键定级")).toBeInTheDocument();
     expect(screen.getByText("需求信息")).toBeInTheDocument();
     expect(screen.getByText("来自 Teambition")).toBeInTheDocument();
+    // TB 原始字段同时使用「TB」小徽标与分区来源标注。
+    expect(screen.getAllByText("TB").length).toBeGreaterThanOrEqual(8);
+    // Teambition 来源只读，不提供「编辑需求」入口。
+    expect(screen.queryByRole("button", { name: "编辑需求" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "历史与高级" }));
     expect(screen.getByText("AI 评分与优先级")).toBeInTheDocument();
     expect(screen.getByText("适用人群")).toBeInTheDocument();
     expect(screen.getByText("处理与推送")).toBeInTheDocument();
@@ -647,10 +654,6 @@ describe("RequirementsPanel (ticket 17)", () => {
     expect(screen.getByRole("heading", { name: "重复处理" })).toBeInTheDocument();
     expect(screen.getByText(/暂无重复候选/)).toBeInTheDocument();
     expect(screen.getByText("查看依据与历史")).toBeInTheDocument();
-    // TB 原始字段同时使用「TB」小徽标与分区来源标注。
-    expect(screen.getAllByText("TB").length).toBeGreaterThanOrEqual(8);
-    // Teambition 来源只读，不提供「编辑需求」入口。
-    expect(screen.queryByRole("button", { name: "编辑需求" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /返回需求池/ }));
     expect(await screen.findByText("需要报表")).toBeInTheDocument();
@@ -885,6 +888,7 @@ describe("RequirementsPanel (ticket 17)", () => {
     });
     render(<RequirementsPanel onRefresh={() => undefined} />);
     await openFirstRow();
+    fireEvent.click(screen.getByRole("tab", { name: "需求评估与 PRD" }));
 
     // 默认选最新版本；结论、置信度、假设按契约渲染。
     expect(await screen.findByText("第二版背景")).toBeInTheDocument();
@@ -924,6 +928,7 @@ describe("RequirementsPanel (ticket 17)", () => {
     });
     render(<RequirementsPanel onRefresh={() => undefined} />);
     await openFirstRow();
+    fireEvent.click(screen.getByRole("tab", { name: "需求评估与 PRD" }));
 
     fireEvent.change(screen.getByRole("textbox", { name: "需求背景" }), { target: { value: "售后反馈" } });
     fireEvent.change(screen.getByRole("textbox", { name: "需求目标" }), { target: { value: "降低投诉" } });
@@ -950,6 +955,7 @@ describe("RequirementsPanel (ticket 17)", () => {
     });
     render(<RequirementsPanel onRefresh={() => undefined} />);
     await openFirstRow();
+    fireEvent.click(screen.getByRole("tab", { name: "需求评估与 PRD" }));
 
     expect(await screen.findByText(/还没有评估结果/)).toBeInTheDocument();
     // PRD 4.10.3：三项补充都可为空，全空也允许生成（空输入不是错误）。
@@ -987,6 +993,7 @@ describe("RequirementsPanel (ticket 17)", () => {
     });
     render(<RequirementsPanel onRefresh={() => undefined} />);
     await openFirstRow();
+    fireEvent.click(screen.getByRole("tab", { name: "需求评估与 PRD" }));
     expect(await screen.findByDisplayValue("v2 背景")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("radio", { name: "v1" }));
@@ -1013,6 +1020,7 @@ describe("RequirementsPanel (ticket 17)", () => {
     });
     render(<RequirementsPanel onRefresh={() => undefined} />);
     await openFirstRow();
+    fireEvent.click(screen.getByRole("tab", { name: "需求评估与 PRD" }));
 
     expect(await screen.findByRole("radio", { name: "v2 生成中" })).toBeInTheDocument();
     expect(screen.getByText("这一版正在生成")).toBeInTheDocument();
@@ -1034,6 +1042,7 @@ describe("RequirementsPanel (ticket 17)", () => {
     });
     render(<RequirementsPanel onRefresh={() => undefined} />);
     await openFirstRow();
+    fireEvent.click(screen.getByRole("tab", { name: "需求评估与 PRD" }));
 
     fireEvent.click(screen.getByRole("button", { name: "生成评估" }));
     expect(await screen.findByText("正在生成，请稍候。")).toBeInTheDocument();
@@ -1059,6 +1068,7 @@ describe("RequirementsPanel (ticket 17)", () => {
     });
     render(<RequirementsPanel onRefresh={() => undefined} />);
     await openFirstRow();
+    fireEvent.click(screen.getByRole("tab", { name: "需求评估与 PRD" }));
     expect(await screen.findByRole("radio", { name: "v1" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "生成评估" }));
@@ -1085,6 +1095,7 @@ describe("RequirementsPanel (ticket 17)", () => {
     });
     render(<RequirementsPanel onRefresh={() => undefined} />);
     await openFirstRow();
+    fireEvent.click(screen.getByRole("tab", { name: "需求评估与 PRD" }));
 
     // 用户已填内容必须在超时/核对/最终提示全过程中保留。
     fireEvent.change(screen.getByRole("textbox", { name: "需求背景" }), { target: { value: "不能丢的背景" } });
@@ -1134,6 +1145,7 @@ describe("RequirementsPanel (ticket 17)", () => {
     });
     render(<RequirementsPanel onRefresh={() => undefined} />);
     await openFirstRow();
+    fireEvent.click(screen.getByRole("tab", { name: "需求评估与 PRD" }));
 
     expect(await screen.findByText(/还没有评估结果/)).toBeInTheDocument();
     expect(screen.getByText(/先生成一条成功的需求评估/)).toBeInTheDocument();
@@ -1163,10 +1175,12 @@ describe("RequirementsPanel (ticket 17)", () => {
     });
     render(<RequirementsPanel onRefresh={() => undefined} />);
     await openFirstRow();
+    fireEvent.click(screen.getByRole("tab", { name: "需求评估与 PRD" }));
 
     expect(await screen.findByText(/评估历史读取失败/)).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "需求信息" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "需求评估" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "核心信息与定级" }));
+    expect(screen.getByRole("heading", { name: "需求信息" })).toBeInTheDocument();
   });
 
   it("puts requirements waiting for human handling first, then sorts each group by update time", async () => {
@@ -1314,6 +1328,7 @@ describe("RequirementsPanel (ticket 17)", () => {
     mockPanel();
     render(<RequirementsPanel onRefresh={() => undefined} />);
     await openFirstRow();
+    fireEvent.click(screen.getByRole("tab", { name: "历史与高级" }));
     expect(screen.getByRole("heading", { name: "重复处理" })).toBeInTheDocument();
     expect(screen.getByText(/暂无重复候选/)).toBeInTheDocument();
     expect(screen.getByText(/可直接忽略/)).toBeInTheDocument();
@@ -1377,6 +1392,7 @@ describe("RequirementsPanel (ticket 17)", () => {
     await openFirstRow();
     const actions = screen.getByRole("group", { name: "需求操作" });
     expect(within(actions).getByText("会消耗一次模型调用")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "历史与高级" }));
     const contextSection = screen.getByRole("region", { name: "补充上下文" });
     expect(within(contextSection).getByText("会消耗一次模型调用")).toBeInTheDocument();
   });
@@ -1612,6 +1628,7 @@ describe("RequirementsPanel (ticket 17)", () => {
     });
     render(<RequirementsPanel onRefresh={() => undefined} />);
     await openFirstRow();
+    fireEvent.click(screen.getByRole("tab", { name: "历史与高级" }));
 
     // L2 卡片：维度/结论/理由，证据不足显式标红。
     expect(screen.getByText("模块建议")).toBeInTheDocument();
@@ -1628,7 +1645,7 @@ describe("RequirementsPanel (ticket 17)", () => {
     fireEvent.click(trigger);
     expect(await screen.findByText("原文证据")).toBeVisible();
     expect(screen.getByText(/【AI 推断】可能需要定时导出/)).toBeInTheDocument();
-    expect(screen.getByText("目标用户")).toBeInTheDocument();
+    expect(screen.getAllByText("目标用户").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("价值待确认")).toBeInTheDocument();
     expect(screen.getByText(/AI provider request timed out\./)).toBeInTheDocument();
     expect(screen.getByText("源快照（只读 JSON）")).toBeInTheDocument();
@@ -1650,6 +1667,7 @@ describe("RequirementsPanel (ticket 17)", () => {
     mockPanel({ detailBody: detail({ baseRecordId: "recvxwGs5Js0PA" }) });
     render(<RequirementsPanel onRefresh={() => undefined} />);
     await openFirstRow();
+    fireEvent.click(screen.getByRole("tab", { name: "历史与高级" }));
 
     expect((await screen.findAllByText("recvxwGs5Js0PA")).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByRole("button", { name: "复制记录 ID" })).toBeInTheDocument();
@@ -1661,6 +1679,7 @@ describe("RequirementsPanel (ticket 17)", () => {
     mockPanel({ detailBody: detail({ baseRecordId: "recvxwGs5Js0PA", baseRecordUrl: "https://tenant.feishu.cn/base/app?table=t&record=recvxwGs5Js0PA" }) });
     render(<RequirementsPanel onRefresh={() => undefined} />);
     await openFirstRow();
+    fireEvent.click(screen.getByRole("tab", { name: "历史与高级" }));
     const link = await screen.findByRole("link", { name: "在飞书 Base 中打开" });
     expect(link).toHaveAttribute("href", "https://tenant.feishu.cn/base/app?table=t&record=recvxwGs5Js0PA");
     expect(link).toHaveAttribute("target", "_blank");
@@ -3322,5 +3341,93 @@ describe("Wave 1 frontend hardening regressions", () => {
     expect(screen.getByRole("heading", { name: "一、角色与边界" })).toBeInTheDocument();
     expect(container.querySelectorAll(".arco-table").length).toBe(4);
     expect(container.querySelectorAll(".guide-table").length).toBe(0);
+  });
+
+  it("renders PragmaticTriageCard v4 factors, SimilarRequirementsStrip, and submits 1-click PM triage", async () => {
+    let triagePayload: unknown = null;
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = typeof input === "string" ? input : new Request(input).url;
+      if (path === "/api/people") return jsonOk({ items: [] });
+      if (path === "/api/requirements/req-edit-1/assessments") return jsonOk({ items: [] });
+      if (path === "/api/requirements/req-edit-1/prd-prompts") return jsonOk({ items: [] });
+      if (path === "/api/requirements/req-edit-1/triage" && init?.method === "PUT") {
+        triagePayload = JSON.parse(String(init.body));
+        return jsonOk({ requirementId: "req-edit-1", effectivePriority: "P0", priorityOverride: { priority: "P0", reason: "PM 一键定级", actorId: "pm", at: "2026-11-28T00:00:00.000Z" } });
+      }
+      if (path.startsWith("/api/requirements/req-edit-1")) {
+        return jsonOk({
+          id: "req-edit-1",
+          platformRequirementId: "RQ-000101",
+          sourceRequirementId: null,
+          sourceType: "teambition",
+          sourceChannel: null,
+          productModel: null,
+          requirementType: null,
+          constraintNotes: null,
+          supplementUrl: null,
+          intakeModule: null,
+          audience: { tags: [], confirmed: false, version: 0 },
+          title: "骑行导航频繁闪退",
+          description: "骑行中导航崩溃",
+          sourceVersion: 1,
+          pipeline: { pull: "synced", analysis: "analyzed", owner: "auto_mapped", push: "pending" },
+          source: {},
+          analysis: { module: "导航", confidence: "中", confidence_reason: "缺少频次", missing_inputs: ["固件版本"] },
+          analyses: [],
+          baseRecordId: null,
+          similarRequirements: {
+            count90d: 2,
+            items: [{ id: "req-sim-1", platformRequirementId: "RQ-000088", title: "相似导航崩溃", similarity: 0.72, createdAt: "2026-11-20T00:00:00.000Z" }],
+          },
+          scoring: {
+            current: null,
+            aiSuggestion: {
+              id: "score-v4",
+              requirementId: "req-edit-1",
+              version: 1,
+              status: "ai_suggested",
+              origin: "ai",
+              sourceVersion: 1,
+              analysisVersion: 1,
+              ruleVersionId: "rule-v4",
+              inputs: { version: "v4", impact: 4, urgency: 3, costTier: null, strategicMatch: true, guardrail: "safety_p0" },
+              alpha: 1.5,
+              score: 82,
+              priority: "P0",
+              scoreConfidence: "中",
+              scoreConfidenceReason: "缺少频次数据",
+              safetyFlag: true,
+              basis: {
+                impact: { reason: "核心导航崩溃", evidence: ["需要报表"], assumption: false },
+                urgency: { reason: "缺少频次，中性 3 分", evidence: [], assumption: true },
+              },
+              rationale: "涉及安全与核心流程",
+              actorId: null,
+              changeReason: null,
+              createdAt: "2026-11-28T00:00:00.000Z",
+            },
+            history: [],
+            formula: { formulaType: "pragmatic_triage_v4", text: "v4", thresholds: { p0: 80, p1: 60, p2: 40 } },
+          },
+        });
+      }
+      return jsonOk({ items: [], nextCursor: null });
+    });
+
+    render(<RequirementsPanel onRefresh={() => undefined} initialRequirementId="req-edit-1" />);
+
+    expect(await screen.findByText(/近 90 天同池检测到 2 条相似反馈/)).toBeInTheDocument();
+    expect(screen.getAllByText(/安全红警/).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("影响严重度")).toBeInTheDocument();
+    expect(screen.getByText("4 / 5")).toBeInTheDocument();
+    expect(screen.getByText("紧迫 / 频次")).toBeInTheDocument();
+    expect(screen.getByText("3 / 5")).toBeInTheDocument();
+    expect(screen.getByText("命中本季重点")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "查看相似需求（辅助判断高频度）" }));
+    expect(screen.getByRole("link", { name: /RQ-000088 · 相似导航崩溃/ })).toBeInTheDocument();
+
+    fireEvent.click(within(screen.getByRole("group", { name: "PM 一键定级" })).getByRole("button", { name: "P0" }));
+    await waitFor(() => expect(triagePayload).toEqual({ priority: "P0", costTier: null, reason: "PM 一键定级" }));
   });
 });

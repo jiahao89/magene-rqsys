@@ -21,6 +21,7 @@ import type {
 import type { RequirementRecord, SourcePool } from "../domain/persistence.js";
 import { randomUUID } from "node:crypto";
 import { computeUmcScore } from "../analysis/scoring.js";
+import { computeTriageScore } from "../analysis/scoring-v4.js";
 import { DEFAULT_FUNCTION_MODULES } from "../domain/team-directory.js";
 import { analysisModelContext } from "../analysis/context.js";
 import { AnalysisRepositoryAdapter } from "../analysis/repository-adapter.js";
@@ -248,8 +249,62 @@ export function createRequirementWorkflow(deps: RequirementWorkflowDeps) {
         try { await deps.repositories.analyses.closeSupersededRunning?.(new Date().toISOString(), requirement.id); }
         catch (cause) { log(`stale running analysis cleanup failed for ${requirement.id}: ${(cause as Error)?.name ?? "unknown"}`); }
       }
-      // V02-S06：分析成功且评分合法时，落 AI 建议版本；评分持久化失败不改变主分析终态。
-      if (run.status === "analyzed" && run.result?.scoring && run.result.priority && deps.repositories.scoring) {
+      // V02-S06 / v4：分析成功且评分合法时，落 AI 建议版本；评分持久化失败不改变主分析终态。
+      if (run.status === "analyzed" && run.result?.triageScoring && run.result.priority && deps.repositories.scoring) {
+        try {
+          const triage = run.result.triageScoring;
+          const computed = priorityRule?.computeTriageScore
+            ? priorityRule.computeTriageScore({
+                impact: triage.impact,
+                urgency: triage.urgency,
+                costTier: null,
+                strategicMatch: triage.strategicMatch,
+                safetyFlag: triage.safetyFlag,
+                typeSuggestion: run.result.typeSuggestion,
+              })
+            : computeTriageScore({
+                impact: triage.impact,
+                urgency: triage.urgency,
+                costTier: null,
+                strategicMatch: triage.strategicMatch,
+                safetyFlag: triage.safetyFlag,
+                typeSuggestion: run.result.typeSuggestion,
+              });
+          await deps.repositories.scoring.createAi({
+            requirementId: requirement.id,
+            sourceVersion: run.sourceVersion,
+            analysisVersion: run.analysisVersion,
+            ruleVersionId: priorityRule?.id ?? null,
+            inputs: {
+              version: "v4",
+              impact: triage.impact,
+              urgency: triage.urgency,
+              costTier: null,
+              strategicMatch: triage.strategicMatch,
+              guardrail: computed.guardrail,
+            },
+            alpha: triage.safetyFlag ? 1.5 : 1.0,
+            score: computed.score,
+            priority: computed.priority,
+            scoreConfidence: triage.scoreConfidence,
+            scoreConfidenceReason: triage.scoreConfidenceReason,
+            safetyFlag: triage.safetyFlag,
+            basis: triage.basis as unknown as Record<string, unknown>,
+            rationale: triage.rationale,
+            auditEvent: {
+              id: randomUUID(),
+              actorId: typeof job.payload.actorId === "string" ? job.payload.actorId : null,
+              eventType: "scoring.suggested",
+              entityType: "requirement",
+              result: "succeeded",
+              safeDetails: { scoreVersion: run.analysisVersion, score: computed.score, priority: computed.priority, formulaType: "pragmatic_triage_v4" },
+              occurredAt: new Date().toISOString(),
+            },
+          });
+        } catch (cause) {
+          log(`v4 scoring suggestion persistence failed for ${requirement.id}: ${(cause as Error)?.name ?? "unknown"}`);
+        }
+      } else if (run.status === "analyzed" && run.result?.scoring && run.result.priority && deps.repositories.scoring) {
         try {
           const computed = computeUmcScore(run.result.scoring.inputs, run.result.scoring.alpha);
           await deps.repositories.scoring.createAi({

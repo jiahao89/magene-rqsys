@@ -37,6 +37,7 @@ const SHARED = [
   "analysis/openai-http.ts",
   "analysis/priority-rule.ts",
   "analysis/provider.ts",
+  "analysis/scoring-v4.ts",
   "analysis/service.ts",
   "assessment/rate-limit.ts",
   "owner/mapping.ts",

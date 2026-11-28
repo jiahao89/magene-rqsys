@@ -14,17 +14,29 @@
 
 import type { AnalysisPriorityRule, ValidatedAnalysis } from "./contract.js";
 import type { PriorityLevel, PriorityRuleVersionRecord } from "../domain/persistence.js";
-import { computeUmcScore, computeUmcScoreWithThresholds, type PriorityThresholds, type ScoringInputs } from "./scoring.js";
+import { SCORING_FORMULA_TEXT, computeUmcScore, computeUmcScoreWithThresholds, type PriorityThresholds, type ScoringInputs } from "./scoring.js";
+import { TRIAGE_V4_DEFAULT_THRESHOLDS, TRIAGE_V4_FORMULA_TEXT, TRIAGE_V4_FORMULA_TYPE, computeTriageScore } from "./scoring-v4.js";
 
 type ScoringMap = Record<string, number>;
 type RulePayload = {
   formulaType?: string;
   scoring?: Partial<Record<"user" | "market" | "business" | "technology", ScoringMap>>;
   thresholds?: { p0?: unknown; p1?: unknown; p2?: unknown };
+  quarterlyFocus?: unknown;
 };
 
+function normalizeQuarterlyFocus(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 5);
+}
+
 // 从校验后的 U/M/S/C 建议提取各维建议取值（评分映射的查找键）。
-export function recommendationValues(result: ValidatedAnalysis): { user: string; market: string; business: string; technology: string } {
+export function recommendationValues(result: ValidatedAnalysis): { user: string; market: string; business: string; technology: string } | null {
+  if (!result.recommendations) return null;
   return {
     user: result.recommendations.user.recommendation,
     market: result.recommendations.market.recommendation,
@@ -36,6 +48,24 @@ export function recommendationValues(result: ValidatedAnalysis): { user: string;
 // 已发布规则版本 → AnalysisPriorityRule；规则契约不完整或未经校准时返回 null（优先级留空）。
 export function buildPriorityRule(record: PriorityRuleVersionRecord): AnalysisPriorityRule | null {
   const rules = record.rules as RulePayload | null;
+  if (rules?.formulaType === TRIAGE_V4_FORMULA_TYPE) {
+    const t = rules.thresholds;
+    const p0 = typeof t?.p0 === "number" ? t.p0 : TRIAGE_V4_DEFAULT_THRESHOLDS.p0;
+    const p1 = typeof t?.p1 === "number" ? t.p1 : TRIAGE_V4_DEFAULT_THRESHOLDS.p1;
+    const p2 = typeof t?.p2 === "number" ? t.p2 : TRIAGE_V4_DEFAULT_THRESHOLDS.p2;
+    if (![p0, p1, p2].every((value) => Number.isFinite(value) && value >= 0 && value <= 100)) return null;
+    if (!(p0 >= p1 && p1 >= p2)) return null;
+    const thresholds: PriorityThresholds = { p0, p1, p2 };
+    const quarterlyFocus = normalizeQuarterlyFocus(rules.quarterlyFocus);
+    return {
+      id: record.id,
+      version: record.version,
+      formulaType: TRIAGE_V4_FORMULA_TYPE,
+      quarterlyFocus,
+      compute: () => null,
+      computeTriageScore: (input) => computeTriageScore(input, thresholds),
+    };
+  }
   if (rules?.formulaType === "umsc_weighted_v2") {
     const thresholds = rules.thresholds;
     if (!Array.isArray(record.validationEvidence) || record.validationEvidence.length === 0) return null;
@@ -110,10 +140,10 @@ export function buildPriorityRule(record: PriorityRuleVersionRecord): AnalysisPr
   };
 }
 
-/** 已发布 v3 规则的分位阈值；v2/旧规则返回 null（调用方回落到固定阈值展示）。 */
+/** 已发布 v3 / v4 规则的分位阈值；v2/旧规则返回 null（调用方回落到固定阈值展示）。 */
 export function priorityRuleThresholds(record: PriorityRuleVersionRecord | null | undefined): PriorityThresholds | null {
   const rules = record?.rules as RulePayload | null;
-  if (rules?.formulaType !== "umsc_weighted_v3") return null;
+  if (rules?.formulaType !== "umsc_weighted_v3" && rules?.formulaType !== TRIAGE_V4_FORMULA_TYPE) return null;
   const t = rules.thresholds;
   const p0 = typeof t?.p0 === "number" ? t.p0 : undefined;
   const p1 = typeof t?.p1 === "number" ? t.p1 : undefined;
@@ -121,4 +151,9 @@ export function priorityRuleThresholds(record: PriorityRuleVersionRecord | null 
   if (p0 === undefined || p1 === undefined || p2 === undefined) return null;
   if (!(p0 >= p1 && p1 >= p2)) return null;
   return { p0, p1, p2 };
+}
+
+export function priorityRuleFormulaText(record: PriorityRuleVersionRecord | null | undefined): string {
+  const rules = record?.rules as RulePayload | null;
+  return rules?.formulaType === TRIAGE_V4_FORMULA_TYPE ? TRIAGE_V4_FORMULA_TEXT : SCORING_FORMULA_TEXT;
 }

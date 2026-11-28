@@ -1121,8 +1121,10 @@ function RulesPanel() {
   const [thresholds, setThresholds] = useState<{ p0: number | undefined; p1: number | undefined; p2: number | undefined }>({ p0: 4, p1: 3, p2: 2 });
   const [scoringInput, setScoringInput] = useState("user:强=3\nuser:中=2\nuser:弱=1\nmarket:强=3\nmarket:中=2\nmarket:弱=1\nbusiness:强=3\nbusiness:中=2\nbusiness:弱=1\ntechnology:强=3\ntechnology:中=2\ntechnology:弱=1");
   const [evidenceInput, setEvidenceInput] = useState("");
-  // v2 是已确认的固定公式：生效期间 API 拒绝发布任何 v1 草稿，界面必须提前说明而不是让人点了才收到 409。
-  const activeV2 = rules.some((rule) => rule.status === "published" && (rule.rules.formulaType === "umsc_weighted_v2" || rule.rules.formulaType === "umsc_weighted_v3"));
+  const [v4Thresholds, setV4Thresholds] = useState<{ p0: number | undefined; p1: number | undefined; p2: number | undefined }>({ p0: 80, p1: 60, p2: 40 });
+  const [quarterlyFocusInput, setQuarterlyFocusInput] = useState("");
+  // v2/v3/v4 是已确认的校准公式：生效期间 API 拒绝发布任何 v1 草稿，界面必须提前说明而不是让人点了才收到 409。
+  const activeCalibrated = rules.some((rule) => rule.status === "published" && (rule.rules.formulaType === "umsc_weighted_v2" || rule.rules.formulaType === "umsc_weighted_v3" || rule.rules.formulaType === "pragmatic_triage_v4"));
 
   const loadControllerRef = useRef<AbortController | null>(null);
   const load = useCallback(async () => {
@@ -1151,8 +1153,28 @@ function RulesPanel() {
 
   const ruleColumns = useMemo(() => [
     { title: "版本", dataIndex: "version", width: 90, render: (_value: unknown, rule: PriorityRuleVersion) => <span className="mono-cell">v{rule.version}</span> },
+    {
+      title: "公式类型",
+      dataIndex: "formulaType",
+      width: 150,
+      render: (_value: unknown, rule: PriorityRuleVersion) => {
+        const ft = rule.rules.formulaType;
+        if (ft === "pragmatic_triage_v4") return <ArcoTag size="small" color="arcoblue">务实初筛 v4</ArcoTag>;
+        if (ft === "umsc_weighted_v3") return <ArcoTag size="small">U/M/S/C v3</ArcoTag>;
+        if (ft === "umsc_weighted_v2") return <ArcoTag size="small">U/M/S/C v2</ArcoTag>;
+        return <ArcoTag size="small" color="gray">v1 映射</ArcoTag>;
+      },
+    },
     { title: "状态", dataIndex: "status", width: 110, render: (_value: unknown, rule: PriorityRuleVersion) => <PublishStatusChip status={rule.status} /> },
-    { title: "阈值 (P0/P1/P2)", dataIndex: "rules", width: 170, render: (_value: unknown, rule: PriorityRuleVersion) => <span className="mono-cell">{[rule.rules.thresholds?.p0, rule.rules.thresholds?.p1, rule.rules.thresholds?.p2].map((value) => value ?? "—").join(" / ")}</span> },
+    { title: "阈值 (P0/P1/P2)", dataIndex: "rules", width: 160, render: (_value: unknown, rule: PriorityRuleVersion) => <span className="mono-cell">{[rule.rules.thresholds?.p0, rule.rules.thresholds?.p1, rule.rules.thresholds?.p2].map((value) => value ?? "—").join(" / ")}</span> },
+    {
+      title: "本季重点",
+      dataIndex: "quarterlyFocus",
+      width: 180,
+      render: (_value: unknown, rule: PriorityRuleVersion) => rule.rules.quarterlyFocus?.length
+        ? rule.rules.quarterlyFocus.join("、")
+        : <span className="subtle-text">—</span>,
+    },
     { title: "创建时间", dataIndex: "createdAt", width: 180, render: (_value: unknown, rule: PriorityRuleVersion) => new Date(rule.createdAt).toLocaleString("zh-CN") },
     { title: "发布时间", dataIndex: "publishedAt", width: 180, render: (_value: unknown, rule: PriorityRuleVersion) => rule.publishedAt ? new Date(rule.publishedAt).toLocaleString("zh-CN") : "—" },
     {
@@ -1160,9 +1182,10 @@ function RulesPanel() {
       dataIndex: "id",
       width: 110,
       render: (_value: unknown, rule: PriorityRuleVersion) => {
-        const blocked = activeV2 && rule.rules.formulaType !== "umsc_weighted_v2" && rule.rules.formulaType !== "umsc_weighted_v3";
+        const isCalibrated = rule.rules.formulaType === "umsc_weighted_v2" || rule.rules.formulaType === "umsc_weighted_v3" || rule.rules.formulaType === "pragmatic_triage_v4";
+        const blocked = activeCalibrated && !isCalibrated;
         return rule.status === "draft" && (
-          <ArcoTooltip content={blocked ? "v2/v3 公式生效期间不能发布 v1 规则" : ""} disabled={!blocked}>
+          <ArcoTooltip content={blocked ? "v2/v3/v4 公式生效期间不能发布 v1 规则" : ""} disabled={!blocked}>
             <ArcoButton
               type="primary"
               htmlType="button"
@@ -1176,7 +1199,28 @@ function RulesPanel() {
         );
       },
     },
-  ], [activeV2, busy, withFeedback]);
+  ], [activeCalibrated, busy, withFeedback]);
+  const handleCreateV4Rule = () => withFeedback(async () => {
+    if (v4Thresholds.p0 === undefined || v4Thresholds.p1 === undefined || v4Thresholds.p2 === undefined) {
+      throw new ApiError("请填写完整的 P0 / P1 / P2 阈值。", 400, "INVALID_THRESHOLDS");
+    }
+    if (!(v4Thresholds.p0 >= v4Thresholds.p1 && v4Thresholds.p1 >= v4Thresholds.p2)) {
+      throw new ApiError("阈值需满足 P0 ≥ P1 ≥ P2。", 400, "INVALID_THRESHOLDS");
+    }
+    const quarterlyFocus = quarterlyFocusInput
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (quarterlyFocus.length > 5) {
+      throw new ApiError("本季度重点方向最多填写 5 条。", 400, "INVALID_QUARTERLY_FOCUS");
+    }
+    const created = await createPriorityRuleDraft({
+      formulaType: "pragmatic_triage_v4",
+      thresholds: { p0: v4Thresholds.p0, p1: v4Thresholds.p1, p2: v4Thresholds.p2 },
+      ...(quarterlyFocus.length > 0 ? { quarterlyFocus } : {}),
+    });
+    return `务实初筛 v4 规则（v${created.version}）草稿已创建`;
+  });
   const handleCreateRule = () => withFeedback(async () => {
     if (thresholds.p0 === undefined || thresholds.p1 === undefined || thresholds.p2 === undefined) {
       throw new ApiError("请填写完整的 P0 / P1 / P2 阈值。", 400, "INVALID_THRESHOLDS");
@@ -1197,13 +1241,52 @@ function RulesPanel() {
         <ArcoTypography.Text type="secondary">规则版本经历史案例校准；发布前需求优先级保持为空。</ArcoTypography.Text>
         <ArcoButton type="secondary" htmlType="button" size="small" onClick={() => void load()} disabled={busy}><RefreshCw size={14} />刷新</ArcoButton>
       </div>
-      {activeV2 && <ArcoAlert className="rq-inline-alert" type="info" showIcon role="status" content="当前生效的是已确认的 v2/v3 评分公式。v1 四维求和规则不能再发布覆盖它，下方「创建草稿」已暂停。" />}
+      {activeCalibrated && <ArcoAlert className="rq-inline-alert" type="info" showIcon role="status" content="当前生效的是已确认的 v2/v3/v4 评分公式。v1 四维求和规则不能再发布覆盖它。" />}
       {loadError && <ArcoAlert className="rq-inline-alert" type="error" showIcon role="alert" title="配置加载失败" content={loadError} action={<ArcoButton type="secondary" size="mini" htmlType="button" onClick={() => void load()}>重试</ArcoButton>} />}
       {actionError && <ArcoAlert className="rq-inline-alert" type="error" showIcon closable role="alert" title="操作未完成" content={actionError} onClose={() => setActionError(null)} />}
       {notice && <ArcoAlert className="rq-inline-alert" type="success" showIcon closable role="status" content={notice} onClose={() => setNotice(null)} />}
 
+      <ArcoCard size="small" className="rq-subcard" style={{ marginBottom: 16 }} title="创建务实初筛规则 v4 草稿" extra={<ArcoTag color="arcoblue">推荐 · 2维线性 + 护栏</ArcoTag>}>
+        <ArcoTypography.Paragraph type="secondary" className="detail-note">
+          公式：影响严重度(1–5)×12 + 紧迫频次(1–5)×8 + 成本微调(+5/0/-10) + 本季重点(+10)；缺失项中性按 3 分估算；安全红警→P0，严重缺陷(影响≥4)→保底 P1。
+        </ArcoTypography.Paragraph>
+        <ArcoForm layout="vertical" className="rq-compact-form">
+          <ArcoGrid.Row gutter={[12, 0]}>
+            {(["p0", "p1", "p2"] as const).map((key) => (
+              <ArcoGrid.Col key={`v4-${key}`} xs={8} sm={6} md={4}>
+                <ArcoForm.Item label={`v4 ${key.toUpperCase()} 阈值`}>
+                  <ArcoInputNumber
+                    min={0}
+                    max={100}
+                    step={5}
+                    precision={0}
+                    value={v4Thresholds[key]}
+                    aria-label={`v4 ${key.toUpperCase()} 阈值`}
+                    onChange={(value: number | undefined) => setV4Thresholds((prev) => ({ ...prev, [key]: typeof value === "number" && Number.isFinite(value) ? value : undefined }))}
+                  />
+                </ArcoForm.Item>
+              </ArcoGrid.Col>
+            ))}
+          </ArcoGrid.Row>
+          <ArcoForm.Item label="本季度重点方向（可选，每行一条，最多 5 条；命中时 AI 初筛 +10 分）">
+            <ArcoInput.TextArea
+              aria-label="本季度重点方向"
+              rows={3}
+              placeholder={"例如：\n导航稳定性\n功率计生态"}
+              value={quarterlyFocusInput}
+              onChange={(value: string) => setQuarterlyFocusInput(value)}
+            />
+          </ArcoForm.Item>
+          <div className="rq-action-bar">
+            <ArcoButton type="primary" htmlType="button" size="small" onClick={() => void handleCreateV4Rule()} disabled={busy}>
+              创建 v4 规则草稿
+            </ArcoButton>
+          </div>
+        </ArcoForm>
+      </ArcoCard>
+
       <ArcoCollapse className="advanced-settings" defaultActiveKey={[]}>
-        <ArcoCollapse.Item name="rule-advanced-settings" header="高级设置：创建规则草稿（U/M/S/C 评分映射与校准证据）">
+        <ArcoCollapse.Item name="rule-advanced-settings" header="高级设置：创建历史 v1 规则草稿（U/M/S/C 评分映射与校准证据）">
           <ArcoTypography.Paragraph type="secondary" className="detail-note">这些输入直接决定规则 JSON；未校准证据的规则发布后不会用于优先级计算。</ArcoTypography.Paragraph>
           <ArcoForm layout="vertical" className="rq-compact-form">
             <ArcoGrid.Row gutter={[12, 0]}>
@@ -1230,8 +1313,8 @@ function RulesPanel() {
               <ArcoInput.TextArea aria-label="校准证据" rows={2} placeholder='例如：{"cohort":"2026-Q3","cases":12}' value={evidenceInput} onChange={(value: string) => setEvidenceInput(value)} />
             </ArcoForm.Item>
             <div className="rq-action-bar">
-              <ArcoTooltip content={activeV2 ? "v2/v3 公式生效期间不能发布 v1 规则" : ""} disabled={!activeV2}>
-                <ArcoButton type="primary" htmlType="button" size="small" onClick={() => void handleCreateRule()} disabled={busy || activeV2}>创建草稿</ArcoButton>
+              <ArcoTooltip content={activeCalibrated ? "v2/v3/v4 公式生效期间不能发布 v1 规则" : ""} disabled={!activeCalibrated}>
+                <ArcoButton type="primary" htmlType="button" size="small" onClick={() => void handleCreateRule()} disabled={busy || activeCalibrated}>创建草稿</ArcoButton>
               </ArcoTooltip>
             </div>
           </ArcoForm>

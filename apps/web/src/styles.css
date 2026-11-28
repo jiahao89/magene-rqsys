@@ -1434,3 +1434,20 @@ h1, h2, h3, h4, h5, h6 {
 .table-scroll .arco-table-content-inner::-webkit-scrollbar-thumb:hover {
   background: var(--color-text-4);
 }
+
+/* ---------- Pragmatic Triage v4 & Decluttered Detail Tabs ---------- */
+.req-detail-tabs-shell .arco-tabs-header-nav { margin-bottom: 12px; }
+.req-detail-tab-stack { display: flex; flex-direction: column; gap: 16px; }
+.triage-meta-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.triage-factors-grid { margin-bottom: 10px; }
+.triage-factor-card .detail-note { margin: 6px 0 8px; }
+.triage-rationale { margin: 6px 0 8px; font-size: 13px; color: var(--rq-text); }
+.triage-missing-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; }
+.triage-action-bar { padding-top: 4px; }

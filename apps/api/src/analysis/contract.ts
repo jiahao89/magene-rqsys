@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { REQUIREMENT_INTAKE_TYPES } from "../contracts/pipeline.js";
 import { ScoringSchema, validateScoringEvidence, type ComputedScore, type ScoringInputs } from "./scoring.js";
+import { TriageScoringSchema, validateTriageScoringEvidence, type ComputedTriageScore, type TriageCostTier } from "./scoring-v4.js";
 
 export interface AnalysisDictionary {
   version: number;
@@ -10,10 +11,21 @@ export interface AnalysisDictionary {
 export interface AnalysisPriorityRule {
   id: string;
   version: number;
+  formulaType?: string;
+  quarterlyFocus?: string[];
   // 输入是四维建议取值（规则评分映射的查找键）；取值不在映射中时返回 null（优先级留空，不做默认猜测）。
   compute: (values: { user: string; market: string; business: string; technology: string }) => "P0" | "P1" | "P2" | "P3" | null;
   // V02-S06：评分 v2 规则用九项输入和 α 计算；旧规则无此函数。
   computeScore?: (inputs: ScoringInputs, alpha: number) => ComputedScore | null;
+  // 务实初筛 v4：两维线性评分 + 护栏规则。
+  computeTriageScore?: (input: {
+    impact: number;
+    urgency: number;
+    costTier?: TriageCostTier | null;
+    strategicMatch?: boolean;
+    safetyFlag?: boolean;
+    typeSuggestion?: string | null;
+  }) => ComputedTriageScore;
 }
 
 export interface AnalysisRequestInput {
@@ -26,7 +38,7 @@ export interface AnalysisRequestInput {
 }
 
 export interface SafeAnalysisRequest extends Omit<AnalysisRequestInput, "piiMarkers" | "priorityRule"> {
-  priorityRule: { id: string; version: number } | null;
+  priorityRule: { id: string; version: number; formulaType?: string; quarterlyFocus?: string[] } | null;
 }
 
 const EMAIL = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
@@ -88,7 +100,14 @@ export function buildAnalysisRequest(input: AnalysisRequestInput): SafeAnalysisR
     description: maskPii(input.description, input.piiMarkers),
     context: maskPii(input.context, input.piiMarkers),
     dictionary: input.dictionary,
-    priorityRule: input.priorityRule ? { id: input.priorityRule.id, version: input.priorityRule.version } : null,
+    priorityRule: input.priorityRule
+      ? {
+          id: input.priorityRule.id,
+          version: input.priorityRule.version,
+          ...(input.priorityRule.formulaType ? { formulaType: input.priorityRule.formulaType } : {}),
+          ...(input.priorityRule.quarterlyFocus?.length ? { quarterlyFocus: input.priorityRule.quarterlyFocus } : {}),
+        }
+      : null,
   };
 }
 
@@ -112,7 +131,7 @@ const AnalysisSchema = z.object({
   confidence: z.enum(["高", "中", "低"]),
   confidence_reason: z.string().min(1),
   evidence: EvidenceList.min(1),
-  recommendations: z.object({ user: RecommendationSchema, market: RecommendationSchema, business: RecommendationSchema, technology: RecommendationSchema }),
+  recommendations: z.object({ user: RecommendationSchema, market: RecommendationSchema, business: RecommendationSchema, technology: RecommendationSchema }).optional(),
   facts: z.array(z.object({ text: z.string().min(1), evidence: z.string().min(1) })),
   inferences: z.array(z.object({ text: z.string().min(1), ai_inference: z.literal(true) })),
   missing_inputs: z.array(z.string()),
@@ -124,6 +143,8 @@ const AnalysisSchema = z.object({
   audience: z.array(z.object({ level: z.enum(AUDIENCE_LEVELS), reason: z.string().min(1), evidence: EvidenceList })).default([]),
   // V02-S06：评分 v2 可选（旧分析无此字段仍可读）；新提示词要求模型输出。
   scoring: ScoringSchema.optional(),
+  // 务实初筛 v4：精简两维评分，v5 提示词要求模型输出。
+  triageScoring: TriageScoringSchema.optional(),
 }).strict();
 
 export type ValidatedAnalysis = z.infer<typeof AnalysisSchema>;
@@ -144,7 +165,7 @@ export function validateAnalysisOutput(
   const sourceText = options.sourceText;
   const evidence = [
     ...result.evidence,
-    ...Object.values(result.recommendations).flatMap((item) => item.evidence),
+    ...(result.recommendations ? Object.values(result.recommendations).flatMap((item) => item.evidence) : []),
     ...result.facts.map((item) => item.evidence),
     ...result.audience.flatMap((item) => item.evidence),
   ];
@@ -157,5 +178,6 @@ export function validateAnalysisOutput(
   // 伪造出源文没有的"事实"进入结构化结果与详情页。
   if (result.facts.some((item) => !compactSource.includes(compact(item.text)))) throw new Error("Analysis fact does not occur in source text");
   if (result.scoring) validateScoringEvidence(result.scoring, sourceText);
+  if (result.triageScoring) validateTriageScoringEvidence(result.triageScoring, sourceText);
   return { ...result, priority: null };
 }

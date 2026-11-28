@@ -11,9 +11,10 @@ import type { TeamPersonRecord } from "../domain/team-directory.js";
 import { AnalysisContextUpdateSchema, AuditListQuerySchema, GateConfirmSchema, OpsJobsQuerySchema, OpsMetricsQuerySchema, RequirementExportQuerySchema, ClearDuplicateDecisionSchema, DuplicateDecisionSchema, PriorityOverrideUpdateSchema, RetryAnalysisRequestSchema, KanoEvidenceImportSchema, KanoRunRequestSchema, AudienceUpdateSchema, BatchListQuerySchema, RiceDraftUpdateSchema, FeishuUserSearchQuerySchema, OwnerMappingUpdateSchema, RequirementIntakeEditSchema, RequirementIntakeSchema, RequirementListQuerySchema, RequirementAssessmentInputSchema, PrdPromptRequestSchema, SyncIdempotencyHeaderSchema, SyncRunRequestSchema } from "../contracts/pipeline.js";
 import { createHash, randomUUID } from "node:crypto";
 import { ApplyAiScoringSchema, ManualScoringUpdateSchema, SCORING_FORMULA_TEXT, SCORING_THRESHOLDS, computeUmcScore } from "../analysis/scoring.js";
+import { ManualTriageUpdateSchema, ManualV4ScoringUpdateSchema, TRIAGE_V4_DEFAULT_THRESHOLDS, TRIAGE_V4_FORMULA_TYPE, isV4ScoringInputs } from "../analysis/scoring-v4.js";
 import { maskPii } from "../analysis/contract.js";
 import { confirmGate, evaluateGates } from "../ops/gates.js";
-import { buildPriorityRule, priorityRuleThresholds } from "../analysis/priority-rule.js";
+import { buildPriorityRule, priorityRuleFormulaText, priorityRuleThresholds } from "../analysis/priority-rule.js";
 import { toCsv } from "../application/csv.js";
 import { SourceConfigUpdateSchema, normalizeSourceSchedule, normalizeExecutorAllowlistNames, MAX_EXECUTOR_ALLOWLIST_SIZE, type ResolvedSourceConfigUpdate } from "../contracts/source.js";
 import { DictionaryCreateSchema, PriorityRuleCreateSchema, TeamModulesSaveSchema, TeamPersonCreateSchema, TeamPersonFeishuBindSchema, TeamPersonRenameSchema } from "../contracts/rules.js";
@@ -105,7 +106,7 @@ function assessmentRateLimiterFor(runner: NonNullable<ApiDependencies["assessmen
   if (!limiter) { limiter = createAssessmentRateLimiter(limit); assessmentRateLimiters.set(runner, limiter); }
   return limiter;
 }
-const CALIBRATED_SCORING_FORMULAS = new Set(["umsc_weighted_v2", "umsc_weighted_v3"]);
+const CALIBRATED_SCORING_FORMULAS = new Set(["umsc_weighted_v2", "umsc_weighted_v3", "pragmatic_triage_v4"]);
 const TRANSIENT_NODE_ERROR_CODES = new Set([
   "ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EPIPE", "ENOTFOUND", "EAI_AGAIN",
   "CONNECTION_ENDED", "CONNECTION_CLOSED", "CONNECTION_DESTROYED",
@@ -1503,11 +1504,66 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
     if (!repositories?.requirements || !repositories.scoring || !repositories.priorityRules) return jsonError("DEPENDENCY_UNAVAILABLE");
     const requirementId = pathUuid(scoringMatch[1]!, dependencies); if (!requirementId) return jsonError("NOT_FOUND");
-    const parsed = ManualScoringUpdateSchema.safeParse(await readJson(request)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
+    const rawBody = await readJson(request);
+    const parsedV4 = ManualV4ScoringUpdateSchema.safeParse(rawBody);
+    const parsed = parsedV4.success ? null : ManualScoringUpdateSchema.safeParse(rawBody);
+    if (!parsedV4.success && (!parsed || !parsed.success)) return jsonError("VALIDATION_FAILED");
     const requirement = await repositories.requirements.get(requirementId); if (!requirement) return jsonError("NOT_FOUND");
     const rule = await repositories.priorityRules.getPublished();
     const compiledRule = rule ? buildPriorityRule(rule) : null;
     const ruleFormula = (rule?.rules as Record<string, unknown> | null | undefined)?.formulaType;
+    if (parsedV4.success) {
+      if (!rule || ruleFormula !== TRIAGE_V4_FORMULA_TYPE || !compiledRule?.computeTriageScore) {
+        return jsonError("CONFLICT", "评分规则未发布");
+      }
+      const latest = await repositories.analyses?.latest(requirement.id) ?? null;
+      const latestTypeSuggestion = latest?.status === "analyzed" && latest.structuredResult && typeof latest.structuredResult.typeSuggestion === "string"
+        ? latest.structuredResult.typeSuggestion
+        : null;
+      const current = await repositories.scoring.current(requirement.id);
+      const aiSuggestion = await repositories.scoring.aiSuggestion(requirement.id);
+      const sourceScore = current ?? aiSuggestion;
+      const safetyFlag = parsedV4.data.safetyFlag ?? sourceScore?.safetyFlag ?? false;
+      const strategicMatch = parsedV4.data.strategicMatch ?? (isV4ScoringInputs(sourceScore?.inputs) ? sourceScore.inputs.strategicMatch : false);
+      const computed = compiledRule.computeTriageScore({
+        impact: parsedV4.data.impact,
+        urgency: parsedV4.data.urgency,
+        costTier: parsedV4.data.costTier ?? null,
+        strategicMatch,
+        safetyFlag,
+        typeSuggestion: latestTypeSuggestion,
+      });
+      const auditEvent = { id: randomUUID(), actorId: auth.actor.id, eventType: "scoring.updated", entityType: "requirement", result: "succeeded" as const, safeDetails: { fromVersion: current?.version ?? 0, score: computed.score, priority: computed.priority, formulaType: TRIAGE_V4_FORMULA_TYPE }, occurredAt: (dependencies.now?.() ?? new Date()).toISOString() };
+      const result = await repositories.scoring.saveManual({
+        requirementId: requirement.id,
+        expectedVersion: parsedV4.data.expectedVersion,
+        sourceVersion: requirement.sourceVersion,
+        analysisVersion: latest?.analysisVersion ?? null,
+        ruleVersionId: rule.id,
+        inputs: {
+          version: "v4",
+          impact: parsedV4.data.impact,
+          urgency: parsedV4.data.urgency,
+          costTier: parsedV4.data.costTier ?? null,
+          strategicMatch,
+          guardrail: computed.guardrail,
+        },
+        alpha: safetyFlag ? 1.5 : 1.0,
+        score: computed.score,
+        priority: computed.priority,
+        scoreConfidence: sourceScore?.scoreConfidence ?? null,
+        scoreConfidenceReason: sourceScore?.scoreConfidenceReason ?? null,
+        safetyFlag,
+        basis: sourceScore?.basis ?? {},
+        rationale: parsedV4.data.reason,
+        actorId: auth.actor.id,
+        reason: parsedV4.data.reason,
+        auditEvent,
+      });
+      if (result.outcome === "version_conflict") return jsonError("CONFLICT", `评分版本冲突，当前版本 ${result.currentVersion}`);
+      return json({ scoring: result.version });
+    }
+    if (!parsed || !parsed.success) return jsonError("VALIDATION_FAILED");
     if (!rule || typeof ruleFormula !== "string" || !CALIBRATED_SCORING_FORMULAS.has(ruleFormula) || !compiledRule?.computeScore) {
       return jsonError("CONFLICT", "评分规则未发布");
     }
@@ -1540,6 +1596,74 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     });
     if (result.outcome === "version_conflict") return jsonError("CONFLICT", `评分版本冲突，当前版本 ${result.currentVersion}`);
     return json({ scoring: result.version });
+  }
+  const triageMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/triage$/);
+  if (triageMatch && method === "PUT") {
+    const auth = await actorFor(request, dependencies); if ("response" in auth) return auth.response;
+    if (!repositories?.requirements || !repositories.audit) return jsonError("DEPENDENCY_UNAVAILABLE");
+    const requirementId = pathUuid(triageMatch[1]!, dependencies); if (!requirementId) return jsonError("NOT_FOUND");
+    const parsed = ManualTriageUpdateSchema.safeParse(await readJson(request)); if (!parsed.success) return jsonError("VALIDATION_FAILED");
+    const req = await repositories.requirements.get(requirementId); if (!req) return jsonError("NOT_FOUND");
+    if ((req.processingState ?? "active") !== "active") return jsonError("CONFLICT", "该需求已被排除，请先撤销判定再设置定级。");
+    const now = (dependencies.now ?? (() => new Date()))().toISOString();
+    const reasonText = parsed.data.reason?.trim() || "PM 一键定级";
+    const auditEvent = { id: randomUUID(), actorId: auth.actor.id, eventType: "requirement.priority_override_set", entityType: "requirement", result: "succeeded" as const, safeDetails: { priority: parsed.data.priority, costTier: parsed.data.costTier ?? null, source: "triage", at: now }, occurredAt: now };
+    let overrideResult: Awaited<ReturnType<RequirementQueryRepository["setPriorityOverride"]>>;
+    try { overrideResult = await repositories.requirements.setPriorityOverride(req.id, { priority: parsed.data.priority, reason: reasonText, actorId: auth.actor.id, at: now, auditEvent }); }
+    catch { return jsonError("DEPENDENCY_UNAVAILABLE"); }
+    if (overrideResult.outcome === "not_found") return jsonError("NOT_FOUND");
+    let updatedScore = repositories.scoring ? await repositories.scoring.current(req.id) : null;
+    if (parsed.data.costTier !== undefined && repositories.scoring) {
+      const aiScore = await repositories.scoring.aiSuggestion(req.id);
+      const baseScore = updatedScore ?? aiScore;
+      if (baseScore && isV4ScoringInputs(baseScore.inputs)) {
+        const rule = await repositories.priorityRules?.getPublished();
+        const compiledRule = rule ? buildPriorityRule(rule) : null;
+        const latest = await repositories.analyses?.latest(req.id) ?? null;
+        const latestTypeSuggestion = latest?.status === "analyzed" && latest.structuredResult && typeof latest.structuredResult.typeSuggestion === "string"
+          ? latest.structuredResult.typeSuggestion
+          : null;
+        const computed = compiledRule?.computeTriageScore
+          ? compiledRule.computeTriageScore({
+              impact: baseScore.inputs.impact,
+              urgency: baseScore.inputs.urgency,
+              costTier: parsed.data.costTier,
+              strategicMatch: baseScore.inputs.strategicMatch,
+              safetyFlag: baseScore.safetyFlag,
+              typeSuggestion: latestTypeSuggestion,
+            })
+          : null;
+        if (computed) {
+          const scoreAudit = { id: randomUUID(), actorId: auth.actor.id, eventType: "scoring.updated", entityType: "requirement", result: "succeeded" as const, safeDetails: { fromVersion: updatedScore?.version ?? 0, score: computed.score, priority: computed.priority, costTier: parsed.data.costTier }, occurredAt: now };
+          const saved = await repositories.scoring.saveManual({
+            requirementId: req.id,
+            expectedVersion: updatedScore?.version ?? 0,
+            sourceVersion: req.sourceVersion,
+            analysisVersion: latest?.analysisVersion ?? null,
+            ruleVersionId: rule?.id ?? baseScore.ruleVersionId,
+            inputs: { ...baseScore.inputs, costTier: parsed.data.costTier, guardrail: computed.guardrail },
+            alpha: baseScore.alpha,
+            score: computed.score,
+            priority: computed.priority,
+            scoreConfidence: baseScore.scoreConfidence,
+            scoreConfidenceReason: baseScore.scoreConfidenceReason,
+            safetyFlag: baseScore.safetyFlag,
+            basis: baseScore.basis,
+            rationale: reasonText,
+            actorId: auth.actor.id,
+            reason: reasonText,
+            auditEvent: scoreAudit,
+          });
+          if (saved.outcome === "saved") updatedScore = saved.version;
+        }
+      }
+    }
+    return json({
+      requirementId: req.id,
+      priorityOverride: overrideResult.override,
+      effectivePriority: overrideResult.override?.priority ?? updatedScore?.priority ?? null,
+      scoring: updatedScore,
+    });
   }
   const applyAiMatch = url.pathname.match(/^\/api\/requirements\/([^/]+)\/scoring\/apply-ai$/);
   if (applyAiMatch && method === "POST") {
@@ -1759,13 +1883,16 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
     // - latest 分析从 listByRequirement 派生（listByRequirement 已对最新版本保留 structuredResult）；
     // - currentScore / aiScore 从 scoring.list 派生（按 version DESC 排序）；
     // - listDuplicateCandidates 传入 titleKey 在 SQL 层预过滤，避免全池拉取。
-    const [detailPool, history, ownerName, duplicates, rawDuplicateCandidates, resolution, scoreHistory, publishedRule] = await Promise.all([
+    const [detailPool, history, ownerName, duplicates, rawDuplicateCandidates, similarItems, resolution, scoreHistory, publishedRule] = await Promise.all([
       requirementPoolOf(repositories, req),
       repositories.analyses?.listByRequirement(req.id) ?? Promise.resolve([] as AnalysisRunRecord[]),
       resolveDetailOwner(),
       repositories.requirements.listDuplicates(req.id),
       titleKey
         ? (repositories.requirements.listDuplicateCandidates?.({ requirementId: req.id, sourceConfigId: req.sourceConfigId, titleKey }) ?? Promise.resolve([]))
+        : Promise.resolve([]),
+      repositories.requirements.listSimilarRequirements
+        ? repositories.requirements.listSimilarRequirements({ requirementId: req.id, sourceConfigId: req.sourceConfigId, title: req.title, days: 90, minSimilarity: 0.35, limit: 10 }).catch(() => [])
         : Promise.resolve([]),
       repositories.requirements.getResolution?.(req.id) ?? Promise.resolve(null),
       repositories.scoring ? repositories.scoring.list(req.id) : Promise.resolve([]),
@@ -1779,6 +1906,8 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
       : [];
     const currentScore = scoreHistory.find((entry) => entry.status === "current" || entry.status === "confirmed") ?? null;
     const aiScore = scoreHistory.find((entry) => entry.status === "ai_suggested") ?? null;
+    const publishedRuleFormula = (publishedRule?.rules as { formulaType?: unknown } | null | undefined)?.formulaType;
+    const formulaType = typeof publishedRuleFormula === "string" ? publishedRuleFormula : "umsc_weighted_v2";
     // M16：deleted_by 只对删除人返回；canRestore 直接告诉前端能不能点还原（不靠 deletedBy 推断）。
     // deleted_by 存登录身份（妙搭 userId），与 auth.actor.id 同口径比较，不依赖飞书身份解析。
     const detailDto = requirementDto(req, latest && latest.status === "analyzed" ? latest.structuredResult : null, history.map(analysisVersionDto), ownerName, currentScore?.priority ?? null, detailPool);
@@ -1789,12 +1918,20 @@ async function routeApiRequest(request: Request, dependencies: ApiDependencies):
       canRestore,
       duplicates,
       duplicateCandidates,
+      similarRequirements: {
+        count90d: similarItems.length,
+        items: similarItems,
+      },
       resolution: resolution ?? requirementResolutionDto(req),
       scoring: {
         current: currentScore,
         aiSuggestion: aiScore,
         history: scoreHistory,
-        formula: { text: SCORING_FORMULA_TEXT, thresholds: priorityRuleThresholds(publishedRule) ?? SCORING_THRESHOLDS },
+        formula: {
+          formulaType,
+          text: priorityRuleFormulaText(publishedRule),
+          thresholds: priorityRuleThresholds(publishedRule) ?? (formulaType === TRIAGE_V4_FORMULA_TYPE ? TRIAGE_V4_DEFAULT_THRESHOLDS : SCORING_THRESHOLDS),
+        },
       },
     });
   }

@@ -1979,3 +1979,127 @@ test("Perf Wave 1: handleApiRequest maps PG 22P02 to 400 and deletedRequirementW
   assert.equal(gateFailed.status, 503);
   assert.equal(((await gateFailed.json()) as { error: { code: string } }).error.code, "DEPENDENCY_UNAVAILABLE");
 });
+
+test("Pragmatic Triage v4: rules creation, GET detail similarRequirements, PUT /triage with costTier, and PUT /scoring v4", async () => {
+  const d = makeDependencies();
+  const storedRules: Array<{ id: string; version: number; status: "draft" | "published" | "retired"; rules: Record<string, unknown>; validationEvidence: unknown[]; createdBy: string | null; createdAt: string; publishedAt: string | null }> = [];
+  d.repositories!.priorityRules = {
+    async list() { return storedRules; },
+    async get(id) { return storedRules.find((r) => r.id === id) ?? null; },
+    async getPublished() { return storedRules.find((r) => r.status === "published") ?? null; },
+    async create(input) {
+      const rec = { id: "77777777-7777-4777-8777-777777777777", version: storedRules.length + 1, status: "draft" as const, rules: input.rules, validationEvidence: input.validationEvidence, createdBy: input.createdBy, createdAt: input.now, publishedAt: null };
+      storedRules.push(rec);
+      return rec;
+    },
+    async publish(id, now) {
+      for (const r of storedRules) if (r.status === "published") r.status = "retired";
+      const target = storedRules.find((r) => r.id === id)!;
+      target.status = "published";
+      target.publishedAt = now;
+      return target;
+    },
+  };
+  // 1) Create & publish pragmatic_triage_v4 rule with quarterlyFocus
+  const createRuleRes = await handleApiRequest(new Request("http://localhost/api/rules/priority", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      rules: {
+        formulaType: "pragmatic_triage_v4",
+        thresholds: { p0: 80, p1: 60, p2: 40 },
+        quarterlyFocus: ["导航稳定性", "功率计生态"],
+      },
+    }),
+  }), d);
+  assert.equal(createRuleRes.status, 201);
+  const createdRule = (await createRuleRes.json()) as { id: string; rules: { formulaType?: string; quarterlyFocus?: string[] } };
+  assert.equal(createdRule.rules.formulaType, "pragmatic_triage_v4");
+  assert.deepEqual(createdRule.rules.quarterlyFocus, ["导航稳定性", "功率计生态"]);
+  const publishRes = await handleApiRequest(new Request(`http://localhost/api/rules/priority/${createdRule.id}/publish`, { method: "POST" }), d);
+  assert.equal(publishRes.status, 200);
+
+  // 2) Mock similarRequirements + v4 aiSuggestion
+  d.repositories!.requirements!.listSimilarRequirements = async () => [
+    { id: "99999999-9999-4999-8999-999999999999", platformRequirementId: "RQ-000099", title: "类似导航崩溃", similarity: 0.62, createdAt: "2026-11-20T00:00:00.000Z" },
+  ];
+  const v4AiScore = {
+    id: "88888888-8888-4888-8888-888888888888",
+    requirementId: requirement.id,
+    version: 1,
+    status: "ai_suggested" as const,
+    origin: "ai" as const,
+    sourceVersion: 1,
+    analysisVersion: 1,
+    ruleVersionId: createdRule.id,
+    inputs: { version: "v4", impact: 3, urgency: 3, costTier: null, strategicMatch: false, guardrail: null },
+    alpha: 1.0,
+    score: 60,
+    priority: "P1" as const,
+    scoreConfidence: "中",
+    scoreConfidenceReason: "缺少频次",
+    safetyFlag: false,
+    basis: {
+      impact: { reason: "中度影响", evidence: ["导航"], assumption: false },
+      urgency: { reason: "中性默认", evidence: [], assumption: true },
+    },
+    rationale: "中性初筛",
+    actorId: null,
+    changeReason: null,
+    createdAt: "2026-11-28T00:00:00.000Z",
+  };
+  let savedManualScore: Record<string, unknown> | null = null;
+  let savedOverride: Record<string, unknown> | null = null;
+  d.repositories!.scoring = {
+    async list() { return [v4AiScore]; },
+    async current() { return null; },
+    async aiSuggestion() { return v4AiScore; },
+    async createAi() { return v4AiScore; },
+    async saveManual(input) {
+      savedManualScore = input as unknown as Record<string, unknown>;
+      return { outcome: "saved" as const, version: { ...v4AiScore, version: 2, status: "current" as const, origin: "manual" as const, inputs: input.inputs, score: input.score, priority: input.priority } };
+    },
+    async applyAi() { return { outcome: "ai_not_found" as const }; },
+  };
+  d.repositories!.requirements!.setPriorityOverride = async (_id, input) => {
+    savedOverride = input as unknown as Record<string, unknown>;
+    return { outcome: "saved" as const, override: input.priority ? { priority: input.priority, reason: input.reason ?? "", actorId: input.actorId, at: input.at } : null };
+  };
+
+  // 3) GET detail includes similarRequirements + v4 formulaType
+  const detailRes = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}`), d);
+  assert.equal(detailRes.status, 200);
+  const detailBody = (await detailRes.json()) as {
+    similarRequirements?: { count90d: number; items: Array<{ platformRequirementId: string }> };
+    scoring?: { formula: { formulaType?: string; thresholds: { p0: number; p1: number; p2: number } } };
+  };
+  assert.equal(detailBody.similarRequirements?.count90d, 1);
+  assert.equal(detailBody.similarRequirements?.items[0]?.platformRequirementId, "RQ-000099");
+  assert.equal(detailBody.scoring?.formula.formulaType, "pragmatic_triage_v4");
+  assert.deepEqual(detailBody.scoring?.formula.thresholds, { p0: 80, p1: 60, p2: 40 });
+
+  // 4) PUT /triage sets priorityOverride + costTier S (+5 -> 65)
+  const triageRes = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/triage`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ priority: "P0", costTier: "S", reason: "本周紧急修复" }),
+  }), d);
+  assert.equal(triageRes.status, 200);
+  const triageBody = (await triageRes.json()) as { effectivePriority: string; scoring?: { score: number } };
+  assert.equal(triageBody.effectivePriority, "P0");
+  assert.equal(triageBody.scoring?.score, 65);
+  assert.ok(savedOverride);
+  assert.ok(savedManualScore);
+
+  // 5) PUT /scoring v4 directly
+  const scoreV4Res = await handleApiRequest(new Request(`http://localhost/api/requirements/${requirement.id}/scoring`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ expectedVersion: 0, version: "v4", impact: 5, urgency: 4, costTier: "L", reason: "高影响但大工作量" }),
+  }), d);
+  assert.equal(scoreV4Res.status, 200);
+  const scoreV4Body = (await scoreV4Res.json()) as { scoring: { score: number; priority: string } };
+  // 5*12 + 4*8 - 10 = 82 >= 80 -> P0
+  assert.equal(scoreV4Body.scoring.score, 82);
+  assert.equal(scoreV4Body.scoring.priority, "P0");
+});

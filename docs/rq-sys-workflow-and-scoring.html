@@ -1148,6 +1148,12 @@
               <td>按当前需求池分数分位校准的可配置 <code>p0 ≥ p1 ≥ p2</code></td>
               <td>上线 Gate G2 推荐版本；解决固定阈值下各档位分布偏斜问题</td>
             </tr>
+            <tr>
+              <td><span class="tag tag-green">pragmatic_triage_v4</span></td>
+              <td>2 维线性 <code>impact×12 + urgency×8 + costAdj(+5/0/-10) + strategicAdj(+10)</code>；缺失项中性按 <code>3</code> 分；安全红警→P0，严重缺陷(影响≥4)→保底 P1；90 天 <code>pg_trgm</code> 相似反馈召回</td>
+              <td>默认 <code>80 / 60 / 40</code>（可配 <code>0–100</code>）+ 本季重点方向</td>
+              <td>务实初筛推荐版本（<code>rq-analysis-v5</code>）；PM 一键定级（<code>PUT /triage</code>），保留历史 v2/v3 只读兼容</td>
+            </tr>
           </tbody>
         </table>
       </div>

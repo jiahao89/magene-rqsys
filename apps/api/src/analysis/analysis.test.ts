@@ -156,7 +156,7 @@ test("provider resolves model evidence references to exact source excerpts", asy
   const title = "同步 AI 与 Base 推送";
   const result = await provider.analyze({ title, description: "", context: "", piiMarkers: [], dictionary, priorityRule: null });
   assert.deepEqual(result.evidence, [title]);
-  assert.deepEqual(result.recommendations.user.evidence, [title]);
+  assert.deepEqual(result.recommendations?.user.evidence, [title]);
   assert.equal(result.facts[0]?.evidence, title);
   const messages = requestBody?.messages as Array<{ content: string }> | undefined;
   assert.match(messages?.[1]?.content ?? "", /T1/);

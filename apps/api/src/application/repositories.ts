@@ -678,6 +678,7 @@ export interface RequirementQueryRepository {
   listTitleCandidates(sourceConfigId: string): Promise<Array<{ id: string; teambitionRequirementId: string; title: string; sourceCreatedAt: string | null; duplicateOfRequirementId: string | null }>>;
   /** 2026-11-23：PRD §4.7.5 的「疑似重复候选」——同来源、其他 active 需求，排除自身与已压制；传入 titleKey 时 SQL 层按规范化标题预过滤。 */
   listDuplicateCandidates?(input: { requirementId: string; sourceConfigId: string | null; titleKey?: string }): Promise<Array<{ id: string; title: string; platformRequirementId: string; teambitionRequirementId: string | null }>>;
+  listSimilarRequirements?(input: { requirementId: string; sourceConfigId: string | null; title: string; days?: number; minSimilarity?: number; limit?: number }): Promise<Array<{ id: string; platformRequirementId: string; title: string; similarity: number; createdAt: string }>>;
   setDuplicateOf(requirementId: string, canonicalRequirementId: string | null): Promise<void>;
   setBaseRecord(requirementId: string, baseRecordId: string, pushedAt: string): Promise<void>;
   setPushState(requirementId: string, state: PushState): Promise<void>;

@@ -9,7 +9,7 @@ import { RequirementDetailSkeleton, SkeletonBlock, SkeletonTableRows } from "../
 import { readRequirementDeepLink } from "../deep-link";
 import { emptyRequirementListFilters, myRequirementsUrl, readMyRequirementsPool, readRequirementListFilters, recycleBinUrl, requirementFilterCount, requirementPoolUrl, type RequirementListFilters, type RequirementProcessingView } from "../requirements-url";
 import { formatDateTime, requirementDisplayId, requirementOwnerView, requirementSourceFacts, requirementSourceName, requirementTime, sortRequirementsForAttention } from "../requirement-view";
-import { ApiError, applyRequirementAiScore, clearOwner, createRequirementAssessment, deleteRequirement, exportRequirementsCsv, getMyRequirementCounts, getRequirement, getRequirementSourceCounts, isAbortError, listMyRequirements, listRecycleBinRequirements, listRequirementAssessments, listRequirements, listTeamPeople, pushRequirement, restoreRequirement, retryAnalysis, revokeDuplicateDecision, saveAnalysisContext, saveRequirementScore, setDuplicateDecision, setOwner, setPriorityOverride, type AnalysisVersionSummary, type AssessmentConfidence, type AssessmentVerdict, type DuplicateDecision, type MyRequirementCounts, type RequirementAssessment, type RequirementDetail, type RequirementPool, type RequirementProcessingState, type RequirementResolution, type RequirementScoreVersion, type RequirementSourceCounts, type RequirementSummary, type ScoringInputs, type TeamPerson } from "../api";
+import { ApiError, applyRequirementAiScore, clearOwner, createRequirementAssessment, deleteRequirement, exportRequirementsCsv, getMyRequirementCounts, getRequirement, getRequirementSourceCounts, isAbortError, listMyRequirements, listRecycleBinRequirements, listRequirementAssessments, listRequirements, listTeamPeople, pushRequirement, restoreRequirement, retryAnalysis, revokeDuplicateDecision, saveAnalysisContext, saveRequirementScore, saveRequirementTriage, setDuplicateDecision, setOwner, setPriorityOverride, type AnalysisVersionSummary, type AssessmentConfidence, type AssessmentVerdict, type DuplicateDecision, type MyRequirementCounts, type RequirementAssessment, type RequirementDetail, type RequirementPool, type RequirementProcessingState, type RequirementResolution, type RequirementScoreVersion, type RequirementSourceCounts, type RequirementSummary, type ScoringInputs, type TeamPerson, type TriageScoringInputs } from "../api";
 import { CACHE_KEYS, invalidateQueryCache } from "../cache";
 import { PrdPromptSection } from "../prd-prompt";
 import { safeHttpUrl } from "../safe-url";
@@ -1129,8 +1129,279 @@ function scoreDimensions(inputs: ScoringInputs) {
   };
 }
 
+function isV4ScoringInputs(inputs: ScoringInputs | TriageScoringInputs | null | undefined): inputs is TriageScoringInputs {
+  return Boolean(inputs && typeof inputs === "object" && "version" in inputs && inputs.version === "v4");
+}
+
 function scoreOriginLabel(origin: RequirementScoreVersion["origin"]): string {
   return origin === "ai" ? "AI 建议" : origin === "manual" ? "PM 人工" : "已采用 AI";
+}
+
+/** 务实版 AI 初筛 & PM 一键定级卡（Tab 1 核心操作区）。 */
+function PragmaticTriageCard({
+  detail,
+  missingInputs,
+  onSaved,
+  onOpenLegacy,
+}: {
+  detail: RequirementDetail;
+  missingInputs: string[];
+  onSaved: () => void;
+  onOpenLegacy: () => void;
+}) {
+  const suppressed = requirementProcessingState(detail) !== "active";
+  const current = detail.scoring?.current ?? null;
+  const ai = detail.scoring?.aiSuggestion ?? null;
+  const display = current ?? ai;
+  const v4Inputs = display && isV4ScoringInputs(display.inputs) ? display.inputs : null;
+  const effectivePriority = detail.effectivePriority ?? detail.priorityOverride?.priority ?? display?.priority ?? null;
+
+  const [selectedPriority, setSelectedPriority] = useState<"P0" | "P1" | "P2" | "P3">(effectivePriority ?? "P1");
+  const [costTier, setCostTier] = useState<"S" | "M" | "L" | null>(v4Inputs?.costTier ?? null);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSelectedPriority(effectivePriority ?? "P1");
+    setCostTier(v4Inputs?.costTier ?? null);
+    setReason("");
+    setError(null);
+    setNotice(null);
+  }, [detail.id, effectivePriority, v4Inputs?.costTier]);
+
+  const submitTriage = async (targetPriority: "P0" | "P1" | "P2" | "P3" = selectedPriority) => {
+    setBusy(true); setError(null); setNotice(null);
+    try {
+      const result = await saveRequirementTriage(detail.id, {
+        priority: targetPriority,
+        ...(v4Inputs ? { costTier } : {}),
+        reason: reason.trim() || "PM 一键定级",
+      });
+      setSelectedPriority(result.effectivePriority ?? targetPriority);
+      setReason("");
+      setNotice(`已定级为 ${result.effectivePriority ?? targetPriority}。`);
+      onSaved();
+    } catch (cause) {
+      setError(errorText(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const clearOverride = async () => {
+    setBusy(true); setError(null); setNotice(null);
+    try {
+      await setPriorityOverride(detail.id, { priority: null, reason: "恢复 AI 初筛结果" });
+      setNotice("已清除人工定级，恢复使用 AI 初筛结果。");
+      onSaved();
+    } catch (cause) {
+      setError(errorText(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const impactBasis = display?.basis?.impact;
+  const urgencyBasis = display?.basis?.urgency;
+  const guardrailLabel = v4Inputs?.guardrail === "safety_p0"
+    ? "安全红警 → P0"
+    : v4Inputs?.guardrail === "severe_bug_p1"
+      ? "严重缺陷 → 保底 P1"
+      : null;
+
+  return (
+    <ArcoCard
+      className="rq-card req-section req-triage-card"
+      aria-labelledby="req-triage-heading"
+      title={
+        <div className="rq-card-title">
+          <h3 id="req-triage-heading" className="rq-section-heading">AI 初筛与 PM 一键定级</h3>
+          <ArcoTypography.Text type="secondary" className="rq-card-subtitle">
+            {v4Inputs ? "务实初筛 v4（影响严重度 + 紧迫频次，缺失项中性 3 分）" : "先看 AI 初筛参考，1 秒完成 PM 定级"}
+          </ArcoTypography.Text>
+        </div>
+      }
+      extra={
+        <ArcoSpace size={6}>
+          {effectivePriority
+            ? <ArcoTag color={PRIORITY_TAG_COLORS[effectivePriority] ?? "gray"}>{effectivePriority}{detail.priorityOverride ? "（PM 定级）" : ""}</ArcoTag>
+            : <ArcoTag>待定级</ArcoTag>}
+          {display && <ArcoTag>{v4Inputs ? `${Math.round(display.score)}/100` : `${display.score.toFixed(1)} 分`}</ArcoTag>}
+        </ArcoSpace>
+      }
+    >
+      {display?.safetyFlag && (
+        <ArcoAlert
+          className="rq-inline-alert"
+          type="error"
+          showIcon
+          role="alert"
+          content="安全红警：来源涉及安全/事故/合规风险，系统已标为 P0 候选，请优先复核。"
+        />
+      )}
+      <div className="triage-meta-strip">
+        {display ? (
+          <ArcoSpace size={8} wrap>
+            <ArcoTag size="small">{scoreOriginLabel(display.origin)} v{display.version}</ArcoTag>
+            {display.scoreConfidence && <ArcoTag size="small">置信度：{display.scoreConfidence}</ArcoTag>}
+            {guardrailLabel && <ArcoTag size="small" color="orangered">{guardrailLabel}</ArcoTag>}
+            {v4Inputs?.strategicMatch && <ArcoTag size="small" color="arcoblue">命中本季重点</ArcoTag>}
+            {detail.priorityOverride && <ArcoBadge status="warning" text={`人工定级：${detail.priorityOverride.priority}（${detail.priorityOverride.reason}）`} />}
+          </ArcoSpace>
+        ) : (
+          <ArcoTypography.Text type="secondary">尚无 AI 初筛评分；可直接下方一键定级。</ArcoTypography.Text>
+        )}
+        {!v4Inputs && display && (
+          <ArcoButton type="text" size="small" htmlType="button" onClick={onOpenLegacy}>
+            查看历史 v2/v3 九项明细
+          </ArcoButton>
+        )}
+      </div>
+
+      {v4Inputs && (
+        <ArcoGrid.Row gutter={[12, 12]} className="triage-factors-grid">
+          <ArcoGrid.Col xs={24} sm={12}>
+            <ArcoCard size="small" className="rq-subcard triage-factor-card">
+              <div className="dimension-card-head">
+                <span>影响严重度</span>
+                <strong>{v4Inputs.impact} / 5</strong>
+              </div>
+              <p className="detail-note">{impactBasis?.reason ?? "—"}</p>
+              <ArcoSpace size={6} wrap>
+                {impactBasis?.assumption ? <ArcoTag size="small" color="orange">缺失信息 · 中性估算</ArcoTag> : <ArcoTag size="small" color="green">原文有据</ArcoTag>}
+                {impactBasis?.evidence?.[0] && <span className="subtle-text">“{impactBasis.evidence[0]}”</span>}
+              </ArcoSpace>
+            </ArcoCard>
+          </ArcoGrid.Col>
+          <ArcoGrid.Col xs={24} sm={12}>
+            <ArcoCard size="small" className="rq-subcard triage-factor-card">
+              <div className="dimension-card-head">
+                <span>紧迫 / 频次</span>
+                <strong>{v4Inputs.urgency} / 5</strong>
+              </div>
+              <p className="detail-note">{urgencyBasis?.reason ?? "—"}</p>
+              <ArcoSpace size={6} wrap>
+                {urgencyBasis?.assumption ? <ArcoTag size="small" color="orange">缺失信息 · 中性估算</ArcoTag> : <ArcoTag size="small" color="green">原文有据</ArcoTag>}
+                {urgencyBasis?.evidence?.[0] && <span className="subtle-text">“{urgencyBasis.evidence[0]}”</span>}
+              </ArcoSpace>
+            </ArcoCard>
+          </ArcoGrid.Col>
+        </ArcoGrid.Row>
+      )}
+
+      {display?.rationale && (
+        <p className="triage-rationale"><strong>AI 一句话结论：</strong>{display.rationale}</p>
+      )}
+
+      {missingInputs.length > 0 && (
+        <div className="triage-missing-strip">
+          <ArcoTypography.Text type="secondary" className="rq-caption">缺失信息：</ArcoTypography.Text>
+          <ArcoSpace size={6} wrap>
+            {missingInputs.map((item, idx) => <ArcoTag key={`${idx}-${item}`} size="small" color="orange">{item}</ArcoTag>)}
+          </ArcoSpace>
+        </div>
+      )}
+
+      <ArcoDivider className="rq-compact-divider" />
+
+      <div className="triage-action-bar" role="group" aria-label="PM 一键定级">
+        <ArcoSpace size={8} wrap align="center">
+          <ArcoTypography.Text type="secondary">PM 一键定级</ArcoTypography.Text>
+          {(["P0", "P1", "P2", "P3"] as const).map((level) => (
+            <ArcoButton
+              key={level}
+              htmlType="button"
+              size="small"
+              type={selectedPriority === level ? "primary" : "secondary"}
+              disabled={busy || suppressed}
+              onClick={() => {
+                setSelectedPriority(level);
+                void submitTriage(level);
+              }}
+            >
+              {level}
+            </ArcoButton>
+          ))}
+          {v4Inputs && (
+            <ArcoSelect
+              aria-label="成本档位"
+              size="small"
+              style={{ width: 132 }}
+              value={costTier ?? ""}
+              disabled={busy || suppressed}
+              onChange={(val: string) => setCostTier(val === "S" || val === "M" || val === "L" ? val : null)}
+              options={[
+                { label: "工作量：未评", value: "" },
+                { label: "小 S (+5分)", value: "S" },
+                { label: "中 M (0分)", value: "M" },
+                { label: "大 L (-10分)", value: "L" },
+              ]}
+            />
+          )}
+          <ArcoInput
+            aria-label="定级备注"
+            size="small"
+            style={{ width: 220 }}
+            value={reason}
+            disabled={busy || suppressed}
+            onChange={(val: string) => setReason(val)}
+            placeholder="可选备注（默认：PM 一键定级）"
+          />
+          <ArcoButton
+            htmlType="button"
+            size="small"
+            type="primary"
+            disabled={busy || suppressed}
+            onClick={() => void submitTriage(selectedPriority)}
+          >
+            {busy ? "保存中…" : "保存定级"}
+          </ArcoButton>
+          {detail.priorityOverride && (
+            <ArcoButton htmlType="button" size="small" type="text" disabled={busy || suppressed} onClick={() => void clearOverride()}>
+              恢复 AI 初筛
+            </ArcoButton>
+          )}
+        </ArcoSpace>
+      </div>
+      <StateBanner loadError={error} notice={notice} onCloseNotice={() => setNotice(null)} />
+    </ArcoCard>
+  );
+}
+
+/** Phase 2：近 90 天同池相似需求客观频次条（pg_trgm 召回，只读提示）。 */
+function SimilarRequirementsStrip({ data }: { data: import("../api").SimilarRequirementsData | null | undefined }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!data || data.count90d <= 0 || data.items.length === 0) return null;
+  return (
+    <ArcoAlert
+      className="rq-inline-alert triage-similar-strip"
+      type="info"
+      showIcon
+      role="note"
+      title={`近 90 天同池检测到 ${data.count90d} 条相似反馈`}
+      content={
+        <div>
+          <ArcoButton type="text" size="small" htmlType="button" onClick={() => setExpanded((v) => !v)} style={{ paddingLeft: 0 }}>
+            {expanded ? "收起相似需求列表" : "查看相似需求（辅助判断高频度）"}
+          </ArcoButton>
+          {expanded && (
+            <ul className="rq-compact-list" style={{ marginTop: 6 }}>
+              {data.items.map((item) => (
+                <li key={item.id}>
+                  <a href={`?requirement=${item.id}`} target="_blank" rel="noreferrer">
+                    {item.platformRequirementId} · {item.title}
+                  </a>
+                  <span className="subtle-text"> · 相似度 {Math.round(item.similarity * 100)}%</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      }
+    />
+  );
 }
 
 /** V02-S06 / 2026-10-28：AI 评分与 AI 建议整合为同一区域。
@@ -1143,12 +1414,15 @@ export function ScoringPanel({ requirementId, scoring, dimensionInsights = [], c
   children?: ReactNode;
   onSaved: () => void;
 }) {
-  const current = scoring?.current ?? null;
-  const ai = scoring?.aiSuggestion ?? null;
-  const baseInputs: ScoringInputs = current?.inputs ?? ai?.inputs ?? {
+  const rawCurrent = scoring?.current ?? null;
+  const rawAi = scoring?.aiSuggestion ?? null;
+  const current = rawCurrent && !isV4ScoringInputs(rawCurrent.inputs) ? rawCurrent : null;
+  const ai = rawAi && !isV4ScoringInputs(rawAi.inputs) ? rawAi : null;
+  const defaultLegacyInputs: ScoringInputs = {
     user: { pain: 3, frequency: 3 }, market: { sellingPoint: 1, competitor: 1 },
     strategy: { roadmap: 1, dependency: 1 }, cost: { workload: 3, technicalRisk: 3, resource: 3 },
   };
+  const baseInputs: ScoringInputs = (current?.inputs as ScoringInputs | undefined) ?? (ai?.inputs as ScoringInputs | undefined) ?? defaultLegacyInputs;
   const [editing, setEditing] = useState(false);
   const [inputs, setInputs] = useState<EditableScoringInputs>(baseInputs);
   const [alpha, setAlpha] = useState<number | undefined>(current?.alpha ?? ai?.alpha ?? 0.8);
@@ -1160,17 +1434,17 @@ export function ScoringPanel({ requirementId, scoring, dimensionInsights = [], c
   const [historyOpen, setHistoryOpen] = useState(false);
   useEffect(() => {
     const source = current ?? ai;
-    if (source) { setInputs(source.inputs); setAlpha(source.alpha); setSafetyFlag(source.safetyFlag); }
+    if (source && !isV4ScoringInputs(source.inputs)) { setInputs(source.inputs); setAlpha(source.alpha); setSafetyFlag(source.safetyFlag); }
     setEditing(false); setError(null);
   }, [current?.id, ai?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const display = current ?? ai;
-  const dimensions = display ? scoreDimensions(display.inputs) : null;
+  const dimensions = display ? scoreDimensions(display.inputs as ScoringInputs) : null;
   const insightByKey = new Map(dimensionInsights.map((insight) => [insight.key, insight]));
   const dimensionCards = display && dimensions ? ([
-    { key: "U" as const, label: "U · 用户价值", value: dimensions.U, formula: `痛点 ${display.inputs.user.pain} × 频次 ${display.inputs.user.frequency}` },
-    { key: "M" as const, label: "M · 市场价值", value: dimensions.M, formula: `卖点 ${display.inputs.market.sellingPoint} × 竞品 ${display.inputs.market.competitor}` },
-    { key: "S" as const, label: "S · 战略价值", value: dimensions.S, formula: `Roadmap ${display.inputs.strategy.roadmap} × 依赖 ${display.inputs.strategy.dependency}` },
-    { key: "C" as const, label: "C · 成本", value: dimensions.C, formula: `max(工作量 ${display.inputs.cost.workload}，风险 ${display.inputs.cost.technicalRisk}，资源 ${display.inputs.cost.resource})` },
+    { key: "U" as const, label: "U · 用户价值", value: dimensions.U, formula: `痛点 ${(display.inputs as ScoringInputs).user.pain} × 频次 ${(display.inputs as ScoringInputs).user.frequency}` },
+    { key: "M" as const, label: "M · 市场价值", value: dimensions.M, formula: `卖点 ${(display.inputs as ScoringInputs).market.sellingPoint} × 竞品 ${(display.inputs as ScoringInputs).market.competitor}` },
+    { key: "S" as const, label: "S · 战略价值", value: dimensions.S, formula: `Roadmap ${(display.inputs as ScoringInputs).strategy.roadmap} × 依赖 ${(display.inputs as ScoringInputs).strategy.dependency}` },
+    { key: "C" as const, label: "C · 成本", value: dimensions.C, formula: `max(工作量 ${(display.inputs as ScoringInputs).cost.workload}，风险 ${(display.inputs as ScoringInputs).cost.technicalRisk}，资源 ${(display.inputs as ScoringInputs).cost.resource})` },
   ]) : [];
   const aiAlreadyApplied = Boolean(current && ai && current.origin === "ai_applied" && current.analysisVersion === ai.analysisVersion);
   const validInputs = toValidScoringInputs(inputs);
@@ -1212,10 +1486,10 @@ export function ScoringPanel({ requirementId, scoring, dimensionInsights = [], c
       key: label,
       group,
       label,
-      aiValue: ai ? scoringValue(ai.inputs, path) : "—",
+      aiValue: ai ? scoringValue(ai.inputs as ScoringInputs, path) : "—",
       currentValue: editing
         ? <ArcoInputNumber aria-label={`评分 ${label}`} min={1} max={max} step={1} precision={0} value={editableScoringValue(inputs, path)} onChange={(value: number | undefined) => setInputs(withScoringValue(inputs, path, typeof value === "number" && Number.isFinite(value) ? value : undefined))} style={{ width: 72 }} />
-        : (display ? scoringValue(display.inputs, path) : "—"),
+        : (display ? scoringValue(display.inputs as ScoringInputs, path) : "—"),
       basis: rowLabel(path),
     })),
     {
@@ -2086,12 +2360,14 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
 }) {
   const [ownerPickerOpen, setOwnerPickerOpen] = useState(autoOpenOwnerPicker);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
+  const [detailTab, setDetailTab] = useState("overview");
   // 由 RequirementAssessmentSection 统一拉取评估历史并共享给 PrdPromptSection，消除详情页打开时的重复 GET /assessments 请求。
   const [sharedAssessments, setSharedAssessments] = useState<{ items: RequirementAssessment[]; loaded: boolean; error: string | null }>({ items: [], loaded: false, error: null });
   const ownerEditorId = useId();
   useEffect(() => { setOwnerPickerOpen(autoOpenOwnerPicker); }, [detail?.id, autoOpenOwnerPicker]);
   useEffect(() => {
     setDescriptionExpanded(false);
+    setDetailTab("overview");
     setSharedAssessments({ items: [], loaded: false, error: null });
   }, [detail?.id]);
 
@@ -2301,6 +2577,14 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
       />;
   const aiAnalysisContent = <>{audienceEditor}{aiAnalysisBody}<div className="rq-action-bar"><BetaPanel requirementId={detail.id} /></div></>;
 
+  const showDuplicateInline = suppressed || detail.resolution?.reviewState === "suspected" || (detail.duplicateCandidates?.length ?? detail.duplicates?.length ?? 0) > 0;
+  const duplicateBlock = isTbSource
+    ? <DuplicateDecisionSection detail={detail} onSaved={() => onSaved(detail.id)} />
+    : null;
+  const baseFormSimilarBlock = !isTbSource && sourceKind === "base_form"
+    ? <SimilarRequirementSection requirementId={detail.id} title={detail.title} />
+    : null;
+
   return <div className="req-detail-page">
     <ArcoCard className="rq-card req-detail-summary">
       <div className="req-summary-backbar" style={{ marginBottom: 12 }}><ArcoButton htmlType="button" onClick={onBack} type="secondary" size="small"><ArrowLeft size={14} />返回需求池</ArcoButton></div>
@@ -2312,18 +2596,18 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
           </h2>
           <div className="mono-cell" style={{ marginTop: 4 }}>{detail.platformRequirementId ?? (detail.sourceRequirementId ? `REQ-${detail.sourceRequirementId.slice(0, 8)}` : "WEB")} · v{detail.sourceVersion}</div>
           {detail.duplicateOf && <ArcoAlert className="rq-inline-alert" type="warning" showIcon role="note" content={<>该需求与另一条需求标题相同，仅作疑似重复提示；两条记录仍按各自的来源 ID 独立保留，是否排除由人工判定决定。<a href={`?requirement=${detail.duplicateOf}`}>查看另一条</a></>} />}
-          {detail.duplicates && detail.duplicates.length > 0 && <ArcoAlert className="rq-inline-alert" type="warning" showIcon role="note" content={<>发现 {detail.duplicates.length} 条同标题疑似重复需求：{detail.duplicates.map((duplicate, index) => <span key={duplicate.id}>{index > 0 ? "、" : ""}<a href={`?requirement=${duplicate.id}`}>{duplicate.title}</a></span>)}。这些记录均独立保留；可在下方「重复处理」确认重复或忽略，被排除记录不再进入 AI 分析、Base 推送与通知。</>} />}
+          {detail.duplicates && detail.duplicates.length > 0 && <ArcoAlert className="rq-inline-alert" type="warning" showIcon role="note" content={<>发现 {detail.duplicates.length} 条同标题疑似重复需求：{detail.duplicates.map((duplicate, index) => <span key={duplicate.id}>{index > 0 ? "、" : ""}<a href={`?requirement=${duplicate.id}`}>{duplicate.title}</a></span>)}。这些记录均独立保留；可在「重复处理」确认重复或忽略，被排除记录不再进入 AI 分析、Base 推送与通知。</>} />}
         </div>
         <div className="req-summary-score" aria-label="评分与优先级摘要">
-          <ArcoTypography.Text type="secondary" className="rq-caption">{summaryCurrent ? "当前综合评分" : summaryAi ? "AI 建议" : "综合评分"}</ArcoTypography.Text>
-          {summaryScore ? <>
+          <ArcoTypography.Text type="secondary" className="rq-caption">{detail.priorityOverride ? "PM 定级" : summaryCurrent ? "当前评分" : summaryAi ? "AI 初筛" : "综合评分"}</ArcoTypography.Text>
+          {(detail.effectivePriority || summaryScore) ? <>
             <div className="summary-score-line">
-              <strong>{summaryScore.score.toFixed(2)}</strong>
-              <ArcoTag color={PRIORITY_TAG_COLORS[summaryScore.priority] ?? "gray"}>{summaryScore.priority}</ArcoTag>
+              {summaryScore && <strong>{isV4ScoringInputs(summaryScore.inputs) ? `${Math.round(summaryScore.score)}` : summaryScore.score.toFixed(2)}</strong>}
+              <ArcoTag color={PRIORITY_TAG_COLORS[detail.effectivePriority ?? summaryScore?.priority ?? ""] ?? "gray"}>{detail.effectivePriority ?? summaryScore?.priority}</ArcoTag>
             </div>
-            <ArcoTypography.Text type="secondary" className="rq-caption">v{summaryScore.version} · {scoreOriginLabel(summaryScore.origin)}{summaryScore.scoreConfidence ? ` · ${summaryScore.scoreConfidence}置信度` : ""}</ArcoTypography.Text>
-            <ArcoButton type="text" size="small" htmlType="button" onClick={() => scrollToSection("req-scoring-heading")}>查看评分与依据</ArcoButton>
-          </> : <div><strong>暂无评分</strong><div className="subtle-text">AI 分析后生成，或手动填写</div></div>}
+            {summaryScore && <ArcoTypography.Text type="secondary" className="rq-caption">v{summaryScore.version} · {scoreOriginLabel(summaryScore.origin)}{summaryScore.scoreConfidence ? ` · ${summaryScore.scoreConfidence}置信度` : ""}</ArcoTypography.Text>}
+            {summaryScore && <ArcoButton type="text" size="small" htmlType="button" onClick={() => { setDetailTab("advanced"); window.setTimeout(() => scrollToSection("req-scoring-heading"), 50); }}>查看评分与依据</ArcoButton>}
+          </> : <div><strong>暂无评分</strong><div className="subtle-text">AI 分析后生成，或直接定级</div></div>}
         </div>
       </div>
       <div className="req-summary-meta">
@@ -2374,156 +2658,181 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
       showIcon
       role="alert"
       title={`该需求已被排除（${suppressedLabel}）`}
-      content="被排除的需求不会进入 AI 分析、Base 推送与通知；记录仍保留。请在下方「重复处理」撤销判定后恢复为活跃。"
+      content="被排除的需求不会进入 AI 分析、Base 推送与通知；记录仍保留。请在「重复处理」撤销判定后恢复为活跃。"
       action={<ArcoButton type="secondary" htmlType="button" size="small" onClick={() => scrollToSection("req-duplicate-heading")}>前往撤销判定</ArcoButton>}
     />}
 
-    <ArcoCard
-      className="rq-card req-section"
-      aria-labelledby="req-l1-heading"
-      title={<h3 id="req-l1-heading" className="rq-section-heading">需求信息</h3>}
-      extra={<ArcoTag>{sourceInfo?.note ?? "来自 Teambition"}</ArcoTag>}
-    >
-      <div className="req-field">
-        <TbFieldLabel kind={sourceKind}>标题</TbFieldLabel>
-        <p className="req-l1-title">{detail.title}</p>
-      </div>
-      <div className="req-field req-description-field">
-        <TbFieldLabel kind={sourceKind}>描述</TbFieldLabel>
-        {facts.description ? <>
-          <p className={`req-description${descriptionExpanded ? " is-expanded" : ""}`}>{facts.description}</p>
-          {facts.description.length > 140 && <ArcoButton type="text" size="small" htmlType="button" onClick={() => setDescriptionExpanded((expanded) => !expanded)}>{descriptionExpanded ? "收起描述" : "展开全部"}</ArcoButton>}
-        </> : <span className="req-empty-value" title="Teambition 未提供该字段">—</span>}
-      </div>
-      {(isTbSource || facts.proposerName) ? (
-        <ArcoDescriptions
-          size="small"
-          column={{ xs: 1, sm: 2, md: 3 }}
-          style={{ marginTop: 12 }}
-          data={[
-            { label: <TbFieldLabel kind={sourceKind}>提出人</TbFieldLabel>, value: <SourceValue value={facts.proposerName} /> },
-            ...(isTbSource ? [
-              { label: <TbFieldLabel kind={sourceKind}>执行人</TbFieldLabel>, value: <SourceValue value={facts.executorName} /> },
-              { label: <TbFieldLabel kind={sourceKind}>状态</TbFieldLabel>, value: <SourceValue value={facts.tbStatus} emptyHint="Teambition 未提供该字段；工作台不推断状态名称" /> },
-              { label: <TbFieldLabel kind={sourceKind}>链接</TbFieldLabel>, value: <SourceValue value={facts.tbUrl} href emptyHint="Teambition 未提供该字段" /> },
-              { label: <TbFieldLabel kind={sourceKind}>创建时间</TbFieldLabel>, value: <SourceValue value={sourceCreatedAt} emptyHint="Teambition 未提供该字段" /> },
-              { label: <TbFieldLabel kind={sourceKind}>更新时间</TbFieldLabel>, value: <SourceValue value={updatedAt ?? facts.updatedAt} emptyHint="Teambition 未提供该字段" /> },
-            ] : []),
-          ]}
-        />
-      ) : null}
-      {(detail.intakeModule || detail.productModel || detail.requirementType || detail.constraintNotes || detail.supplementUrl) ? (
-        <ArcoDescriptions
-          size="small"
-          column={{ xs: 1, sm: 2 }}
-          style={{ marginTop: 12 }}
-          title="录入上下文"
-          data={[
-            ...(detail.intakeModule ? [{ label: "模块（录入）", value: detail.intakeModule }] : []),
-            ...(detail.productModel ? [{ label: "产品/型号", value: detail.productModel }] : []),
-            ...(detail.requirementType ? [{ label: "需求类型（录入）", value: detail.requirementType }] : []),
-            ...(detail.constraintNotes ? [{ label: "边界/限制", value: detail.constraintNotes }] : []),
-            ...(detail.supplementUrl ? [{ label: "来源链接", value: safeHttpUrl(detail.supplementUrl) ? <a href={safeHttpUrl(detail.supplementUrl)!} target="_blank" rel="noreferrer">{detail.supplementUrl}</a> : detail.supplementUrl }] : []),
-          ]}
-        />
-      ) : null}
-      <ManualEditSection detail={detail} onSaved={() => onSaved(detail.id)} />
-    </ArcoCard>
-
-    {/* 决策按 (来源配置, TB 需求ID) 保存，非 Teambition 来源没有这个身份、后端会 404：仅 TB 显示。
-        PRD-31：base_form 详情改为只读展示相似需求；手工/聊天粘贴不展示重复处理。 */}
-    {isTbSource
-      ? <DuplicateDecisionSection detail={detail} onSaved={() => onSaved(detail.id)} />
-      : sourceKind === "base_form"
-        ? <SimilarRequirementSection requirementId={detail.id} title={detail.title} />
-        : null}
-
-    <ScoringPanel requirementId={detail.id} scoring={detail.scoring} dimensionInsights={dimensionInsights} onSaved={() => onSaved(detail.id)}>
-      {aiAnalysisContent}
-    </ScoringPanel>
-
-    <PriorityOverrideSection detail={detail} onSaved={() => onSaved(detail.id)} />
-
-    <AnalysisContextSection detail={detail} onSaved={() => onSaved(detail.id)} />
-
-    <RequirementAssessmentSection requirementId={detail.id} onAssessmentsChange={setSharedAssessments} />
-    <PrdPromptSection
-      key={detail.id}
-      requirementId={detail.id}
-      sharedAssessments={sharedAssessments.items}
-      sharedAssessmentsLoaded={sharedAssessments.loaded}
-      sharedAssessmentsError={sharedAssessments.error}
-    />
-
-    <ArcoCard
-      className="rq-card req-section"
-      aria-labelledby="req-status-heading"
-      title={<h3 id="req-status-heading" className="rq-section-heading">处理与推送</h3>}
-      extra={<ArcoTag>系统状态</ArcoTag>}
-    >
-      <ArcoDescriptions
-        size="small"
-        column={{ xs: 1, sm: 2 }}
-        data={[
-          { label: "四阶段状态", value: <div className="req-stage-row">{stages.map(([stage, state]) => <StageBadge key={stage} stage={stage} state={state} />)}</div> },
-          { label: "负责人映射方式", value: pipelineLabel("owner", detail.pipeline.owner) },
-          { label: "Base 记录", value: <BaseRecordReference recordId={detail.baseRecordId} url={detail.baseRecordUrl ?? null} /> },
-          { label: "推送时间", value: pushTime ?? <span className="req-empty-value" title="接口未返回推送时间">—</span> },
-          { label: "最近一次失败", value: failureText ?? <span className="req-empty-value" title="没有最近失败记录">—</span> },
-        ]}
-      />
-      <p className="detail-note">推送成功不代表飞书 PM 通知已送达；PM 处理状态与通知送达以飞书多维表格为准。</p>
-    </ArcoCard>
-
-    <ArcoCard className="rq-card req-section req-audit-section">
-      <Collapse className="req-audit" defaultActiveKey={[]}>
-        <Collapse.Item name="requirement-audit" header="查看依据与历史">
-          <ArcoDescriptions
-            size="small"
-            layout="vertical"
-            column={{ xs: 1, sm: 2 }}
-            data={[
-              { label: "原文证据", value: <TextList items={evidence} /> },
-              { label: "事实（来自源文本）", value: <TextList items={factItems} /> },
-              { label: "AI 推断（非事实）", value: <TextList items={inferenceItems} prefix="【AI 推断】" /> },
-              { label: "缺失信息", value: <TextList items={missingInputs} /> },
-              { label: "分析盲点", value: <TextList items={blindSpots} /> },
-              { label: "Base 记录号", value: detail.baseRecordId ? <code className="base-ref-id">{detail.baseRecordId}</code> : <span className="req-empty-value">尚未写入飞书 Base</span> },
-            ]}
-          />
-          <ArcoDivider className="rq-compact-divider" />
-          <div className="req-source-snapshot">
-            <ArcoTypography.Text type="secondary" className="rq-caption">源快照（只读 JSON）</ArcoTypography.Text>
-            <pre className="source-snapshot-pre">{JSON.stringify(detail.source ?? {}, null, 2)}</pre>
-          </div>
-          <ArcoDivider className="rq-compact-divider" />
-          <h4 className="req-audit-title" style={{ marginBottom: 8 }}>分析版本历史</h4>
-          {analysisVersions.length
-            ? <ArcoTable<AnalysisVersionSummary>
-              rowKey="analysisVersion"
-              data={analysisVersions}
-              pagination={false}
-              border={false}
-              columns={[
-                { title: "分析版本", dataIndex: "analysisVersion", width: 100, render: (_value, version) => <span className="mono-cell">v{version.analysisVersion}</span> },
-                { title: "状态", dataIndex: "status", width: 120, render: (_value, version) => <StageBadge stage="analysis" state={version.status} /> },
-                { title: "模块", dataIndex: "moduleSuggestion", render: (_value, version) => version.moduleSuggestion ?? "—" },
-                { title: "优先级", dataIndex: "priority", width: 100, render: (_value, version) => version.priority ?? "空" },
-                { title: "开始时间", dataIndex: "startedAt", width: 180, render: (_value, version) => timeLabel(version.startedAt) },
-                { title: "失败摘要", dataIndex: "safeErrorSummary", render: (_value, version) => version.safeErrorSummary ?? "—" },
-              ]}
+    <div className="req-detail-tabs-shell">
+      <AccessibleTabs label="需求详情分区" activeTab={detailTab} onChange={setDetailTab} destroyOnHide={false} lazyload={false}>
+        <ArcoTabs.TabPane key="overview" title="核心信息与定级">
+          <div className="req-detail-tab-stack">
+            <PragmaticTriageCard
+              detail={detail}
+              missingInputs={missingInputs}
+              onSaved={() => onSaved(detail.id)}
+              onOpenLegacy={() => {
+                setDetailTab("advanced");
+                window.setTimeout(() => scrollToSection("req-scoring-heading"), 50);
+              }}
             />
-            : <p className="req-empty-value">尚无分析版本历史</p>}
-        </Collapse.Item>
-      </Collapse>
-    </ArcoCard>
-    {/* 5c-1：详情底部只读区块，回答「这条需求怎么来的」。不展示 Base 表 ID / record URL / 原始 payload。 */}
-    <div className="req-origin-line" aria-label="这条需求怎么来的">
-      <strong>这条需求怎么来的</strong>
-      <span><em>来源</em>{sourceLabel}</span>
-      <span><em>来源渠道</em>{detail.sourceChannel || "未填写"}</span>
-      <span><em>提出人</em>{facts.proposerName || "未填写"}</span>
-      <span><em>创建时间</em>{platformCreatedAt ?? "未填写"}</span>
+
+            <SimilarRequirementsStrip data={detail.similarRequirements} />
+            {baseFormSimilarBlock}
+
+            {showDuplicateInline && duplicateBlock}
+
+            <ArcoCard
+              className="rq-card req-section"
+              aria-labelledby="req-l1-heading"
+              title={<h3 id="req-l1-heading" className="rq-section-heading">需求信息</h3>}
+              extra={<ArcoTag>{sourceInfo?.note ?? "来自 Teambition"}</ArcoTag>}
+            >
+              <div className="req-field">
+                <TbFieldLabel kind={sourceKind}>标题</TbFieldLabel>
+                <p className="req-l1-title">{detail.title}</p>
+              </div>
+              <div className="req-field req-description-field">
+                <TbFieldLabel kind={sourceKind}>描述</TbFieldLabel>
+                {facts.description ? <>
+                  <p className={`req-description${descriptionExpanded ? " is-expanded" : ""}`}>{facts.description}</p>
+                  {facts.description.length > 140 && <ArcoButton type="text" size="small" htmlType="button" onClick={() => setDescriptionExpanded((expanded) => !expanded)}>{descriptionExpanded ? "收起描述" : "展开全部"}</ArcoButton>}
+                </> : <span className="req-empty-value" title="Teambition 未提供该字段">—</span>}
+              </div>
+              {(isTbSource || facts.proposerName) ? (
+                <ArcoDescriptions
+                  size="small"
+                  column={{ xs: 1, sm: 2, md: 3 }}
+                  style={{ marginTop: 12 }}
+                  data={[
+                    { label: <TbFieldLabel kind={sourceKind}>提出人</TbFieldLabel>, value: <SourceValue value={facts.proposerName} /> },
+                    ...(isTbSource ? [
+                      { label: <TbFieldLabel kind={sourceKind}>执行人</TbFieldLabel>, value: <SourceValue value={facts.executorName} /> },
+                      { label: <TbFieldLabel kind={sourceKind}>状态</TbFieldLabel>, value: <SourceValue value={facts.tbStatus} emptyHint="Teambition 未提供该字段；工作台不推断状态名称" /> },
+                      { label: <TbFieldLabel kind={sourceKind}>链接</TbFieldLabel>, value: <SourceValue value={facts.tbUrl} href emptyHint="Teambition 未提供该字段" /> },
+                      { label: <TbFieldLabel kind={sourceKind}>创建时间</TbFieldLabel>, value: <SourceValue value={sourceCreatedAt} emptyHint="Teambition 未提供该字段" /> },
+                      { label: <TbFieldLabel kind={sourceKind}>更新时间</TbFieldLabel>, value: <SourceValue value={updatedAt ?? facts.updatedAt} emptyHint="Teambition 未提供该字段" /> },
+                    ] : []),
+                  ]}
+                />
+              ) : null}
+              {(detail.intakeModule || detail.productModel || detail.requirementType || detail.constraintNotes || detail.supplementUrl) ? (
+                <ArcoDescriptions
+                  size="small"
+                  column={{ xs: 1, sm: 2 }}
+                  style={{ marginTop: 12 }}
+                  title="录入上下文"
+                  data={[
+                    ...(detail.intakeModule ? [{ label: "模块（录入）", value: detail.intakeModule }] : []),
+                    ...(detail.productModel ? [{ label: "产品/型号", value: detail.productModel }] : []),
+                    ...(detail.requirementType ? [{ label: "需求类型（录入）", value: detail.requirementType }] : []),
+                    ...(detail.constraintNotes ? [{ label: "边界/限制", value: detail.constraintNotes }] : []),
+                    ...(detail.supplementUrl ? [{ label: "来源链接", value: safeHttpUrl(detail.supplementUrl) ? <a href={safeHttpUrl(detail.supplementUrl)!} target="_blank" rel="noreferrer">{detail.supplementUrl}</a> : detail.supplementUrl }] : []),
+                  ]}
+                />
+              ) : null}
+              <ManualEditSection detail={detail} onSaved={() => onSaved(detail.id)} />
+            </ArcoCard>
+          </div>
+        </ArcoTabs.TabPane>
+
+        <ArcoTabs.TabPane key="assessment" title="需求评估与 PRD">
+          <div className="req-detail-tab-stack">
+            <RequirementAssessmentSection requirementId={detail.id} onAssessmentsChange={setSharedAssessments} />
+            <PrdPromptSection
+              key={detail.id}
+              requirementId={detail.id}
+              sharedAssessments={sharedAssessments.items}
+              sharedAssessmentsLoaded={sharedAssessments.loaded}
+              sharedAssessmentsError={sharedAssessments.error}
+            />
+          </div>
+        </ArcoTabs.TabPane>
+
+        <ArcoTabs.TabPane key="advanced" title="历史与高级">
+          <div className="req-detail-tab-stack">
+            {!showDuplicateInline && duplicateBlock}
+
+            <AnalysisContextSection detail={detail} onSaved={() => onSaved(detail.id)} />
+
+            <ScoringPanel requirementId={detail.id} scoring={detail.scoring} dimensionInsights={dimensionInsights} onSaved={() => onSaved(detail.id)}>
+              {aiAnalysisContent}
+            </ScoringPanel>
+
+            <PriorityOverrideSection detail={detail} onSaved={() => onSaved(detail.id)} />
+
+            <ArcoCard
+              className="rq-card req-section"
+              aria-labelledby="req-status-heading"
+              title={<h3 id="req-status-heading" className="rq-section-heading">处理与推送</h3>}
+              extra={<ArcoTag>系统状态</ArcoTag>}
+            >
+              <ArcoDescriptions
+                size="small"
+                column={{ xs: 1, sm: 2 }}
+                data={[
+                  { label: "四阶段状态", value: <div className="req-stage-row">{stages.map(([stage, state]) => <StageBadge key={stage} stage={stage} state={state} />)}</div> },
+                  { label: "负责人映射方式", value: pipelineLabel("owner", detail.pipeline.owner) },
+                  { label: "Base 记录", value: <BaseRecordReference recordId={detail.baseRecordId} url={detail.baseRecordUrl ?? null} /> },
+                  { label: "推送时间", value: pushTime ?? <span className="req-empty-value" title="接口未返回推送时间">—</span> },
+                  { label: "最近一次失败", value: failureText ?? <span className="req-empty-value" title="没有最近失败记录">—</span> },
+                ]}
+              />
+              <p className="detail-note">推送成功不代表飞书 PM 通知已送达；PM 处理状态与通知送达以飞书多维表格为准。</p>
+            </ArcoCard>
+
+            <ArcoCard className="rq-card req-section req-audit-section">
+              <Collapse className="req-audit" defaultActiveKey={[]}>
+                <Collapse.Item name="requirement-audit" header="查看依据与历史">
+                  <ArcoDescriptions
+                    size="small"
+                    layout="vertical"
+                    column={{ xs: 1, sm: 2 }}
+                    data={[
+                      { label: "原文证据", value: <TextList items={evidence} /> },
+                      { label: "事实（来自源文本）", value: <TextList items={factItems} /> },
+                      { label: "AI 推断（非事实）", value: <TextList items={inferenceItems} prefix="【AI 推断】" /> },
+                      { label: "缺失信息", value: <TextList items={missingInputs} /> },
+                      { label: "分析盲点", value: <TextList items={blindSpots} /> },
+                      { label: "Base 记录号", value: detail.baseRecordId ? <code className="base-ref-id">{detail.baseRecordId}</code> : <span className="req-empty-value">尚未写入飞书 Base</span> },
+                    ]}
+                  />
+                  <ArcoDivider className="rq-compact-divider" />
+                  <div className="req-source-snapshot">
+                    <ArcoTypography.Text type="secondary" className="rq-caption">源快照（只读 JSON）</ArcoTypography.Text>
+                    <pre className="source-snapshot-pre">{JSON.stringify(detail.source ?? {}, null, 2)}</pre>
+                  </div>
+                  <ArcoDivider className="rq-compact-divider" />
+                  <h4 className="req-audit-title" style={{ marginBottom: 8 }}>分析版本历史</h4>
+                  {analysisVersions.length
+                    ? <ArcoTable<AnalysisVersionSummary>
+                      rowKey="analysisVersion"
+                      data={analysisVersions}
+                      pagination={false}
+                      border={false}
+                      columns={[
+                        { title: "分析版本", dataIndex: "analysisVersion", width: 100, render: (_value, version) => <span className="mono-cell">v{version.analysisVersion}</span> },
+                        { title: "状态", dataIndex: "status", width: 120, render: (_value, version) => <StageBadge stage="analysis" state={version.status} /> },
+                        { title: "模块", dataIndex: "moduleSuggestion", render: (_value, version) => version.moduleSuggestion ?? "—" },
+                        { title: "优先级", dataIndex: "priority", width: 100, render: (_value, version) => version.priority ?? "空" },
+                        { title: "开始时间", dataIndex: "startedAt", width: 180, render: (_value, version) => timeLabel(version.startedAt) },
+                        { title: "失败摘要", dataIndex: "safeErrorSummary", render: (_value, version) => version.safeErrorSummary ?? "—" },
+                      ]}
+                    />
+                    : <p className="req-empty-value">尚无分析版本历史</p>}
+                </Collapse.Item>
+              </Collapse>
+            </ArcoCard>
+            {/* 5c-1：详情底部只读区块，回答「这条需求怎么来的」。不展示 Base 表 ID / record URL / 原始 payload。 */}
+            <div className="req-origin-line" aria-label="这条需求怎么来的">
+              <strong>这条需求怎么来的</strong>
+              <span><em>来源</em>{sourceLabel}</span>
+              <span><em>来源渠道</em>{detail.sourceChannel || "未填写"}</span>
+              <span><em>提出人</em>{facts.proposerName || "未填写"}</span>
+              <span><em>创建时间</em>{platformCreatedAt ?? "未填写"}</span>
+            </div>
+          </div>
+        </ArcoTabs.TabPane>
+      </AccessibleTabs>
     </div>
   </div>;
 }

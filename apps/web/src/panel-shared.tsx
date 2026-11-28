@@ -136,7 +136,7 @@ export class PanelErrorBoundary extends Component<ErrorBoundaryProps, ErrorBound
 }
 
 /** ARCO-06 收尾：Arco Tabs 自身不渲染 role=tablist；挂载后在头部补 role/aria-label，保留 tab/tabpanel 关联。 */
-export function AccessibleTabs({ label, activeTab, onChange, extra, children }: { label: string; activeTab: string; onChange: (key: string) => void; extra?: ReactNode; children: ReactNode }) {
+export function AccessibleTabs({ label, activeTab, onChange, extra, destroyOnHide, lazyload, children }: { label: string; activeTab: string; onChange: (key: string) => void; extra?: ReactNode; destroyOnHide?: boolean; lazyload?: boolean; children: ReactNode }) {
   const hostRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const header = hostRef.current?.querySelector<HTMLElement>(".arco-tabs-header");
@@ -144,7 +144,7 @@ export function AccessibleTabs({ label, activeTab, onChange, extra, children }: 
     header.setAttribute("role", "tablist");
     header.setAttribute("aria-label", label);
   }, [label]);
-  return <div ref={hostRef}><ArcoTabs activeTab={activeTab} onChange={onChange} extra={extra}>{children}</ArcoTabs></div>;
+  return <div ref={hostRef}><ArcoTabs activeTab={activeTab} onChange={onChange} extra={extra} {...(destroyOnHide === undefined ? {} : { destroyOnHide })} {...(lazyload === undefined ? {} : { lazyload })}>{children}</ArcoTabs></div>;
 }
 
 export function stateChip(status: string) {

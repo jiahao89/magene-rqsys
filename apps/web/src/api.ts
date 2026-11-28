@@ -91,8 +91,8 @@ export interface PriorityRuleVersion {
   id: string;
   version: number;
   status: PublishStatus;
-  /** umsc_weighted_v2 为已确认的固定公式；缺省表示 v1 四维求和规则。 */
-  rules: { formulaType?: string; thresholds?: { p0?: number; p1?: number; p2?: number } };
+  /** umsc_weighted_v2 / umsc_weighted_v3 / pragmatic_triage_v4；缺省表示 v1 四维求和规则。 */
+  rules: { formulaType?: string; thresholds?: { p0?: number; p1?: number; p2?: number }; quarterlyFocus?: string[] };
   validationEvidence: unknown[];
   createdBy: string | null;
   createdAt: string;
@@ -326,8 +326,12 @@ export async function listPriorityRules(fetcher: typeof fetch = fetch, signal?: 
   return result.items;
 }
 
+export type PriorityRuleCreatePayload =
+  | { scoring: Record<string, Record<string, number>>; thresholds: { p0: number; p1: number; p2: number } }
+  | { formulaType: "pragmatic_triage_v4"; thresholds: { p0: number; p1: number; p2: number }; quarterlyFocus?: string[] };
+
 export function createPriorityRuleDraft(
-  rules: { scoring: Record<string, Record<string, number>>; thresholds: { p0: number; p1: number; p2: number } },
+  rules: PriorityRuleCreatePayload,
   fetcher: typeof fetch = fetch,
   validationEvidence: unknown[] = [],
 ): Promise<PriorityRuleVersion> {
@@ -703,6 +707,28 @@ export interface ScoringInputs {
   cost: { workload: number; technicalRisk: number; resource: number };
 }
 
+export interface TriageScoringInputs {
+  version: "v4";
+  impact: number;
+  urgency: number;
+  costTier?: "S" | "M" | "L" | null;
+  strategicMatch?: boolean;
+  guardrail?: "safety_p0" | "severe_bug_p1" | null;
+}
+
+export interface SimilarRequirementItem {
+  id: string;
+  platformRequirementId: string;
+  title: string;
+  similarity: number;
+  createdAt: string;
+}
+
+export interface SimilarRequirementsData {
+  count90d: number;
+  items: SimilarRequirementItem[];
+}
+
 export interface RequirementScoreVersion {
   id: string;
   requirementId: string;
@@ -712,7 +738,7 @@ export interface RequirementScoreVersion {
   sourceVersion: number;
   analysisVersion: number | null;
   ruleVersionId: string | null;
-  inputs: ScoringInputs;
+  inputs: ScoringInputs | TriageScoringInputs;
   alpha: number;
   score: number;
   priority: "P0" | "P1" | "P2" | "P3";
@@ -730,7 +756,7 @@ export interface ScoringData {
   current: RequirementScoreVersion | null;
   aiSuggestion: RequirementScoreVersion | null;
   history: RequirementScoreVersion[];
-  formula: { text: string; thresholds: { p0: number; p1: number; p2: number } };
+  formula: { formulaType?: string; text: string; thresholds: { p0: number; p1: number; p2: number } };
 }
 
 export interface RequirementDetail {
@@ -775,6 +801,8 @@ export interface RequirementDetail {
   duplicates?: Array<{ id: string; title: string; teambitionRequirementId: string }>;
   /** 重复候选：同标题的其他 active 需求（排除自身与已压制）。旧响应没有该字段时回退 duplicates。 */
   duplicateCandidates?: Array<{ id: string; title: string; platformRequirementId?: string | null; teambitionRequirementId?: string | null }>;
+  /** 近 90 天同池标题相似需求（pg_trgm 召回，只读提示）。 */
+  similarRequirements?: SimilarRequirementsData | null;
   scoring?: ScoringData | null;
   /** 服务端创建时间（四种来源都返回）；非 TB 来源没有 payload 创建时间，必须读这里。 */
   createdAt?: string | null;
@@ -1104,6 +1132,14 @@ export function saveRequirementScore(id: string, input: { expectedVersion: numbe
 
 export function applyRequirementAiScore(id: string, input: { expectedVersion: number; aiVersion: number; reason?: string | null }, fetcher: typeof fetch = fetch): Promise<{ scoring: unknown }> {
   return postJson(`/api/requirements/${id}/scoring/apply-ai`, input, fetcher);
+}
+
+export function saveRequirementTriage(
+  id: string,
+  input: { priority: "P0" | "P1" | "P2" | "P3"; costTier?: "S" | "M" | "L" | null; reason?: string },
+  fetcher: typeof fetch = fetch,
+): Promise<{ requirementId: string; priorityOverride: PriorityOverrideState | null; effectivePriority: "P0" | "P1" | "P2" | "P3" | null; scoring?: RequirementScoreVersion | null }> {
+  return putJson(`/api/requirements/${id}/triage`, input, fetcher);
 }
 
 export function setAudienceTags(id: string, input: { tags: string[]; expectedVersion: number }, fetcher: typeof fetch = fetch): Promise<{ requirementId: string; audienceVersion: number; confirmed: boolean; tags: string[] }> {
