@@ -1135,35 +1135,140 @@ h1, h2, h3, h4, h5, h6 {
 .req-owner.is-not-required .req-avatar { background: var(--color-fill-3); color: var(--rq-text-muted); }
 
 /* ---------- Requirement Detail Page ---------- */
+.req-summary-backbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--rq-border-subtle);
+}
+.req-summary-id {
+  font-size: 12px;
+  color: var(--rq-text-muted);
+}
 .req-summary-top {
   display: flex;
-  align-items: flex-start;
+  align-items: stretch;
   justify-content: space-between;
-  gap: 16px;
+  gap: 20px;
   flex-wrap: wrap;
 }
-.req-summary-heading { flex: 1 1 360px; min-width: 0; }
+.req-summary-heading {
+  flex: 1 1 420px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+}
 .req-summary-title {
-  font-size: 20px;
+  font-size: 19px;
   font-weight: 600;
-  line-height: 1.4;
+  line-height: 1.45;
+  color: var(--rq-text);
   margin-bottom: 4px;
 }
 .req-summary-score {
-  min-width: 200px;
-  padding: 12px 16px;
-  border-radius: var(--rq-radius-sm);
+  flex: 0 0 auto;
+  min-width: 248px;
+  padding: 14px 18px;
+  border-radius: var(--border-radius-medium);
+  border: 1px solid var(--rq-border-subtle);
   background: var(--rq-surface-subtle);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  justify-content: space-between;
+  gap: 8px;
+}
+.req-summary-score.is-p0 {
+  border-color: rgb(var(--danger-3));
+  background: rgb(var(--danger-1));
+}
+.req-summary-score.is-p1 {
+  border-color: rgb(var(--warning-3));
+  background: rgb(var(--warning-1));
+}
+.req-summary-score.is-p2 {
+  border-color: rgb(var(--arcoblue-3));
+  background: rgb(var(--arcoblue-1));
+}
+.summary-score-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 .summary-score-line {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
+  align-items: center;
+  gap: 12px;
 }
-.summary-score-line strong { font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.summary-priority-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 48px;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: var(--border-radius-small);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  background: var(--color-fill-3);
+  color: var(--rq-text);
+}
+.summary-priority-pill.is-p0 {
+  background: rgb(var(--danger-6));
+  color: var(--color-white);
+}
+.summary-priority-pill.is-p1 {
+  background: rgb(var(--warning-6));
+  color: var(--color-white);
+}
+.summary-priority-pill.is-p2 {
+  background: rgb(var(--arcoblue-6));
+  color: var(--color-white);
+}
+.summary-priority-pill.is-p3 {
+  background: var(--color-fill-4);
+  color: var(--rq-text);
+}
+.summary-score-value {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.summary-score-value strong {
+  font-size: 28px;
+  line-height: 1;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--rq-text);
+}
+.summary-score-unit {
+  font-size: 12px;
+  color: var(--rq-text-muted);
+}
+.summary-score-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--rq-border-subtle);
+}
+.summary-score-empty strong {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--rq-text);
+}
+.req-summary-guidance {
+  margin-top: 8px;
+  margin-bottom: 0;
+}
 
 .req-summary-meta {
   display: flex;
@@ -1451,3 +1556,78 @@ h1, h2, h3, h4, h5, h6 {
 .triage-rationale { margin: 6px 0 8px; font-size: 13px; color: var(--rq-text); }
 .triage-missing-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; }
 .triage-action-bar { padding-top: 4px; }
+
+/* ---------- Assessment Result Scannable Layout ---------- */
+.assessment-verdict-banner.is-investigate {
+  background: rgb(var(--arcoblue-1));
+  border-color: rgb(var(--arcoblue-3));
+}
+.assessment-verdict-banner.is-advance {
+  background: rgb(var(--success-1));
+  border-color: rgb(var(--success-3));
+}
+.assessment-verdict-banner.is-hold {
+  background: rgb(var(--warning-1));
+  border-color: rgb(var(--warning-3));
+}
+.assessment-verdict-reason {
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--rq-text);
+}
+.assessment-list-card { height: 100%; }
+.assessment-kv-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.assessment-kv-row {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--rq-border-subtle);
+}
+.assessment-kv-row:last-child {
+  padding-bottom: 0;
+  border-bottom: none;
+}
+.assessment-kv-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--rq-text-muted);
+  padding-top: 2px;
+}
+.assessment-feasibility-item {
+  padding: 10px 12px;
+  border-radius: var(--border-radius-small);
+  background: var(--rq-surface-subtle);
+  height: 100%;
+}
+.assessment-feasibility-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--rq-text-muted);
+  margin-bottom: 4px;
+}
+.assessment-clamped-wrap { min-width: 0; }
+.assessment-clamped-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--rq-text);
+  word-break: break-word;
+}
+.assessment-clamped-text.is-clamped {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.assessment-expand-btn {
+  padding-left: 0;
+  margin-top: 2px;
+}

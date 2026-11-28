@@ -1895,6 +1895,23 @@ function assessmentErrorMessage(cause: unknown): string {
   return cause.message;
 }
 
+/** 评估长文本折叠器：默认最多展示 3 行，超过阈值提供展开/收起，避免大段文字挤满页面。 */
+function ClampedAssessmentText({ text, limit = 110 }: { text: string | null; limit?: number }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!text) return <span className="subtle-text">未提供</span>;
+  const long = text.length > limit;
+  return (
+    <div className="assessment-clamped-wrap">
+      <p className={`assessment-clamped-text${long && !expanded ? " is-clamped" : ""}`}>{text}</p>
+      {long && (
+        <ArcoButton type="text" size="mini" htmlType="button" className="assessment-expand-btn" onClick={() => setExpanded((v) => !v)}>
+          {expanded ? "收起" : "展开全文"}
+        </ArcoButton>
+      )}
+    </div>
+  );
+}
+
 /** 单条评估结论：按契约 v0 渲染，未知/缺失字段显示「未提供」，不补造内容。 */
 function AssessmentResult({ assessment }: { assessment: RequirementAssessment }) {
   const promptBodyId = useId();
@@ -1932,39 +1949,76 @@ function AssessmentResult({ assessment }: { assessment: RequirementAssessment })
     } catch { setCopyError("复制失败，请展开后手动选中复制。"); }
   };
 
+  const verdictTone = verdict ? `is-${verdict}` : "";
   return <div className="assessment-result">
-    <div className="assessment-verdict-row">
-      {verdict ? <ArcoTag color={verdictColor} title={ASSESSMENT_VERDICTS[verdict].hint}>{ASSESSMENT_VERDICTS[verdict].label}</ArcoTag> : <ArcoTag>未给出结论</ArcoTag>}
-      {confidence ? <ArcoTag>置信度：{confidence}</ArcoTag> : null}
-      <span className="subtle-text">v{assessment.version} · {timeLabel(assessment.createdAt)}{assessment.promptVersion ? ` · ${assessment.promptVersion}` : ""}{assessment.model ? ` · ${assessment.model}` : ""}</span>
-    </div>
-    <p className="subtle-text" style={{ margin: 0 }}>AI 建议，非结论；请结合下方依据与待确认问题人工判断。</p>
-    <ArcoGrid.Row gutter={[12, 12]}>
-      <ArcoGrid.Col xs={24} md={8}><ArcoCard size="small" className="rq-subcard" title="背景"><p style={{ margin: 0 }}>{analysisText(output.background) ?? "未提供"}</p></ArcoCard></ArcoGrid.Col>
-      <ArcoGrid.Col xs={24} md={8}><ArcoCard size="small" className="rq-subcard" title="目标"><p style={{ margin: 0 }}>{analysisText(output.goal) ?? "未提供"}</p></ArcoCard></ArcoGrid.Col>
-      <ArcoGrid.Col xs={24} md={8}><ArcoCard size="small" className="rq-subcard" title="业务价值"><p style={{ margin: 0 }}>{analysisText(output.value) ?? "未提供"}</p></ArcoCard></ArcoGrid.Col>
-    </ArcoGrid.Row>
-    <ArcoGrid.Row gutter={[12, 12]}>
-      <ArcoGrid.Col xs={24} md={12}><ArcoCard size="small" className="rq-subcard" title="范围：要做">{scopeIn.length ? <ul className="rq-compact-list">{scopeIn.map((item, index) => <li key={index}>{item}</li>)}</ul> : <p className="subtle-text">未提供</p>}</ArcoCard></ArcoGrid.Col>
-      <ArcoGrid.Col xs={24} md={12}><ArcoCard size="small" className="rq-subcard" title="范围：不做">{scopeOut.length ? <ul className="rq-compact-list">{scopeOut.map((item, index) => <li key={index}>{item}</li>)}</ul> : <p className="subtle-text">未提供</p>}</ArcoCard></ArcoGrid.Col>
-    </ArcoGrid.Row>
-    <ArcoCard size="small" className="rq-subcard" title="可行性">
-      <ArcoDescriptions
-        size="small"
-        column={{ xs: 1, sm: 2 }}
-        data={[
-          { label: "技术", value: analysisText(feasibility.technical) ?? "未提供" },
-          { label: "成本", value: analysisText(feasibility.cost) ?? "未提供" },
-          { label: "依赖", value: analysisText(feasibility.dependency) ?? "未提供" },
-          { label: "风险", value: analysisText(feasibility.risk) ?? "未提供" },
-        ]}
-      />
+    <ArcoCard size="small" className={`rq-subcard assessment-verdict-banner ${verdictTone}`}>
+      <div className="assessment-verdict-row">
+        {verdict ? <ArcoTag color={verdictColor} title={ASSESSMENT_VERDICTS[verdict].hint}>{ASSESSMENT_VERDICTS[verdict].label}</ArcoTag> : <ArcoTag>未给出结论</ArcoTag>}
+        {confidence ? <ArcoTag>置信度：{confidence}</ArcoTag> : null}
+        <span className="subtle-text">v{assessment.version} · {timeLabel(assessment.createdAt)}{assessment.promptVersion ? ` · ${assessment.promptVersion}` : ""}{assessment.model ? ` · ${assessment.model}` : ""}</span>
+      </div>
+      {verdict && (
+        <div className="assessment-verdict-reason">
+          <strong>结论依据：</strong>
+          <span>{analysisText(output.verdictReason) ?? "未提供"}</span>
+        </div>
+      )}
+      <p className="rq-caption subtle-text" style={{ margin: "6px 0 0" }}>AI 建议，非结论；请结合下方待确认问题与范围人工判断。</p>
     </ArcoCard>
-    {verdict ? <ArcoCard size="small" className="rq-subcard" title="结论依据"><p style={{ margin: 0 }}>{analysisText(output.verdictReason) ?? "未提供"}</p></ArcoCard> : null}
+
     <ArcoGrid.Row gutter={[12, 12]}>
-      <ArcoGrid.Col xs={24} md={12}><ArcoCard size="small" className="rq-subcard" title="假设（AI 推断）">{assumptions.length ? <ul className="rq-compact-list">{assumptions.map((item, index) => <li key={index}><ArcoTag size="small" color="orange" style={{ marginRight: 6 }}>假设</ArcoTag>{item.replace(/^(假设|推断)[：:]\s*/, "")}</li>)}</ul> : <p className="subtle-text">未列出假设</p>}</ArcoCard></ArcoGrid.Col>
-      <ArcoGrid.Col xs={24} md={12}><ArcoCard size="small" className="rq-subcard" title="待确认问题">{openQuestions.length ? <ol className="rq-compact-list">{openQuestions.map((item, index) => <li key={index}>{item}</li>)}</ol> : <p className="subtle-text">暂无待确认问题</p>}</ArcoCard></ArcoGrid.Col>
+      <ArcoGrid.Col xs={24} md={12}>
+        <ArcoCard size="small" className="rq-subcard assessment-list-card" title="待确认问题" extra={openQuestions.length ? <ArcoTag size="small">{openQuestions.length} 项</ArcoTag> : null}>
+          {openQuestions.length ? <ol className="rq-compact-list">{openQuestions.map((item, index) => <li key={index}>{item}</li>)}</ol> : <p className="subtle-text" style={{ margin: 0 }}>暂无待确认问题</p>}
+        </ArcoCard>
+      </ArcoGrid.Col>
+      <ArcoGrid.Col xs={24} md={12}>
+        <ArcoCard size="small" className="rq-subcard assessment-list-card" title="假设（AI 推断）" extra={assumptions.length ? <ArcoTag size="small" color="orange">{assumptions.length} 项</ArcoTag> : null}>
+          {assumptions.length ? <ul className="rq-compact-list">{assumptions.map((item, index) => <li key={index}><ArcoTag size="small" color="orange" style={{ marginRight: 6 }}>假设</ArcoTag>{item.replace(/^(假设|推断)[：:]\s*/, "")}</li>)}</ul> : <p className="subtle-text" style={{ margin: 0 }}>未列出假设</p>}
+        </ArcoCard>
+      </ArcoGrid.Col>
     </ArcoGrid.Row>
+
+    <ArcoGrid.Row gutter={[12, 12]}>
+      <ArcoGrid.Col xs={24} md={12}><ArcoCard size="small" className="rq-subcard assessment-list-card" title="范围：要做">{scopeIn.length ? <ul className="rq-compact-list">{scopeIn.map((item, index) => <li key={index}>{item}</li>)}</ul> : <p className="subtle-text" style={{ margin: 0 }}>未提供</p>}</ArcoCard></ArcoGrid.Col>
+      <ArcoGrid.Col xs={24} md={12}><ArcoCard size="small" className="rq-subcard assessment-list-card" title="范围：不做">{scopeOut.length ? <ul className="rq-compact-list">{scopeOut.map((item, index) => <li key={index}>{item}</li>)}</ul> : <p className="subtle-text" style={{ margin: 0 }}>未提供</p>}</ArcoCard></ArcoGrid.Col>
+    </ArcoGrid.Row>
+
+    <ArcoCard size="small" className="rq-subcard" title="背景、目标与价值">
+      <div className="assessment-kv-list">
+        <div className="assessment-kv-row">
+          <span className="assessment-kv-label">背景</span>
+          <ClampedAssessmentText text={analysisText(output.background)} />
+        </div>
+        <div className="assessment-kv-row">
+          <span className="assessment-kv-label">目标</span>
+          <ClampedAssessmentText text={analysisText(output.goal)} />
+        </div>
+        <div className="assessment-kv-row">
+          <span className="assessment-kv-label">业务价值</span>
+          <ClampedAssessmentText text={analysisText(output.value)} />
+        </div>
+      </div>
+    </ArcoCard>
+
+    <ArcoCard size="small" className="rq-subcard" title="可行性评估">
+      <ArcoGrid.Row gutter={[12, 12]}>
+        {([
+          ["技术", analysisText(feasibility.technical)],
+          ["成本", analysisText(feasibility.cost)],
+          ["依赖", analysisText(feasibility.dependency)],
+          ["风险", analysisText(feasibility.risk)],
+        ] as const).map(([label, val]) => (
+          <ArcoGrid.Col key={label} xs={24} sm={12}>
+            <div className="assessment-feasibility-item">
+              <strong className="assessment-feasibility-label">{label}</strong>
+              <ClampedAssessmentText text={val} limit={95} />
+            </div>
+          </ArcoGrid.Col>
+        ))}
+      </ArcoGrid.Row>
+    </ArcoCard>
+
     {prompt ? <ArcoCard
       size="small"
       className="rq-subcard"
@@ -2585,29 +2639,53 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
     ? <SimilarRequirementSection requirementId={detail.id} title={detail.title} />
     : null;
 
+  const summaryPriority = detail.effectivePriority ?? summaryScore?.priority ?? null;
+  const summaryPriorityTone = summaryPriority ? `is-${summaryPriority.toLowerCase()}` : "is-empty";
+  const summaryIsV4 = Boolean(summaryScore && isV4ScoringInputs(summaryScore.inputs));
+
   return <div className="req-detail-page">
     <ArcoCard className="rq-card req-detail-summary">
-      <div className="req-summary-backbar" style={{ marginBottom: 12 }}><ArcoButton htmlType="button" onClick={onBack} type="secondary" size="small"><ArrowLeft size={14} />返回需求池</ArcoButton></div>
+      <div className="req-summary-backbar">
+        <ArcoSpace size={10} align="center" wrap>
+          <ArcoButton htmlType="button" onClick={onBack} type="secondary" size="small"><ArrowLeft size={14} />返回需求池</ArcoButton>
+          <span className="mono-cell req-summary-id">{detail.platformRequirementId ?? (detail.sourceRequirementId ? `REQ-${detail.sourceRequirementId.slice(0, 8)}` : "WEB")} · v{detail.sourceVersion}</span>
+          <ArcoTag size="small">{sourceLabel}</ArcoTag>
+        </ArcoSpace>
+        <div className="req-stage-row" role="group" aria-label="处理状态">{stages.map(([stage, state]) => <StageBadge key={stage} stage={stage} state={state} />)}</div>
+      </div>
       <div className="req-summary-top">
         <div className="req-summary-heading">
           <h2 className="req-summary-title" style={{ marginBottom: 0 }}>
             <span>{detail.title}</span>
             {detail.pool === "group" ? <>{" "}{poolChip("group")}</> : null}
           </h2>
-          <div className="mono-cell" style={{ marginTop: 4 }}>{detail.platformRequirementId ?? (detail.sourceRequirementId ? `REQ-${detail.sourceRequirementId.slice(0, 8)}` : "WEB")} · v{detail.sourceVersion}</div>
           {detail.duplicateOf && <ArcoAlert className="rq-inline-alert" type="warning" showIcon role="note" content={<>该需求与另一条需求标题相同，仅作疑似重复提示；两条记录仍按各自的来源 ID 独立保留，是否排除由人工判定决定。<a href={`?requirement=${detail.duplicateOf}`}>查看另一条</a></>} />}
           {detail.duplicates && detail.duplicates.length > 0 && <ArcoAlert className="rq-inline-alert" type="warning" showIcon role="note" content={<>发现 {detail.duplicates.length} 条同标题疑似重复需求：{detail.duplicates.map((duplicate, index) => <span key={duplicate.id}>{index > 0 ? "、" : ""}<a href={`?requirement=${duplicate.id}`}>{duplicate.title}</a></span>)}。这些记录均独立保留；可在「重复处理」确认重复或忽略，被排除记录不再进入 AI 分析、Base 推送与通知。</>} />}
         </div>
-        <div className="req-summary-score" aria-label="评分与优先级摘要">
-          <ArcoTypography.Text type="secondary" className="rq-caption">{detail.priorityOverride ? "PM 定级" : summaryCurrent ? "当前评分" : summaryAi ? "AI 初筛" : "综合评分"}</ArcoTypography.Text>
-          {(detail.effectivePriority || summaryScore) ? <>
+        <div className={`req-summary-score ${summaryPriorityTone}`} aria-label="评分与优先级摘要">
+          <div className="summary-score-header">
+            <ArcoTypography.Text type="secondary" className="rq-caption">{detail.priorityOverride ? "PM 定级" : summaryCurrent ? "当前评分" : summaryAi ? "AI 初筛" : "优先级与评分"}</ArcoTypography.Text>
+            {summaryScore && <ArcoTag size="small" className="summary-origin-chip">{scoreOriginLabel(summaryScore.origin)}</ArcoTag>}
+          </div>
+          {(summaryPriority || summaryScore) ? <>
             <div className="summary-score-line">
-              {summaryScore && <strong>{isV4ScoringInputs(summaryScore.inputs) ? `${Math.round(summaryScore.score)}` : summaryScore.score.toFixed(2)}</strong>}
-              <ArcoTag color={PRIORITY_TAG_COLORS[detail.effectivePriority ?? summaryScore?.priority ?? ""] ?? "gray"}>{detail.effectivePriority ?? summaryScore?.priority}</ArcoTag>
+              {summaryPriority && <span className={`summary-priority-pill ${summaryPriorityTone}`}>{summaryPriority}</span>}
+              {summaryScore && (
+                <span className="summary-score-value">
+                  <strong>{summaryIsV4 ? `${Math.round(summaryScore.score)}` : summaryScore.score.toFixed(2)}</strong>
+                  {summaryIsV4 && <span className="summary-score-unit">/ 100</span>}
+                </span>
+              )}
             </div>
-            {summaryScore && <ArcoTypography.Text type="secondary" className="rq-caption">v{summaryScore.version} · {scoreOriginLabel(summaryScore.origin)}{summaryScore.scoreConfidence ? ` · ${summaryScore.scoreConfidence}置信度` : ""}</ArcoTypography.Text>}
-            {summaryScore && <ArcoButton type="text" size="small" htmlType="button" onClick={() => { setDetailTab("advanced"); window.setTimeout(() => scrollToSection("req-scoring-heading"), 50); }}>查看评分与依据</ArcoButton>}
-          </> : <div><strong>暂无评分</strong><div className="subtle-text">AI 分析后生成，或直接定级</div></div>}
+            {summaryScore && (
+              <div className="summary-score-footer">
+                <ArcoTypography.Text type="secondary" className="rq-caption">
+                  v{summaryScore.version}{summaryScore.scoreConfidence ? ` · ${summaryScore.scoreConfidence}置信度` : ""}
+                </ArcoTypography.Text>
+                <ArcoButton type="text" size="mini" htmlType="button" onClick={() => { setDetailTab("advanced"); window.setTimeout(() => scrollToSection("req-scoring-heading"), 50); }}>查看评分与依据</ArcoButton>
+              </div>
+            )}
+          </> : <div className="summary-score-empty"><strong>待定级</strong><div className="subtle-text">AI 分析后生成，或下方一键定级</div></div>}
         </div>
       </div>
       <div className="req-summary-meta">
@@ -2620,7 +2698,6 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
             return `已恢复默认负责人（${pipelineLabel("owner", result.ownerState)}）${result.status === "queued" ? "，Base 推送已排队" : "；等待默认负责人映射"}`;
           }, detail.id)} htmlType="button">恢复默认负责人</ArcoButton>}
         </ArcoSpace>
-        <div className="req-stage-row" role="group" aria-label="处理状态">{stages.map(([stage, state]) => <StageBadge key={stage} stage={stage} state={state} />)}</div>
         <div role="group" aria-label="需求操作">
           <ArcoSpace size={8} wrap>
             <ArcoButton htmlType="button" aria-expanded={ownerPickerOpen} aria-controls={ownerEditorId} onClick={() => setOwnerPickerOpen((open) => !open)} disabled={busy || suppressed} type="primary" size="small">{suppressed ? "分配 / 变更负责人（已排除）" : "分配 / 变更负责人"}</ArcoButton>
@@ -2636,7 +2713,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
           </ArcoSpace>
         </div>
       </div>
-      <p className="detail-note">{guidance}</p>
+      <p className="detail-note req-summary-guidance">{guidance}</p>
       {ownerPickerOpen && !suppressed && <div className="detail-owner-editor" id={ownerEditorId}>
         <p className="detail-note" style={{ marginTop: 0, marginBottom: 8 }}>只修改当前这一条需求的负责人，不会改动同 TB 执行人名下的其他需求或全局映射；保存后重新排队 Base 推送。{detail.manualOwner ? "点击「恢复默认负责人」可回到 TB 执行人映射。" : ""}</p>
         <FeishuUserPicker key={detail.id} disabled={busy} saveLabel={ownerSaveLabel} onMap={async (user) => {
