@@ -40,6 +40,7 @@
 | PR-13 | [P2 路线：生命周期/多来源/协作/文档治理](PR-13-p2-roadmap.md) | draft | 产品 Roadmap + D-01/D-02 决策 | P2 | 路线条目（实施前另建票）；`docs/`、`specs/` |
 | PR-14 | [上线培训、角色 SOP 与文档同步](PR-14-training-sop-and-docs.md) | ready-for-agent | 需用户/试点团队配合 | P1 | `deployment/`、`docs/`、`specs/`、App 使用指南 |
 | PR-15 | [唯一上线 Gate 与当前状态页](PR-15-go-live-gate-and-current-status.md) | implemented-local | 用户/产品确认 gate 为唯一判据；状态页已实现，待发布取证 | P0 | `deployment/`、`specs/rq-sys-mvp/`、PRD 增补 §9 |
+| PR-16 | [评分规则版本可回退（retired → published）](PR-16-priority-rule-rollback.md) | draft | 用户确认是否立项；2026-11-28 v4 启用时发现无回退入口，已备一次性改库脚本 | P1 | `apps/api/src/http/app.ts`、`apps/api/src/adapters/postgres/repositories.ts`、`apps/web/src/App.tsx`、`database/migrations/`、`specs/rq-sys-mvp/openapi.yaml` |
 
 ## 与评估报告的覆盖映射
 
