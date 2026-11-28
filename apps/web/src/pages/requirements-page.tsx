@@ -1133,6 +1133,16 @@ function isV4ScoringInputs(inputs: ScoringInputs | TriageScoringInputs | null | 
   return Boolean(inputs && typeof inputs === "object" && "version" in inputs && inputs.version === "v4");
 }
 
+/** 综合分的数值部分（PRD §4.2.7.1 / PRD-36）：v4 的 0–100 制取整；v2/v3 旧 U/M/S/C 制保留两位小数。 */
+function compositeScoreNumber(score: number, inputs: ScoringInputs | TriageScoringInputs | null | undefined): string {
+  return isV4ScoringInputs(inputs) ? String(Math.round(score)) : score.toFixed(2);
+}
+
+/** 综合分完整显示：v4 追加 / 100；v2/v3 不追加，避免把旧制套成 0–100。 */
+function formatCompositeScore(score: number, inputs: ScoringInputs | TriageScoringInputs | null | undefined): string {
+  return isV4ScoringInputs(inputs) ? `${compositeScoreNumber(score, inputs)} / 100` : compositeScoreNumber(score, inputs);
+}
+
 function scoreOriginLabel(origin: RequirementScoreVersion["origin"]): string {
   return origin === "ai" ? "AI 建议" : origin === "manual" ? "PM 人工" : "已采用 AI";
 }
@@ -1228,7 +1238,7 @@ function PragmaticTriageCard({
           {effectivePriority
             ? <ArcoTag color={PRIORITY_TAG_COLORS[effectivePriority] ?? "gray"}>{effectivePriority}{detail.priorityOverride ? "（PM 定级）" : ""}</ArcoTag>
             : <ArcoTag>待定级</ArcoTag>}
-          {display && <ArcoTag>{v4Inputs ? `${Math.round(display.score)}/100` : `${display.score.toFixed(1)} 分`}</ArcoTag>}
+          {display && <ArcoTag>{formatCompositeScore(display.score, display.inputs)}{v4Inputs ? null : " 分"}</ArcoTag>}
         </ArcoSpace>
       }
     >
@@ -1534,7 +1544,11 @@ export function ScoringPanel({ requirementId, scoring, dimensionInsights = [], c
             <div className="score-number-line">
               {/* Arco Statistic 会把整数位与小数位拆成两个 span；用 renderFormat 返回完整字符串会读成「0.80.8」。
                   交给 precision={2} 统一格式化，DOM 文本正好是 0.80 / 6.00 / 4.00，读屏只念一遍。 */}
-              <ArcoStatistic value={display.score} precision={2} />
+              <ArcoStatistic
+                value={display.score}
+                precision={isV4ScoringInputs(display.inputs) ? 0 : 2}
+                suffix={isV4ScoringInputs(display.inputs) ? " / 100" : undefined}
+              />
               <ArcoTag color={PRIORITY_TAG_COLORS[display.priority] ?? "gray"}>{display.priority}</ArcoTag>
             </div>
             <ArcoTypography.Text type="secondary" className="rq-caption">v{display.version} · {scoreOriginLabel(display.origin)} · {display.scoreConfidence ? `${display.scoreConfidence}置信度` : "置信度 —"}</ArcoTypography.Text>
@@ -1613,7 +1627,7 @@ export function ScoringPanel({ requirementId, scoring, dimensionInsights = [], c
         columns={[
           { title: "版本", dataIndex: "version", width: 130, render: (_value, version) => <>v{version.version} · {version.status}</> },
           { title: "来源", dataIndex: "origin", width: 120, render: (_value, version) => scoreOriginLabel(version.origin) },
-          { title: "分数/P", dataIndex: "score", width: 130, render: (_value, version) => <>{version.score.toFixed(2)} / {version.priority}</> },
+          { title: "分数/P", dataIndex: "score", width: 130, render: (_value, version) => <>{formatCompositeScore(version.score, version.inputs)} · {version.priority}</> },
           { title: "时间", dataIndex: "createdAt", width: 180, render: (_value, version) => formatDateTime(version.createdAt) },
           { title: "理由", dataIndex: "changeReason", render: (_value, version) => version.changeReason ?? "—" },
         ]}
@@ -2674,8 +2688,8 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
               {summaryPriority && <span className={`summary-priority-pill ${summaryPriorityTone}`}>{summaryPriority}</span>}
               {summaryScore && (
                 <span className="summary-score-value">
-                  <strong>{summaryIsV4 ? `${Math.round(summaryScore.score)}` : summaryScore.score.toFixed(2)}</strong>
-                  {summaryIsV4 && <span className="summary-score-unit">/ 100</span>}
+                  <strong>{compositeScoreNumber(summaryScore.score, summaryScore.inputs)}</strong>
+                  {summaryIsV4 && <span className="summary-score-unit"> / 100</span>}
                 </span>
               )}
             </div>

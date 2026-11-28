@@ -711,6 +711,24 @@ describe("RequirementsPanel (ticket 17)", () => {
     expect(line?.textContent).not.toContain("0.80.8");
   });
 
+  it("formats an old U/M/S/C score with two decimals in both the main visual and history rows", () => {
+    const legacyInputs = { user: { pain: 3, frequency: 4 }, market: { sellingPoint: 1, competitor: 1 }, strategy: { roadmap: 1, dependency: 1 }, cost: { workload: 3, technicalRisk: 2, resource: 2 } };
+    const scoreV6 = {
+      id: "score-6", requirementId: "req-1", version: 2, status: "current" as const, origin: "manual" as const,
+      sourceVersion: 1, analysisVersion: 2, ruleVersionId: "rule-v2", inputs: legacyInputs,
+      alpha: 0.8, score: 6.4, priority: "P3" as const, scoreConfidence: "中" as const, scoreConfidenceReason: "频次不足", safetyFlag: false,
+      basis: {}, rationale: null, actorId: "pm-1", changeReason: "人工复核", createdAt: "2026-10-28T01:00:00.000Z",
+    };
+    const scoreV15 = { ...scoreV6, id: "score-15", version: 3, score: 15.2, priority: "P2" as const };
+    const { container } = render(<ScoringPanel requirementId="req-1" scoring={{ current: scoreV15, aiSuggestion: null, history: [scoreV6, scoreV15], formula: { text: "formula", thresholds: { p0: 45, p1: 25, p2: 10 } } }} onSaved={() => undefined} />);
+    // 旧 U/M/S/C 制保留两位小数，不追加 / 100。
+    expect(container.querySelector(".req-score-section .arco-statistic")?.textContent).toBe("15.20");
+    expect(screen.queryByText("/ 100")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "历史（2）" }));
+    expect(screen.getByText("6.40 · P3")).toBeInTheDocument();
+    expect(screen.getByText("15.20 · P2")).toBeInTheDocument();
+  });
+
   it("shows the current manual definition, labels fields as manual, and does not claim finished analysis is incomplete", async () => {
     const manualRow = {
       ...row,
@@ -3417,7 +3435,7 @@ describe("Wave 1 frontend hardening regressions", () => {
               ruleVersionId: "rule-v4",
               inputs: { version: "v4", impact: 4, urgency: 3, costTier: null, strategicMatch: true, guardrail: "safety_p0" },
               alpha: 1.5,
-              score: 82,
+              score: 80,
               priority: "P0",
               scoreConfidence: "中",
               scoreConfidenceReason: "缺少频次数据",
@@ -3448,6 +3466,9 @@ describe("Wave 1 frontend hardening regressions", () => {
     expect(screen.getByText("紧迫 / 频次")).toBeInTheDocument();
     expect(screen.getByText("3 / 5")).toBeInTheDocument();
     expect(screen.getByText("命中本季重点")).toBeInTheDocument();
+    // v4 的 0–100 制显示整数 + / 100：摘要卡与 AI 建议标签一致，不出现两位小数。
+    expect(screen.getAllByText("80 / 100").length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText("80.00")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "查看相似需求（辅助判断高频度）" }));
     expect(screen.getByRole("link", { name: /RQ-000088 · 相似导航崩溃/ })).toBeInTheDocument();
