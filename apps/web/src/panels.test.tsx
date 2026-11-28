@@ -3022,7 +3022,7 @@ describe("My requirements and recycle bin (PRD §4.13)", () => {
     mockMine();
     render(<MyRequirementsPanel onRefresh={() => undefined} />);
 
-    expect(await screen.findByText("含已压制 · 共 3 条")).toBeInTheDocument();
+    expect(await screen.findByText("含已排除 · 共 3 条")).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /产品需求池/ })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tab", { name: /集团需求池/ })).toBeInTheDocument();
     // PRD §4.13.4：不显示来源 Tab、高级筛选和新建入口。
@@ -3079,7 +3079,7 @@ describe("My requirements and recycle bin (PRD §4.13)", () => {
 
     expect(await screen.findByText("被删除的需求")).toBeInTheDocument();
     expect(screen.getByText("集团池")).toBeInTheDocument();
-    expect(screen.getByText("已压制（忽略）")).toBeInTheDocument();
+    expect(screen.getByText("已忽略")).toBeInTheDocument();
     expect(screen.getByText(/只显示你删除的需求/)).toBeInTheDocument();
     expect(screen.queryByText("清空回收站")).not.toBeInTheDocument();
 

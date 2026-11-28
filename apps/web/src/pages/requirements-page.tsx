@@ -90,8 +90,8 @@ export function requirementProcessingState(requirement: Pick<RequirementSummary,
 
 export const processingStateLabels: Record<RequirementProcessingState, string> = {
   active: "活跃",
-  suppressed_duplicate: "已压制（重复）",
-  suppressed_ignored: "已压制（忽略）",
+  suppressed_duplicate: "已判定重复",
+  suppressed_ignored: "已忽略",
 };
 
 /** 列表行角标：疑似重复提示 / 压制结果；普通活跃需求不加角标。 */
@@ -100,10 +100,10 @@ export function processingBadge(requirement: Pick<RequirementSummary, "processin
   const resolution: RequirementResolution | null = requirement.resolution ?? null;
   const canonical = resolution?.canonicalPlatformRequirementId ?? resolution?.canonicalRequirementId ?? null;
   if (state === "suppressed_duplicate") {
-    return { label: "已压制（重复）", className: "status-danger", title: `已压制：不再进入 AI 分析/Base 推送/通知${canonical ? `；主记录 ${canonical}` : ""}${resolution?.reason ? `；理由：${resolution.reason}` : ""}` };
+    return { label: "已判定重复", className: "status-danger", title: `已排除：不再进入 AI 分析/Base 推送/通知${canonical ? `；主记录 ${canonical}` : ""}${resolution?.reason ? `；理由：${resolution.reason}` : ""}` };
   }
   if (state === "suppressed_ignored") {
-    return { label: "已压制（忽略）", className: "status-muted", title: `已压制：不再进入 AI 分析/Base 推送/通知${resolution?.reason ? `；理由：${resolution.reason}` : ""}` };
+    return { label: "已忽略", className: "status-muted", title: `已排除：不再进入 AI 分析/Base 推送/通知${resolution?.reason ? `；理由：${resolution.reason}` : ""}` };
   }
   if (resolution?.reviewState === "suspected") {
     return { label: "疑似重复", className: "status-warning", title: `系统提示标题相同，仅作疑似重复提示；${canonical ? `疑似主记录 ${canonical}；` : ""}尚未人工确认` };
@@ -118,7 +118,7 @@ export function processingBadge(requirement: Pick<RequirementSummary, "processin
 const PROCESSING_VIEWS: Array<{ value: RequirementProcessingView; label: string }> = [
   { value: "all", label: "全部" },
   { value: "active", label: "仅活跃" },
-  { value: "suppressed", label: "已压制重复" },
+  { value: "suppressed", label: "已排除" },
 ];
 
 function pipelineTagColor(state: string): string {
@@ -608,7 +608,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId, scope = "pr
         >
           {SOURCE_TABS.map((tab) => {
             const countKey = sourceCountKey(tab.value);
-            // 处理视图切到「全部/已压制重复」时隐藏计数：计数是活跃数，列表行数会更多，避免误读。
+            // 处理视图切到「全部/已排除」时隐藏计数：计数是活跃数，列表行数会更多，避免误读。
             const count = sourceCounts && processingState === "active" && countKey ? sourceCounts[countKey] : null;
             return (
               <ArcoTabs.TabPane
@@ -701,7 +701,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId, scope = "pr
             {isGroup && (
               <div className="processing-view-switch">
                 <span className="processing-view-switch-label">重复处理</span>
-                <ArcoTooltip content="已压制需求保留记录，但不会进入 AI 分析、Base 推送与通知。">
+                <ArcoTooltip content="已排除需求保留记录，但不会进入 AI 分析、Base 推送与通知。">
                   <span className="inline-help-icon" role="img" aria-label="重复处理说明"><CircleHelp size={14} /></span>
                 </ArcoTooltip>
                 <ArcoRadio.Group
@@ -719,7 +719,7 @@ export function RequirementsPanel({ onRefresh, initialRequirementId, scope = "pr
             {!isGroup && (
               <div className="processing-view-switch">
                 <span className="processing-view-switch-label">重复处理</span>
-                <ArcoTooltip content="已压制需求保留记录，但不会进入 AI 分析、Base 推送与通知。">
+                <ArcoTooltip content="已排除需求保留记录，但不会进入 AI 分析、Base 推送与通知。">
                   <span className="inline-help-icon" role="img" aria-label="重复处理说明"><CircleHelp size={14} /></span>
                 </ArcoTooltip>
                 <ArcoRadio.Group
@@ -818,7 +818,7 @@ export function MyRequirementsPanel({ onRefresh }: { onRefresh: () => void }) {
   const tabExtra = countsState === "error"
     ? <span className="subtle-text">数量暂不可用</span>
     : countsState === "ready" && counts
-      ? <span className="subtle-text">含已压制 · 共 {counts.total} 条</span>
+      ? <span className="subtle-text">含已排除 · 共 {counts.total} 条</span>
       : undefined;
 
   return <div className="composite-page my-requirements-page">
@@ -1451,7 +1451,7 @@ function DuplicateDecisionSection({ detail, onSaved }: { detail: RequirementDeta
       {(resolution?.canonicalPlatformRequirementId ?? resolution?.canonicalRequirementId) && <span className="subtle-text">主记录：<code>{resolution.canonicalPlatformRequirementId ?? resolution.canonicalRequirementId}</code></span>}
       {typeof resolution?.version === "number" && <span className="subtle-text">判定版本 v{resolution.version}</span>}
     </div>
-    <p className="detail-note">{compact ? "暂未发现同标题的重复候选，主记录与「确认非重复」暂不可用；如需压制这条需求，可直接忽略：不再进入 AI 分析、Base 推送与通知，记录保留、可随时撤销。" : "确认重复或忽略后该需求会被压制：不再进入 AI 分析、Base 推送与通知，记录保留、可随时撤销；撤销判定会把处理状态恢复为活跃。"}</p>
+    <p className="detail-note">{compact ? "暂未发现同标题的重复候选，主记录与「确认非重复」暂不可用；如需排除这条需求，可直接忽略：不再进入 AI 分析、Base 推送与通知，记录保留、可随时撤销。" : "确认重复或忽略后该需求会被排除：不再进入 AI 分析、Base 推送与通知，记录保留、可随时撤销；撤销判定会把处理状态恢复为活跃。"}</p>
     {error && <ArcoAlert className="rq-inline-alert" type="error" showIcon role="alert" title={conflict ? "判定未保存" : "操作未完成"} content={error} action={conflict ? <ArcoButton type="secondary" htmlType="button" size="small" onClick={onSaved}>刷新详情</ArcoButton> : undefined} />}
     {notice && <ArcoAlert className="rq-inline-alert" type="success" showIcon role="status" content={notice} />}
     {mode === null ? <ArcoSpace size={8} wrap className="duplicate-actions">
@@ -1526,8 +1526,8 @@ export function PriorityOverrideSection({ detail, onSaved }: { detail: Requireme
     {override && detail.scoring?.current && detail.scoring.current.priority !== override.priority && <ArcoAlert className="rq-inline-alert" type="info" showIcon role="note" content={`Base 的「AI优先级建议」仍是评分结果 ${detail.scoring.current.priority}，不会随人工覆盖（${override.priority}）变化；PM 终审优先级请在 Base 中维护。`} />}
     <StateBanner loadError={error} notice={notice} onCloseNotice={() => setNotice(null)} />
     {mode === null ? <ArcoSpace size={8} wrap className="rq-action-bar">
-      <ArcoButton type="secondary" htmlType="button" size="small" onClick={() => { setMode("edit"); setReason(""); setError(null); setNotice(null); }} disabled={busy || suppressed} title={suppressed ? "已压制需求不能设置人工优先级；请先撤销判定" : "设置人工优先级覆盖"}>{override ? "修改人工优先级" : "设置人工优先级"}</ArcoButton>
-      {override && <ArcoButton type="outline" status="danger" htmlType="button" size="small" onClick={() => { setMode("clear"); setReason(""); setError(null); setNotice(null); }} disabled={busy || suppressed} title={suppressed ? "已压制需求不能清除人工优先级" : "清除人工优先级，恢复评分结果"}>清除人工优先级</ArcoButton>}
+      <ArcoButton type="secondary" htmlType="button" size="small" onClick={() => { setMode("edit"); setReason(""); setError(null); setNotice(null); }} disabled={busy || suppressed} title={suppressed ? "已排除需求不能设置人工优先级；请先撤销判定" : "设置人工优先级覆盖"}>{override ? "修改人工优先级" : "设置人工优先级"}</ArcoButton>
+      {override && <ArcoButton type="outline" status="danger" htmlType="button" size="small" onClick={() => { setMode("clear"); setReason(""); setError(null); setNotice(null); }} disabled={busy || suppressed} title={suppressed ? "已排除需求不能清除人工优先级" : "清除人工优先级，恢复评分结果"}>清除人工优先级</ArcoButton>}
     </ArcoSpace> : <ArcoForm layout="inline" className="rq-compact-form rq-action-bar">
       {mode === "edit" && <ArcoForm.Item label="覆盖为 *"><ArcoSelect aria-label="人工优先级" value={priority} onChange={(value: "P0" | "P1" | "P2" | "P3") => setPriority(value)} style={{ minWidth: 120 }} options={["P0", "P1", "P2", "P3"].map((level) => ({ label: level, value: level }))} /></ArcoForm.Item>}
       <ArcoForm.Item label={mode === "clear" ? "清除原因 *" : "覆盖原因 *"}><ArcoInput aria-label="人工优先级原因" value={reason} onChange={(value: string) => setReason(value)} disabled={busy} placeholder="例如：产品会议决定提前处理（1–500 字）" /></ArcoForm.Item>
@@ -1587,8 +1587,8 @@ export function AnalysisContextSection({ detail, onSaved }: { detail: Requiremen
     </ArcoForm>
     <StateBanner loadError={error} notice={notice} onCloseNotice={() => setNotice(null)} />
     <ArcoSpace size={8} wrap align="center">
-      <ArcoButton type="secondary" htmlType="button" size="small" onClick={() => void save(false)} disabled={busy || suppressed} title={suppressed ? "已压制需求不能保存补充上下文；请先撤销判定" : "仅保存补充上下文"}>{busy ? "保存中…" : "保存"}</ArcoButton>
-      <ArcoButton type="primary" htmlType="button" size="small" onClick={() => void save(true)} disabled={busy || suppressed} title={suppressed ? "已压制需求不能重新分析" : "保存补充上下文后强制重跑一次 AI 分析（会消耗一次模型调用）"}>{busy ? "提交中…" : "保存并重新分析"}</ArcoButton>
+      <ArcoButton type="secondary" htmlType="button" size="small" onClick={() => void save(false)} disabled={busy || suppressed} title={suppressed ? "已排除需求不能保存补充上下文；请先撤销判定" : "仅保存补充上下文"}>{busy ? "保存中…" : "保存"}</ArcoButton>
+      <ArcoButton type="primary" htmlType="button" size="small" onClick={() => void save(true)} disabled={busy || suppressed} title={suppressed ? "已排除需求不能重新分析" : "保存补充上下文后强制重跑一次 AI 分析（会消耗一次模型调用）"}>{busy ? "提交中…" : "保存并重新分析"}</ArcoButton>
       <span className="subtle-text">会消耗一次模型调用</span>
     </ArcoSpace>
   </ArcoCard>;
@@ -2005,7 +2005,7 @@ function RequirementAssessmentSection({
 /**
  * PRD-31：多维表格来源的详情只读展示相似需求。
  * R8 两段查询：先用整条标题；0 条且标题超过 8 字时，去掉【…】前缀取前 8 字再查一次。
- * 每次渲染最多 2 次请求，2s 超时或失败静默隐藏，不写 duplicate_of、不自动压制。
+ * 每次渲染最多 2 次请求，2s 超时或失败静默隐藏，不写 duplicate_of、不自动排除。
  */
 function SimilarRequirementSection({ requirementId, title }: { requirementId: string; title: string }) {
   const [items, setItems] = useState<RequirementSummary[]>([]);
@@ -2054,7 +2054,7 @@ function SimilarRequirementSection({ requirementId, title }: { requirementId: st
     title={<h3 id="req-similar-heading" className="rq-section-heading">相似需求（只读，仅供参考）</h3>}
     extra={<ArcoTag>按标题关键字匹配</ArcoTag>}
   >
-    <p className="detail-note">相似需求只作参考：不会写回重复判定、不自动压制，也不影响本条需求的编辑与推送。</p>
+    <p className="detail-note">相似需求只作参考：不会写回重复判定、不自动排除，也不影响本条需求的编辑与推送。</p>
     <ul className="rq-compact-list">
       {items.map((item) => <li key={item.id}>
         <a href={`?requirement=${item.id}`} target="_blank" rel="noreferrer">{item.platformRequirementId ? `${item.platformRequirementId} · ` : ""}{item.title}</a>
@@ -2211,7 +2211,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
   const ownerMapped = ["auto_mapped", "manually_mapped"].includes(detail.pipeline.owner);
   const ownerSaveLabel = detail.pipeline.owner === "pending_mapping" ? "保存负责人并入队推送" : ownerMapped ? "变更负责人并入队推送" : "分配负责人并入队推送";
   const analysisDisabledReason = suppressed
-    ? "该需求已被压制，不会进入 AI 分析；如需分析请先在「重复处理」撤销判定。"
+    ? "该需求已被排除，不会进入 AI 分析；如需分析请先在「重复处理」撤销判定。"
     : detail.pipeline.analysis === "running"
       ? "AI 分析正在进行中，完成后可查看结果。"
       : detail.pipeline.analysis === "analyzed"
@@ -2220,7 +2220,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
           ? "该需求的分析失败不可自动重试，请检查源数据或联系管理员。"
           : "当前状态不可重试 AI 分析。";
   const pushDisabledReason = suppressed
-    ? "该需求已被压制，不会进入 Base 推送；如需推送请先在「重复处理」撤销判定。"
+    ? "该需求已被排除，不会进入 Base 推送；如需推送请先在「重复处理」撤销判定。"
     : detail.pipeline.push === "pushed"
       ? "Base 推送已完成，无需重试；PM 在飞书多维表格继续处理。"
       : detail.pipeline.push === "running"
@@ -2232,7 +2232,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
   // 「可重跑」包含 already analyzed；指引不能把已完成的分析说成未完成。
   const analysisIncomplete = ["pending", "failed_retryable", "running"].includes(detail.pipeline.analysis);
   const guidance = (suppressed
-    ? [`该需求已被压制（${suppressedLabel}）：不会进入 AI 分析、Base 推送与通知；如需恢复请在下方「重复处理」撤销判定。`]
+    ? [`该需求已被排除（${suppressedLabel}）：不会进入 AI 分析、Base 推送与通知；如需恢复请在下方「重复处理」撤销判定。`]
     : [
       detail.pipeline.push === "pushed" ? "该需求已推送完成，PM 在飞书多维表格继续处理；如需换人可在此变更负责人。" : "",
       pushRetryable ? (ownerMapped ? "Base 推送失败：可重试推送，也可变更负责人后重新排队。" : "Base 推送失败：请先分配负责人，再重试推送。") : "",
@@ -2311,8 +2311,8 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
             {detail.pool === "group" ? <>{" "}{poolChip("group")}</> : null}
           </h2>
           <div className="mono-cell" style={{ marginTop: 4 }}>{detail.platformRequirementId ?? (detail.sourceRequirementId ? `REQ-${detail.sourceRequirementId.slice(0, 8)}` : "WEB")} · v{detail.sourceVersion}</div>
-          {detail.duplicateOf && <ArcoAlert className="rq-inline-alert" type="warning" showIcon role="note" content={<>该需求与另一条需求标题相同，仅作疑似重复提示；两条记录仍按各自的来源 ID 独立保留，是否压制由人工判定决定。<a href={`?requirement=${detail.duplicateOf}`}>查看另一条</a></>} />}
-          {detail.duplicates && detail.duplicates.length > 0 && <ArcoAlert className="rq-inline-alert" type="warning" showIcon role="note" content={<>发现 {detail.duplicates.length} 条同标题疑似重复需求：{detail.duplicates.map((duplicate, index) => <span key={duplicate.id}>{index > 0 ? "、" : ""}<a href={`?requirement=${duplicate.id}`}>{duplicate.title}</a></span>)}。这些记录均独立保留；可在下方「重复处理」确认重复或忽略，被压制记录不再进入 AI 分析、Base 推送与通知。</>} />}
+          {detail.duplicateOf && <ArcoAlert className="rq-inline-alert" type="warning" showIcon role="note" content={<>该需求与另一条需求标题相同，仅作疑似重复提示；两条记录仍按各自的来源 ID 独立保留，是否排除由人工判定决定。<a href={`?requirement=${detail.duplicateOf}`}>查看另一条</a></>} />}
+          {detail.duplicates && detail.duplicates.length > 0 && <ArcoAlert className="rq-inline-alert" type="warning" showIcon role="note" content={<>发现 {detail.duplicates.length} 条同标题疑似重复需求：{detail.duplicates.map((duplicate, index) => <span key={duplicate.id}>{index > 0 ? "、" : ""}<a href={`?requirement=${duplicate.id}`}>{duplicate.title}</a></span>)}。这些记录均独立保留；可在下方「重复处理」确认重复或忽略，被排除记录不再进入 AI 分析、Base 推送与通知。</>} />}
         </div>
         <div className="req-summary-score" aria-label="评分与优先级摘要">
           <ArcoTypography.Text type="secondary" className="rq-caption">{summaryCurrent ? "当前综合评分" : summaryAi ? "AI 建议" : "综合评分"}</ArcoTypography.Text>
@@ -2331,7 +2331,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
           <ArcoTypography.Text type="secondary">负责人</ArcoTypography.Text>
           <OwnerBadge owner={owner} />
           {detail.manualOwner && <ArcoTag size="small" color="arcoblue" title="只影响这一条需求，不会改动同 TB 执行人的其他需求">手动指定</ArcoTag>}
-          {detail.manualOwner && <ArcoButton type="text" size="small" disabled={busy || suppressed} title={suppressed ? "已压制需求不会推送；请先撤销判定" : undefined} onClick={() => void onAct(async () => {
+          {detail.manualOwner && <ArcoButton type="text" size="small" disabled={busy || suppressed} title={suppressed ? "已排除需求不会推送；请先撤销判定" : undefined} onClick={() => void onAct(async () => {
             const result = await clearOwner(detail.id);
             return `已恢复默认负责人（${pipelineLabel("owner", result.ownerState)}）${result.status === "queued" ? "，Base 推送已排队" : "；等待默认负责人映射"}`;
           }, detail.id)} htmlType="button">恢复默认负责人</ArcoButton>}
@@ -2339,7 +2339,7 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
         <div className="req-stage-row" role="group" aria-label="处理状态">{stages.map(([stage, state]) => <StageBadge key={stage} stage={stage} state={state} />)}</div>
         <div role="group" aria-label="需求操作">
           <ArcoSpace size={8} wrap>
-            <ArcoButton htmlType="button" aria-expanded={ownerPickerOpen} aria-controls={ownerEditorId} onClick={() => setOwnerPickerOpen((open) => !open)} disabled={busy || suppressed} type="primary" size="small">{suppressed ? "分配 / 变更负责人（已压制）" : "分配 / 变更负责人"}</ArcoButton>
+            <ArcoButton htmlType="button" aria-expanded={ownerPickerOpen} aria-controls={ownerEditorId} onClick={() => setOwnerPickerOpen((open) => !open)} disabled={busy || suppressed} type="primary" size="small">{suppressed ? "分配 / 变更负责人（已排除）" : "分配 / 变更负责人"}</ArcoButton>
             <ArcoTooltip content={analysisRetryable ? "重新提交 AI 分析（会消耗一次模型调用）" : analysisDisabledReason}>
               <ArcoButton type="secondary" htmlType="button" size="small" onClick={() => void onAct(async () => { await retryAnalysis(detail.id); return "AI 分析重试已入队"; }, detail.id)} disabled={busy || !analysisRetryable} title={analysisRetryable ? "重新提交 AI 分析（会消耗一次模型调用）" : analysisDisabledReason}>{analysisActionLabel}</ArcoButton>
             </ArcoTooltip>
@@ -2373,8 +2373,8 @@ function RequirementDetailPage({ detail, detailId, loading, error, notice, busy,
       type="error"
       showIcon
       role="alert"
-      title={`该需求已被压制（${suppressedLabel}）`}
-      content="被压制的需求不会进入 AI 分析、Base 推送与通知；记录仍保留。请在下方「重复处理」撤销判定后恢复为活跃。"
+      title={`该需求已被排除（${suppressedLabel}）`}
+      content="被排除的需求不会进入 AI 分析、Base 推送与通知；记录仍保留。请在下方「重复处理」撤销判定后恢复为活跃。"
       action={<ArcoButton type="secondary" htmlType="button" size="small" onClick={() => scrollToSection("req-duplicate-heading")}>前往撤销判定</ArcoButton>}
     />}
 
@@ -2578,7 +2578,7 @@ const RequirementsTable = memo(function RequirementsTable({ rows, loading, showS
           {showPool ? poolChip(row.pool) : null}
           {badge ? <ArcoTag size="small" color={BADGE_TAG_COLOR(badge.className)} className="processing-badge" title={badge.title}>{badge.label}</ArcoTag> : null}
           {row.sourceMissingSince ? <ArcoTag size="small" className="processing-badge" title={`上次全量同步（${timeLabel(row.sourceMissingSince)}）未再出现该 TB 需求；记录保留，处理与推送状态不变`}>来源已移除</ArcoTag> : null}
-          {suppressed ? <span className="sr-only">（已压制：不进入 AI 分析/Base 推送/通知）</span> : null}
+          {suppressed ? <span className="sr-only">（已排除：不进入 AI 分析/Base 推送/通知）</span> : null}
         </ArcoSpace>;
       },
     },
@@ -2638,7 +2638,7 @@ const RequirementsTable = memo(function RequirementsTable({ rows, loading, showS
   const handleRow = useCallback((row: RequirementSummary) => ({
     style: { cursor: "pointer" },
     tabIndex: 0,
-    "aria-label": `${requirementProcessingState(row) !== "active" ? "打开已压制需求" : "打开需求"}：${row.title}`,
+    "aria-label": `${requirementProcessingState(row) !== "active" ? "打开已排除需求" : "打开需求"}：${row.title}`,
     onClick: (event: MouseEvent<HTMLElement>) => { if (!isRowActionTarget(event.target)) onOpen(row); },
     onKeyDown: (event: KeyboardEvent<HTMLElement>) => { if ((event.key === "Enter" || event.key === " ") && !isRowActionTarget(event.target)) { event.preventDefault(); onOpen(row); } },
   }), [onOpen]);

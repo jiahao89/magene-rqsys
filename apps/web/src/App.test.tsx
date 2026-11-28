@@ -588,14 +588,14 @@ describe("RQ-Sys local workbench", () => {
     });
 
     render(<App />);
-    expect(await screen.findByText("产品池 8 · 集团池 4（含已压制）")).toBeInTheDocument();
+    expect(await screen.findByText("产品池 8 · 集团池 4（含已排除）")).toBeInTheDocument();
     expect(screen.getByText("12")).toBeInTheDocument();
     const nav = screen.getByRole("navigation", { name: "主导航" });
     const navLabels = within(nav).getAllByRole("link").map((link) => link.textContent ?? "");
     expect(navLabels.indexOf("我的需求")).toBe(navLabels.indexOf("需求池") + 1);
     expect(within(nav).getByRole("link", { name: "我的需求" })).toHaveAttribute("href", "/#my-requirements");
 
-    fireEvent.click(screen.getByText("产品池 8 · 集团池 4（含已压制）").closest("a")!);
+    fireEvent.click(screen.getByText("产品池 8 · 集团池 4（含已排除）").closest("a")!);
     expect(await screen.findByRole("heading", { level: 1, name: "我的需求" })).toBeInTheDocument();
     expect(window.location.hash).toBe("#my-requirements");
     expect(await screen.findByRole("tab", { name: /产品需求池/ })).toHaveAttribute("aria-selected", "true");
@@ -616,7 +616,7 @@ describe("RQ-Sys local workbench", () => {
     expect(screen.getByRole("tab", { name: /集团需求池/ })).toHaveAttribute("aria-selected", "true");
     // 计数失败只降级数字，不显示 0，也不阻塞列表。
     expect(await screen.findByText("数量暂不可用")).toBeInTheDocument();
-    expect(screen.queryByText("含已压制 · 共 0 条")).not.toBeInTheDocument();
+    expect(screen.queryByText("含已排除 · 共 0 条")).not.toBeInTheDocument();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/requirements/mine?pool=group&limit=25", expect.anything()));
   });
 

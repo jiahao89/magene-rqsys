@@ -433,7 +433,7 @@ function App() {
   const priorityGraded = priority ? priority.P0 + priority.P1 + priority.P2 + priority.P3 : null;
   // 服务端 ownerResolved 已包含 auto_mapped / manually_mapped / not_required，因此 total - counts.owner 精确对应 pending_mapping。
   const kpiItems = [
-    { key: "total", label: "需求总数", value: metrics ? total : null, hint: metrics ? `已压制 ${counts.suppressed} 条不计入` : "全量统计暂不可用", tone: "neutral", icon: Layers3, filters: undefined },
+    { key: "total", label: "需求总数", value: metrics ? total : null, hint: metrics ? `已排除 ${counts.suppressed} 条，不参与分析与推送` : "全量统计暂不可用", tone: "neutral", icon: Layers3, filters: undefined },
     { key: "unassigned", label: "待分配负责人", value: metrics ? Math.max(0, total - counts.owner) : null, hint: "分配后自动推送并通知", tone: "warn", icon: UserRoundCheck, filters: { ownerState: "pending_mapping" } },
     { key: "failed", label: "推送失败", value: metrics ? counts.pushFailed : null, hint: "详情页查看原因并重试", tone: metrics && counts.pushFailed > 0 ? "danger" : "ok", icon: CircleAlert, filters: { push: "failed" } },
     { key: "pending", label: "待推送", value: metrics ? counts.pushPending : null, hint: "等待写入多维表格", tone: "info", icon: Clock3, filters: { push: "pending" } },
@@ -962,7 +962,7 @@ function MyRequirementsCard({ onOpen }: { onOpen: () => void }) {
         ? "未绑定飞书身份"
         : counts && counts.total === 0
           ? "暂无分配给你的需求"
-          : counts ? `产品池 ${counts.product} · 集团池 ${counts.group}（含已压制）` : "";
+          : counts ? `产品池 ${counts.product} · 集团池 ${counts.group}（含已排除）` : "";
   return (
     <ArcoCard
       bordered={false}
@@ -1261,7 +1261,7 @@ function RulesPanel() {
 }
 
 function pageDescription(page: Page): string {
-  const descriptions: Record<Page, string> = { Overview: "同步流程的当前健康状态与执行概况。", Requirements: "按需求标题、TB负责人和处理状态检索需求；负责人分配在需求详情页完成。", GroupRequirements: "集团需求池：仅同步执行人名单内的集团需求，数据与产品池完全隔离。", Team: "维护组内人员、飞书账号绑定和 Teambition 负责人映射。", Modules: "维护 AI 分类使用的功能模块、责任人员及词典版本历史。", SyncRecords: "检查同步批次、失败项与可追踪的审计操作。", Sources: "两个需求池的数据源、周计划、收集表与飞书 Base 地址。", MyRequirements: "分配给你的需求；删除后进入回收站，可随时还原；含已压制。", RecycleBin: "你删除的需求保留在这里，可一键还原；不做物理删除。", Rules: "管理已校准的优先级规则；评分映射与校准证据在高级设置中维护。", Ops: "只读查看失败与卡住的作业，辅助定位同步、分析和推送中断。", Guide: "系统工作流、状态含义与日常操作说明。", Sop: "按角色整理的试点标准作业流程（SOP）与 30 分钟培训议程。" };
+  const descriptions: Record<Page, string> = { Overview: "同步流程的当前健康状态与执行概况。", Requirements: "按需求标题、TB负责人和处理状态检索需求；负责人分配在需求详情页完成。", GroupRequirements: "集团需求池：仅同步执行人名单内的集团需求，数据与产品池完全隔离。", Team: "维护组内人员、飞书账号绑定和 Teambition 负责人映射。", Modules: "维护 AI 分类使用的功能模块、责任人员及词典版本历史。", SyncRecords: "检查同步批次、失败项与可追踪的审计操作。", Sources: "两个需求池的数据源、周计划、收集表与飞书 Base 地址。", MyRequirements: "分配给你的需求；删除后进入回收站，可随时还原；含已排除。", RecycleBin: "你删除的需求保留在这里，可一键还原；不做物理删除。", Rules: "管理已校准的优先级规则；评分映射与校准证据在高级设置中维护。", Ops: "只读查看失败与卡住的作业，辅助定位同步、分析和推送中断。", Guide: "系统工作流、状态含义与日常操作说明。", Sop: "按角色整理的试点标准作业流程（SOP）与 30 分钟培训议程。" };
   return descriptions[page];
 }
 
