@@ -1,0 +1,1422 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RQ-Sys 需求平台工作流与 U/M/S/C 评分机制详解</title>
+  <style>
+    :root {
+      --bg-canvas: #f2f3f5;
+      --bg-card: #ffffff;
+      --bg-subtle: #f7f8fa;
+      --bg-hover: #f2f3f5;
+      --border: #e5e6eb;
+      --border-strong: #c9cdd4;
+      --text-1: #1d2129;
+      --text-2: #4e5969;
+      --text-3: #86909c;
+      --primary: #165dff;
+      --primary-hover: #4080ff;
+      --primary-soft: #e8f3ff;
+      --success: #00b42a;
+      --success-soft: #e8ffea;
+      --warning: #ff7d00;
+      --warning-soft: #fff7e8;
+      --danger: #f53f3f;
+      --danger-soft: #ffece8;
+      --purple: #722ed1;
+      --purple-soft: #f5e8ff;
+      --radius-sm: 4px;
+      --radius-md: 8px;
+      --font-sans: Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
+    body.dark {
+      --bg-canvas: #17171a;
+      --bg-card: #232324;
+      --bg-subtle: #2a2a2b;
+      --bg-hover: #313133;
+      --border: #333335;
+      --border-strong: #484849;
+      --text-1: rgba(255, 255, 255, 0.92);
+      --text-2: rgba(255, 255, 255, 0.72);
+      --text-3: rgba(255, 255, 255, 0.5);
+      --primary: #3c7eff;
+      --primary-hover: #6aa1ff;
+      --primary-soft: rgba(60, 126, 255, 0.16);
+      --success: #23c343;
+      --success-soft: rgba(35, 195, 67, 0.16);
+      --warning: #ff9a2e;
+      --warning-soft: rgba(255, 154, 46, 0.16);
+      --danger: #f76560;
+      --danger-soft: rgba(247, 101, 96, 0.16);
+      --purple: #8d4eda;
+      --purple-soft: rgba(141, 78, 218, 0.16);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: var(--font-sans);
+      font-size: 14px;
+      line-height: 1.6;
+      color: var(--text-1);
+      background: var(--bg-canvas);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Top Navbar (Arco Pro 2.0) */
+    .navbar {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      height: 60px;
+      background: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 600;
+      font-size: 16px;
+      color: var(--text-1);
+      white-space: nowrap;
+    }
+    .brand-icon {
+      width: 30px;
+      height: 30px;
+      border-radius: 6px;
+      background: var(--primary);
+      color: #fff;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 14px;
+      letter-spacing: -0.5px;
+    }
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      overflow-x: auto;
+    }
+    .nav-link {
+      padding: 6px 12px;
+      border-radius: var(--radius-sm);
+      color: var(--text-2);
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 500;
+      white-space: nowrap;
+      transition: background 0.15s, color 0.15s;
+    }
+    .nav-link:hover { background: var(--bg-hover); color: var(--primary); }
+    .theme-btn {
+      border: none;
+      background: var(--bg-hover);
+      color: var(--text-1);
+      height: 32px;
+      padding: 0 12px;
+      border-radius: 16px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    .theme-btn:hover { background: var(--border); }
+
+    /* Container */
+    .container {
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 20px 20px 56px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    /* Hero */
+    .hero {
+      background: var(--bg-card);
+      border-radius: var(--radius-sm);
+      padding: 28px 28px 24px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+    .hero h1 {
+      margin: 0 0 8px;
+      font-size: 22px;
+      font-weight: 600;
+      line-height: 1.35;
+    }
+    .hero p {
+      margin: 0;
+      color: var(--text-2);
+      max-width: 720px;
+    }
+    .hero-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    /* Cards & Typography */
+    .card {
+      background: var(--bg-card);
+      border-radius: var(--radius-sm);
+      padding: 24px;
+    }
+    .card-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 18px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    .card-title {
+      margin: 0;
+      font-size: 17px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .card-sub {
+      margin: 4px 0 0;
+      font-size: 13px;
+      color: var(--text-3);
+    }
+    .section-num {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: var(--primary-soft);
+      color: var(--primary);
+      font-size: 12px;
+      font-weight: 700;
+      flex: none;
+    }
+
+    /* Tags / Pills */
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 9px;
+      border-radius: 2px;
+      font-size: 12px;
+      font-weight: 500;
+      line-height: 20px;
+      white-space: nowrap;
+    }
+    .tag-blue { background: var(--primary-soft); color: var(--primary); }
+    .tag-green { background: var(--success-soft); color: var(--success); }
+    .tag-orange { background: var(--warning-soft); color: var(--warning); }
+    .tag-red { background: var(--danger-soft); color: var(--danger); }
+    .tag-purple { background: var(--purple-soft); color: var(--purple); }
+    .tag-gray { background: var(--bg-hover); color: var(--text-2); }
+
+    /* Grids */
+    .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+    .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .grid-4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+    @media (max-width: 960px) {
+      .grid-3, .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 680px) {
+      .grid-3, .grid-2, .grid-4 { grid-template-columns: 1fr; }
+    }
+
+    /* 3-System Architecture */
+    .arch-flow {
+      display: grid;
+      grid-template-columns: 1fr 36px 1.25fr 36px 1fr;
+      align-items: stretch;
+      gap: 8px;
+      margin-bottom: 18px;
+    }
+    @media (max-width: 900px) {
+      .arch-flow { grid-template-columns: 1fr; }
+      .arch-arrow { transform: rotate(90deg); height: 28px; }
+    }
+    .arch-box {
+      background: var(--bg-subtle);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .arch-box.highlight {
+      border-color: var(--primary);
+      background: var(--primary-soft);
+    }
+    .arch-box h3 {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .arch-box ul {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--text-2);
+      font-size: 13px;
+    }
+    .arch-box li { margin-bottom: 4px; }
+    .arch-arrow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--primary);
+      font-size: 20px;
+      font-weight: 700;
+    }
+
+    /* Invariant Tiles */
+    .tile {
+      background: var(--bg-subtle);
+      border-radius: var(--radius-sm);
+      padding: 14px 16px;
+      border-left: 3px solid var(--primary);
+    }
+    .tile.warn { border-left-color: var(--warning); }
+    .tile.green { border-left-color: var(--success); }
+    .tile.purple { border-left-color: var(--purple); }
+    .tile strong { display: block; font-size: 13px; margin-bottom: 4px; }
+    .tile span { font-size: 12.5px; color: var(--text-2); }
+
+    /* Interactive Workflow Stepper */
+    .pipeline-steps {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    @media (max-width: 900px) {
+      .pipeline-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    .step-btn {
+      text-align: left;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 12px 14px;
+      cursor: pointer;
+      color: var(--text-1);
+      font-family: inherit;
+      transition: all 0.15s;
+      position: relative;
+    }
+    .step-btn:hover { border-color: var(--primary); }
+    .step-btn.active {
+      background: var(--primary-soft);
+      border-color: var(--primary);
+      box-shadow: 0 0 0 1px var(--primary);
+    }
+    .step-kicker {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-3);
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+    .step-btn.active .step-kicker { color: var(--primary); }
+    .step-name { font-size: 14px; font-weight: 600; margin: 2px 0 6px; }
+    .step-brief { font-size: 12px; color: var(--text-2); line-height: 1.45; }
+
+    .step-detail {
+      background: var(--bg-subtle);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 18px 20px;
+    }
+    .step-detail-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .step-detail-head h3 { margin: 0; font-size: 15px; }
+    .state-chain {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+    .state-arrow { color: var(--text-3); font-size: 12px; }
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+    @media (max-width: 720px) { .detail-grid { grid-template-columns: 1fr; } }
+    .detail-box {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 12px 14px;
+    }
+    .detail-box h4 {
+      margin: 0 0 6px;
+      font-size: 13px;
+      color: var(--text-1);
+    }
+    .detail-box ul {
+      margin: 0;
+      padding-left: 18px;
+      font-size: 12.5px;
+      color: var(--text-2);
+    }
+    .detail-box li { margin-bottom: 4px; }
+
+    /* Formula Hero Box */
+    .formula-box {
+      background: var(--bg-subtle);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 20px;
+      text-align: center;
+      margin-bottom: 18px;
+    }
+    .formula-main {
+      font-family: var(--font-mono);
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--primary);
+      margin-bottom: 14px;
+      word-break: break-word;
+    }
+    .formula-parts {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      text-align: left;
+    }
+    @media (max-width: 900px) { .formula-parts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    .f-part {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+    }
+    .f-part .f-sym {
+      font-family: var(--font-mono);
+      font-weight: 700;
+      font-size: 13px;
+      color: var(--primary);
+    }
+    .f-part .f-expr {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-1);
+      margin: 3px 0;
+    }
+    .f-part .f-desc { font-size: 11.5px; color: var(--text-3); }
+
+    /* Tables */
+    .table-wrap { overflow-x: auto; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th, td {
+      padding: 10px 12px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    th {
+      background: var(--bg-subtle);
+      font-weight: 600;
+      color: var(--text-1);
+      white-space: nowrap;
+    }
+    td { color: var(--text-2); }
+    code {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      background: var(--bg-hover);
+      color: var(--text-1);
+      padding: 1px 5px;
+      border-radius: 3px;
+    }
+
+    /* Priority Hierarchy Ladder */
+    .ladder {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      padding: 14px 16px;
+      background: var(--bg-subtle);
+      border-radius: var(--radius-md);
+      margin-top: 14px;
+    }
+    .ladder-step {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 8px 12px;
+      font-size: 12.5px;
+    }
+    .ladder-step strong { color: var(--text-1); }
+    .ladder-step small { display: block; color: var(--text-3); font-size: 11.5px; }
+
+    /* Interactive Calculator */
+    .calc-layout {
+      display: grid;
+      grid-template-columns: 1.35fr 0.9fr;
+      gap: 20px;
+      align-items: start;
+    }
+    @media (max-width: 960px) { .calc-layout { grid-template-columns: 1fr; } }
+    .presets {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .preset-btn {
+      border: 1px solid var(--border);
+      background: var(--bg-subtle);
+      color: var(--text-1);
+      padding: 6px 12px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      font-size: 12.5px;
+      font-family: inherit;
+      transition: all 0.15s;
+    }
+    .preset-btn:hover { border-color: var(--primary); color: var(--primary); }
+
+    .dim-group {
+      background: var(--bg-subtle);
+      border-radius: var(--radius-md);
+      padding: 14px 16px;
+      margin-bottom: 12px;
+    }
+    .dim-group-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+      font-weight: 600;
+      font-size: 13.5px;
+    }
+    .slider-row {
+      display: grid;
+      grid-template-columns: 150px 1fr 42px;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .slider-row:last-child { margin-bottom: 0; }
+    .slider-label { font-size: 12.5px; color: var(--text-2); }
+    .slider-val {
+      font-family: var(--font-mono);
+      font-weight: 600;
+      text-align: right;
+      color: var(--primary);
+    }
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--primary);
+      cursor: pointer;
+    }
+    .switch-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+      font-size: 12.5px;
+      color: var(--text-2);
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px dashed var(--border);
+    }
+
+    /* Result Panel */
+    .result-panel {
+      position: sticky;
+      top: 76px;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 20px;
+    }
+    .score-hero {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 16px;
+    }
+    .score-value {
+      font-family: var(--font-mono);
+      font-size: 40px;
+      font-weight: 700;
+      line-height: 1.1;
+      font-variant-numeric: tabular-nums;
+    }
+    .priority-badge {
+      font-size: 22px;
+      font-weight: 700;
+      padding: 6px 18px;
+      border-radius: var(--radius-sm);
+    }
+    .p-P0 { background: var(--danger-soft); color: var(--danger); }
+    .p-P1 { background: var(--warning-soft); color: var(--warning); }
+    .p-P2 { background: var(--primary-soft); color: var(--primary); }
+    .p-P3 { background: var(--bg-hover); color: var(--text-2); }
+
+    .breakdown-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .bd-item {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+    }
+    .bd-item .k { font-size: 11.5px; color: var(--text-3); }
+    .bd-item .v { font-family: var(--font-mono); font-size: 16px; font-weight: 600; color: var(--text-1); }
+
+    .live-formula {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-2);
+      margin-bottom: 14px;
+      word-break: break-all;
+    }
+    .threshold-inputs {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .threshold-inputs label {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 11.5px;
+      color: var(--text-3);
+    }
+    .threshold-inputs input {
+      width: 100%;
+      padding: 5px 8px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--bg-card);
+      color: var(--text-1);
+      font-family: var(--font-mono);
+      font-size: 13px;
+    }
+    .safety-alert {
+      display: none;
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-radius: var(--radius-sm);
+      background: var(--danger-soft);
+      color: var(--danger);
+      font-size: 12.5px;
+      font-weight: 500;
+    }
+    .safety-alert.show { display: block; }
+
+    .footer {
+      text-align: center;
+      color: var(--text-3);
+      font-size: 12px;
+      padding-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <header class="navbar">
+    <div class="brand">
+      <span class="brand-icon">RQ</span>
+      <span>RQ-Sys 需求平台原理图解</span>
+    </div>
+    <nav class="nav-links" aria-label="章节导航">
+      <a class="nav-link" href="#architecture">三系统边界</a>
+      <a class="nav-link" href="#workflow">端到端工作流</a>
+      <a class="nav-link" href="#scoring">U/M/S/C 评分原理</a>
+      <a class="nav-link" href="#simulator">实时评分模拟器</a>
+      <a class="nav-link" href="#rules-evolution">规则演进与隔离</a>
+    </nav>
+    <button class="theme-btn" id="themeToggle" type="button">切换暗色</button>
+  </header>
+
+  <main class="container">
+    <!-- Hero -->
+    <section class="hero">
+      <div>
+        <h1>RQ-Sys 需求流转工作流 &amp; U/M/S/C 评分机制全景图</h1>
+        <p>
+          面向迈金室外产品（码表软固件）团队的内部需求工作台：打通 <strong>Teambition 只读事实源</strong>、<strong>RQ-Sys 状态与 AI 评分中枢</strong> 与 <strong>飞书多维表格（Base）PM 协作通知面</strong>，实现可审计、不互相阻塞、AI 辅助但人类拍板的标准化需求分诊。
+        </p>
+        <div class="hero-badges">
+          <span class="tag tag-blue">产品需求池 + 集团需求池双池隔离</span>
+          <span class="tag tag-green">四阶段独立状态机（互不阻塞）</span>
+          <span class="tag tag-purple">AI 给 9 项输入与引证 · 服务端确定性算分</span>
+          <span class="tag tag-orange">写前 PM 快照保护</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 1. Architecture & Ownership -->
+    <section class="card" id="architecture">
+      <div class="card-header">
+        <div>
+          <h2 class="card-title"><span class="section-num">1</span> 三系统权责边界与核心铁律</h2>
+          <p class="card-sub">RQ-Sys 不是替代 Teambition 或飞书多维表格，而是三者之间职责清晰、单向权威的流转中枢</p>
+        </div>
+        <span class="tag tag-gray">唯一身份键：(Teambition 项目 ID, 需求 ID)</span>
+      </div>
+
+      <div class="arch-flow">
+        <div class="arch-box">
+          <h3>① 需求事实源 <span class="tag tag-blue">只读权威</span></h3>
+          <ul>
+            <li><strong>Teambition</strong>：主事实源，RQ-Sys <strong>绝不回写</strong> Teambition。</li>
+            <li><strong>Web 手工新建 / 聊天粘贴</strong>：支持 AI 抽取草稿（PRD-26 脱敏保留展示用提出人）。</li>
+            <li><strong>飞书收集表</strong>：多维表格表单收录（<code>base_form</code>）。</li>
+            <li><strong>双需求池隔离</strong>：产品池（4 来源）与集团池（8 人执行人白名单过滤，独立 Base）。</li>
+          </ul>
+        </div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-box highlight">
+          <h3>② RQ-Sys 中枢 <span class="tag tag-purple">PostgreSQL + AI</span></h3>
+          <ul>
+            <li><strong>工作流状态机</strong>：独立维护拉取、AI 分析、负责人匹配、推送 4 条状态。</li>
+            <li><strong>只追加快照</strong>：按允许字段白名单哈希对比，仅变化时生成新源版本。</li>
+            <li><strong>版本化 AI 与评分</strong>：模块建议、六层人群、U/M/S/C 评分版本、需求评估、PRD Prompt。</li>
+            <li><strong>运维保障</strong>：幂等重试、租约心跳、写前 PM 快照、审计日志、逻辑删除回收站。</li>
+          </ul>
+        </div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-box">
+          <h3>③ 飞书多维表格 Base <span class="tag tag-green">PM 协作面</span></h3>
+          <ul>
+            <li>承载 <strong>PM 处理状态</strong>（待处理/已采纳/已调整/暂不处理）与 PM 确认结论。</li>
+            <li>由多维表格自动化负责 <strong>干系人通知</strong>（批量首推静默，分配负责人后通知）。</li>
+            <li>MVP 阶段 Base PM 处理状态 <strong>不回写 Web</strong>，避免双写冲突。</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="grid-4">
+        <div class="tile">
+          <strong>四阶段独立，永不互相卡死</strong>
+          <span>AI 分析失败、置信度低、规则未发布（优先级留空）或无负责人，均<strong>不会阻断</strong>需求推送至飞书 Base。</span>
+        </div>
+        <div class="tile green">
+          <strong>AI 建议与人工确认严格隔离</strong>
+          <span>AI 重跑只会产生新的建议版本，绝不静默覆盖 PM 已确认的评分、人工优先级覆写或 Base 中的处理结论。</span>
+        </div>
+        <div class="tile warn">
+          <strong>实质变更先快照 PM 状态</strong>
+          <span>仅当标题/描述/范围/验收标准/附件变化时，先快照 Base 中 PM 状态与备注，再更新行、重跑 AI 并复位「待处理」。</span>
+        </div>
+        <div class="tile purple">
+          <strong>PII 脱敏防线</strong>
+          <span>送入大模型前自动掩码手机号、邮箱、工号、密钥等敏感信息；附件原文与凭据绝不发送给模型。</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. End-to-End Workflow -->
+    <section class="card" id="workflow">
+      <div class="card-header">
+        <div>
+          <h2 class="card-title"><span class="section-num">2</span> 端到端需求工作流（点击各阶段查看状态与规则）</h2>
+          <p class="card-sub">从需求进入系统到进入飞书协作、深度评估与 PRD 生成的完整生命周期</p>
+        </div>
+        <span class="tag tag-blue">交互视图：点击下方任意阶段卡片</span>
+      </div>
+
+      <div class="pipeline-steps" id="pipelineSteps">
+        <button class="step-btn active" data-step="0" type="button">
+          <div class="step-kicker">Stage 1 · pull</div>
+          <div class="step-name">需求收录与去重</div>
+          <div class="step-brief">TB 定时/手动拉取 + Web/聊天粘贴/表单汇入统一池</div>
+        </button>
+        <button class="step-btn" data-step="1" type="button">
+          <div class="step-kicker">Stage 2 · analysis</div>
+          <div class="step-name">AI 初审与评分</div>
+          <div class="step-brief">脱敏后生成模块建议、六层人群与 9 项评分依据</div>
+        </button>
+        <button class="step-btn" data-step="2" type="button">
+          <div class="step-kicker">Stage 3 · owner</div>
+          <div class="step-name">负责人映射</div>
+          <div class="step-brief">将 TB 执行人/人工指派对应到飞书账号</div>
+        </button>
+        <button class="step-btn" data-step="3" type="button">
+          <div class="step-kicker">Stage 4 · push</div>
+          <div class="step-name">Base 幂等推送</div>
+          <div class="step-brief">写前快照 PM 字段，按平台键幂等创建或更新</div>
+        </button>
+        <button class="step-btn" data-step="4" type="button">
+          <div class="step-kicker">Stage 5 · lifecycle</div>
+          <div class="step-name">评估 · PRD · 回收站</div>
+          <div class="step-brief">人工改分/覆写、按需需求评估、PRD Prompt 与个人管理</div>
+        </button>
+      </div>
+
+      <div class="step-detail" id="stepDetail"></div>
+    </section>
+
+    <!-- 3. U/M/S/C Scoring Mechanism -->
+    <section class="card" id="scoring">
+      <div class="card-header">
+        <div>
+          <h2 class="card-title"><span class="section-num">3</span> U/M/S/C 评分机制与核心原理</h2>
+          <p class="card-sub">AI 负责客观提取 9 项基础因子与原文引证，服务端用确定性数学公式计算综合分与 P0–P3</p>
+        </div>
+        <span class="tag tag-purple">模型不输出最终优先级 · 服务端唯一算分</span>
+      </div>
+
+      <div class="formula-box">
+        <div class="formula-main">
+          Score = round₂( [ U × α × (1 + 0.6 × M + 0.4 × S) ] ÷ C )
+        </div>
+        <div class="formula-parts">
+          <div class="f-part">
+            <div class="f-sym">U（用户价值）</div>
+            <div class="f-expr">pain × frequency</div>
+            <div class="f-desc">痛点(1-5) × 频次(1-5)，取值 1–25，决定需求基本盘</div>
+          </div>
+          <div class="f-part">
+            <div class="f-sym">α（证据/安全系数）</div>
+            <div class="f-expr">0.5 – 2.0（步长 0.1）</div>
+            <div class="f-desc">当前自动取值：安全标记=1.5，其余=1.0；PM 可手调</div>
+          </div>
+          <div class="f-part">
+            <div class="f-sym">M（市场乘数 ×0.6）</div>
+            <div class="f-expr">sellingPoint × competitor</div>
+            <div class="f-desc">卖点(1-3) × 竞品差异(1-3)，取值 1–9，放大商业价值</div>
+          </div>
+          <div class="f-part">
+            <div class="f-sym">S（战略乘数 ×0.4）</div>
+            <div class="f-expr">roadmap × dependency</div>
+            <div class="f-desc">路线图(1-3) × 战略杠杆(1-3)，取值 1–9，体现长期价值</div>
+          </div>
+          <div class="f-part">
+            <div class="f-sym">C（成本瓶颈除数）</div>
+            <div class="f-expr">max(work, risk, res)</div>
+            <div class="f-desc">工作量/风险/资源(1-5)取<strong>最大值</strong>（木桶短板原则）</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid-3" style="margin-bottom: 18px;">
+        <div class="tile">
+          <strong>为什么除以 MAX(C) 而不是求平均？</strong>
+          <span>遵循「木桶短板」原则：哪怕工作量只有 2 分，但技术风险高达 5 分（极高风险），整体投入性价比仍被最高瓶颈拖累。</span>
+        </div>
+        <div class="tile purple">
+          <strong>防 AI 幻觉：NFKC 原文引证强校验</strong>
+          <span>9 项输入每项都必须附带 <code>basis</code>。若 <code>assumption=false</code>，所引原文片段必须真实存在于本次源文本中，否则整条评分拒收并进入重试。</span>
+        </div>
+        <div class="tile warn">
+          <strong>为什么当前默认 α=1.0 而非 0.8？</strong>
+          <span>VOC/NPS 跨渠道数据尚未接入，不能对所有单条需求一刀切打 8 折；因此服务端强制确定性取值：<code>safetyFlag=true → 1.5</code>，其余 <code>1.0</code>。</span>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>维度</th>
+              <th>输入因子（字段名）</th>
+              <th>取值范围</th>
+              <th>核心打分刻度说明</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="tag tag-blue">U 用户价值</span></td>
+              <td>痛点强度 <code>user.pain</code></td>
+              <td><code>1 – 5</code> 整数</td>
+              <td>1=几乎无感 · 3=明显不便 · 4=阻碍核心目标 · 5=涉及骑行安全或不可逆后果</td>
+            </tr>
+            <tr>
+              <td><span class="tag tag-blue">U 用户价值</span></td>
+              <td>发生频次 <code>user.frequency</code></td>
+              <td><code>1 – 5</code> 整数</td>
+              <td>1=极少发生 · 3=每月遇到 · 5=几乎每次骑行/每天发生</td>
+            </tr>
+            <tr>
+              <td><span class="tag tag-green">M 市场价值</span></td>
+              <td>卖点强度 <code>market.sellingPoint</code></td>
+              <td><code>1 – 3</code> 整数</td>
+              <td>1=无对外卖点 · 2=可作对比支撑 · 3=核心差异化卖点</td>
+            </tr>
+            <tr>
+              <td><span class="tag tag-green">M 市场价值</span></td>
+              <td>竞品差异 <code>market.competitor</code></td>
+              <td><code>1 – 3</code> 整数</td>
+              <td>1=未核实/无差异 · 2=与竞品持平 · 3=明显领先竞品</td>
+            </tr>
+            <tr>
+              <td><span class="tag tag-purple">S 战略价值</span></td>
+              <td>Roadmap 匹配 <code>strategy.roadmap</code></td>
+              <td><code>1 – 3</code> 整数</td>
+              <td>1=未规划/无证据 · 2=候选或中期规划 · 3=当前版本/战略重点</td>
+            </tr>
+            <tr>
+              <td><span class="tag tag-purple">S 战略价值</span></td>
+              <td>战略依赖/杠杆 <code>strategy.dependency</code></td>
+              <td><code>1 – 3</code> 整数</td>
+              <td>1=独立单点 · 2=复用现有平台 · 3=关键战略能力/跨产品协同</td>
+            </tr>
+            <tr>
+              <td><span class="tag tag-orange">C 实施成本</span></td>
+              <td>工作量 <code>cost.workload</code></td>
+              <td><code>1 – 5</code> 整数</td>
+              <td>1=极小改动 · 3=常规版本需求 · 5=超大跨端工程（越高成本越大）</td>
+            </tr>
+            <tr>
+              <td><span class="tag tag-orange">C 实施成本</span></td>
+              <td>技术风险 <code>cost.technicalRisk</code></td>
+              <td><code>1 – 5</code> 整数</td>
+              <td>1=方案成熟 · 3=中等联调风险 · 5=底层固件/协议高风险</td>
+            </tr>
+            <tr>
+              <td><span class="tag tag-orange">C 实施成本</span></td>
+              <td>资源占用 <code>cost.resource</code></td>
+              <td><code>1 – 5</code> 整数</td>
+              <td>1=单端自闭环 · 3=需少量协同 · 5=重度占用硬件/多团队稀缺资源</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="ladder" aria-label="生效优先级裁决顺序">
+        <strong style="font-size: 13px; margin-right: 4px;">生效优先级裁决顺序：</strong>
+        <div class="ladder-step">
+          <strong>① 人工优先级覆写</strong>
+          <small>PM 显式填理由直接指定 P0–P3（最高优先）</small>
+        </div>
+        <span class="state-arrow">&gt;</span>
+        <div class="ladder-step">
+          <strong>② 人工改分版本 (manual)</strong>
+          <small>PM 修改 9 项/α 后由服务端公式重算</small>
+        </div>
+        <span class="state-arrow">&gt;</span>
+        <div class="ladder-step">
+          <strong>③ AI 评分版本 (ai / ai_applied)</strong>
+          <small>AI 9 项输入 + 服务端确定性 α 与公式</small>
+        </div>
+        <span class="state-arrow">&gt;</span>
+        <div class="ladder-step">
+          <strong>④ 留空（规则未发布）</strong>
+          <small>未发布校准规则时不伪造 P，仅展示建议</small>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4. Interactive Simulator -->
+    <section class="card" id="simulator">
+      <div class="card-header">
+        <div>
+          <h2 class="card-title"><span class="section-num">4</span> 交互式 U/M/S/C 评分实时模拟器</h2>
+          <p class="card-sub">拖动滑块或点击下方典型码表需求案例，直观体验服务端公式如何算出综合分与 P0–P3</p>
+        </div>
+        <span class="tag tag-green">与 apps/api/src/analysis/scoring.ts 完全一致</span>
+      </div>
+
+      <div class="presets">
+        <button class="preset-btn" type="button" data-preset="safety">案例 A：骑行途中异常重启（安全标记 P0）</button>
+        <button class="preset-btn" type="button" data-preset="feature">案例 B：高差异化路线爬坡引导（核心卖点 P1）</button>
+        <button class="preset-btn" type="button" data-preset="ux">案例 C：夜间车灯循环交互细节（单点优化 P3）</button>
+        <button class="preset-btn" type="button" data-preset="costly">案例 D：高价值但底层高风险重构（成本 C 制约）</button>
+      </div>
+
+      <div class="calc-layout">
+        <div>
+          <div class="dim-group">
+            <div class="dim-group-head">
+              <span>U · 用户价值（pain × frequency）</span>
+              <span class="tag tag-blue" id="badgeU">U = 12</span>
+            </div>
+            <div class="slider-row">
+              <span class="slider-label">痛点强度 pain (1–5)</span>
+              <input type="range" id="pain" min="1" max="5" step="1" value="3" />
+              <span class="slider-val" id="val-pain">3</span>
+            </div>
+            <div class="slider-row">
+              <span class="slider-label">发生频次 frequency (1–5)</span>
+              <input type="range" id="frequency" min="1" max="5" step="1" value="4" />
+              <span class="slider-val" id="val-frequency">4</span>
+            </div>
+            <div class="slider-row">
+              <span class="slider-label">修正系数 α (0.5–2.0)</span>
+              <input type="range" id="alpha" min="0.5" max="2.0" step="0.1" value="1.0" />
+              <span class="slider-val" id="val-alpha">1.0</span>
+            </div>
+            <div class="switch-row">
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                <input type="checkbox" id="safetyFlag" />
+                <span>涉及安全/事故（<code>safetyFlag=true</code>，自动切换 α = 1.5）</span>
+              </label>
+              <span style="font-size:12px;color:var(--text-3);">手动拉动 α 可模拟 PM 改分</span>
+            </div>
+          </div>
+
+          <div class="dim-group">
+            <div class="dim-group-head">
+              <span>M · 市场价值（sellingPoint × competitor，权重 0.6）</span>
+              <span class="tag tag-green" id="badgeM">M = 4</span>
+            </div>
+            <div class="slider-row">
+              <span class="slider-label">卖点强度 sellingPoint (1–3)</span>
+              <input type="range" id="sellingPoint" min="1" max="3" step="1" value="2" />
+              <span class="slider-val" id="val-sellingPoint">2</span>
+            </div>
+            <div class="slider-row">
+              <span class="slider-label">竞品差异 competitor (1–3)</span>
+              <input type="range" id="competitor" min="1" max="3" step="1" value="2" />
+              <span class="slider-val" id="val-competitor">2</span>
+            </div>
+          </div>
+
+          <div class="dim-group">
+            <div class="dim-group-head">
+              <span>S · 战略价值（roadmap × dependency，权重 0.4）</span>
+              <span class="tag tag-purple" id="badgeS">S = 4</span>
+            </div>
+            <div class="slider-row">
+              <span class="slider-label">Roadmap 匹配 (1–3)</span>
+              <input type="range" id="roadmap" min="1" max="3" step="1" value="2" />
+              <span class="slider-val" id="val-roadmap">2</span>
+            </div>
+            <div class="slider-row">
+              <span class="slider-label">战略杠杆 dependency (1–3)</span>
+              <input type="range" id="dependency" min="1" max="3" step="1" value="2" />
+              <span class="slider-val" id="val-dependency">2</span>
+            </div>
+          </div>
+
+          <div class="dim-group" style="margin-bottom:0;">
+            <div class="dim-group-head">
+              <span>C · 实施成本（取三项最大值 MAX）</span>
+              <span class="tag tag-orange" id="badgeC">C = 3</span>
+            </div>
+            <div class="slider-row">
+              <span class="slider-label">工作量 workload (1–5)</span>
+              <input type="range" id="workload" min="1" max="5" step="1" value="3" />
+              <span class="slider-val" id="val-workload">3</span>
+            </div>
+            <div class="slider-row">
+              <span class="slider-label">技术风险 technicalRisk (1–5)</span>
+              <input type="range" id="technicalRisk" min="1" max="5" step="1" value="2" />
+              <span class="slider-val" id="val-technicalRisk">2</span>
+            </div>
+            <div class="slider-row">
+              <span class="slider-label">资源占用 resource (1–5)</span>
+              <input type="range" id="resource" min="1" max="5" step="1" value="2" />
+              <span class="slider-val" id="val-resource">2</span>
+            </div>
+          </div>
+        </div>
+
+        <aside class="result-panel">
+          <div class="score-hero">
+            <div>
+              <div style="font-size:12px;color:var(--text-3);margin-bottom:4px;">服务端计算综合分</div>
+              <div class="score-value" id="resScore">20.00</div>
+            </div>
+            <div class="priority-badge p-P2" id="resPriority">P2</div>
+          </div>
+
+          <div class="breakdown-grid">
+            <div class="bd-item">
+              <div class="k">用户调整分 U_adj = U × α</div>
+              <div class="v" id="resUAdj">12.0</div>
+            </div>
+            <div class="bd-item">
+              <div class="k">价值放大系数 (1+0.6M+0.4S)</div>
+              <div class="v" id="resMultiplier">5.00</div>
+            </div>
+            <div class="bd-item">
+              <div class="k">分子 U_adj × 放大系数</div>
+              <div class="v" id="resNumerator">60.00</div>
+            </div>
+            <div class="bd-item">
+              <div class="k">成本瓶颈 C = max(...)</div>
+              <div class="v" id="resCost">3</div>
+            </div>
+          </div>
+
+          <div class="live-formula" id="liveFormula"></div>
+
+          <div style="font-size:12.5px;font-weight:600;margin-bottom:4px;">
+            优先级分档阈值（支持模拟 v2 固定阈值 / v3 分位校准阈值）
+          </div>
+          <div class="threshold-inputs">
+            <label>P0 下限 (≥)<input type="number" id="thP0" value="45" min="0" step="1" /></label>
+            <label>P1 下限 (≥)<input type="number" id="thP1" value="25" min="0" step="1" /></label>
+            <label>P2 下限 (≥)<input type="number" id="thP2" value="10" min="0" step="1" /></label>
+          </div>
+          <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="preset-btn" type="button" id="btnV2">恢复 v2 固定阈值 (45/25/10)</button>
+            <button class="preset-btn" type="button" id="btnV3Sample">模拟 v3 分位阈值 (36/20/9)</button>
+          </div>
+
+          <div class="safety-alert" id="safetyAlert">
+            安全复核提示：<code>safetyFlag = true</code>，该需求涉及安全/不可逆风险，建议 PM Leader 优先人工复核（系统按 α=1.5 放大权重，但不绕过公式直接硬写 P0）。
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- 5. Rule Versions & Beta Isolation -->
+    <section class="card" id="rules-evolution">
+      <div class="card-header">
+        <div>
+          <h2 class="card-title"><span class="section-num">5</span> 评分规则版本演进 &amp; 次级评估工具隔离</h2>
+          <p class="card-sub">为什么保留版本化规则且不自动回算旧记录？RICE 与 Kano 在平台里扮演什么角色？</p>
+        </div>
+      </div>
+
+      <div class="table-wrap" style="margin-bottom: 16px;">
+        <table>
+          <thead>
+            <tr>
+              <th>规则版本</th>
+              <th>计算方式</th>
+              <th>分档阈值</th>
+              <th>适用与兼容策略</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="tag tag-gray">v1 旧规则</span></td>
+              <td>AI 输出四维档位（强/中/弱），服务端查表映射数字求和</td>
+              <td>规则内自定义 P0/P1/P2</td>
+              <td>仅保留历史读取兼容；已有 v2/v3 发布时禁止再发布 v1 覆盖</td>
+            </tr>
+            <tr>
+              <td><span class="tag tag-blue">umsc_weighted_v2</span></td>
+              <td>9 项整数输入 + α，按 <code>U×α×(1+0.6M+0.4S)/C</code> 计算</td>
+              <td>固定 <code>45 / 25 / 10</code></td>
+              <td>需要非空校准证据（<code>validationEvidence</code>）方可生效，不自动回算历史</td>
+            </tr>
+            <tr>
+              <td><span class="tag tag-purple">umsc_weighted_v3</span></td>
+              <td>与 v2 <strong>完全相同的公式</strong></td>
+              <td>按当前需求池分数分位校准的可配置 <code>p0 ≥ p1 ≥ p2</code></td>
+              <td>上线 Gate G2 推荐版本；解决固定阈值下各档位分布偏斜问题</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="grid-2">
+        <div class="tile green">
+          <strong>RICE &amp; Kano（详情页次级 Beta 入口）</strong>
+          <span>均需 PM <strong>手动触发</strong>，与主流水线和主优先级完全隔离——绝不改写 U/M/S/C 分数、不触发 Base 推送、也不影响通知。RICE 用于人工草稿定量试算，Kano 用于基于访谈证据的 AI 假设分类报告。</span>
+        </div>
+        <div class="tile">
+          <strong>版本不可变与不静默回算</strong>
+          <span>每次规则升级仅作用于新分析或人工重跑；旧需求保留其分析时的规则版本 FK 与评分历史快照，确保任何时候都能复盘「当初为什么是 P1」。</span>
+        </div>
+      </div>
+    </section>
+
+    <footer class="footer">
+      RQ-Sys 平台架构与评分机制可视化说明 · 基于项目真实源码（<code>apps/api/src/analysis/scoring.ts</code>、<code>priority-rule.ts</code>、<code>domain/workflow.ts</code>）整理
+    </footer>
+  </main>
+
+  <script>
+    // 1. Theme Toggle
+    const themeBtn = document.getElementById("themeToggle");
+    themeBtn.addEventListener("click", () => {
+      const dark = document.body.classList.toggle("dark");
+      themeBtn.textContent = dark ? "切换亮色" : "切换暗色";
+    });
+
+    // 2. Interactive Workflow Steps
+    const STEPS = [
+      {
+        title: "Stage 1 · 需求收录与重复判定（pull）",
+        tag: "多源汇入 · 幂等去重",
+        states: [
+          { label: "pending 待同步", cls: "tag-gray" },
+          { label: "running 同步中", cls: "tag-blue" },
+          { label: "synced 已同步 (TB)", cls: "tag-green" },
+          { label: "collected 已收录 (Web/表单)", cls: "tag-green" },
+          { label: "failed 同步失败", cls: "tag-red" },
+        ],
+        leftTitle: "收录方式与身份去重",
+        leftItems: [
+          "支持 4 类来源：Teambition 定时/手动同步、Web 手工新建、聊天记录粘贴 AI 抽草稿（PRD-26）、飞书多维表格收集表。",
+          "严格按 (source_project_id, source_requirement_id) 文本键去重，永不按标题或浮动序号去重。",
+          "集团需求池按 8 人执行人白名单过滤，与产品需求池数据隔离，共享全局不复用 RQ-###### 展示编号。",
+          "仅允许白名单 field_map 字段进入标准化快照，源内容哈希未变时不重复生成版本。"
+        ],
+        rightTitle: "重复处理闸口（processing_state）",
+        rightItems: [
+          "系统自动检测同池标题归一化重复，标记为「疑似重复」（不自动排除）。",
+          "PM 在详情页人工判定为 suppressed_duplicate 或 suppressed_ignored 后，该需求保留记录但不再进入 AI 分析、Base 推送与通知。",
+          "排除操作随时支持撤销，并可同步在 Base 中打标（Q2 重复标记）。"
+        ]
+      },
+      {
+        title: "Stage 2 · AI 辅助分析与 U/M/S/C 评分（analysis）",
+        tag: "脱敏输入 · 原文引证校验",
+        states: [
+          { label: "pending 待分析", cls: "tag-gray" },
+          { label: "running 分析中", cls: "tag-blue" },
+          { label: "analyzed 已分析", cls: "tag-green" },
+          { label: "failed_retryable 可重试失败", cls: "tag-orange" },
+        ],
+        leftTitle: "AI 输出内容与护栏",
+        leftItems: [
+          "送模前自动执行 PII 掩码（脱敏手机号、邮箱、ID、Token/密码），绝不发送附件原文。",
+          "模块建议严格受控于 Web 维护的功能模块词典，无法可靠匹配时返回「无法识别」。",
+          "同步产出六层人群标签（L1–L6）、9 项评分输入、逐项原文证据/假设标记、安全标记与整体置信度。",
+          "所有非假设依据必须通过 NFKC 归一化原文子串校验，拒绝编造证据。"
+        ],
+        rightTitle: "失败隔离与版本保护",
+        rightItems: [
+          "服务端使用固定公式把 9 项输入 + α 换算为综合分与 P0–P3；模型自报优先级一律忽略。",
+          "AI 调用超时、限流或校验失败记为 failed_retryable，支持自动恢复队列与人工一键重试，不阻断 Base 推送。",
+          "AI 重跑只追加新的分析/评分建议版本，绝不覆盖 PM 已手动修改或覆写的优先级。"
+        ]
+      },
+      {
+        title: "Stage 3 · 负责人匹配（owner）",
+        tag: "分级匹配 · 允许空负责人",
+        states: [
+          { label: "pending_mapping 待匹配", cls: "tag-orange" },
+          { label: "auto_mapped 已自动匹配", cls: "tag-green" },
+          { label: "manually_mapped 已手动匹配", cls: "tag-green" },
+          { label: "not_required 无需负责人", cls: "tag-gray" },
+        ],
+        leftTitle: "匹配优先级（从高到低）",
+        leftItems: [
+          "① 需求级人工指派（manual_owner）：仅作用于当前需求，不污染全局人员映射表。",
+          "② Teambition 用户 ID 精确匹配：优先查 person_mappings.teambition_user_id。",
+          "③ 归一化唯一姓名回退：当 ID 未命中时，按人员页绑定的唯一姓名匹配飞书账号。",
+          "无法自动确定时停留在 pending_mapping，由操作人在详情页搜索并选定飞书用户。"
+        ],
+        rightTitle: "无负责人与变更保护",
+        rightItems: [
+          "Teambition 未指定负责人时标记为 not_required，依然可以推送到飞书多维表格（负责人字段留空，暂不触发通知）。",
+          "TB 侧未解析或为空的执行人绝不能清空飞书 Base 中 PM 已手工分配的负责人。",
+          "当需求已 manually_mapped 时，后续 TB 同步变更执行人不会重置其已手动匹配状态。"
+        ]
+      },
+      {
+        title: "Stage 4 · 飞书 Base 幂等推送与 PM 保护（push）",
+        tag: "写前快照 · 串行限流",
+        states: [
+          { label: "pending 待推送", cls: "tag-gray" },
+          { label: "running 推送中", cls: "tag-blue" },
+          { label: "pushed 已推送", cls: "tag-green" },
+          { label: "failed 推送失败", cls: "tag-red" },
+        ],
+        leftTitle: "幂等写入与防重机制",
+        leftItems: [
+          "按平台键 + TB 需求键双向查重，检测到跨键错配直接报 BaseKeyConflictError 阻止脏写。",
+          "使用分布式租约锁（system_flags）串行化同一需求的并发推送，不占用 DB 连接池。",
+          "所有 Base I/O 经过 RateLimitedBaseClient 串行限流；若外部写入成功但本地记账失败，记为 pushed_unrecorded 防止重推产生重复行。"
+        ],
+        rightTitle: "实质变更 vs 非实质变更",
+        rightItems: [
+          "实质源字段变化（标题/描述/范围/验收标准/附件）：必须先读取并持久化 Base PM 字段快照（读失败则中止写入），再更新行、重跑 AI 并将 Base PM 状态复位为「待处理」。",
+          "非实质变更（状态、时间戳、仅元数据变化）：单独处理，不重置 PM 处理结论。",
+          "通知由飞书 Base 自动化触发：批量首推静默，待匹配/空负责人分配后触发定向通知。"
+        ]
+      },
+      {
+        title: "Stage 5 · 深度评估 · PRD Prompt · 个人闭环",
+        tag: "按需触发 · 安全生命周期",
+        states: [
+          { label: "人工改分 / 覆写", cls: "tag-blue" },
+          { label: "按需需求评估", cls: "tag-purple" },
+          { label: "PRD Prompt 生成", cls: "tag-purple" },
+          { label: "我的需求 / 回收站", cls: "tag-green" },
+        ],
+        leftTitle: "从初审走向 PRD 落地",
+        leftItems: [
+          "PM 可在详情页补充「分析上下文」、微调 9 项评分与 α（附理由）、或显式覆写最终 P0–P3。",
+          "按需运行「需求评估」：输出可行性/盲区结论与可复制的调研 Prompt（带单运行态防重与用户限流）。",
+          "评估成功后可按需生成「PRD Prompt」，辅助快速起草结构化 PRD。"
+        ],
+        rightTitle: "我的需求与逻辑删除回收站",
+        rightItems: [
+          "「我的需求」按当前飞书身份汇总跨产品池/集团池归属自己的需求。",
+          "支持本人对自己的需求执行逻辑删除（deleted_at/deleted_by），移入个人回收站，不会物理删除也不删 Base 历史行。",
+          "回收站支持跨池一键还原，完整记录审计日志。"
+        ]
+      }
+    ];
+
+    const stepDetailEl = document.getElementById("stepDetail");
+    const stepBtns = document.querySelectorAll(".step-btn");
+
+    function renderStep(idx) {
+      const s = STEPS[idx];
+      stepBtns.forEach((b, i) => b.classList.toggle("active", i === idx));
+      const chainHtml = s.states
+        .map((st, i) => `<span class="tag ${st.cls}">${st.label}</span>${i < s.states.length - 1 ? '<span class="state-arrow">→</span>' : ''}`)
+        .join("");
+      stepDetailEl.innerHTML = `
+        <div class="step-detail-head">
+          <h3>${s.title}</h3>
+          <span class="tag tag-blue">${s.tag}</span>
+        </div>
+        <div class="state-chain">${chainHtml}</div>
+        <div class="detail-grid">
+          <div class="detail-box">
+            <h4>${s.leftTitle}</h4>
+            <ul>${s.leftItems.map((t) => `<li>${t}</li>`).join("")}</ul>
+          </div>
+          <div class="detail-box">
+            <h4>${s.rightTitle}</h4>
+            <ul>${s.rightItems.map((t) => `<li>${t}</li>`).join("")}</ul>
+          </div>
+        </div>
+      `;
+    }
+    stepBtns.forEach((btn) => btn.addEventListener("click", () => renderStep(Number(btn.dataset.step))));
+    renderStep(0);
+
+    // 3. Interactive U/M/S/C Scoring Simulator (exact parity with apps/api/src/analysis/scoring.ts)
+    const ids = ["pain", "frequency", "alpha", "sellingPoint", "competitor", "roadmap", "dependency", "workload", "technicalRisk", "resource"];
+    const els = Object.fromEntries(ids.map((id) => [id, document.getElementById(id)]));
+    const safetyEl = document.getElementById("safetyFlag");
+    const thP0 = document.getElementById("thP0");
+    const thP1 = document.getElementById("thP1");
+    const thP2 = document.getElementById("thP2");
+
+    function computeAndRender() {
+      const pain = Number(els.pain.value);
+      const frequency = Number(els.frequency.value);
+      const alpha = Number(els.alpha.value);
+      const sellingPoint = Number(els.sellingPoint.value);
+      const competitor = Number(els.competitor.value);
+      const roadmap = Number(els.roadmap.value);
+      const dependency = Number(els.dependency.value);
+      const workload = Number(els.workload.value);
+      const technicalRisk = Number(els.technicalRisk.value);
+      const resource = Number(els.resource.value);
+
+      ids.forEach((id) => {
+        document.getElementById("val-" + id).textContent = id === "alpha" ? alpha.toFixed(1) : String(els[id].value);
+      });
+
+      const U = pain * frequency;
+      const M = sellingPoint * competitor;
+      const S = roadmap * dependency;
+      const C = Math.max(workload, technicalRisk, resource);
+      const uAdj = Math.round(U * alpha * 10) / 10;
+      const multiplier = 1 + 0.6 * M + 0.4 * S;
+      const numerator = uAdj * multiplier;
+      const score = Math.round((numerator / C) * 100) / 100;
+
+      const p0 = Number(thP0.value) || 0;
+      const p1 = Number(thP1.value) || 0;
+      const p2 = Number(thP2.value) || 0;
+      const priority = score >= p0 ? "P0" : score >= p1 ? "P1" : score >= p2 ? "P2" : "P3";
+
+      document.getElementById("badgeU").textContent = `U = ${U}（U_adj = ${uAdj.toFixed(1)}）`;
+      document.getElementById("badgeM").textContent = `M = ${M}`;
+      document.getElementById("badgeS").textContent = `S = ${S}`;
+      document.getElementById("badgeC").textContent = `C = ${C}`;
+
+      document.getElementById("resScore").textContent = score.toFixed(2);
+      const pBadge = document.getElementById("resPriority");
+      pBadge.textContent = priority;
+      pBadge.className = `priority-badge p-${priority}`;
+
+      document.getElementById("resUAdj").textContent = uAdj.toFixed(1);
+      document.getElementById("resMultiplier").textContent = multiplier.toFixed(2);
+      document.getElementById("resNumerator").textContent = numerator.toFixed(2);
+      document.getElementById("resCost").textContent = String(C);
+      document.getElementById("liveFormula").textContent =
+        `score = round2( ${uAdj.toFixed(1)} × (1 + 0.6×${M} + 0.4×${S}) ÷ ${C} ) = ${score.toFixed(2)} → ${priority}`;
+
+      document.getElementById("safetyAlert").classList.toggle("show", safetyEl.checked);
+    }
+
+    ids.forEach((id) => els[id].addEventListener("input", computeAndRender));
+    safetyEl.addEventListener("change", () => {
+      els.alpha.value = safetyEl.checked ? "1.5" : "1.0";
+      computeAndRender();
+    });
+    [thP0, thP1, thP2].forEach((el) => el.addEventListener("input", computeAndRender));
+
+    document.getElementById("btnV2").addEventListener("click", () => {
+      thP0.value = 45; thP1.value = 25; thP2.value = 10;
+      computeAndRender();
+    });
+    document.getElementById("btnV3Sample").addEventListener("click", () => {
+      thP0.value = 36; thP1.value = 20; thP2.value = 9;
+      computeAndRender();
+    });
+
+    const PRESETS = {
+      safety: { pain: 5, frequency: 4, alpha: 1.5, safety: true, sellingPoint: 1, competitor: 2, roadmap: 3, dependency: 2, workload: 3, technicalRisk: 3, resource: 2 },
+      feature: { pain: 4, frequency: 4, alpha: 1.0, safety: false, sellingPoint: 3, competitor: 3, roadmap: 3, dependency: 2, workload: 3, technicalRisk: 3, resource: 3 },
+      ux: { pain: 3, frequency: 4, alpha: 0.8, safety: false, sellingPoint: 1, competitor: 1, roadmap: 1, dependency: 1, workload: 3, technicalRisk: 2, resource: 2 },
+      costly: { pain: 4, frequency: 4, alpha: 1.0, safety: false, sellingPoint: 2, competitor: 2, roadmap: 2, dependency: 2, workload: 2, technicalRisk: 5, resource: 2 },
+    };
+    document.querySelectorAll("[data-preset]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const p = PRESETS[btn.dataset.preset];
+        Object.keys(p).forEach((k) => {
+          if (k === "safety") { safetyEl.checked = p[k]; }
+          else if (els[k]) { els[k].value = String(p[k]); }
+        });
+        computeAndRender();
+      });
+    });
+
+    computeAndRender();
+  </script>
+</body>
+</html>
