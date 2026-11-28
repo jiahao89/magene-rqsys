@@ -2727,6 +2727,9 @@ describe("OpsPanel", () => {
     expect(screen.getByText("同步成功率")).toBeInTheDocument();
     expect(screen.getAllByText("100%").length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText(/分析失败码：AI_TIMEOUT×2/)).toBeInTheDocument();
+    // 运维的 N 是 duplicate + ignored 合计，只能用集合词「已排除」；不要再写成「已判定重复」。
+    expect(screen.getByText(/重复：已排除 2 · 疑似 1/)).toBeInTheDocument();
+    expect(screen.queryByText(/已判定重复/)).not.toBeInTheDocument();
     expect(screen.getByText("G1 · 正式 Base 全链路")).toBeInTheDocument();
     expect(screen.getByText("记录证据")).toBeInTheDocument();
   });

@@ -177,7 +177,7 @@ export function OpsPanel() {
         </ArcoGrid.Row>
         <p className="detail-note">
           负责人：自动 {metrics.owner.autoMapped} · 手工 {metrics.owner.manuallyMapped} · 待匹配 {metrics.owner.pendingMapping} · 无需 {metrics.owner.notRequired}；
-          重复：已判定重复 {metrics.duplicate.confirmedSuppressed} · 疑似 {metrics.duplicate.suspected}；
+          重复：已排除 {metrics.duplicate.confirmedSuppressed} · 疑似 {metrics.duplicate.suspected}；
           评分：AI 建议 {metrics.scoring.aiSuggested} · 人工修改 {metrics.scoring.manual} · 采用 AI {metrics.scoring.aiApplied}（采纳率 {opsRate(metrics.scoring.adoptionRate)}）
         </p>
         {metrics.analysis.failureCodes.length > 0 && <p className="detail-note">分析失败码：{metrics.analysis.failureCodes.map((item) => `${item.code}×${item.count}`).join("、")}</p>}
