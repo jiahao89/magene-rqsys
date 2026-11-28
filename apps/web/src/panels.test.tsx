@@ -63,8 +63,9 @@ describe("ScoringPanel (V02-S06)", () => {
       if (init?.method === "PUT") { body = JSON.parse(String(init.body)) as Record<string, unknown>; return jsonOk({ scoring: scoreVersion }); }
       return jsonOk({});
     });
-    render(<ScoringPanel requirementId="req-1" scoring={{ current: scoreVersion, aiSuggestion: null, history: [scoreVersion], formula: { text: "formula", thresholds: { p0: 45, p1: 25, p2: 10 } } }} onSaved={() => undefined} />);
-    expect(screen.getByText("6.40")).toBeInTheDocument();
+    const { container } = render(<ScoringPanel requirementId="req-1" scoring={{ current: scoreVersion, aiSuggestion: null, history: [scoreVersion], formula: { text: "formula", thresholds: { p0: 45, p1: 25, p2: 10 } } }} onSaved={() => undefined} />);
+    // Arco Statistic 把整数位/小数位拆成两个 span：按整体文本断言，顺带防「6.40.0」这类重复。
+    expect(container.querySelector(".req-score-section .arco-statistic")?.textContent).toBe("6.40");
     expect(screen.getByText("P3")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "编辑评分" }));
     fireEvent.change(screen.getByLabelText("评分 U 痛点强度"), { target: { value: "4" } });
@@ -684,6 +685,30 @@ describe("RequirementsPanel (ticket 17)", () => {
     expect(screen.getByText("AI 评分与优先级")).toBeInTheDocument();
     expect(screen.queryByText("AI 分析与建议")).not.toBeInTheDocument();
     expect(screen.getByText("U · 用户价值")).toBeInTheDocument();
+  });
+
+  it("renders a sub-1 score once in the DOM instead of duplicating the decimal (0.80, not 0.80.8)", async () => {
+    mockPanel({
+      detailBody: detail({
+        analysis: { module: "报表分析", confidence: "中", recommendations: {} },
+        scoring: {
+          current: {
+            id: "score-low", requirementId: "req-1", version: 2, status: "current", origin: "ai",
+            sourceVersion: 1, analysisVersion: 2, ruleVersionId: "rule-v2",
+            inputs: { user: { pain: 3, frequency: 4 }, market: { sellingPoint: 1, competitor: 1 }, strategy: { roadmap: 1, dependency: 1 }, cost: { workload: 3, technicalRisk: 2, resource: 2 } },
+            alpha: 0.8, score: 0.8, priority: "P3", scoreConfidence: "中", scoreConfidenceReason: "频次不足", safetyFlag: false,
+            basis: {}, rationale: null, actorId: null, changeReason: null, createdAt: "2026-10-28T01:00:00.000Z",
+          },
+          aiSuggestion: null, history: [], formula: { text: "formula", thresholds: { p0: 45, p1: 25, p2: 10 } },
+        },
+      }),
+    });
+    const { container } = render(<RequirementsPanel onRefresh={() => undefined} />);
+    await openFirstRow();
+    const line = container.querySelector(".score-number-line");
+    // Arco Statistic 把整数位和小数位拆成两个 span；小数位只能出现一次，读屏才不会念两遍。
+    expect(line?.textContent).toBe("0.80P3");
+    expect(line?.textContent).not.toContain("0.80.8");
   });
 
   it("shows the current manual definition, labels fields as manual, and does not claim finished analysis is incomplete", async () => {

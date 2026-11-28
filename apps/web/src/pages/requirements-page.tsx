@@ -1532,7 +1532,9 @@ export function ScoringPanel({ requirementId, scoring, dimensionInsights = [], c
           <div className="score-overview-main">
             <ArcoTypography.Text type="secondary" className="rq-caption">{current ? "当前综合评分" : "AI 建议综合评分"}</ArcoTypography.Text>
             <div className="score-number-line">
-              <ArcoStatistic value={display.score} renderFormat={() => display.score.toFixed(2)} />
+              {/* Arco Statistic 会把整数位与小数位拆成两个 span；用 renderFormat 返回完整字符串会读成「0.80.8」。
+                  交给 precision={2} 统一格式化，DOM 文本正好是 0.80 / 6.00 / 4.00，读屏只念一遍。 */}
+              <ArcoStatistic value={display.score} precision={2} />
               <ArcoTag color={PRIORITY_TAG_COLORS[display.priority] ?? "gray"}>{display.priority}</ArcoTag>
             </div>
             <ArcoTypography.Text type="secondary" className="rq-caption">v{display.version} · {scoreOriginLabel(display.origin)} · {display.scoreConfidence ? `${display.scoreConfidence}置信度` : "置信度 —"}</ArcoTypography.Text>
